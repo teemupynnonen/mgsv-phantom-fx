@@ -364,21 +364,11 @@ bool drawFogPass(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call
     context->OMGetRenderTargets(1, target.GetAddressOf(), nullptr);
     if (!target || resourceOf(target.Get()).Get() != gameFog.load()) return false;
 
-    D3D11_VIEWPORT viewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
-    D3D11_RECT scissors[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
-    UINT viewportCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE, scissorCount = viewportCount;
-    context->RSGetViewports(&viewportCount, viewports);
-    context->RSGetScissorRects(&scissorCount, scissors);
-
-    const D3D11_VIEWPORT whole{0, 0, static_cast<float>(FogWidth), static_cast<float>(FogHeight), 0, 1};
-    const D3D11_RECT all{0, 0, static_cast<LONG>(FogWidth), static_cast<LONG>(FogHeight)};
-    context->RSSetViewports(1, &whole);
-    context->RSSetScissorRects(1, &all);
-    performance::Timed timed(context, performance::Pass::FogPass);
-    context->DrawInstanced(call.count, call.instances, call.first, call.firstInstance);
-    timed.end();
-    context->RSSetViewports(viewportCount, viewports);
-    context->RSSetScissorRects(scissorCount, scissors);
+    {
+        const WholeTargetViewport whole(context, FogWidth, FogHeight);
+        const performance::Timed timed(context, performance::Pass::FogPass);
+        context->DrawInstanced(call.count, call.instances, call.first, call.firstInstance);
+    }
 
     if (fog) noteFogPass(context);
 

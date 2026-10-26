@@ -526,6 +526,27 @@ void sceneWritten(camera::SceneConstants& scene)
     if (frame.jittered) camera::applyJitter(scene, camera::jitterNdc(frame.jitter, scene.c[22][0], scene.c[22][1]));
 }
 
+// In exclusive fullscreen the game draws GammaControl into a viewport of its scene's size, centred in
+// the back buffer (docs/DEVELOPMENT.md, "Render size"), so a scene below the output size shows 1:1 in a
+// box. Returns the target's size when the bound draw does that.
+std::optional<std::pair<UINT, UINT>> boxedGammaTarget(ID3D11DeviceContext* context)
+{
+    ComPtr<ID3D11RenderTargetView> target;
+    ComPtr<ID3D11ShaderResourceView> scene;
+    context->OMGetRenderTargets(1, target.GetAddressOf(), nullptr);
+    context->PSGetShaderResources(0, 1, scene.GetAddressOf());
+    const auto [width, height] = sizeOf(target.Get());
+    const auto [sceneWidth, sceneHeight] = sizeOf(scene.Get());
+    if (!sceneWidth || !sceneHeight || sceneWidth >= width || sceneHeight >= height) return std::nullopt;
+
+    UINT count = 1;
+    D3D11_VIEWPORT viewport{};
+    context->RSGetViewports(&count, &viewport);
+    if (viewport.Width != static_cast<float>(sceneWidth) || viewport.Height != static_cast<float>(sceneHeight)) return std::nullopt;
+
+    return std::pair{width, height};
+}
+
 // GammaControl draws once more, from DLSS's image before the HUD into frame generation's hudless
 // texture, with the game's own constants and sampler.
 void drawHudless(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call)
@@ -975,8 +996,6 @@ void drawGradedScene(ID3D11DeviceContext* context, ID3D11RenderTargetView* scene
     UINT sampleMask{};
     ID3D11RenderTargetView* bound[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
     ComPtr<ID3D11DepthStencilView> depth;
-    D3D11_VIEWPORT viewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
-    UINT viewportCount = static_cast<UINT>(std::size(viewports));
     context->IAGetInputLayout(layout.GetAddressOf());
     context->IAGetPrimitiveTopology(&topology);
     context->VSGetShader(vertex.GetAddressOf(), nullptr, nullptr);
@@ -988,10 +1007,9 @@ void drawGradedScene(ID3D11DeviceContext* context, ID3D11RenderTargetView* scene
     context->OMGetRenderTargets(static_cast<UINT>(std::size(bound)), bound, depth.GetAddressOf());
     std::array<ComPtr<ID3D11RenderTargetView>, std::size(bound)> targets;
     for (std::size_t i = 0; i < std::size(bound); ++i) targets[i].Attach(bound[i]);
-    context->RSGetViewports(&viewportCount, viewports);
 
     const auto size = textureDesc(scene);
-    const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(size.Width), static_cast<float>(size.Height), 0, 1};
+    const WholeTargetViewport viewport(context, size.Width, size.Height);
     context->IASetInputLayout(nullptr);
     context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context->VSSetShader(stretch->vertex.Get(), nullptr, 0);
@@ -1001,7 +1019,6 @@ void drawGradedScene(ID3D11DeviceContext* context, ID3D11RenderTargetView* scene
     context->RSSetState(nullptr);
     context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
     context->OMSetRenderTargets(1, &scene, nullptr);
-    context->RSSetViewports(1, &viewport);
     context->Draw(3, 0);
 
     context->IASetInputLayout(layout.Get());
@@ -1013,7 +1030,6 @@ void drawGradedScene(ID3D11DeviceContext* context, ID3D11RenderTargetView* scene
     context->RSSetState(rasterizer.Get());
     context->OMSetBlendState(blend.Get(), blendFactor, sampleMask);
     context->OMSetRenderTargets(static_cast<UINT>(std::size(bound)), bound, depth.Get());
-    context->RSSetViewports(viewportCount, viewports);
 }
 
 // ---- Per frame, on the immediate context ----
@@ -1597,6 +1613,10 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call) noexc
         {
             // With HDR every GammaControl draw, the hudless one too, encodes for the display.
             const hdr::OutputShader output(context);
+            // Out of the fullscreen box, over the whole target: the add-on's draws read output-size
+            // images, and the game's own then stretches its scene as it does windowed.
+            std::optional<WholeTargetViewport> wholeTarget;
+            if (const auto size = boxedGammaTarget(context)) wholeTarget.emplace(context, size->first, size->second);
             drawHudless(context, call);
 
             if (ui_redirect::drawGamma(context, call))
@@ -1606,7 +1626,7 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call) noexc
                 return true;
             }
 
-            if (output.bound())
+            if (output.bound() || wholeTarget)
             {
                 context->DrawInstanced(call.count, call.instances, call.first, call.firstInstance);
 

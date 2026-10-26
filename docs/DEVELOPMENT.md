@@ -650,6 +650,11 @@ confirmed by setting the wanted size in game.
   `uv x m_renderInfo.xy x m_renderBuffer.zw` with a linear clamp sampler, the console-style
   sub-rectangle mapping, so any scene size fills the screen. FXAA's `fxaaQualityRcpFrame` and the
   colour grading follow by themselves.
+- Except in exclusive fullscreen (`window_mode` `FullScreen`): there `GammaControl` draws with a
+  viewport of the render size, centred in the back buffer (2228x1254 at `806,453` for 3840x2160 in
+  F10 record frame-13946), so a smaller scene shows 1:1 in a box. No other screen-size draw in that
+  record has an offset viewport; the only others draw tiles of two small targets (128x512 and
+  128x256). Windowed and borderless draw it over the whole back buffer.
 - `cPSSystem`'s `m_renderInfo` and `m_renderBuffer` are set per pass to that pass's target size
   (data breakpoints caught 512 for the fog volume pass): `0x2C586E` and `0x2C5F75` copy them into a
   per-context copy of the buffer with `memcpy`.
@@ -1113,6 +1118,10 @@ rate"), the photo mode hooks (see "Photo mode"), the game loop hooks (see "Frame
   - Every clear of a render-size depth-stencil also clears the output-size one, so the 2D pass's
     stencil masks work.
   - `GammaControl` reads the output target's `_SRGB` view in place of the scene target.
+  - When `GammaControl`'s viewport has its scene's size and the back buffer is larger (the exclusive
+    fullscreen box), every `GammaControl` draw gets the viewport and scissor over the whole back
+    buffer: the redirected one, frame generation's hudless one, the HDR one, and the game's own when
+    the redirect declines, which then stretches the scene as it does windowed.
   - The window, swap chain and mouse are untouched; the engine never learns the output size differs.
 
   Checked in game: at 1920x1080 windowed, Performance (960x540) on the title menu and in free roam

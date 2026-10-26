@@ -202,4 +202,39 @@ private:
     ID3D11UnorderedAccessView* accesses[D3D11_1_UAV_SLOT_COUNT]{};
     ID3D11SamplerState* samplers[D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT]{};
 };
+
+// One viewport and scissor rectangle over `width` x `height` from 0,0; the game's are put back when
+// this goes out of scope.
+class WholeTargetViewport
+{
+public:
+    WholeTargetViewport(ID3D11DeviceContext* context, UINT width, UINT height) : context(context)
+    {
+        context->RSGetViewports(&viewportCount, viewports);
+        context->RSGetScissorRects(&rectCount, rects);
+
+        const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1};
+        const D3D11_RECT rect{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+        context->RSSetViewports(1, &viewport);
+        context->RSSetScissorRects(1, &rect);
+    }
+
+    ~WholeTargetViewport()
+    {
+        context->RSSetViewports(viewportCount, viewports);
+        context->RSSetScissorRects(rectCount, rects);
+    }
+
+    WholeTargetViewport(const WholeTargetViewport&) = delete;
+    WholeTargetViewport& operator=(const WholeTargetViewport&) = delete;
+
+private:
+    ID3D11DeviceContext* context;
+
+    D3D11_VIEWPORT viewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+    D3D11_RECT rects[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+    // The array sizes; the getters write back how many are bound.
+    UINT viewportCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+    UINT rectCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+};
 }
