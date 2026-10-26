@@ -16,6 +16,24 @@ inline std::uint8_t* image() noexcept
     return reinterpret_cast<std::uint8_t*>(GetModuleHandleW(nullptr));
 }
 
+// Whether the calling thread's stack holds a return address in the game's image: the call comes from
+// the game's code, not from another tool's thread.
+inline bool calledFromGame() noexcept
+{
+    const auto* base = image();
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + reinterpret_cast<const IMAGE_DOS_HEADER*>(base)->e_lfanew);
+    const auto begin = reinterpret_cast<std::uintptr_t>(base);
+    const auto end = begin + nt->OptionalHeader.SizeOfImage;
+    void* frames[62]{};
+    const auto count = RtlCaptureStackBackTrace(0, static_cast<DWORD>(std::size(frames)), frames, nullptr);
+
+    return std::any_of(frames, frames + count, [&](void* frame)
+    {
+        const auto address = reinterpret_cast<std::uintptr_t>(frame);
+        return address >= begin && address < end;
+    });
+}
+
 // Code the game's build has at an address in its image.
 struct Expected
 {

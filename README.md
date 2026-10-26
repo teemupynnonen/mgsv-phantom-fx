@@ -44,6 +44,7 @@ More comparisons: [Previews](docs/PREVIEWS.md)
 - DLSS Frame Generation: RTX 40 (2x) or RTX 50 (up to 6x), and hardware-accelerated GPU scheduling on
 - HDR: HDR on in Windows display settings
 - [ReShade 6.8+ with full add-on support](https://reshade.me/#download)
+- Special K works alongside, without frame generation
 
 ## Install
 

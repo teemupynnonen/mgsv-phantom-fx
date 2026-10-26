@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Works with Special K: the game no longer crashes when it resizes its window with HDR on, and
+  Phantom FX starts in the right order when Special K is loaded first. Frame generation stays off
+  with Special K for now; the menu says so.
 - Fix upscaling in exclusive fullscreen: the image stayed at the render size in a box in the
   middle of the screen, HUD included, instead of filling it.
 - The menu and the Budget page name each effect the same way: global illumination shows RTGI on

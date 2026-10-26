@@ -198,10 +198,38 @@ the wrapper's DLL, so it returns false and the caller (`je 0x2BAA37`) quits thro
 the CRT, `PostQuitMessage` from `mgsvtpp.exe+0x7082A`, under both ReShade and RenderDoc.
 It is a local check; nothing is sent anywhere.
 
-**Fix.** ReShade loads add-ons inside `D3D11CreateDevice`, before the check runs.
-`passDeviceCheck()` (`src/device_check.cpp`) verifies the build and the function's first bytes
-(`40 53 48 81 EC 60 04 00 00`) and writes `mov al, 1; ret` (`B0 01 C3`) over its start, in memory
-only. The game file is never changed. Without the add-on, ReShade alone cannot run the game.
+**Fix.** ReShade loads add-ons inside `D3D11CreateDevice`, before the check runs (with Special K,
+see "Special K"). `passDeviceCheck()` (`src/device_check.cpp`) verifies the build and the function's
+first bytes (`40 53 48 81 EC 60 04 00 00`) and writes `mov al, 1; ret` (`B0 01 C3`) over its start,
+in memory only. The game file is never changed. Without the add-on, ReShade alone cannot run the game.
+
+## Special K
+
+Checked with Special K 26.10.10 injected by SKIF, ReShade as `dxgi.dll`. Special K registers itself
+as a ReShade add-on and sits below ReShade's DXGI proxies.
+
+**Start-up order.** Special K's hook set-up makes a Direct3D 11 device on its own thread, 2 to 3 ms
+after it logs "Installing Deferred DXGI / D3D11 / D3D12 Hooks", before the game makes its own.
+ReShade loads add-ons inside that call, so `AddonInit` ran beside the game's start-up: in one run
+the frame generation hook and HDR's handlers came after the game's swap chain, and the add-on took
+Special K's immediate context for the game's. Special K then makes a swap chain of its own through
+DXGI's `CreateSwapChain`, which the frame generation hook sits on. Now a device made on another
+thread waits in `create_device` until `AddonInit` is done (at most 10 s), and the immediate context
+and the swap chain frame generation replaces are only taken when the game's code is on the stack
+(`game_code::calledFromGame`). Without Special K the game's own thread runs `AddonInit` and
+nothing waits.
+
+**Tearing flag.** Special K makes the game's swap chain with `DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING`
+(its `AllowTearingInDWM`). The game resizes with flags 0x2; with the game's sRGB format Special K
+puts the flag back, with HDR's format it does not, DXGI fails `ResizeBuffers` with `E_INVALIDARG`
+and the game crashes releasing the missing back buffer (`0x19F43D0`, from its window procedure).
+HDR's `create_swapchain` keeps the flag when the live swap chain has it.
+
+**Frame generation** does not start when a module exports `SK_GetDLLRole`; the menu says so. On the
+frame generation swap chain, Special K's present hook makes a Direct3D 11 texture with the game's
+device and faults in `d3d12.dll` on the third frame, on the game's window thread, which ends; the
+rest of the game waits for it. With Special K's `[API.Hook] d3d12=false`, DLSS Frame Generation
+faults in `sl.dlss_g.dll` on the first frame instead.
 
 ## Frame rate
 

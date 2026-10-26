@@ -83,9 +83,11 @@ void drawFrameGeneration(Settings& wanted)
     }
     else if (on)
     {
-        state = State::Restart;
+        // Started with the game but not running: the presenter says why. Otherwise turned on since.
         const auto reason = presenter::status();
-        message = presenter::installed() && sameRoute && !reason.empty() ? reason : "Restart the game to start frame generation.";
+        const bool tried = presenter::installed() && sameRoute && !reason.empty();
+        state = tried ? State::NotRunning : State::Restart;
+        message = tried ? reason : "Restart the game to start frame generation.";
     }
 
     const fxui::Item item({.id = "frameGeneration",

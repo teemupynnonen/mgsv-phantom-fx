@@ -25,6 +25,7 @@
 #include "fxaa.hpp"
 #include "fxui/fxui.hpp"
 #include "engine_scene.hpp"
+#include "game_code.hpp"
 #include "game_loop.hpp"
 #include "global_illumination.hpp"
 #include "hdr.hpp"
@@ -45,11 +46,15 @@
 #include <Psapi.h>
 #include <MinHook.h>
 #include <d3d11.h>
+#include <dxgi1_5.h>
 // Before reshade.hpp, so register_addon also connects the ImGui calls of the overlay to ReShade's.
 #include <imgui.h>
 #include <reshade.hpp>
 #include <array>
+#include <chrono>
+#include <condition_variable>
 #include <filesystem>
+#include <mutex>
 #include <string>
 
 extern "C" __declspec(dllexport) const char* NAME = "Phantom FX";
@@ -66,6 +71,17 @@ command_list* immediateList{};
 bool overlayOpen{};
 // ReShade's runtime, which draws its effects and overlay on the back buffer in the colour space it is told.
 effect_runtime* effects{};
+// The window of a live swap chain made with DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING, which its resizes must keep.
+void* tearingWindow{};
+
+// Special K makes a device on its own thread before the game makes its own, so ReShade loads the add-on
+// there while the game goes on starting. A device made on another thread waits until AddonInit is done,
+// as the game's does without Special K, when the game's own thread loads the add-on.
+constexpr auto StartTimeout = std::chrono::seconds(10);
+std::mutex startMutex;
+std::condition_variable startDone;
+bool started{};
+DWORD startThread{};
 
 ID3D11DeviceContext* native(command_list* list)
 {
@@ -132,11 +148,27 @@ ID3D11DeviceContext* wrapperOf(command_queue* queue, ID3D11DeviceContext* contex
     return nullptr;
 }
 
+bool onCreateDevice(device_api, uint32_t&)
+{
+    std::unique_lock lock(startMutex);
+    if (GetCurrentThreadId() != startThread && !startDone.wait_for(lock, StartTimeout, [] { return started; }))
+        log("A device was made while Phantom FX was still starting; it stopped waiting after 10 seconds.");
+
+    return false;
+}
+
 void onInitCommandQueue(command_queue* queue)
 {
     auto* context = reinterpret_cast<ID3D11DeviceContext*>(queue->get_native());
     if (queue->get_device()->get_api() != device_api::d3d11 || !context || context->GetType() != D3D11_DEVICE_CONTEXT_IMMEDIATE || immediateList)
         return;
+
+    // Special K's device, made on its own thread, comes first.
+    if (!game_code::calledFromGame())
+    {
+        logOnce("Left out a device the game did not make.");
+        return;
+    }
 
     immediateList = queue->get_immediate_command_list();
     auto* wrapper = wrapperOf(queue, context);
@@ -315,6 +347,19 @@ void onInitSwapchain(swapchain* chain, bool)
     // so HDR sets it on the native swap chain.
     hdr::swapChainReady(reinterpret_cast<IDXGISwapChain*>(chain->get_native()));
     showColorSpace();
+
+    DXGI_SWAP_CHAIN_DESC native{};
+    if (FAILED(reinterpret_cast<IDXGISwapChain*>(chain->get_native())->GetDesc(&native))) return;
+
+    tearingWindow = native.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING ? chain->get_hwnd() : nullptr;
+    if constexpr (DiagnosticLog)
+        log("Swap chain " + std::to_string(native.BufferDesc.Width) + "x" + std::to_string(native.BufferDesc.Height) + ", format "
+            + std::to_string(native.BufferDesc.Format) + ", flags " + hex(native.Flags) + ".");
+}
+
+void onDestroySwapchain(swapchain*, bool resize)
+{
+    if (!resize) tearingWindow = nullptr;
 }
 
 void onInitEffectRuntime(effect_runtime* created)
@@ -330,7 +375,7 @@ void onDestroyEffectRuntime(effect_runtime* destroyed)
 
 // ---- HDR's swap chain and targets, registered only while HDR runs ----
 
-bool onCreateSwapchain(device_api api, swapchain_desc& desc, void*)
+bool onCreateSwapchain(device_api api, swapchain_desc& desc, void* hwnd)
 {
     auto bufferFormat = static_cast<DXGI_FORMAT>(desc.back_buffer.texture.format);
     auto swapEffect = static_cast<DXGI_SWAP_EFFECT>(desc.present_mode);
@@ -340,6 +385,9 @@ bool onCreateSwapchain(device_api api, swapchain_desc& desc, void*)
     desc.back_buffer.texture.format = static_cast<format>(bufferFormat);
     desc.present_mode = swapEffect;
     desc.back_buffer_count = buffers;
+    // Special K adds the tearing flag below ReShade, so the game's resize lacks it. With the game's
+    // format, Special K's resize puts it back; with HDR's, DXGI gets none and fails the resize.
+    if (hwnd && hwnd == tearingWindow) desc.present_flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
 
     return true;
 }
@@ -533,6 +581,13 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshadeMo
 {
     if (!reshade::register_addon(addon, reshadeModule)) return false;
 
+    {
+        std::lock_guard lock(startMutex);
+        started = false;
+        startThread = GetCurrentThreadId();
+    }
+    reshade::register_event<reshade::addon_event::create_device>(onCreateDevice);
+
     self = addon;
     const auto directory = dataDirectory();
     openLog(directory / "PhantomFX.log");
@@ -578,6 +633,7 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshadeMo
     reshade::register_event<reshade::addon_event::push_descriptors>(onPushDescriptors);
     reshade::register_event<reshade::addon_event::bind_pipeline>(onBindPipeline);
     reshade::register_event<reshade::addon_event::init_swapchain>(onInitSwapchain);
+    reshade::register_event<reshade::addon_event::destroy_swapchain>(onDestroySwapchain);
     reshade::register_event<reshade::addon_event::map_buffer_region>(onMapBuffer);
     reshade::register_event<reshade::addon_event::unmap_buffer_region>(onUnmapBuffer);
     reshade::register_event<reshade::addon_event::execute_secondary_command_list>(onExecuteSecondary);
@@ -609,6 +665,12 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshadeMo
         reshade::register_event<reshade::addon_event::copy_resource>(onCopyResource);
         reshade::register_event<reshade::addon_event::create_pipeline>(onCreatePipeline);
     }
+
+    {
+        std::lock_guard lock(startMutex);
+        started = true;
+    }
+    startDone.notify_all();
 
     return true;
 }

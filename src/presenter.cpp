@@ -7,6 +7,7 @@
 #include "log.hpp"
 
 #include <Windows.h>
+#include <Psapi.h>
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
@@ -616,6 +617,17 @@ void SwapChain::waitFor(UINT64 value)
         throw Failure("Direct3D 12 did not finish a frame within 10 seconds.", DXGI_ERROR_DEVICE_HUNG);
 }
 
+// Special K under any file name: SpecialK64.dll when injected, dxgi.dll or d3d11.dll beside the game.
+bool specialKLoaded() noexcept
+{
+    HMODULE modules[1024]{};
+    DWORD bytes{};
+    if (!K32EnumProcessModules(GetCurrentProcess(), modules, sizeof(modules), &bytes)) return false;
+
+    const auto count = std::min<std::size_t>(bytes / sizeof(HMODULE), std::size(modules));
+    return std::any_of(modules, modules + count, [](HMODULE module) { return GetProcAddress(module, "SK_GetDLLRole") != nullptr; });
+}
+
 // DXGI's own function behind an entry of its factories' function table. Some setups replace the entry
 // in memory (ReShade does when Ubisoft's overlay is loaded) and call the function it held, so it is
 // read from the entry in dxgi.dll's file and relocated to where dxgi.dll is loaded.
@@ -668,9 +680,10 @@ void* originalEntry(void* const* slot)
 // Behind ReShade: ReShade wraps what this returns as the game's swap chain.
 HRESULT STDMETHODCALLTYPE createSwapChain(IDXGIFactory* factory, IUnknown* device, DXGI_SWAP_CHAIN_DESC* desc, IDXGISwapChain** chain)
 {
-    // Only the game's Direct3D 11 swap chain is replaced; any other while it lives passes on.
+    // Only the game's Direct3D 11 swap chain is replaced; any other while it lives passes on, and so do
+    // those other tools make from their own threads (Special K makes one before the game does).
     ComPtr<ID3D11Device> game;
-    if (presenting || !device || !desc || !chain || FAILED(device->QueryInterface(IID_PPV_ARGS(&game))))
+    if (presenting || !device || !desc || !chain || FAILED(device->QueryInterface(IID_PPV_ARGS(&game))) || !game_code::calledFromGame())
         return originalCreate(factory, device, desc, chain);
 
     // Without frame generation the game's own swap chain does the same job without the copy.
@@ -723,6 +736,14 @@ void install(const std::filesystem::path& directory, Route route) noexcept
     hooked = true;
     addonDirectory = directory;
     if (!presenting) presentRoute = route;
+    // Special K's present hook crashes on the Direct3D 12 swap chain that frame generation presents
+    // through, and with that hook off DLSS Frame Generation crashes.
+    if (specialKLoaded())
+    {
+        setStatus("Frame generation does not work with Special K yet.");
+        return;
+    }
+
     try
     {
         // ReShade gives the game proxies of DXGI's factories, which call the real factories' shared
