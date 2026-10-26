@@ -75,7 +75,7 @@ void settingsPersist(const fs::path& root)
     saveSettings(path, chosen);
     expect(loadSettings(path) == chosen,
         "Restart restores the upscaler, mode, preset, sharpening, frame rate unlock, frame generation, soft, screen-space and ray-traced "
-        "shadows, GTVBAO, SSILVB, the global illumination's rays, the volumetric fog and the draw distance.");
+        "shadows, GTVBAO, GT-VBGI, the global illumination's rays, the volumetric fog and the draw distance.");
     write(path, "frame_generation=dynamic\n");
     expect(loadSettings(path).frameGeneration == FrameGeneration::Dynamic, "Dynamic frame generation is read back.");
     write(path, "frame_generation=fsr\n");
@@ -105,7 +105,7 @@ void settingsPersist(const fs::path& root)
     const auto light = loadSettings(path);
     expect(!light.indirectLight && light.indirectLightRadius == Settings::MinIndirectLightRadius
             && light.indirectLightStrength == Settings::MaxIndirectLightStrength,
-        "An invalid toggle leaves SSILVB off, and its radius and strength are clamped.");
+        "An invalid toggle leaves GT-VBGI off, and its radius and strength are clamped.");
 
     const Settings upscaling{.mode = Mode::Custom, .preset = Preset::K, .sharpness = 0.25f, .customScale = 0.75f, .mipBiasOffset = -0.5f};
     saveSettings(path, upscaling);

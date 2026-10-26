@@ -28,7 +28,7 @@ namespace
 {
 using Microsoft::WRL::ComPtr;
 
-// The game's pixel shaders GTVBAO and SSILVB work with (docs/DEVELOPMENT.md, "Ambient occlusion").
+// The game's pixel shaders GTVBAO and GT-VBGI work with (docs/DEVELOPMENT.md, "Ambient occlusion").
 enum class Role : std::uint8_t
 {
     SkyLight,      // Binds the G-buffer normals, right before the upscale in the same command list
@@ -78,7 +78,7 @@ constexpr UINT SceneSlot = 2;      // cPSScene, in the upscale and the resolves
 constexpr UINT AlbedoSlot = 8, DiffuseSlot = 9, ResolveDepthSlot = 11, OcclusionSlot = 13;
 constexpr UINT SceneConstantsSize = 480;
 constexpr int DenoisePasses = 2;
-// SSILVB's march and denoiser run at the render size over this, rounded up (Scale in shaders::March).
+// GT-VBGI's march and denoiser run at the render size over this, rounded up (Scale in shaders::March).
 constexpr UINT LightScale = 2;
 // The march stops at this share of the render height, for surfaces close to the camera.
 constexpr float MaxRadiusShare = 0.15f;
@@ -150,21 +150,21 @@ ComPtr<ID3D11PixelShader> applyShader, showOcclusionShader, showLightShader;
 ComPtr<ID3D11BlendState> multiplyBlend;
 ComPtr<ID3D11Buffer> parameterBuffer;
 ComPtr<ID3D11ShaderResourceView> whiteView; // 1x1, the resolve's occlusion while GTVBAO is on
-// The denoise passes alternate between the two; the last one writes [Result]. SSILVB's are at
+// The denoise passes alternate between the two; the last one writes [Result]. GT-VBGI's are at
 // its march's size.
 std::array<Target, 2> visibility, gathered;
 constexpr std::size_t Result = DenoisePasses % 2;
 Target occlusionEdges, lightEdges; // Depth edges for each denoiser, written by its march
-Target diffuseWithLight;           // The game's diffuse light with SSILVB's or the global illumination's added, read by the resolve in its place
+Target diffuseWithLight;           // The game's diffuse light with GT-VBGI's or the global illumination's added, read by the resolve in its place
 // While the global illumination runs, the game's probe light, which the upscale also draws aside:
 // the resolve takes it out of the diffuse light. The game's light target keeps it, as the game's
 // exposure (Tonemap_Lum_Lacc) measures that target: without the probe light there, the exposure
 // ran away in the shade (a white screen).
 DrawTarget gameProbeLight;
 MipTarget distances;               // shaders::PrefilterDepths' output, written before each march
-Progress occlusionProgress{"GTVBAO"}, lightProgress{"SSILVB"}, globalProgress{"Global illumination"};
+Progress occlusionProgress{"GTVBAO"}, lightProgress{"GT-VBGI"}, globalProgress{"Global illumination"};
 // Compiles the shaders and makes the fixed resources once; call with resourceMutex held. Returns
-// false when GTVBAO and SSILVB are unavailable.
+// false when GTVBAO and GT-VBGI are unavailable.
 bool ensurePipeline()
 {
     if (occlusionShader) return true;
@@ -177,14 +177,14 @@ bool ensurePipeline()
         prefilterShader = computeShader(device.Get(), shaders::PrefilterDepths, "depth-prefilter");
         denoiseShader = computeShader(device.Get(), shaders::Denoise, "gtvbao-denoise", occlusionPass);
         finalDenoiseShader = computeShader(device.Get(), shaders::Denoise, "gtvbao-denoise-final", lastOcclusionPass);
-        lightShader = computeShader(device.Get(), shaders::March, "ssilvb", lightPass);
-        lightDenoiseShader = computeShader(device.Get(), shaders::Denoise, "ssilvb-denoise", lightPass);
-        finalLightDenoiseShader = computeShader(device.Get(), shaders::Denoise, "ssilvb-denoise-final", lastLightPass);
-        lightUpsampleShader = computeShader(device.Get(), shaders::Upsample, "ssilvb-upsample");
+        lightShader = computeShader(device.Get(), shaders::March, "gtvbgi", lightPass);
+        lightDenoiseShader = computeShader(device.Get(), shaders::Denoise, "gtvbgi-denoise", lightPass);
+        finalLightDenoiseShader = computeShader(device.Get(), shaders::Denoise, "gtvbgi-denoise-final", lastLightPass);
+        lightUpsampleShader = computeShader(device.Get(), shaders::Upsample, "gtvbgi-upsample");
         addLightShader = computeShader(device.Get(), shaders::AddLight, "gi-add");
         applyShader = pixelShader(device.Get(), shaders::Apply, "gtvbao-apply");
         showOcclusionShader = pixelShader(device.Get(), shaders::Show, "gtvbao-show", occlusionPass);
-        showLightShader = pixelShader(device.Get(), shaders::Show, "ssilvb-show", lightPass);
+        showLightShader = pixelShader(device.Get(), shaders::Show, "gtvbgi-show", lightPass);
 
         // Multiplies the diffuse light by the visibility and leaves its alpha, and the specular light
         // the upscale also binds, as they are.
@@ -217,14 +217,14 @@ bool ensurePipeline()
 
         // Last, so it marks a complete pipeline.
         occlusionShader = computeShader(device.Get(), shaders::March, "gtvbao", occlusionPass);
-        log("GTVBAO and SSILVB ready.");
+        log("GTVBAO and GT-VBGI ready.");
 
         return true;
     }
     catch (const std::exception& error)
     {
         pipelineFailed = true;
-        log(std::string("GTVBAO and SSILVB unavailable: ") + error.what());
+        log(std::string("GTVBAO and GT-VBGI unavailable: ") + error.what());
 
         return false;
     }
@@ -300,19 +300,19 @@ void ensureOcclusionTargets(UINT width, UINT height)
     if (made) log("GTVBAO at " + std::to_string(width) + "x" + std::to_string(height) + ".");
 }
 
-// SSILVB's working textures: the march's at its size, the diffuse light at the render size; call
+// GT-VBGI's working textures: the march's at its size, the diffuse light at the render size; call
 // with resourceMutex held.
 void ensureLightTargets(UINT width, UINT height)
 {
     ensureDistances(width, height);
     const UINT marchWidth = (width + LightScale - 1) / LightScale, marchHeight = (height + LightScale - 1) / LightScale;
-    bool made = ensureTarget(lightEdges, marchWidth, marchHeight, DXGI_FORMAT_R8_UNORM, "Creating the SSILVB depth edges");
+    bool made = ensureTarget(lightEdges, marchWidth, marchHeight, DXGI_FORMAT_R8_UNORM, "Creating the GT-VBGI depth edges");
     for (auto& target : gathered)
-        made |= ensureTarget(target, marchWidth, marchHeight, DXGI_FORMAT_R11G11B10_FLOAT, "Creating the SSILVB light");
+        made |= ensureTarget(target, marchWidth, marchHeight, DXGI_FORMAT_R11G11B10_FLOAT, "Creating the GT-VBGI light");
     // The game's diffuse light's format.
-    made |= ensureTarget(diffuseWithLight, width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the SSILVB diffuse light");
+    made |= ensureTarget(diffuseWithLight, width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the GT-VBGI diffuse light");
     if (made)
-        log("SSILVB at " + std::to_string(marchWidth) + "x" + std::to_string(marchHeight) + " for " + std::to_string(width) + "x"
+        log("GT-VBGI at " + std::to_string(marchWidth) + "x" + std::to_string(marchHeight) + " for " + std::to_string(width) + "x"
             + std::to_string(height) + ".");
 }
 
@@ -389,7 +389,7 @@ void computeOcclusion(ID3D11DeviceContext* context, ID3D11ShaderResourceView* de
     prefilterDepths(context, depth, specular);
 
     timed.next(performance::Pass::OcclusionMarch);
-    // t2 and t3 are SSILVB's.
+    // t2 and t3 are GT-VBGI's.
     ID3D11ShaderResourceView* inputs[]{depth, normalView, nullptr, nullptr, distances.view.Get()};
     ID3D11UnorderedAccessView* outputs[]{visibility[0].access.Get(), occlusionEdges.access.Get()};
     context->CSSetShaderResources(0, 5, inputs);
@@ -400,7 +400,7 @@ void computeOcclusion(ID3D11DeviceContext* context, ID3D11ShaderResourceView* de
     denoise(context, visibility, occlusionEdges, denoiseShader.Get(), finalDenoiseShader.Get());
 }
 
-// Records SSILVB's march, denoise and upsample passes on `context`; call with resourceMutex held.
+// Records GT-VBGI's march, denoise and upsample passes on `context`; call with resourceMutex held.
 // The upsample writes diffuseWithLight.
 void computeLight(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D11ShaderResourceView* normalView,
     ID3D11ShaderResourceView* diffuse, ID3D11ShaderResourceView* albedo, ID3D11ShaderResourceView* specular, ID3D11Buffer* scene,
@@ -570,7 +570,7 @@ bool drawUpscale(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call
     return true;
 }
 
-// SSILVB's passes, from what the resolve binds; call with resourceMutex held. False leaves the
+// GT-VBGI's passes, from what the resolve binds; call with resourceMutex held. False leaves the
 // resolve the game's diffuse light this frame.
 bool addLight(ID3D11DeviceContext* context, ID3D11ShaderResourceView* normalView, const Options& options)
 {
@@ -596,7 +596,7 @@ bool addLight(ID3D11DeviceContext* context, ID3D11ShaderResourceView* normalView
     return true;
 }
 
-// The resolve, with the diffuse light SSILVB added to while it runs, and white in place of the
+// The resolve, with the diffuse light GT-VBGI added to while it runs, and white in place of the
 // game's occlusion while GTVBAO runs; or, for the diagnostics, either effect alone. False leaves
 // the draw to the game.
 bool drawResolve(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, const Options& options)
@@ -919,7 +919,7 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call) noexc
     catch (const std::exception& error)
     {
         std::lock_guard lock(resourceMutex);
-        logOnce(std::string("GTVBAO or SSILVB: a pass kept the game's drawing: ") + error.what());
+        logOnce(std::string("GTVBAO or GT-VBGI: a pass kept the game's drawing: ") + error.what());
     }
     catch (...)
     {

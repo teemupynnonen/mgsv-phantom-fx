@@ -8,7 +8,7 @@
 #include <string>
 
 // What the add-on does to the game's indirect light (docs/DEVELOPMENT.md, "Ambient occlusion",
-// "GTVBAO" and "SSILVB"). Both share one visibility bitmask march.
+// "GTVBAO" and "GT-VBGI"). Both share one visibility bitmask march.
 //
 // GTVBAO, ground-truth visibility bitmask ambient occlusion, replaces the game's SSAO. Fox Engine
 // multiplies all of a pixel's light by its occlusion in the deferred resolve, sunlight included.
@@ -17,13 +17,14 @@
 // it is on, the resolve reads a white texture in place of the game's occlusion, and the game's own
 // SSAO passes are left out.
 //
-// SSILVB, screen-space indirect lighting with visibility bitmask, adds the light that nearby
-// surfaces on screen reflect onto each other: at the resolve, once the sun and the local lights are
-// in the diffuse light, the resolve reads the diffuse light with that bounce added.
+// GT-VBGI, ground-truth visibility bitmask global illumination (Mirko Salm's extension of GT-VBAO to
+// diffuse bounces), adds the light that nearby surfaces on screen reflect onto each other: at the
+// resolve, once the sun and the local lights are in the diffuse light, the resolve reads the diffuse
+// light with that bounce added.
 //
 // The global illumination (global_illumination.hpp) replaces the game's probe light and SSAO: the
 // upscale writes only its alpha, the SSAO passes are left out, and the resolve reads the diffuse
-// light with the traced light added and white for the occlusion. GTVBAO and SSILVB are off then.
+// light with the traced light added and white for the occlusion. GTVBAO and GT-VBGI are off then.
 namespace phantom_fx::indirect_light
 {
 struct Options
@@ -31,7 +32,7 @@ struct Options
     bool occlusion{};           // GTVBAO
     float occlusionRadius{1};   // Metres
     float occlusionStrength{1}; // Exponent on the visibility
-    bool light{};               // SSILVB
+    bool light{};               // GT-VBGI
     float lightRadius{2};       // Metres
     float lightStrength{1};     // Multiplies the light
     bool globalIllumination{};  // The traced light in place of the game's probes and SSAO
@@ -40,7 +41,7 @@ struct Options
     // tell it what it needs (global_illumination::noteNormals and the others).
     bool rayTracing{};
     bool showOcclusion{};       // Diagnostics: the resolve draws GTVBAO's occlusion alone
-    bool showLight{};           // Diagnostics: the resolve draws SSILVB's light alone
+    bool showLight{};           // Diagnostics: the resolve draws GT-VBGI's light alone
     bool showGlobalIllumination{}; // Diagnostics: the resolve draws the global illumination's output alone
 };
 

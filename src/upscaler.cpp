@@ -318,7 +318,7 @@ void configureShadows()
     });
 }
 
-// Call with settingsMutex held. The global illumination replaces GTVBAO and SSILVB; its scene also
+// Call with settingsMutex held. The global illumination replaces GTVBAO and GT-VBGI; its scene also
 // gives the ray-traced shadows of the sun and of the point and spot lights.
 void configureIndirectLight()
 {

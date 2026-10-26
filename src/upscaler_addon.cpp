@@ -5,7 +5,7 @@
 // processing down (fxaa.hpp), can lift its 60 fps cap (frame_rate.hpp), adds DLSS Frame Generation
 // with Reflex or FSR frame generation (presenter.hpp, game_loop.hpp, fsr_frame_generation.hpp), can
 // give the sun soft shadows and every light Bend Studio's screen-space shadows (shadows.hpp), can
-// replace the game's ambient occlusion with GTVBAO and add SSILVB's screen-space indirect lighting
+// replace the game's ambient occlusion with GTVBAO and add GT-VBGI's screen-space indirect lighting
 // (indirect_light.hpp), or replace the game's indirect light with ray-traced global illumination
 // (global_illumination.hpp), adds volumetric fog with light shafts (atmosphere.hpp), has a photo mode
 // (photo_mode.hpp), can output HDR10 (hdr.hpp) and has an optional pipeline recorder (frame_log.hpp),

@@ -290,7 +290,7 @@ std::optional<upscaler::LeftOut> startMeasurement(LONGLONG now)
     leave(lighting && settings.rayTracedLights, "Ray-traced lights", &upscaler::LeftOut::rayTracedLights);
 
     // The global illumination in parts: its light passes, then the rest (the scene's build, the wait
-    // for Direct3D 12 and its passes in the game's frame). It keeps SSILVB and GTVBAO
+    // for Direct3D 12 and its passes in the game's frame). It keeps GT-VBGI and GTVBAO
     // off, so they stay off with it.
     const bool global = lighting && settings.globalIllumination;
     leave(global, "Global illumination's light passes", &upscaler::LeftOut::globalLight);
@@ -300,7 +300,7 @@ std::optional<upscaler::LeftOut> startMeasurement(LONGLONG now)
         leave(global, "Global illumination (the rest)", &upscaler::LeftOut::globalIllumination);
     }
 
-    leave(lighting && settings.indirectLight && !settings.globalIllumination, "SSILVB", &upscaler::LeftOut::indirectLight);
+    leave(lighting && settings.indirectLight && !settings.globalIllumination, "GT-VBGI", &upscaler::LeftOut::indirectLight);
     leave(lighting && settings.ambientOcclusion && !settings.globalIllumination, "GTVBAO", &upscaler::LeftOut::ambientOcclusion);
     leave(lighting && settings.lightScreenSpaceShadows, "Lamp contact shadows", &upscaler::LeftOut::lightScreenSpaceShadows);
     leave(lighting && settings.sunScreenSpaceShadows && !rayTraced, "Sun contact shadows", &upscaler::LeftOut::sunScreenSpaceShadows);

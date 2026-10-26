@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Indirect lighting** is now **GT-VBGI** (Mirko Salm) in place of SSILVB. A lit surface passes its
+  light on evenly every way it faces, as a matte surface does, so the bounce is brighter, and the
+  bounce's directions are picked by how much each one counts. The setting, radius and strength
+  carry over.
 - The menu and the Budget page name each effect the same way: global illumination shows RTGI on
   both, and the upscaler's item shows DLSS or FSR beside its name.
 - Remove **Old paths** from the Diagnostics page: the ray tracing's earlier behaviour, kept to compare

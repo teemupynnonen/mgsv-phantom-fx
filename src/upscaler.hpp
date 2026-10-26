@@ -31,7 +31,7 @@ struct Diagnostics
     bool gameFxaa{}; // Comparison: leave the frame to the game's FXAA, keeping DLSS ready
     bool onlyScreenSpaceShadows{}; // The sun shadowed by the screen-space shadows alone
     bool showAmbientOcclusion{};   // GTVBAO's occlusion alone in place of the lit scene
-    bool showIndirectLight{};      // SSILVB's light alone in place of the lit scene
+    bool showIndirectLight{};      // GT-VBGI's light alone in place of the lit scene
     bool showGlobalIllumination{}; // The global illumination's light alone in place of the lit scene
     bool showTracedScene{};        // The global illumination's traced scene from the camera
     bool logGlobalIlluminationOften{}; // The global illumination's light logged every few frames, not every ten seconds
@@ -105,7 +105,7 @@ Settings currentSettings();
 void applySettings(const Settings& settings);
 Diagnostics currentDiagnostics();
 void applyDiagnostics(const Diagnostics& diagnostics);
-// Soft shadows, screen-space shadows, GTVBAO and SSILVB together, for comparing with the game's own
+// Soft shadows, screen-space shadows, GTVBAO and GT-VBGI together, for comparing with the game's own
 // lighting (F1). Not saved: each start begins with them on, as their own settings say.
 bool enhancementsOn();
 void setEnhancements(bool on);

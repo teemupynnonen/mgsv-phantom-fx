@@ -30,7 +30,7 @@ More comparisons: [Previews](docs/PREVIEWS.md)
 - **Soft shadows** (PCSS)
 - **Contact shadows** (Bend Studio's screen-space shadows)
 - **Ambient occlusion** (GTVBAO)
-- **Indirect lighting** (SSILVB)
+- **Indirect lighting** (GT-VBGI)
 - **Volumetric fog** with light shafts and a physical sky
 - **Draw distance:** loads full detail and the distant world farther, with more detail at a distance
 - **Photo mode**

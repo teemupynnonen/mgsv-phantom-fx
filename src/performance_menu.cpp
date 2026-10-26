@@ -41,7 +41,7 @@ void drawPresets(upscaler::Settings& wanted)
     constexpr EffectPreset presets[]{EffectPreset::ScreenSpace, EffectPreset::RayTraced};
     constexpr fxui::Option options[]{
         {.label = "Screen-space",
-            .tip = "Soft shadows, sun and lamp contact shadows, GTVBAO and SSILVB. No ray tracing, so it runs on any GPU."},
+            .tip = "Soft shadows, sun and lamp contact shadows, GTVBAO and GT-VBGI. No ray tracing, so it runs on any GPU."},
         {.label = "Ray-traced",
             .tip = "Ray-traced shadows, lights and global illumination in place of the screen-space effects. Needs a GPU that traces rays (DXR 1.1)."},
     };

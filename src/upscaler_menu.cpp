@@ -236,7 +236,7 @@ void drawLighting(Settings& wanted)
             .tag = "Experimental",
             .tip = "Ray-traced indirect light: rays for every 2 x 2 pixels, each hit lit afresh by the sun and the lights, its bounce from a "
                    "light cache, then NVIDIA's NRD denoiser. Sunlight, skylight and lamplight bounce between surfaces, also those off screen, and "
-                   "the sky only lights what it can reach. It replaces the game's baked probe light and SSAO, and GTVBAO and SSILVB while on. Needs "
+                   "the sky only lights what it can reach. It replaces the game's baked probe light and SSAO, and GTVBAO and GT-VBGI while on. Needs "
                    "a GPU that traces rays (DXR 1.1). Off keeps the game's indirect light.",
             .summary = "Sun and sky light bounce between surfaces, also those off screen, in place of the game's baked light.",
             .keywords = "RT DXR GI strength ray quality sun size"});
@@ -268,15 +268,16 @@ void drawLighting(Settings& wanted)
     }
 
     if (const fxui::Item item({.id = "indirectLight",
-            .tip = "Screen-space indirect lighting with visibility bitmask: light bounces off nearby surfaces onto others, taking their colour, such "
-                   "as sunlit ground brightening the underside of a jeep. It only knows what is on screen. Off leaves the game's indirect light unchanged.",
+            .tip = "Ground-truth visibility bitmask global illumination (GT-VBGI): light bounces off nearby surfaces onto others, taking their colour, "
+                   "such as sunlit ground brightening the underside of a jeep. It only knows what is on screen. Off leaves the game's indirect light "
+                   "unchanged.",
             .summary = "Light bounces off nearby surfaces and takes their colour. It only knows what is on screen.",
-            .keywords = "SSGI bounce radius strength"});
+            .keywords = "SSGI GT-VBGI SSILVB bounce radius strength"});
         item)
     {
         fxui::slider("Radius", wanted.indirectLightRadius,
             {.min = Settings::MinIndirectLightRadius, .max = Settings::MaxIndirectLightRadius, .standard = Defaults.indirectLightRadius, .format = "%.2f m",
-                .tip = "How far around a surface SSILVB looks for surfaces that light it."});
+                .tip = "How far around a surface GT-VBGI looks for surfaces that light it."});
         fxui::slider("Strength", wanted.indirectLightStrength,
             {.max = Settings::MaxIndirectLightStrength, .standard = Defaults.indirectLightStrength,
                 .tip = "1 is physically based; higher brightens the bounced light, 0 turns it off."});
@@ -524,7 +525,7 @@ void drawDiagnostics(const Status& state)
     }
 
     if (const fxui::Item item({.id = "comparisons", .name = "Comparisons", .summary = "Each effect alone, or the game's own, to compare.",
-            .keywords = "jitter FXAA contact shadows GTVBAO SSILVB global illumination scene only"});
+            .keywords = "jitter FXAA contact shadows GTVBAO GT-VBGI global illumination scene only"});
         item)
     {
         changed |= fxui::checkbox("Jitter off", options.noJitter, "The upscaler gets the same pixel positions every frame. Edges stay aliased.");
@@ -532,7 +533,7 @@ void drawDiagnostics(const Status& state)
         changed |= fxui::checkbox("Sun contact shadows only", options.onlyScreenSpaceShadows,
             "With sun contact shadows on, the sun is shadowed by them alone, without the shadow map.");
         changed |= fxui::checkbox("GTVBAO only", options.showAmbientOcclusion, "With GTVBAO on, the scene shows its occlusion alone: white where nothing occludes.");
-        changed |= fxui::checkbox("SSILVB only", options.showIndirectLight, "With SSILVB on, the scene shows the light it adds alone: black where nothing bounces.");
+        changed |= fxui::checkbox("GT-VBGI only", options.showIndirectLight, "With GT-VBGI on, the scene shows the light it adds alone: black where nothing bounces.");
         changed |= fxui::checkbox("Global illumination only", options.showGlobalIllumination, "With global illumination on, the scene shows its indirect light alone.");
         changed |= fxui::checkbox("Global illumination scene", options.showTracedScene,
             "With global illumination on, the scene shows the geometry it traces, coloured by its normals: red where it disagrees with the game's "
@@ -641,7 +642,7 @@ void drawMenu()
                 .master = &enhancements,
                 .masterLabel = "Visual enhancements",
                 .masterKey = "F1",
-                .masterTip = "Soft shadows, contact shadows, GTVBAO, SSILVB, the volumetric fog and the ray tracing together, as set in their sections. "
+                .masterTip = "Soft shadows, contact shadows, GTVBAO, GT-VBGI, the volumetric fog and the ray tracing together, as set in their sections. "
                              "Off shows the game's own lighting for comparison; F1 toggles it at any time. Not saved: each start begins with them on.",
                 .masterOff = "Off: the game's own lighting.",
                 .keys = keys});

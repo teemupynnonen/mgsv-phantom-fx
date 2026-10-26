@@ -1,9 +1,9 @@
 #pragma once
 
-// HLSL for GTVBAO and SSILVB (indirect_light.hpp), compiled at runtime with d3dcompiler_47. The
+// HLSL for GTVBAO and GT-VBGI (indirect_light.hpp), compiled at runtime with d3dcompiler_47. The
 // occlusion is ported from three-gtvbao (norio, MIT; GT-VBAO by Mirko Salm, CC0 / MIT; SSRT3 by
-// Olivier Therrien, MIT), the light gathering from SSRT3 (CDRIN, MIT), the noise and the denoiser
-// from XeGTAO (Intel, MIT). Their licenses are in licenses/.
+// Olivier Therrien, MIT), the light gathering and its slice sampling from GT-VBGI (Mirko Salm, taken
+// under CC0), the noise and the denoiser from XeGTAO (Intel, MIT). The MIT licenses are in licenses/.
 namespace phantom_fx::indirect_light::shaders
 {
 // The constant buffer of every compute shader here; each reads the fields it needs.
@@ -14,8 +14,8 @@ cbuffer Parameters : register(b0)
     float Radius;            // Metres
     float MaxRadiusPixels;   // Caps the march for surfaces close to the camera
     float OcclusionStrength; // GTVBAO: exponent on the visibility
-    float LightStrength;     // SSILVB: multiplies the light
-    float DiffuseScale;      // SSILVB: 0 leaves the game's diffuse light out, for the diagnostics
+    float LightStrength;     // GT-VBGI: multiplies the light
+    float DiffuseScale;      // GT-VBGI: 0 leaves the game's diffuse light out, for the diagnostics
     float Padding;
 };
 )"
@@ -115,18 +115,18 @@ void main(uint2 thread : SV_DispatchThreadID, uint2 local : SV_GroupThreadID)
 }
 )";
 
-// The visibility bitmask march, once per pixel at render resolution (once per 2 x 2 for SSILVB, see
+// The visibility bitmask march, once per pixel at render resolution (once per 2 x 2 for GT-VBGI, see
 // Scale): for each slice, 32 sectors of
 // the hemisphere around the view vector, set where a depth sample, taken as `thickness` deep,
 // covers them. The horizons go through the cosine-weighted measure's CDF first (GT-VBAO), so the
 // share of set sectors is the cosine-weighted occlusion. Also writes XeGTAO's depth edges for the
 // denoiser.
 //
-// With LIGHT 0 (GTVBAO) it writes the visibility. With LIGHT 1 (SSILVB) it writes the light the
+// With LIGHT 0 (GTVBAO) it writes the visibility. With LIGHT 1 (GT-VBGI) it writes the light the
 // sectors receive: each sample lights the sectors it covers first, as nearer samples hide what lies
-// behind them, with the diffuse light its surface reflects. Equal sectors carry equal cosine weight,
-// so the sum is the irradiance over pi, in the units of the game's diffuse light, which the resolve
-// multiplies by the albedo.
+// behind them, and that see its front (frontSectors), with the diffuse light its surface reflects.
+// Equal sectors carry equal cosine weight, so the sum is the irradiance over pi, in the units of the
+// game's diffuse light, which the resolve multiplies by the albedo.
 //
 // Fox Engine's view space looks down +z and mirrors x (P00 < 0). Flipping z, and x when mirrored,
 // turns it into the usual view space looking down -z with x right and y up, which the maths below
@@ -157,7 +157,7 @@ static const float Pi = 3.14159265;
 static const uint Sectors = 32;
 static const uint SliceCount = 2;
 static const uint StepCount = 8;
-// SSILVB marches one pixel in each 2 x 2, the top left, which its texel at half the render size
+// GT-VBGI marches one pixel in each 2 x 2, the top left, which its texel at half the render size
 // stands for: the bounce is soft, and the march is nearly all its cost. shaders::Upsample brings it
 // back to the render size. LightScale in indirect_light.cpp matches it.
 static const uint Scale = LIGHT ? 2 : 1;
@@ -266,6 +266,65 @@ float2 remapHorizons(float2 h, float d, float normalAngle, float cosN, float sin
     return saturate(t * invNormalization);
 }
 
+#if LIGHT
+// GT-VBGI's slice sampling (Salm's SampleSliceDir, its cheaper approximation): a slice direction across
+// the view vector from `random` in [0, 1), drawn with the density of the slices' cosine-weighted
+// share of the hemisphere, so every slice weighs the same. `normal` is the receiver's normal across
+// the view vector, in the slice frame. Against the exact density it is off by 8% at most (checked at
+// normals 0 to 89 degrees from the view vector).
+float2 sampleSliceDirection(float2 normal, float random)
+{
+    float angle = random * Pi;
+    float2 even = float2(cos(angle), sin(angle));
+    float l = length(normal);
+    if (l == 0) return even;
+
+    // Into the half circle on the normal's side, then warped towards the normal.
+    even *= dot(even, normal) < 0 ? -1 : 1;
+    float2 n = normal / l;
+    float x = even.x * n.y - even.y * n.x;
+    // The stretch of the arc cosine, with Salm's bias to match the density; k is his arc sine
+    // approximation's parameter.
+    float s = l + (l - l * l) * 0.15;
+    const float k = 0.21545;
+    float a = 0.5 + 0.5 / k, b = 0.5 - 0.5 / k, c = 4 / k;
+    float stretch = 0.5 - 0.5 * s;
+    x *= a - sqrt(b * b + c * stretch * stretch);
+    float u = (abs(x) * k - k - 1) * abs(x) + 1;
+    float y = abs((x > 0 ? 2 : 0) - sqrt(saturate(u)));
+
+    float2 direction;
+    direction.y = (1 - y) / s;
+    direction.x = sqrt(saturate(1 - direction.y * direction.y));
+
+    return float2(direction.x * n.x - direction.y * n.y, direction.y * n.x + direction.x * n.y);
+}
+
+// GT-VBGI's backface rejection: the sectors that see the front of a sample's surface. A diffuse surface
+// sends the same light every way its front faces, so these sectors take the sample's full light and
+// the rest none. In the slice the front faces the half circle of directions w with dot(w, n) < 0, n
+// the sample's normal projected into the slice; its edge, perpendicular to n, cuts the receiver's
+// hemisphere in two. Sector 0 lies at the hemisphere's edge on the tangent side, so the cut keeps the
+// sectors past it when that edge looks onto the sample's back.
+uint frontSectors(float3 sampleNormal, float3 planeNormal, float3 projectedNormal, float3 viewDir, float3 tangent, float normalAngle,
+    float cosN, float sinN, float invNormalization, float dither)
+{
+    float3 n = sampleNormal - planeNormal * dot(sampleNormal, planeNormal);
+    // A surface edge on to the slice: GT-VBGI keeps all its sectors.
+    if (dot(n, n) < 1e-8) return 0xFFFFFFFFu;
+
+    bool keepPast = dot(n, cross(projectedNormal, planeNormal)) >= 0;
+    float3 cut = normalize(keepPast ? cross(planeNormal, n) : cross(n, planeNormal));
+    float d = dot(cut, tangent) >= 0 ? 1 : -1;
+    float position = remapHorizons(clamp(dot(cut, viewDir), -1, 1).xx, d, normalAngle, cosN, sinN, invNormalization).x;
+    uint split = uint(clamp(floor(position * Sectors + dither), 0, Sectors));
+    // Shifts by 32 are shifts by 0 in HLSL, hence the tests for the ends.
+    uint before = split > 0 ? 0xFFFFFFFFu >> (Sectors - split) : 0;
+
+    return keepPast ? ~before : before;
+}
+#endif
+
 [numthreads(8, 8, 1)]
 void main(uint2 marchPixel : SV_DispatchThreadID)
 {
@@ -304,19 +363,28 @@ void main(uint2 marchPixel : SV_DispatchThreadID)
     float foliageThickness = clamp(0.02 * distance, 0.02, Radius);
     float2 noise = spatialNoise(marchPixel);
 
-    // GT-VBAO spreads the slices evenly around the view vector, not in the image plane, and projects them.
+    // GT-VBAO spreads the slices evenly around the view vector, not in the image plane, and projects
+    // them; GT-VBGI spreads them by their weight (sampleSliceDirection).
     float a = 1 / (1 + viewDir.z);
     float b = -viewDir.x * viewDir.y * a;
     float3 frameTangent = float3(1 - viewDir.x * viewDir.x * a, b, -viewDir.x);
     float3 frameBitangent = float3(b, 1 - viewDir.y * viewDir.y * a, -viewDir.y);
+#if LIGHT
+    float2 frameNormal = float2(dot(normal, frameTangent), dot(normal, frameBitangent));
+#endif
 
     float occlusion = 0, weightSum = 0;
     float3 light = 0;
     [unroll]
     for (uint slice = 0; slice < SliceCount; ++slice)
     {
+#if LIGHT
+        float2 direction = sampleSliceDirection(frameNormal, (slice + noise.x) / SliceCount);
+        float3 frameDirection = frameTangent * direction.x + frameBitangent * direction.y;
+#else
         float angle = (slice + noise.x) * Pi / SliceCount;
         float3 frameDirection = frameTangent * cos(angle) + frameBitangent * sin(angle);
+#endif
         float3 sliceDir = float3(normalize(frameDirection.xy * viewDir.z - viewDir.xy * frameDirection.z), 0);
 
         float3 planeNormal = normalize(cross(sliceDir, viewDir));
@@ -371,11 +439,11 @@ void main(uint2 marchPixel : SV_DispatchThreadID)
                 // A shift by 32 is a shift by 0 in HLSL, hence the test for an empty range.
                 uint covered = width > 0 ? (0xFFFFFFFFu >> (Sectors - width)) << start : 0;
 #if LIGHT
-                // The sample's surface sends its light this way by the cosine at the sample (SSRT3);
-                // its back sends none.
                 uint lit = covered & ~occluded;
-                float facing = lit != 0 ? saturate(dot(viewNormal(texel), -toSample * invLength)) : 0;
-                if (facing > 0) sliceLight += countbits(lit) * facing * Diffuse[texel].rgb * Albedo[texel].rgb;
+                if (lit != 0)
+                    lit &= frontSectors(viewNormal(texel), planeNormal, projectedNormal, viewDir, tangent, normalAngle, cosN, sinN,
+                        invNormalization, dither);
+                if (lit != 0) sliceLight += countbits(lit) * Diffuse[texel].rgb * Albedo[texel].rgb;
 #endif
                 occluded |= covered;
                 if (occluded == 0xFFFFFFFFu) break;
@@ -385,8 +453,12 @@ void main(uint2 marchPixel : SV_DispatchThreadID)
         // The slice's cosine-weighted integral weighs it; a degenerate slice drops out, and so does one
         // whose normal faces away from the camera, as normal maps make some do on surfaces seen edge
         // on: its negative weight could cancel the other slice's, and the light divided by the near
-        // zero sum would flare into white specks.
+        // zero sum would flare into white specks. GT-VBGI drew the slice by that integral, so it weighs 1.
+#if LIGHT
+        float sliceWeight = !degenerate && cosN + normalAngle * sinN > 0 ? 1 : 0;
+#else
         float sliceWeight = max(projectedLength * (cosN + normalAngle * sinN), 0);
+#endif
         occlusion += countbits(occluded) / float(Sectors) * sliceWeight;
         light += sliceLight / Sectors * sliceWeight;
         weightSum += sliceWeight;
@@ -462,7 +534,7 @@ void main(uint2 pixel : SV_DispatchThreadID)
 }
 )";
 
-// SSILVB's light, denoised at half the render size, brought to the render size and added to the
+// GT-VBGI's light, denoised at half the render size, brought to the render size and added to the
 // game's diffuse light, for the resolve to read in its place. Each pixel blends the four nearest
 // half-size texels bilinearly, each also weighed by how close its depth is (joint bilateral
 // upsampling), so the light of one surface stays off its neighbour across an edge.
@@ -549,10 +621,10 @@ float4 main(float4 texcoord0 : TEXCOORD0, float4 texcoord1 : TEXCOORD1, float4 p
 }
 )";
 
-// Diagnostics: drawn in place of the deferred resolve, GTVBAO's occlusion (LIGHT 0) or SSILVB's light
+// Diagnostics: drawn in place of the deferred resolve, GTVBAO's occlusion (LIGHT 0) or GT-VBGI's light
 // (LIGHT 1) alone. Every resolve vertex shader outputs the position first. The resolve writes through
 // an sRGB view: the visibility is linearised first and stored as it is, rather than brightened by
-// the encoding; SSILVB's light, which the last denoise pass writes without the game's diffuse light,
+// the encoding; GT-VBGI's light, which the last denoise pass writes without the game's diffuse light,
 // is linear already.
 inline constexpr char Show[] = R"(
 #if LIGHT

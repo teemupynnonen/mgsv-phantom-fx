@@ -204,7 +204,7 @@ fxui::Budget budget(upscaler::Settings& wanted, const performance::Costs& costs)
             .toggle = &wanted.ambientOcclusion, .replacedBy = "globalIllumination", .message = messageFor(occlusion, occlusionProblem)},
         {{Pass::OcclusionPrefilter, "Depth prefilter"}, {Pass::OcclusionMarch, "March"}, {Pass::OcclusionDenoise, "Denoise"},
             {Pass::OcclusionApply, "Applying to the indirect light"}});
-    add({.id = "indirectLight", .name = "Indirect lighting", .tech = "SSILVB", .section = at(Section::Lighting), .state = indirect,
+    add({.id = "indirectLight", .name = "Indirect lighting", .tech = "GT-VBGI", .section = at(Section::Lighting), .state = indirect,
             .toggle = &wanted.indirectLight, .replacedBy = "globalIllumination", .message = messageFor(indirect, lightProblem)},
         {{Pass::LightPrefilter, "Depth prefilter"}, {Pass::LightMarch, "March (half size)"}, {Pass::LightDenoise, "Denoise"},
             {Pass::LightUpsample, "Upscaling to the render size"}});

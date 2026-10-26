@@ -84,13 +84,13 @@ struct Settings
     bool ambientOcclusion{};
     float occlusionRadius{DefaultOcclusionRadius};
     float occlusionStrength{1};
-    // SSILVB's screen-space indirect lighting (indirect_light.hpp), whatever the mode. The radius is
+    // GT-VBGI's screen-space indirect lighting (indirect_light.hpp), whatever the mode. The radius is
     // in metres; the strength multiplies the light.
     bool indirectLight{};
     float indirectLightRadius{DefaultIndirectLightRadius};
     float indirectLightStrength{1};
     // Ray-traced global illumination after AMD's GI-1.2 in place of the game's probe light and
-    // SSAO (global_illumination.hpp), whatever the mode; GTVBAO and SSILVB are off while it is on.
+    // SSAO (global_illumination.hpp), whatever the mode; GTVBAO and GT-VBGI are off while it is on.
     // The strength multiplies its light. The ray quality is its rays a 2 x 2 of pixels: 1, 2 or 4.
     bool globalIllumination{};
     float globalIlluminationStrength{1};

@@ -131,8 +131,8 @@ and local settings are left out. ReShade is installed separately by the player.
 | `src/game_lights.hpp` | The game's point and spot light shaders and their constants, for lamp contact shadows and the ray-traced lights: the checksums, a light's range, its sphere on screen |
 | `src/shaders/gi_shadow.hlsl`, `gi_shadow_filter.hlsl`, `gi_shadow.hlsli` | HLSL: the sun's shadow rays, and the FidelityFX Shadow Denoiser's data access, temporal pass and filters |
 | `third_party/ffx_denoiser_shadows/` | AMD's FidelityFX Shadow Denoiser headers, unchanged (MIT; `licenses/AMD-FidelityFX-LICENSE.txt`) |
-| `src/indirect_light.cpp`, `src/indirect_light.hpp` | GTVBAO in place of the game's SSAO, on the indirect light, and SSILVB's bounce light: pass recognition, the compute passes, the multiply, the resolve's white occlusion and diffuse light |
-| `src/indirect_light_shaders.hpp` | HLSL: the visibility bitmask march (GTVBAO from three-gtvbao, SSILVB's light as SSRT3 gathers it), XeGTAO's noise and denoiser, the multiply, the diagnostics views |
+| `src/indirect_light.cpp`, `src/indirect_light.hpp` | GTVBAO in place of the game's SSAO, on the indirect light, and GT-VBGI's bounce light: pass recognition, the compute passes, the multiply, the resolve's white occlusion and diffuse light |
+| `src/indirect_light_shaders.hpp` | HLSL: the visibility bitmask march (GTVBAO from three-gtvbao, GT-VBGI's light), XeGTAO's noise and denoiser, the multiply, the diagnostics views |
 | `src/atmosphere.cpp`, `src/atmosphere.hpp` | Volumetric fog: the larger fog texture, the game's fog pass over all of it, the shadowed fill before the resolve |
 | `src/atmosphere_shaders.hpp` | HLSL: the game's fog formula per froxel with the sun shadowed, the sum into the game's fog texture; Hillaire's atmosphere tables, the physical fog and sky (Epic Games' reference, MIT) |
 | `src/photo_mode.cpp`, `src/photo_mode.hpp` | Photo mode (F2): the game's pause, a free camera through the camera selector, the game's input held back; hiding the UI (F3) |
@@ -301,7 +301,7 @@ made.
 - **Real cost.** The timed passes miss what they change in the game's work: GTVBAO leaves the
   game's SSAO out, the physical look the game's sky. **Measure the real cost** times the GPU frame
   with everything on, then leaves out, one more at a time and only where on: the volumetric fog,
-  SSILVB, GTVBAO, the lamp and the sun contact
+  GT-VBGI, GTVBAO, the lamp and the sun contact
   shadows, the soft shadows, the sharpening and last the upscaler (the game's FXAA at the same
   render size, as the Diagnostics comparison). 1.5 s to settle and 2.5 s timed per step; the
   difference between steps is what the effect left out costs. The steps run through
@@ -2131,12 +2131,14 @@ Not handled:
 - Forward and transparent objects, drawn after the lighting, get no occlusion, as with the game's
   SSAO.
 
-## SSILVB
+## GT-VBGI
 
-With **Indirect lighting (SSILVB)** on, screen-space indirect lighting with visibility bitmask
-(Therrien, Levesque and Gilet) adds one bounce of light between the surfaces on screen. It runs
-GTVBAO's march (`shaders::March` with `LIGHT` 1) and gathers light as SSRT3 does (CDRIN, MIT). Off,
-the add-on only checks a flag on each full-screen draw.
+With **Indirect lighting (GT-VBGI)** on, ground-truth visibility bitmask global illumination adds
+one bounce of light between the surfaces on screen. GT-VBGI is Mirko Salm's extension of GT-VBAO
+to diffuse bounces (Shadertoy lfdBWn, taken under CC0), on the visibility bitmask of Therrien,
+Levesque and Gilet. It runs GTVBAO's march (`shaders::March` with `LIGHT` 1). Until 1.7.0 the
+effect was SSILVB, which gathered light as SSRT3 does: each sample's light times the cosine at the
+sample. Off, the add-on only checks a flag on each full-screen draw.
 
 - **Where.** At the resolve, which already has the frame's finished diffuse light: the probes and
   sky (occluded by GTVBAO when it is on), the sun with its shadows, the local lights and the skin
@@ -2145,16 +2147,21 @@ the add-on only checks a flag on each full-screen draw.
   any sky light pass bound last (the G-buffer's, one texture for the session).
 - **March**, recorded at the resolve's draw on its deferred context, with the game's compute
   bindings saved and restored: from the resolve's depth (`t11`), diffuse light (`t9`), albedo
-  (`t8`, its sRGB view, so linear) and `cPSScene`, with GTVBAO's slices, steps, thickness and noise
-  and its own radius (2 m by default). It runs the depth prefilter first, with its radius, into the
-  same texture GTVBAO uses. A sample lights the sectors it covers that no nearer sample
-  covered, with the diffuse light its surface reflects (albedo x diffuse light) times the cosine
-  between its normal and the direction to the receiver, which drops back faces (SSRT3). Equal
+  (`t8`, its sRGB view, so linear) and `cPSScene`, with GTVBAO's steps, thickness and noise and its
+  own radius (2 m by default). It runs the depth prefilter first, with its radius, into the same
+  texture GTVBAO uses. A sample lights the sectors it covers that no nearer sample covered and that
+  see its front, with the diffuse light its surface reflects (albedo x diffuse light), with no
+  cosine at the sample: a diffuse surface sends the same light every way its front faces. The
+  front's sectors are Salm's exact backface rejection (`frontSectors`): the line through the sample
+  perpendicular to its normal, projected into the slice, cuts the slice's sectors in two. Equal
   sectors carry equal cosine weight (GT-VBAO's CDF), so the receiver's cosine needs no extra term
   and the sum is the irradiance over pi, the unit the resolve multiplies by the albedo. Specular
-  light is left out, being view-dependent. At half the render size, rounded up (`Scale` 2): each
+  light is left out, being view-dependent. The slice directions are drawn by their cosine-weighted
+  share of the hemisphere (Salm's cheaper `SampleSliceDir`, off the exact density by 8% at most),
+  so each slice weighs 1 where GTVBAO weighs it by its integral; a slice whose integral is not
+  positive still drops out. At half the render size, rounded up (`Scale` 2): each
   texel marches from the top-left pixel of its 2 x 2, with the same steps in render pixels. At full
-  size the march took 2.3 ms at 2560 x 1440, nearly all of SSILVB's cost, for a soft result. Into an
+  size the march took 2.3 ms at 2560 x 1440, nearly all of the effect's cost, for a soft result. Into an
   `R11G11B10_FLOAT` target. A slice whose normal
   faces away from the camera (normal maps on surfaces seen edge on) drops out, in both effects: its
   negative weight could cancel the other slice's, and the light divided by the near-zero sum showed
@@ -2170,7 +2177,7 @@ the add-on only checks a flag on each full-screen draw.
   rest of the light.
 - **Options** apply from the frame after the next present. A resolve without normals, with sizes
   that differ or without `cPSScene` keeps the game's diffuse light and logs the reason once.
-- **Diagnostics.** "SSILVB only" writes the light without the game's diffuse light and draws the
+- **Diagnostics.** "GT-VBGI only" writes the light without the game's diffuse light and draws the
   resolve with `shaders::Show`: the bounce alone, as light before the albedo. Both views write the
   resolve's alpha, `sqrt(luminance / 32)`, which exposure, bloom and depth of field read from the
   scene target (`CopyReductionX4`, `DOF_ScatterBakeFirst`); with 1 there, they blurred the view.
@@ -2179,7 +2186,7 @@ Not handled:
 
 - One bounce, from what is on screen: light from off-screen or hidden surfaces is missing, and the
   bounce fades towards the screen's edges.
-- The probe lighting may already hold some bounce from static scenery, which SSILVB adds again
+- The probe lighting may already hold some bounce from static scenery, which GT-VBGI adds again
   beyond GTVBAO's radius.
 - Forward and transparent objects neither give nor receive the bounce.
 
