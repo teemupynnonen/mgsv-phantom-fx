@@ -2,8 +2,9 @@
 
 // HLSL for GTVBAO and GT-VBGI (indirect_light.hpp), compiled at runtime with d3dcompiler_47. The
 // occlusion is ported from three-gtvbao (norio, MIT; GT-VBAO by Mirko Salm, CC0 / MIT; SSRT3 by
-// Olivier Therrien, MIT), the light gathering and its slice sampling from GT-VBGI (Mirko Salm, taken
-// under CC0), the noise and the denoiser from XeGTAO (Intel, MIT). The MIT licenses are in licenses/.
+// Olivier Therrien, MIT), the light gathering and its slice sampling from GT-VBGI (Mirko Salm,
+// https://www.shadertoy.com/view/lfdBWn, taken under CC0), the noise and the denoiser from XeGTAO
+// (Intel, MIT). The MIT licenses are in licenses/.
 namespace phantom_fx::indirect_light::shaders
 {
 // The constant buffer of every compute shader here; each reads the fields it needs.
