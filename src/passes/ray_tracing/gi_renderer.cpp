@@ -667,7 +667,8 @@ std::pair<std::string, std::string> describeProbe(const State& s, std::span<cons
         const auto kind = g.y & 0xFFFFu, flags = g.y >> 16;
         const bool startsMesh = exact && sh.x == h.w && sh.y == (g.z & 0x7FFFFFFFu);
         text += std::format("with every instance: hits {}, geometry {} ({}{}{}), triangle {}{}", s.contents->describeHit(instancedModels, uint4{h.w, g.z, kind, g.w}), g.x,
-            (flags & GI_GEOMETRY_CUT_OUT) ? "cut-out" : "opaque", (flags & GI_GEOMETRY_ALPHA_TEXTURE) ? " with the game's alpha" : "",
+            !(flags & GI_GEOMETRY_CUT_OUT) ? "opaque" : (flags & GI_GEOMETRY_TWO_SIDED) ? "two-sided cut-out" : "one-sided cut-out",
+            (flags & GI_GEOMETRY_ALPHA_TEXTURE) ? " with the game's alpha" : "",
             (flags & GI_GEOMETRY_LEAF) ? ", leaves" : (flags & GI_GEOMETRY_HAIR) ? ", hair" : "", sh.w,
             !startsMesh ? "" : sh.w == sh.z ? ", the start's own triangle" : ", of the start's own mesh");
         if (kind & GI_INSTANCE_TERRAIN)

@@ -13,8 +13,9 @@ namespace
 // An FMDL mesh's shadow bits (its second byte): bit 0, drawn in the main view only, never into the
 // shadow maps; bit 1, drawn into the shadow maps only, a stand-in for what the main view shows.
 constexpr std::uint8_t CastsNoShadow = 0x01, ShadowMapsOnly = 0x02;
-// Its alpha bits (its first byte): glass, cut out (the shadow pass tests its alpha), translucent (never
-// drawn into the shadow maps) and decals (cast or not by the material's technique).
+// Its alpha bits (its first byte): glass, cut out (the shadow pass tests its alpha and draws both its
+// faces), translucent (never drawn into the shadow maps) and decals (cast or not by the material's
+// technique, one-sided as solid meshes are).
 constexpr std::uint8_t GlassAlpha = 0x10, CutOutAlpha = 0x20, TranslucentAlpha = 0x40, DecalAlpha = 0x80;
 // The StrCode64s of a material's texture parameters "Base_Tex_SRGB" (the colour, and a cut-out mesh's
 // alpha) and "Mask_Tex_LIN" (a shadow-only mesh's mask, its only texture, often the visible mesh's
@@ -77,16 +78,19 @@ std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isC
     return isMainViewOnly ? MeshRole::MainViewOnly : MeshRole::Solid;
 }
 
-std::uint32_t flagsOf(MeshRole role)
+// The game draws a mesh with the cut-out bit into its shadow maps two-sided, every other with its front
+// faces culled, decals and Quiet's alpha-tested body too (four captures, 2026-10-29). Leaves and hair,
+// thin cards the game never casts with, cast from both sides.
+std::uint32_t flagsOf(MeshRole role, std::uint8_t alpha)
 {
     switch (role)
     {
     case MeshRole::CutOut:
-        return GI_GEOMETRY_CUT_OUT;
+        return GI_GEOMETRY_CUT_OUT | ((alpha & CutOutAlpha) ? GI_GEOMETRY_TWO_SIDED : 0u);
     case MeshRole::Leaf:
-        return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_LEAF;
+        return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_LEAF | GI_GEOMETRY_TWO_SIDED;
     case MeshRole::Hair:
-        return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_HAIR;
+        return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_HAIR | GI_GEOMETRY_TWO_SIDED;
     case MeshRole::MainViewOnly:
         return GI_GEOMETRY_NO_SHADOW;
     case MeshRole::ShadowOnly:
@@ -423,7 +427,7 @@ bool isCutOut(MeshRole role)
 
 Material materialOf(const ModelPart& part, std::optional<std::uint32_t> textureIndex)
 {
-    Material material{.flags = flagsOf(part.role) | (part.uvs.empty() ? 0u : GI_GEOMETRY_UV)};
+    Material material{.flags = flagsOf(part.role, part.alphaBits) | (part.uvs.empty() ? 0u : GI_GEOMETRY_UV)};
     if (!textureIndex || part.uvs.empty()) return material;
 
     material.texture = *textureIndex + 1;

@@ -182,6 +182,12 @@ const ModelPart& partOf(const Model& model, std::uint32_t mesh)
     return *part;
 }
 
+// The flags a mesh's material gives its geometry before its texture is copied.
+std::uint32_t flagsOf(const Model& model, std::uint32_t mesh)
+{
+    return materialOf(partOf(model, mesh), std::nullopt).flags;
+}
+
 using Roles = std::vector<std::optional<MeshRole>>;
 constexpr auto Dropped = std::nullopt;
 
@@ -315,10 +321,9 @@ void sameFileDependsOnSource()
 // What each role tells the rays (StopsShadowRay, IsShadowOnly, PassHair, HitDirectLight).
 void materialPerRole()
 {
-    const auto flagsOf = [](const Model& model, std::uint32_t mesh) { return materialOf(partOf(model, mesh), std::nullopt).flags; };
-    const auto building = modelOf({{0, 0}, {128, 64}, {0, 1}, {32, 1}, {0, 2}}, Source::VisibilityManager);
+    const auto building = modelOf({{0, 0}, {160, 64}, {0, 1}, {32, 1}, {0, 2}}, Source::VisibilityManager);
     expect(flagsOf(*building, 0) == 0, "A solid mesh stops every ray.");
-    expect(flagsOf(*building, 1) == GI_GEOMETRY_CUT_OUT, "A cut-out mesh is tested by its alpha.");
+    expect(flagsOf(*building, 1) == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_TWO_SIDED), "A cut-out mesh is tested by its alpha and casts from both sides.");
     expect(flagsOf(*building, 2) == GI_GEOMETRY_NO_SHADOW, "Rays towards lights pass a main-view-only mesh.");
     expect(flagsOf(*building, 4) == GI_GEOMETRY_SHADOW_ONLY, "Only rays towards lights meet a tarp's stand-in.");
 
@@ -326,10 +331,22 @@ void materialPerRole()
     expect(flagsOf(*rock, 1) == (GI_GEOMETRY_SHADOW_ONLY | GI_GEOMETRY_SUN_ONLY), "Only the sun's rays meet a rock's stand-in.");
 
     const auto bush = modelOf({{160, 64}}, Source::ObjectBrush);
-    expect(flagsOf(*bush, 0) == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_LEAF), "Leaves are cut out and let light through.");
+    expect(flagsOf(*bush, 0) == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_LEAF | GI_GEOMETRY_TWO_SIDED), "Leaves are cut out and let light through.");
 
     const auto person = modelOf({{64, 0}}, Source::ModelList, true);
-    expect(flagsOf(*person, 0) == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_HAIR), "Hair is cut out and lets light through in part.");
+    expect(flagsOf(*person, 0) == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_HAIR | GI_GEOMETRY_TWO_SIDED), "Hair is cut out and lets light through in part.");
+}
+
+// Quiet on Mother Base (2026-10-29): her body, every mesh alpha 0x80, stopped her own sun rays from inside
+// in jagged patches. The game draws such meshes into its shadow maps one-sided, as it does decals.
+void decalBitCastsOneSided()
+{
+    const auto quiet = modelOf({{128, 0}, {160, 0}}, Source::ModelList, true);
+    expect(flagsOf(*quiet, 0) == GI_GEOMETRY_CUT_OUT, "A mesh with the decal bit alone is cut out but casts from one side.");
+    expect((flagsOf(*quiet, 1) & GI_GEOMETRY_TWO_SIDED) != 0, "A mesh with the cut-out bit casts from both sides.");
+
+    const auto building = modelOf({{128, 64}}, Source::VisibilityManager);
+    expect(flagsOf(*building, 0) == GI_GEOMETRY_CUT_OUT, "A rigid model's decal casts from one side.");
 }
 
 void cutOutWaitsForTexture()
@@ -340,11 +357,12 @@ void cutOutWaitsForTexture()
     expect(cutOut.baseTexture == TexturePath && !cutOut.textureIsMask, "A mesh's base texture is its Base_Tex_SRGB's path hash.");
 
     const auto waiting = materialOf(cutOut, std::nullopt);
-    expect(waiting.flags == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_UV) && waiting.texture == 0 && waiting.alphaThreshold == 0.0f,
+    expect(waiting.flags == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_TWO_SIDED | GI_GEOMETRY_UV) && waiting.texture == 0 && waiting.alphaThreshold == 0.0f,
         "A cut-out mesh tests no alpha before its texture is copied.");
 
     const auto textured = materialOf(cutOut, 6);
-    expect(textured.flags == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_UV | GI_GEOMETRY_ALPHA_TEXTURE) && textured.texture == 7 && textured.alphaThreshold == 0.5f,
+    expect(textured.flags == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_TWO_SIDED | GI_GEOMETRY_UV | GI_GEOMETRY_ALPHA_TEXTURE) && textured.texture == 7
+            && textured.alphaThreshold == 0.5f,
         "A cut-out mesh with its texture tests its alpha against a half, as the game's shadow pass does.");
 
     const auto& standIn = partOf(*model, 1);
@@ -352,7 +370,7 @@ void cutOutWaitsForTexture()
         "A mesh without a base texture cuts by its mask, whose colour is not its own.");
 
     const auto untextured = materialOf(partOf(*model, 2), 6);
-    expect(untextured.flags == GI_GEOMETRY_CUT_OUT && untextured.texture == 0, "A mesh without texture coordinates has no texture.");
+    expect(untextured.flags == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_TWO_SIDED) && untextured.texture == 0, "A mesh without texture coordinates has no texture.");
 
     const auto solid = materialOf(partOf(*model, 3), 6);
     expect(solid.flags == GI_GEOMETRY_UV && solid.texture == 7 && solid.alphaThreshold == 0.0f, "A solid mesh takes its texture's colour, not its alpha.");
@@ -404,6 +422,7 @@ int main()
         bushesAreLeaves();
         sameFileDependsOnSource();
         materialPerRole();
+        decalBitCastsOneSided();
         cutOutWaitsForTexture();
         unreadableFiles();
         skinThroughBoneGroup();

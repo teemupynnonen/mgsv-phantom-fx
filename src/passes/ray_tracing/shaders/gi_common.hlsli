@@ -602,8 +602,10 @@ bool IsCopyOfSurface(SceneHit hit, float3 normal, float3 direction, float tolera
 // front faces culled (1,227 of 1,267 shadow map draws, 2026-10-26): an opaque surface casts from its back
 // only, as the light sees it, so a ray towards the light meets it on its front. A window's one-sided card,
 // its front outwards, let the searchlight into the hospital's corridor in the game and kept it out of the
-// rays'. Cut-out geometry, which the game mostly draws two-sided, casts from both sides. The game's faces
-// on its models are DXR's back faces (its projection mirrors x); the terrain is one-sided already. A
+// rays'. Geometry the game draws two-sided (GI_GEOMETRY_TWO_SIDED) casts from both sides; not every cut-out
+// mesh is: Quiet's body, alpha-tested all over but drawn one-sided, stopped her sun rays from inside
+// (2026-10-29). The game's faces on its models are DXR's back faces (its projection mirrors x); the
+// terrain is one-sided already. A
 // mesh the game never draws into its shadow maps (a rigid model's main-view-only one) does not stop it
 // at all: one in a stairwell's windows kept the moonlight off its wall (the lamp probe, 2026-10-26). A
 // building's stand-in (GI_GEOMETRY_SUN_ONLY) stops the sun's rays alone: the game draws it into every sun
@@ -618,7 +620,7 @@ bool StopsShadowRay(uint instance, uint geometry, bool dxrFrontFace, bool isTowa
     if (flags & GI_GEOMETRY_NO_SHADOW) return false;
     if (isTowardsLamp && (flags & GI_GEOMETRY_SUN_ONLY)) return false;
 
-    return !dxrFrontFace || (flags & GI_GEOMETRY_CUT_OUT) != 0;
+    return !dxrFrontFace || (flags & GI_GEOMETRY_TWO_SIDED) != 0;
 }
 
 // What a ray leaving a surface goes towards, for what stops it (StopsRay).
