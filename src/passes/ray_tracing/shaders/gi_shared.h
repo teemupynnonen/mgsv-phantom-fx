@@ -35,6 +35,7 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_GEOMETRY_HAIR          64u // A character's see-through mesh the game never casts with (its hair): rays towards lights pass it in part (PassHair)
 #define GI_GEOMETRY_SHADOW_ONLY   128u // The game draws it into its shadow maps only (a tarp's stand-in): only rays towards lights meet it (StopsRay)
 #define GI_GEOMETRY_SUN_ONLY      256u // With GI_GEOMETRY_SHADOW_ONLY (a building's stand-in): of the rays towards lights, only the sun's meet it (StopsShadowRay)
+#define GI_GEOMETRY_TWO_SIDED     512u // The game casts with both its faces (a cut-out mesh it draws unculled, leaves, hair): rays towards lights meet either (StopsShadowRay)
 
 // The game's textures the scene holds at most (g_SceneTextures, gi_textures.hpp).
 #define GI_MAX_TEXTURES 4096u

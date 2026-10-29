@@ -2127,8 +2127,12 @@ traced here (see "Ray-traced lights").
   back faces), so an opaque surface casts from its back alone, as the light sees it. Rays towards the
   sun and the lamps do the same: an opaque surface they meet on its back lets them through, past copies
   of the surface and in the closest stretch by the next hit, further on by tracing the ray again with
-  every triangle looked at, only when the first hit found was such a surface. Cut-out geometry, which
-  the game mostly draws two-sided (most of the 40 two-sided shadow draws), casts from both sides. The
+  every triangle looked at, only when the first hit found was such a surface. What the game draws
+  two-sided casts from both sides (`GI_GEOMETRY_TWO_SIDED`): a mesh with the cut-out alpha bit (`0x20`)
+  is drawn unculled, every other with front faces culled, the decal bit (`0x80`) alone included (four
+  captures, 2026-10-29: `0x20` and `0xa0` unculled in all 448 matched draws, `0x00` and `0x80` culled
+  in all 9,826). Quiet's body, every mesh `0x80` and so cut out, had stopped her sun rays from inside
+  in jagged patches while it cast from both. Leaves and hair, which the game never casts, take both. The
   global illumination's light and sun rays at its hits do the same; its sky rays and bounces see both
   sides. Before, the hospital corridor's windows, one-sided cards facing out (seen from outside, culled
   from inside), kept an outside searchlight out where the game lets it in through them. A rigid model's

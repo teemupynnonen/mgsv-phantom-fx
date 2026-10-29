@@ -8,6 +8,9 @@
 - **Ray-traced shadows no longer flicker along edges.** With DLSS or FSR jittering the frame, the
   shadow denoiser often dropped a pixel's history along object edges and showed the raw, noisy rays
   there. It now keeps the history from the last frame's pixels on the same surface.
+- **Ray-traced shadows: no jagged patches on Quiet.** Her body shaded itself in jagged patches the
+  game never shows, as the rays took every alpha-tested mesh as casting from both sides. They now
+  take a mesh's sides as the game's own shadow maps do.
 
 ## 1.9.0
 
