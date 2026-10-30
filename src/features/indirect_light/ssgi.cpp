@@ -53,7 +53,7 @@ static_assert(sizeof(Parameters) == 64);
 // The game's compute slots the passes bind, saved around them.
 constexpr ComputeSlots PassSlots{.buffers = 2, .views = 8, .accesses = 8};
 
-// SSGI's settings, and whether the resolve shows its light alone (the diagnostics).
+// VB-SSGI's settings, and whether the resolve shows its light alone (the diagnostics).
 struct Wanted
 {
     IndirectLight light;
@@ -81,9 +81,9 @@ bool historyValid{};
 // The prefiltered distances at the render size, for the gather's per-tap occlusion test; the march
 // keeps its own, apart from this.
 visibility_bitmask::DistanceMips mips;
-visibility_bitmask::Progress progress{"SSGI"};
+visibility_bitmask::Progress progress{"VB-SSGI"};
 
-// Compiles the shaders once; call with resourceMutex held. Returns false when SSGI is unavailable.
+// Compiles the shaders once; call with resourceMutex held. Returns false when VB-SSGI is unavailable.
 bool ensurePipeline()
 {
     // The last object made marks a complete pipeline, so a failure part way through is retried
@@ -97,17 +97,17 @@ bool ensurePipeline()
         accumulateShader = computeShader(device.Get(), shaders::Accumulate, "ssgi-accumulate");
         filterShader = computeShader(device.Get(), shaders::Filter, "ssgi-filter");
         resolveShader = computeShader(device.Get(), shaders::Resolve, "ssgi-resolve");
-        fallback = makeComputeTexture(device.Get(), 1, 1, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the SSGI fallback");
+        fallback = makeComputeTexture(device.Get(), 1, 1, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the VB-SSGI fallback");
         // Last, so it marks a complete pipeline.
-        parameterBuffer = makeConstantBuffer(device.Get(), sizeof(Parameters), "Creating the SSGI constants");
-        log("SSGI ready.");
+        parameterBuffer = makeConstantBuffer(device.Get(), sizeof(Parameters), "Creating the VB-SSGI constants");
+        log("VB-SSGI ready.");
 
         return true;
     }
     catch (const std::exception& error)
     {
         pipelineFailed = true;
-        log(std::string("SSGI unavailable: ") + error.what());
+        log(std::string("VB-SSGI unavailable: ") + error.what());
 
         return false;
     }
@@ -118,24 +118,24 @@ bool ensurePipeline()
 void ensureTargets(UINT gatherWidth, UINT gatherHeight, UINT width, UINT height, Target& lit)
 {
     bool made = visibility_bitmask::ensureTarget(device.Get(), bounce, gatherWidth, gatherHeight, DXGI_FORMAT_R16G16B16A16_FLOAT,
-        "Creating the SSGI bounce");
+        "Creating the VB-SSGI bounce");
     made |= visibility_bitmask::ensureTarget(device.Get(), filtered, gatherWidth, gatherHeight, DXGI_FORMAT_R16G16B16A16_FLOAT,
-        "Creating the SSGI filtered");
+        "Creating the VB-SSGI filtered");
     made |= visibility_bitmask::ensureTarget(device.Get(), accumulated, gatherWidth, gatherHeight, DXGI_FORMAT_R16G16B16A16_FLOAT,
-        "Creating the SSGI accumulated");
+        "Creating the VB-SSGI accumulated");
     for (auto& target : history)
         made |= visibility_bitmask::ensureTarget(device.Get(), target, gatherWidth, gatherHeight, DXGI_FORMAT_R16G16B16A16_FLOAT,
-            "Creating the SSGI history");
+            "Creating the VB-SSGI history");
     for (auto& target : historyAux)
         made |= visibility_bitmask::ensureTarget(device.Get(), target, gatherWidth, gatherHeight, DXGI_FORMAT_R16G16B16A16_FLOAT,
-            "Creating the SSGI history aux");
+            "Creating the VB-SSGI history aux");
     for (auto& target : moments)
         made |= visibility_bitmask::ensureTarget(device.Get(), target, gatherWidth, gatherHeight, DXGI_FORMAT_R16G16_FLOAT,
-            "Creating the SSGI moments");
+            "Creating the VB-SSGI moments");
     // The game's diffuse light's format.
-    made |= visibility_bitmask::ensureTarget(device.Get(), lit, width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the SSGI diffuse light");
+    made |= visibility_bitmask::ensureTarget(device.Get(), lit, width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the VB-SSGI diffuse light");
     if (made)
-        log("SSGI at " + std::to_string(gatherWidth) + "x" + std::to_string(gatherHeight) + " for " + std::to_string(width) + "x"
+        log("VB-SSGI at " + std::to_string(gatherWidth) + "x" + std::to_string(gatherHeight) + " for " + std::to_string(width) + "x"
             + std::to_string(height) + ".");
 }
 }
@@ -273,7 +273,7 @@ bool compute(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D
         }
         catch (const std::exception& error)
         {
-            log(std::string("SSGI: the distance prefilter failed, the occlusion test is off: ") + error.what());
+            log(std::string("VB-SSGI: the distance prefilter failed, the occlusion test is off: ") + error.what());
             parameters.visibility = 0.0f;
         }
     }

@@ -1,6 +1,6 @@
 #pragma once
 
-// HLSL for SSGI (ssgi.hpp), compiled at runtime with d3dcompiler_47. The chain is ported from the
+// HLSL for VB-SSGI (ssgi.hpp), compiled at runtime with d3dcompiler_47. The chain is ported from the
 // RenoDX MGSV add-on's indirect lighting (renodx-mgsv src/games/mgsv/il): a golden-angle gather of
 // the light the neighbouring surfaces reflect, temporal accumulation against the game's velocity
 // buffer, an a-trous denoiser driven by measured luminance moments, and a depth-joint bilateral

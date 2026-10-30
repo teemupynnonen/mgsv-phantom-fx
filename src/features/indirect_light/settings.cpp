@@ -17,12 +17,13 @@ void describe(IndirectLight& light, SettingVisitor& visit)
             .iniKey = "indirect_light",
             .section = Section::Lighting,
             .name = "Bounce light",
-            .tech = "SSGI",
-            .tip = "Screen-space GI: light bounces off nearby surfaces onto others, taking their colour, such as sunlit ground "
-                   "brightening the underside of a jeep. It gathers, accumulates over frames and denoises, so it is steadier than "
-                   "the game's probe light. It only knows what is on screen. Off leaves the game's indirect light unchanged.",
-            .summary = "Light picks up colour from nearby surfaces.",
-            .keywords = "SSGI bounce gather radius strength samples history denoise",
+            .tech = "VB-SSGI",
+            .tip = "Screen-space GI with a visibility bitmask: light bounces off nearby surfaces onto others, taking their colour, "
+                   "such as sunlit ground brightening the underside of a jeep. Each gather sample is ray-marched against the "
+                   "prefiltered depth, so occluders stop the light instead of bleeding through, and it accumulates over frames and "
+                   "denoises. It only knows what is on screen. Off leaves the game's indirect light unchanged.",
+            .summary = "Light bounces off nearby surfaces and takes their colour; occluders stop it. It only knows what is on screen.",
+            .keywords = "VB-SSGI SSGI bounce gather visibility occlusion radius strength samples history denoise",
             .effect = Effect::IndirectLight,
             .replacedBy = Effect::GlobalIllumination,
             .needsSupportedBuild = true});

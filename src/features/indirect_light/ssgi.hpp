@@ -6,7 +6,7 @@
 #include <d3d11.h>
 #include <string>
 
-// SSGI, screen-space global illumination (docs/DEVELOPMENT.md, "SSGI"), adds the light that nearby
+// VB-SSGI, screen-space global illumination with a visibility test (docs/DEVELOPMENT.md, "VB-SSGI"), adds the light that nearby
 // surfaces on screen reflect onto each other. It is the RenoDX MGSV add-on's indirect lighting
 // (renodx-mgsv src/games/mgsv/il) ported to Direct3D 11: a gather of the neighbouring light at the
 // gather's resolution, temporal accumulation against the game's velocity buffer, an a-trous
@@ -25,7 +25,7 @@ Health health();
 void present() noexcept;
 
 // ---- Recording, on the game's render and worker threads (indirect_light_pass.cpp) ----
-// The game's diffuse light with SSGI's added, into `lit` at the render size, from what the resolve
+// The game's diffuse light with VB-SSGI's added, into `lit` at the render size, from what the resolve
 // binds: its depth, diffuse light, albedo and specular light (the resolve's inLightSpecular, not the
 // G-buffer's specular material). `specularMaterial` is the G-buffer's specular target, which tells
 // the distance prefilter foliage (may be null). `velocity` is the game's velocity buffer for this

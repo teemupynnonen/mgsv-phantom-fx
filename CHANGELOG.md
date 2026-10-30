@@ -4,11 +4,11 @@
 
 ### New
 
-- **Indirect lighting (SSGI) tests what blocks each gather tap**: the distance prefilter runs for it
+- **Indirect lighting (VB-SSGI) tests what blocks each gather tap**: the distance prefilter runs for it
   (apart from GTVBAO's copy), and every tap ray-marches the prefiltered depth, so occluders stop the
   bounced light instead of bleeding through. New **Visibility** setting: ray-march steps per tap
   (0 to 8, 5 by default; 0 disables the test).
-- **Indirect lighting is now SSGI**, ported from the RenoDX MGSV add-on's indirect lighting
+- **Indirect lighting is now VB-SSGI**, ported from the RenoDX MGSV add-on's indirect lighting
   (`renodx-mgsv` `src/games/mgsv/il`), in place of SSILVB's visibility-bitmask gather: a golden-angle
   gather of the neighbouring surfaces' light, temporal accumulation against the game's velocity
   buffer (the velocity passes are forced on while it runs), an a-trous denoiser and a joint-bilateral

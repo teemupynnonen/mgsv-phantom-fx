@@ -7,7 +7,7 @@ namespace phantom_fx
 struct IndirectLight
 {
     bool on{};
-    float radius{0.8f};        // Share of the screen's height the gather reaches
+    float radius{0.5f};        // Share of the screen's height the gather reaches
     float strength{1};         // The gathered light's multiplier at the resolve
     float samples{8};          // Gather samples per pixel
     int resolution{1};         // The gather's resolution: 0 full, 1 half, 2 quarter

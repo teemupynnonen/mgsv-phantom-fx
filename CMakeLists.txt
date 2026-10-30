@@ -321,7 +321,7 @@ install(FILES "${nrd_SOURCE_DIR}/LICENSE.txt" DESTINATION PhantomFX RENAME NVIDI
 install(FILES "${RESHADE_DIR}/LICENSE.md" DESTINATION PhantomFX RENAME ReShade-LICENSE.txt COMPONENT addon)
 install(FILES "${RESHADE_DIR}/imgui/LICENSE.txt" DESTINATION PhantomFX RENAME ImGui-LICENSE.txt COMPONENT addon)
 # The sharpening shader is ported from FidelityFX FSR 1 RCAS; the screen-space shadows are Bend Studio's;
-# GTVBAO is ported from three-gtvbao, with XeGTAO's noise and denoiser; SSGI is ported from the RenoDX MGSV add-on's indirect lighting.
+# GTVBAO is ported from three-gtvbao, with XeGTAO's noise and denoiser; VB-SSGI is ported from the RenoDX MGSV add-on's indirect lighting.
 install(FILES licenses/AMD-FidelityFX-LICENSE.txt licenses/Bend-Studio-SSS-LICENSE.txt licenses/three-gtvbao-LICENSE.txt
     licenses/XeGTAO-LICENSE.txt licenses/SSRT3-LICENSE.txt licenses/RenoDX-LICENSE.txt
     licenses/UnrealEngineSkyAtmosphere-LICENSE.txt licenses/Capsaicin-LICENSE.txt DESTINATION PhantomFX COMPONENT addon)
