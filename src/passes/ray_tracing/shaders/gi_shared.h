@@ -40,6 +40,7 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_GEOMETRY_HAIR          64u // A character's see-through mesh the game never casts with (its hair): rays towards lights pass it in part (PassHair)
 #define GI_GEOMETRY_SHADOW_ONLY   128u // The game draws it into its shadow maps only (a tarp's stand-in): only rays towards lights meet it (StopsRay)
 #define GI_GEOMETRY_SUN_ONLY      256u // With GI_GEOMETRY_SHADOW_ONLY (a building's stand-in): of the rays towards lights, only the sun's meet it (StopsShadowRay)
+#define GI_GEOMETRY_EMISSIVE      512u // With GI_GEOMETRY_NO_SHADOW: it gives light (GIGeometry::emission) and takes none, its texture its light's colour
 
 // The game's textures the scene holds at most (g_SceneTextures, gi_textures.hpp).
 #define GI_MAX_TEXTURES 4096u
@@ -134,6 +135,16 @@ struct GILocalLight
     uint4 maskTile; // x: its tile in the mask atlas, from 1; 0 for none
 };
 
+// The self-lit meshes a frame's light rays aim at (SampledEmitterLight in gi_hit_light.hlsli): the strongest near the eye.
+#define GI_MAX_EMITTERS 64u
+
+struct GIEmitter
+{
+    float4 sphere; // xyz: around it, world space; w: its radius
+    float4 light;  // rgb: its light in the game's units, over all of it (radiance x area / pi); w: how far it reaches
+    uint4 place;   // x: its instance; y: its geometry in the instance's structure; z: its triangles
+};
+
 // Path tracing's mask atlas (direct_light.hlsl): this many tiles across, each this wide and high.
 #define GI_LAMP_MASK_TILES 8
 #define GI_LAMP_MASK_SIZE 256
@@ -174,7 +185,8 @@ struct GIFrameConstants
     uint4 lightDiagnostics;  // z: the light's debug view into g_LightDebug (CompositeLight), GI_LIGHT_DEBUG_*
     // x: 1 while DLSS Ray Reconstruction denoises (ray_reconstruction.hpp): the light takes a sample a render
     // pixel and goes out without its denoiser (gi_light.hlsl, PerRenderPixel), the sun's and the lights' shadows
-    // as their rays found them.
+    // as their rays found them. y: 1 while path tracing: the hits have their materials (HitMaterialOf in
+    // gi_hit_light.hlsli). z: 1 once g_SkyCube holds the whole sky (sky_capture.hpp).
     uint4 reconstruction;
     // The game's terrain (TerrainGrid in gi_scene.hlsl): a world point is (u, height, v) x scale +
     // offset, u and v its virtual heightmap coordinates; the page table's converter (the terrain
@@ -194,6 +206,11 @@ struct GIFrameConstants
     // The point and spot lights' shadows (TraceLocalLightShadows): x the frame's lights, y rays a pixel.
     uint4 localLightCount;
     GILocalLight localLights[GI_MAX_LOCAL_LIGHTS];
+    // Self-lit meshes: x their light's scale from the game's units (the menu's strength times the light scale); y the
+    // most radiance one lights others with, so scaled. And those the rays aim at: x how many.
+    float4 emission;
+    uint4 emitterCount;
+    GIEmitter emitters[GI_MAX_EMITTERS];
 };
 
 // One mesh of a character posed this frame (Skin in gi_scene.hlsl): its bind pose (16 bytes a vertex:
@@ -208,7 +225,8 @@ struct GISkinRecord
     uint skinOffset;
     uint posedOffset;
     uint firstBone;    // The character's palette: three float4 rows a bone from this one, in g_Palettes
-    uint padding[2];
+    uint bindNormalOffset;  // Its normals and tangents (GIGeometry::normalOffset); 0 without
+    uint posedNormalOffset; // And where they go posed
 };
 
 // One geometry of a bottom-level structure (gi_scene.hpp): where its triangles lie in the geometry
@@ -221,6 +239,11 @@ struct GIGeometry
     uint flags;           // GI_GEOMETRY_*
     uint texture;         // 1 + its base texture's index in g_SceneTextures (its colour, and a cut-out geometry's alpha), 0 without
     float alphaThreshold; // With GI_GEOMETRY_ALPHA_TEXTURE: the alpha below which light passes
+    uint specularTexture; // 1 + its SRM texture's index (r the specular rate, g the roughness), 0 without
+    uint normalTexture;   // 1 + its normal map's index (a x, g y), 0 without
+    uint materialIndex;   // Its row of the game's material table (g_MaterialSpecular)
+    float4 emission;      // rgb: a self-lit mesh's light (SelfColor x SelfColorIntensity), in the game's units
+    uint normalOffset;    // Bytes into the pool: 16 a vertex, the normal then the tangent, four halves each; 0 without
     uint padding[3];
 };
 
@@ -306,7 +329,7 @@ struct GIInstanceDesc
 #ifdef __cplusplus
 static_assert(sizeof(GIFrameConstants) % 16 == 0);
 static_assert(sizeof(GIInstanceDesc) == 64);
-static_assert(sizeof(GIGeometry) == 32);
+static_assert(sizeof(GIGeometry) == 64);
 static_assert(sizeof(GIInspectPixel) == 32);
 }
 #endif

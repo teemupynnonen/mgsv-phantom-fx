@@ -24,7 +24,8 @@
 //   for a model's mesh (taken from its G-buffer draw, engine_scene.hpp), and the mesh's mean albedo,
 //   learnt from the screen (LearnAlbedo), for the rest.
 // - The lights are the sun and the sky, as the game's own sky light gives them, and the frame's point
-//   and spot lights. Emissive surfaces are left out. Specular light is left out: the game keeps its own.
+//   and spot lights; with path tracing also its self-lit meshes (SampledEmitterLight). Specular light is
+//   left out of the cache: the game keeps its own, and path tracing's rays bring theirs.
 // - Rays from a surface skip copies of it just above (gi_common.hlsli, "Copies of a surface").
 // - A hash grid tile is keyed by the side of the surface a ray hits (the ray's main axis and its
 //   sign), not by its finely quantised direction: diffuse light needs no more, and the grid fills
@@ -278,14 +279,12 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
         {
             // The hit's own light, from the sun and a light.
             HashGridCache_Visibility visibility = VisibilityOf(hit, direction);
-            float3 hitWorld, hitNormal;
-            HitSurface(visibility, hitWorld, hitNormal);
-            float3 albedo = HitAlbedo(hitWorld, visibility);
-            bool leaf = HitIsLeaf(visibility);
+            HitMaterial material = HitMaterialOf(visibility, 0.0f, true);
+            float3 hitWorld = material.world, hitNormal = material.geometric, albedo = material.albedo;
+            bool leaf = material.isLeaf;
             float3 hitOrigin = OffsetFromTriangle(hitWorld, hitNormal);
             float tolerance = CopyTolerance(hitWorld);
-            light = albedo * (SunLight(hitWorld, hitNormal, hitOrigin, tolerance, leaf, random)
-                + SampledLocalLight(hitWorld, hitNormal, hitOrigin, tolerance, random));
+            light = DiffuseRayEmission(visibility, material.emission) + HitOwnLight(material, -direction, hitOrigin, tolerance, random);
             MaxDiagnostic(GI_COUNTER_MAX_ALBEDO, albedo);
             MaxDiagnostic(GI_COUNTER_MAX_DIRECT, light);
 
@@ -330,6 +329,9 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
         weightedDirection += rayLuminance * direction;
         totalLuminance += rayLuminance;
     }
+
+    // The self-lit meshes' light on the pixel's own surface, which its rays would rarely meet.
+    total += rays * SampledEmitterLight(world, normal, origin, CopyTolerance(world), random);
 
     path.y = packNormal(totalLuminance > 0.0f ? weightedDirection / totalLuminance : firstDirection);
     g_Light_Partial[did] = float4(total / rays, totalDistance / rays);
@@ -447,6 +449,8 @@ void PopulateCells(uint did : SV_DispatchThreadID)
     float3 albedo = HitAlbedo(world, visibility);
     Random random = MakeRandom(did + 0x9E3779B9u, g_FrameIndex);
     float3 lighting = HitDirectLight(world, normal, albedo, HitIsLeaf(visibility), random);
+    SceneTriangle hitTriangle = LoadTriangle(visibility.instanceIndex, visibility.geometryIndex, visibility.primitiveIndex);
+    if (hitTriangle.geometry.flags & GI_GEOMETRY_EMISSIVE) lighting += DiffuseRayEmission(visibility, EmissionAt(hitTriangle, visibility.barycentrics));
     MaxDiagnostic(GI_COUNTER_MAX_ALBEDO, albedo);
     MaxDiagnostic(GI_COUNTER_MAX_DIRECT, lighting);
     if (!(dot(lighting, lighting) > 0.0f)) return;

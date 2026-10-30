@@ -13,7 +13,10 @@
   in rain, wet surfaces take the traced ones), and the sun and every lamp and flashlight light the scene
   from the path tracer, each light with its own soft shadow where lights overlap. Each surface reflects
   with the strength the game gives its material, and a **Reflections** slider makes them stronger or
-  weaker.
+  weaker. Rays now see what the camera sees: surfaces they hit keep their roughness, shine and normal maps,
+  so shiny things stay shiny in reflections and reflections show other reflections. Glowing bulbs and signs
+  light what is around them, with a **Self-lit surfaces** slider. Reflections of the sky show the game's real
+  sky, with its horizon, clouds, sun glow and weather.
 - **DLSS Ray Reconstruction.** A new **Ray Reconstruction** switch under the upscaler, for NVIDIA RTX GPUs,
   shown while a ray-traced effect is on: NVIDIA's model cleans up the ray-traced global illumination,
   shadows and lights and upscales in one step, in place of DLSS and the add-on's own denoisers, with a

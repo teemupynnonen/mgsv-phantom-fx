@@ -9,6 +9,7 @@
 #include "dev_tools.hpp"
 #include "features/global_illumination/gi_lighting.hpp"
 #include "features/path_tracing/path_tracing.hpp"
+#include "features/path_tracing/sky_capture.hpp"
 #include "features/ray_traced_lights/local_lights.hpp"
 #include "features/sea/sea.hpp"
 #include "frame_latch.hpp"
@@ -69,6 +70,7 @@ struct Options
     bool light = true;
     bool reconstructionGuides{}; // DLSS Ray Reconstruction is asked for: the kick makes its guides (reconstructionGuides)
     bool isPathTracing{};        // The plan runs path tracing: while Ray Reconstruction denoises, it traces (isPathTracing)
+    float emission{1};           // The menu's strength of self-lit meshes' light
 };
 
 // MotionBlurCameraVelocity reads the game's velocity for its moving meshes here, right after the
@@ -145,6 +147,7 @@ RWTexture2D<float4> g_DiffuseAlbedo : register(u1);
 RWTexture2D<float4> g_SpecularAlbedo : register(u2);
 RWTexture2D<float4> g_Material : register(u3); // Path tracing's: rgb the specular colour at normal incidence; a the translucency
 RWTexture2D<float> g_Wrap : register(u4);      // And the light through the leaves' floor: the translucency times the material's
+RWTexture2D<float4> g_MaterialSpecular : register(u5); // Each material's specular colour at normal incidence, for the rays' hits (HitMaterialOf)
 
 cbuffer Parameters : register(b0)
 {
@@ -197,6 +200,9 @@ float WaterReflectance(float toEyeN, float roughness)
 void main(uint2 id : SV_DispatchThreadID)
 {
     if (any(id >= g_Size)) return;
+
+    if (g_HasTables && id.y == 0 && id.x < 256)
+        g_MaterialSpecular[uint2(id.x, 0)] = float4(g_Materials.Load(int3(id.x, 0, 0)).rgb * FresnelAt(1, g_Materials.Load(int3(id.x, 1, 0)).x), 1);
 
     float depth = g_Depth.Load(int3(id, 0));
     if (depth <= 0)
@@ -260,6 +266,9 @@ struct GuideParameters
 // this: the game's auto-exposure changes quickly, and caches holding exposed light lagged behind it
 // and overshot (a white screen). The output takes the frame's exposure (gi_renderer::Frame::outputScale).
 constexpr float LightScale = 1.0f / 1024;
+// The most radiance a self-lit mesh lights others with, in the game's units: the sun's light. Their intensities are set
+// for how they look (up to 221,182, a bulb's bloom); their rooms are lit by the lamps placed beside them.
+constexpr float MostEmission = 20000;
 
 // The sky's light as PsWork holds it, before exposure, and the exposure the pass had; whether the
 // probe's light stands in for it (the game gave no sky).
@@ -337,8 +346,8 @@ ComPtr<ID3D11ShaderResourceView> normals, albedo;
 ComPtr<ID3D11ComputeShader> packShader, guideShader;
 ComPtr<ID3D11Buffer> packParameters, guideParameters;
 // DLSS Ray Reconstruction's guides at the render size, and the kick that made them; path tracing's material
-// guides (guideMaterial, guideTranslucency) with them, shared like the others.
-ComputeTexture guideNormals, guideDiffuse, guideSpecular, guideMaterial, guideTranslucency;
+// guides (guideMaterial, guideTranslucency) and the materials' specular colours with them, shared like the others.
+ComputeTexture guideNormals, guideDiffuse, guideSpecular, guideMaterial, guideTranslucency, materialSpecular;
 std::uint32_t guidesKick{};
 // The frames Ray Reconstruction denoised, counted by reconstructed(), and the count the last kick saw.
 std::atomic<std::uint64_t> reconstructions{};
@@ -480,6 +489,7 @@ void makeGuides(ID3D11ShaderResourceView* depth, const SceneConstants& scene, fl
         guideSpecular = makeShared(device.Get(), width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the Ray Reconstruction specular albedo");
         guideMaterial = makeShared(device.Get(), width, height, DXGI_FORMAT_R8G8B8A8_UNORM, "Creating path tracing's material guide");
         guideTranslucency = makeShared(device.Get(), width, height, DXGI_FORMAT_R8_UNORM, "Creating path tracing's translucency guide");
+        materialSpecular = makeShared(device.Get(), 256, 1, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the materials' specular colours");
     }
 
     const auto specular = indirect_light_pass::specularTarget(width, height);
@@ -503,7 +513,7 @@ void makeGuides(ID3D11ShaderResourceView* depth, const SceneConstants& scene, fl
     ID3D11ShaderResourceView* inputs[]{depth, normals.Get(), hasAlbedo ? albedo.Get() : nullptr, specular.Get(), tables.fresnel.Get(), tables.materials.Get(),
         seaDepth.Get()};
     ID3D11UnorderedAccessView* outputs[]{guideNormals.access.Get(), guideDiffuse.access.Get(), guideSpecular.access.Get(), guideMaterial.access.Get(),
-        guideTranslucency.access.Get()};
+        guideTranslucency.access.Get(), materialSpecular.access.Get()};
     immediate->CSSetShader(guideShader.Get(), nullptr, 0);
     immediate->CSSetConstantBuffers(0, 1, guideParameters.GetAddressOf());
     immediate->CSSetShaderResources(0, static_cast<UINT>(std::size(inputs)), inputs);
@@ -787,12 +797,18 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     engine_scene::Snapshot engineScene;
     engine_scene::take(engineScene, gi_inputs::takeDrawnBones(*sceneCamera));
     for (const auto& model : engineScene.newModels)
-        for (const auto& part : model->parts) gi_textures::want(part.baseTexture, scene_description::isCutOut(part.role));
+        for (const auto& part : model->parts)
+        {
+            gi_textures::want(part.baseTexture, scene_description::isCutOut(part.role) ? gi_textures::Use::CutOut : gi_textures::Use::Colour);
+            gi_textures::want(part.specularTexture, gi_textures::Use::Data);
+            gi_textures::want(part.normalTexture, gi_textures::Use::Data);
+        }
     endStep(ModelsStep);
     gi_textures::update(device.Get(), immediate.Get(), frame.newTextures);
     endStep(TexturesStep);
     if (const auto terrain = engine_scene::takeTerrain()) copyTerrain(*terrain, frame);
     frame.seaLevel = sea::level();
+    auto* skyCube = isPathTraced ? sky_capture::update(immediate.Get(), LightScale) : nullptr;
 
     // The game's velocity for its moving meshes, for the shadows' and the light's denoisers: only this
     // frame's, drawn before this list, at the render size.
@@ -830,6 +846,8 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         textures.lampMasks = lampMasks;
         textures.lampDiffuse = lampDiffuse;
         textures.lampSpecular = lampSpecular;
+        textures.materialSpecular = materialSpecular.texture.Get();
+        textures.skyCube = skyCube;
     }
 
     frame.width = depthOut.width;
@@ -877,6 +895,8 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     // turns the denoisers back on.
     frame.forReconstruction = options.reconstructionGuides && denoisedByReconstruction;
     frame.isPathTraced = isPathTraced;
+    frame.emissionScale = isPathTraced ? options.emission * LightScale : 0;
+    frame.emissionCap = MostEmission * LightScale;
     reconstructionsAtKick = reconstructedFrames;
     wereReflectionsTraced = isPathTraced;
     wereLampsTraced = lampDiffuse != nullptr;
@@ -965,7 +985,7 @@ void detach() noexcept
         packParameters.Reset();
         guideShader.Reset();
         guideParameters.Reset();
-        guideNormals = guideDiffuse = guideSpecular = guideMaterial = guideTranslucency = {};
+        guideNormals = guideDiffuse = guideSpecular = guideMaterial = guideTranslucency = materialSpecular = {};
         guidesKick = 0;
         terrainPages.Reset();
         terrainHeights.Reset();
@@ -1028,6 +1048,7 @@ void configure(const Configuration& configuration) noexcept
         .light = !configuration.leftOut.globalLight,
         .reconstructionGuides = settings.upscaling.isRayReconstructionAsked(),
         .isPathTracing = configuration.effects.runs(Effect::PathTracing),
+        .emission = settings.pathTracing.emission,
     };
 
     latch.set(options);
@@ -1455,8 +1476,9 @@ void present() noexcept
 
     const bool on = (options.enabled || options.shadows || options.localLights) && !failed;
     lighting = on && options.enabled;
-    shadowing = on && options.shadows;
-    localShadowing = on && options.localLights;
+    // Path tracing's sun and lamps read the rays as the ray-traced shadows and lights do, in their place.
+    shadowing = on && (options.shadows || options.isPathTracing);
+    localShadowing = on && (options.localLights || options.isPathTracing);
     if (enabled.exchange(on) && !on)
     {
         // Off gives the GPU memory back.

@@ -21,6 +21,7 @@
 #include "features/lamp_contact_shadows/lamp_contact_shadows.hpp"
 #include "features/motion_blur/motion_blur.hpp"
 #include "features/path_tracing/path_tracing.hpp"
+#include "features/path_tracing/sky_capture.hpp"
 #include "features/photo_mode/photo_mode.hpp"
 #include "features/ray_traced_lights/local_lights.hpp"
 #include "features/sea/sea.hpp"
@@ -247,6 +248,17 @@ bool onDraw(command_list* list, uint32_t vertices, uint32_t instances, uint32_t 
     const bool drawn = atmosphere::draw(context, call, shader) || indirect_light_pass::draw(context, call, shader)
         || sun_light_pass::draw(context, call, shader) || path_tracing::draw(context, call, shader) || sea::draw(context, call, shader)
         || hdr::draw(context, call, shader) || upscaler::draw(context, call, shader);
+
+    // The game's sky, then again for the rays; the physical sky's own draw does the same (atmosphere.cpp).
+    if (!drawn && sky_capture::isWanted())
+        if (const auto* row = shader.row(); row && row->pass == game_shaders::GamePass::Sky)
+        {
+            context->DrawInstanced(vertices, instances, first, firstInstance);
+            sky_capture::capture(context, call);
+
+            return true;
+        }
+
     if (!encode) return drawn;
 
     if (!drawn) context->DrawInstanced(vertices, instances, first, firstInstance);
@@ -264,8 +276,20 @@ bool onDrawIndexed(command_list* list, uint32_t indices, uint32_t instances, uin
     sea::note(context, call, shader);
     // The one order among the owners that matters: a point or spot light's draws have two, and the
     // ray-traced lights come first, so the local light pass never draws a light the rays shadow.
-    return hiddenUi(list) || local_lights::draw(context, call, shader) || local_light_pass::draw(context, call, shader)
-        || sea::draw(context, call, shader) || upscaler::draw(context, call, shader);
+    if (hiddenUi(list) || local_lights::draw(context, call, shader) || local_light_pass::draw(context, call, shader) || sea::draw(context, call, shader)
+        || upscaler::draw(context, call, shader))
+        return true;
+
+    // The sky's dome and clouds, then again for the rays.
+    if (!sky_capture::isWanted()) return false;
+
+    const auto* row = shader.row();
+    if (!row || row->pass != game_shaders::GamePass::SkyDome) return false;
+
+    context->DrawIndexedInstanced(indices, instances, first, offset, firstInstance);
+    sky_capture::capture(context, call);
+
+    return true;
 }
 
 bool onClearRenderTarget(command_list* list, resource_view view, const float color[4], uint32_t rects, const rect*)

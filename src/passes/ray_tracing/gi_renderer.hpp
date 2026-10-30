@@ -56,6 +56,10 @@ struct Textures
     ID3D11Texture2D* lampMasks{};
     ID3D11Texture2D* lampDiffuse{};
     ID3D11Texture2D* lampSpecular{};
+    // And its hits (gi_hit_light.hlsli): each row of the game's material table as its specular colour (256 x 1,
+    // R16G16B16A16_FLOAT), and the sky from every side (sky_capture.hpp), null until captured.
+    ID3D11Texture2D* materialSpecular{};
+    ID3D11Texture2D* skyCube{};
 };
 
 using Matrix = std::array<float, 16>; // Rows applied as dot(row, v), as the engine's
@@ -113,6 +117,8 @@ struct Frame
     bool forReconstruction{};
     // With it, path tracing: the reflections and the point and spot lights traced (path_tracing_rays.hpp).
     bool isPathTraced{};
+    // Self-lit meshes' light: its scale from the game's units, and the most radiance one lights others with, so scaled.
+    float emissionScale{}, emissionCap{};
     // The sun's ray-traced shadow into textures.shadow; the game's shadow map range (cPSLight c8.x,
     // c8.y, c6.x, and 1 once known) and the tangent of the sun's angular radius.
     bool traceShadows{};

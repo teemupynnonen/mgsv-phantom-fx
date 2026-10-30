@@ -8,6 +8,7 @@
 #include "features/lamp_soft_shadows/lamp_soft_shadows.hpp"
 #include "features/motion_blur/motion_blur.hpp"
 #include "features/path_tracing/path_tracing.hpp"
+#include "features/path_tracing/sky_capture.hpp"
 #include "features/photo_mode/focus.hpp"
 #include "features/photo_mode/photo_mode.hpp"
 #include "features/ray_traced_lights/local_lights.hpp"
@@ -56,6 +57,7 @@ constexpr Module Modules[]{
     {.attach = withDevice<ssilvb::attach>, .configure = ssilvb::configure, .present = ssilvb::present, .detach = ssilvb::detach},
     {.attach = withDevice<light_combine::attach>, .configure = light_combine::configure, .present = light_combine::present, .detach = light_combine::detach},
     {.attach = withDevice<path_tracing::attach>, .configure = path_tracing::configure, .present = path_tracing::present, .detach = path_tracing::detach},
+    {.attach = withDevice<sky_capture::attach>, .configure = sky_capture::configure, .present = sky_capture::present, .detach = sky_capture::detach},
     {.attach = withDevice<visibility_bitmask::attach>, .configure = visibility_bitmask::configure, .detach = visibility_bitmask::detach},
 
     {.attach = ray_tracing::attach, .configure = ray_tracing::configure, .present = ray_tracing::present, .detach = ray_tracing::detach},

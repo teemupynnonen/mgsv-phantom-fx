@@ -127,6 +127,17 @@ public:
         device->CreateShaderResourceView(resource, &desc, at(slot));
     }
 
+    // A texture of six slices as a cube.
+    void cube(UINT slot, ID3D12Resource* resource, DXGI_FORMAT format)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
+        desc.Format = format;
+        desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+        desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        desc.TextureCube.MipLevels = 1;
+        device->CreateShaderResourceView(resource, &desc, at(slot));
+    }
+
     void buffer(UINT slot, ID3D12Resource* resource, std::uint64_t offset, std::uint64_t stride, std::uint64_t count)
     {
         D3D12_SHADER_RESOURCE_VIEW_DESC desc{};

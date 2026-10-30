@@ -32,6 +32,7 @@ enum class GamePass : std::uint8_t
     LocalLight,      // A point or spot light: a draw that marks the stencil, then one that lights
     Resolve,         // The G-buffer and the light into the scene's colour, times the game's occlusion
     Sky,
+    SkyDome,         // The sky's painted dome and its clouds, drawn over it
     Sea,             // The game's sea, drawn over the lit scene after the sky (Primitive_TppFourierOcean*)
     ReflectionMask,  // The screen-space reflections' mask from the depth, normals and roughness; reads the scene's depth at t0
     ReflectionAdd,   // The screen-space reflections blended over the scene
@@ -121,6 +122,8 @@ inline constexpr GameShader GameShaders[]{
     {.pass = GamePass::Sky, .name = "Sky_Draw_TppBaked", .checksum = "0fddc9d03f8bd436af2eabe2bc620c44", .hasSprite = true},
     {.pass = GamePass::Sky, .name = "Sky_Draw_Tpp", .checksum = "175290aae288daa07d2440ce316c7a50", .hasSprite = true},
     {GamePass::Sky, "Sky_Draw_TppNoSky", "3cf390b8d8af0de27c093019a693b636"}, // In fog and sandstorms: the fog's colour alone
+    {GamePass::SkyDome, "tpp3dfw_constant_sky", "1d8d495cfad8edf0a94795d1b83ab365"},
+    {GamePass::SkyDome, "tpp3dfw_generativeClouds", "4e081ddecae4b78e7229ae6dec61d2ee"},
 
     // Each as the game makes it and as the float scene patches it (HDR's withoutTonemap).
     {GamePass::Sea, "Primitive_TppFourierOceanHQ", "0b2897387196afcf41609619bde5527a"},

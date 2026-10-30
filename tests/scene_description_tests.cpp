@@ -2,6 +2,7 @@
 #include "passes/ray_tracing/shaders/gi_shared.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <iostream>
 #include <map>
@@ -21,14 +22,18 @@ void expect(bool condition, const char* message)
 // The StrCode64s of the texture parameters a material names its textures by (Base_Tex_SRGB, Mask_Tex_LIN),
 // and the path hash of mesh i's texture, TexturePath + i.
 constexpr std::uint64_t BaseTexture = 0x41EA7BE81B61, MaskTexture = 0x3ED9B75CD480, TexturePath = 0x5000;
+// And of the vectors a material gives (SelfColor, SelfColorIntensity, MatParamIndex_0).
+constexpr std::uint64_t SelfColor = 0x557B9224571E, SelfColorIntensity = 0xE40A3A2518CF, MaterialIndex = 0xCAB8E38487FF;
 
 // A mesh of a test model file: its alpha and shadow bytes, whether its vertices have texture coordinates,
-// and its material's one texture parameter (BaseTexture, MaskTexture, or 0 for none).
+// its material's one texture parameter (BaseTexture, MaskTexture, or 0 for none), and with an intensity its
+// vectors: that SelfColorIntensity, a SelfColor of (1, 0.5, 0.25) and a MatParamIndex_0 of `materialRow`.
 struct TestMesh
 {
     std::uint8_t alpha{}, shadow{};
     bool hasUvs{};
     std::uint64_t textureParameter{};
+    float selfIntensity{}, materialRow{};
 };
 
 template<class T> void put(std::vector<std::uint8_t>& bytes, T value)
@@ -80,12 +85,12 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
     auto& meshBlock = block(3, meshes.size(), 48);
     auto& materialInstances = block(4, meshes.size(), 16);
     auto& textures = block(6, meshes.size(), 4);
-    auto& parameters = block(7, meshes.size(), 4);
+    auto& parameters = block(7, 4 * meshes.size(), 4);
     auto& assignments = block(9, meshes.size(), 8);
     auto& meshFormats = block(10, 2 * meshes.size(), 8);
     auto& faceInfos = block(17, meshes.size(), 8);
     auto& paths = block(21, meshes.size(), 8);
-    auto& names = block(22, meshes.size(), 8);
+    auto& names = block(22, meshes.size() + 3, 8);
     std::vector<std::uint8_t> vertexFormats;
     const auto format = [&](std::uint8_t usage, std::uint8_t dataType, std::uint16_t element) {
         put(vertexFormats, usage);
@@ -103,6 +108,16 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
         putAt<std::uint64_t>(meshBlock, 48 * i + 24, i); // Face info
         materialInstances[16 * i + 6] = mesh.textureParameter != 0;
         putAt<std::uint16_t>(materialInstances, 16 * i + 8, i);
+        // Its three vectors' parameters, after every mesh's texture parameter.
+        const auto firstVector = static_cast<std::uint16_t>(meshes.size() + 3 * i);
+        materialInstances[16 * i + 7] = mesh.selfIntensity > 0 ? 3 : 0;
+        putAt<std::uint16_t>(materialInstances, 16 * i + 10, firstVector);
+        for (std::uint16_t k = 0; k < 3; ++k)
+        {
+            putAt<std::uint16_t>(parameters, 4 * (firstVector + k), static_cast<std::uint16_t>(meshes.size() + k));
+            putAt<std::uint16_t>(parameters, 4 * (firstVector + k) + 2, static_cast<std::uint16_t>(3 * i + k));
+        }
+
         putAt<std::uint16_t>(textures, 4 * i + 2, i);
         putAt<std::uint16_t>(parameters, 4 * i, i);
         putAt<std::uint16_t>(parameters, 4 * i + 2, i);
@@ -128,6 +143,9 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
         putAt<std::uint32_t>(meshFormats, 16 * i + 12, streamAt + 36u * i);
     }
 
+    putAt<std::uint64_t>(names, 8 * meshes.size(), SelfColor);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 1), SelfColorIntensity);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 2), MaterialIndex);
     blocks[11] = {static_cast<std::uint16_t>(vertexFormats.size() / 4), vertexFormats};
     block(14, 1, 16); // One buffer, from the buffer data's start
 
@@ -141,12 +159,12 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
 
     // The header, the section info (each block's type, count and offset into section 0, then section 1's
     // buffer data), section 0's blocks and section 1.
-    const auto section0 = 64 + 8 * blocks.size() + 12;
+    const auto section0 = 64 + 8 * blocks.size() + 24;
     std::vector<std::uint8_t> file(section0);
     putAt<std::uint32_t>(file, 0, 0x4C444D46);
     putAt<std::uint64_t>(file, 8, 64);
     putAt<std::uint32_t>(file, 32, static_cast<std::uint32_t>(blocks.size()));
-    putAt<std::uint32_t>(file, 36, 1);
+    putAt<std::uint32_t>(file, 36, 2);
     putAt<std::uint32_t>(file, 40, static_cast<std::uint32_t>(section0));
 
     std::size_t info = 64;
@@ -159,7 +177,13 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
         info += 8;
     }
 
+    // Section 1's other part: the materials' vectors, after the buffer data.
     putAt<std::uint32_t>(file, info, 2);
+    putAt<std::uint32_t>(file, info + 12, 0);
+    putAt<std::uint32_t>(file, info + 16, static_cast<std::uint32_t>(data.size()));
+    for (const auto& mesh : meshes)
+        for (const float value : {1.0f, 0.5f, 0.25f, 1.0f, mesh.selfIntensity, 0.0f, 0.0f, 0.0f, mesh.materialRow, 0.0f, 0.0f, 0.0f}) put(data, value);
+
     putAt<std::uint32_t>(file, 48, static_cast<std::uint32_t>(file.size()));
     file.insert(file.end(), data.begin(), data.end());
 
@@ -315,7 +339,7 @@ void sameFileDependsOnSource()
 // What each role tells the rays (StopsShadowRay, IsShadowOnly, PassHair, HitDirectLight).
 void materialPerRole()
 {
-    const auto flagsOf = [](const Model& model, std::uint32_t mesh) { return materialOf(partOf(model, mesh), std::nullopt).flags; };
+    const auto flagsOf = [](const Model& model, std::uint32_t mesh) { return materialOf(partOf(model, mesh), {}).flags; };
     const auto building = modelOf({{0, 0}, {128, 64}, {0, 1}, {32, 1}, {0, 2}}, Source::VisibilityManager);
     expect(flagsOf(*building, 0) == 0, "A solid mesh stops every ray.");
     expect(flagsOf(*building, 1) == GI_GEOMETRY_CUT_OUT, "A cut-out mesh is tested by its alpha.");
@@ -339,23 +363,44 @@ void cutOutWaitsForTexture()
     const auto& cutOut = partOf(*model, 0);
     expect(cutOut.baseTexture == TexturePath && !cutOut.textureIsMask, "A mesh's base texture is its Base_Tex_SRGB's path hash.");
 
-    const auto waiting = materialOf(cutOut, std::nullopt);
+    const auto waiting = materialOf(cutOut, {});
     expect(waiting.flags == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_UV) && waiting.texture == 0 && waiting.alphaThreshold == 0.0f,
         "A cut-out mesh tests no alpha before its texture is copied.");
 
-    const auto textured = materialOf(cutOut, 6);
+    const auto textured = materialOf(cutOut, {.base = 6});
     expect(textured.flags == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_UV | GI_GEOMETRY_ALPHA_TEXTURE) && textured.texture == 7 && textured.alphaThreshold == 0.5f,
         "A cut-out mesh with its texture tests its alpha against a half, as the game's shadow pass does.");
 
     const auto& standIn = partOf(*model, 1);
-    expect(standIn.baseTexture == TexturePath + 1 && standIn.textureIsMask && (materialOf(standIn, 6).flags & GI_GEOMETRY_MASK),
+    expect(standIn.baseTexture == TexturePath + 1 && standIn.textureIsMask && (materialOf(standIn, {.base = 6}).flags & GI_GEOMETRY_MASK),
         "A mesh without a base texture cuts by its mask, whose colour is not its own.");
 
-    const auto untextured = materialOf(partOf(*model, 2), 6);
+    const auto untextured = materialOf(partOf(*model, 2), {.base = 6});
     expect(untextured.flags == GI_GEOMETRY_CUT_OUT && untextured.texture == 0, "A mesh without texture coordinates has no texture.");
 
-    const auto solid = materialOf(partOf(*model, 3), 6);
+    const auto solid = materialOf(partOf(*model, 3), {.base = 6});
     expect(solid.flags == GI_GEOMETRY_UV && solid.texture == 7 && solid.alphaThreshold == 0.0f, "A solid mesh takes its texture's colour, not its alpha.");
+}
+
+// Fox Engine's self-lit meshes carry the glass bit and the main view's alone (alpha 0x10, shadow 0x25, a lamp's bulb):
+// taken for their light where the glass they look like is dropped. A glow card, additive (alpha 0x11), is no surface; the sky's
+// dome and the moon have an intensity of 1, and a mesh painted black less: they stay what they were.
+void selfLitMeshes()
+{
+    const auto model = modelOf({{0x10, 0x25, true, BaseTexture, 80, 18}}, Source::VisibilityManager);
+    const auto& bulb = partOf(*model, 0);
+    expect(bulb.role == MeshRole::Emissive, "A bulb is taken for its light.");
+    expect(bulb.emission == std::array{80.0f, 40.0f, 20.0f}, "Its light is its self colour times its intensity.");
+
+    const auto material = materialOf(bulb, {.base = 6});
+    expect((material.flags & (GI_GEOMETRY_EMISSIVE | GI_GEOMETRY_NO_SHADOW)) == (GI_GEOMETRY_EMISSIVE | GI_GEOMETRY_NO_SHADOW),
+        "It gives light, and rays towards lights pass it.");
+    expect(material.emission == bulb.emission && material.materialIndex == 18 && material.texture == 7, "Its material carries its light, row and colour.");
+
+    expect(rigid({{0x11, 0x25, true, BaseTexture, 4000}, {0x10, 0x25, true, BaseTexture, 1}}) == Roles{Dropped, Dropped},
+        "Glow cards and what barely glows stay dropped.");
+    expect(rigid({{0, 0, true, BaseTexture, 1, 7}}) == Roles{MeshRole::Solid} && partOf(*modelOf({{0, 0, true, BaseTexture, 1, 7}}, Source::VisibilityManager), 0).materialIndex == 7,
+        "An ordinary mesh keeps its role, with its row of the material table.");
 }
 
 void unreadableFiles()
@@ -418,6 +463,7 @@ int main()
         sameFileDependsOnSource();
         materialPerRole();
         cutOutWaitsForTexture();
+        selfLitMeshes();
         unreadableFiles();
         skinThroughBoneGroup();
         std::cout << "Scene description tests passed.\n";

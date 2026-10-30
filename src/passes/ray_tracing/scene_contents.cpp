@@ -10,6 +10,7 @@
 #include <cstring>
 #include <format>
 #include <fstream>
+#include <numbers>
 #include <stdexcept>
 
 namespace phantom_fx::scene_contents
@@ -48,12 +49,19 @@ template<class Record> auto findVariant(Record& record, std::uint64_t hiddenGrou
 }
 
 // A mesh's bytes in the pool, in this order and each from a 16-byte boundary: its vertices (16 bytes:
-// the position, then the texture coordinates), its indices, and a skinned model's skin (GISkinRecord:
-// 16 bytes a vertex).
+// the position, then the texture coordinates), its indices, a skinned model's skin (GISkinRecord:
+// 16 bytes a vertex), and its vertices' normals and tangents (GIGeometry::normalOffset: 16 bytes a vertex).
 struct PoolLayout
 {
-    std::uint64_t vertices{}, indices{}, skin{};
+    std::uint64_t vertices{}, indices{}, skin{}, normals{};
 };
+
+// A self-lit mesh's diffuse light reaches as far as it gives this much, in the game's light units: a ten-thousandth of
+// the sun's, which a shadow ray would not show.
+constexpr float LeastEmitterLight = 2;
+// The rays aim at self-lit meshes this near the eye, in metres. Its reach says nothing of this: a bulb lights what is
+// around it, and the camera is rarely within its metre or two.
+constexpr float MostEmitterDistance = 200;
 
 std::uint64_t aligned(std::uint64_t value, std::uint64_t alignment)
 {
@@ -62,7 +70,7 @@ std::uint64_t aligned(std::uint64_t value, std::uint64_t alignment)
 
 PoolLayout poolLayoutOf(const Model& model, const ModelPart& part)
 {
-    return {part.vertices.size() * 16, aligned(part.indices.size() * 2, 16), model.bones ? part.vertices.size() * 16 : 0};
+    return {part.vertices.size() * 16, aligned(part.indices.size() * 2, 16), model.bones ? part.vertices.size() * 16 : 0, part.normals.size() * 16};
 }
 
 // The bytes of a model's meshes in the pool.
@@ -72,7 +80,7 @@ std::uint64_t modelBytes(const Model& model)
     for (std::size_t i = 0; i < model.parts.size() && i < MaxModelParts; ++i)
     {
         const auto layout = poolLayoutOf(model, model.parts[i]);
-        bytes += layout.vertices + layout.indices + layout.skin;
+        bytes += layout.vertices + layout.indices + layout.skin + layout.normals;
     }
 
     return bytes;
@@ -142,11 +150,15 @@ Update SceneContents::update(const GameScene& frame)
     return update;
 }
 
-// A model mesh's material, with its base texture once the game's is copied (scene_description::materialOf).
+// A model mesh's material, with its textures once the game's are copied (scene_description::materialOf).
 scene_description::Material SceneContents::materialOf(const ModelPart& part) const
 {
-    const auto texture = textures.find(part.baseTexture);
-    return scene_description::materialOf(part, texture != textures.end() ? texture->second.slot : std::nullopt);
+    const auto slotOf = [&](std::uint64_t path) {
+        const auto texture = textures.find(path);
+        return texture != textures.end() ? texture->second.slot : std::nullopt;
+    };
+
+    return scene_description::materialOf(part, {slotOf(part.baseTexture), slotOf(part.specularTexture), slotOf(part.normalTexture)});
 }
 
 // The model's meshes laid out from `poolOffset` into `bytes`, and their geometries; a skinned model's
@@ -163,7 +175,13 @@ std::vector<Geometry> SceneContents::stageModel(const Model& model, std::uint64_
         const auto& part = model.parts[i];
         const auto layout = poolLayoutOf(model, part);
         const auto material = materialOf(part);
-        Geometry geometry{.flags = material.flags, .texture = material.texture, .alphaThreshold = material.alphaThreshold};
+        Geometry geometry{.flags = material.flags,
+            .texture = material.texture,
+            .alphaThreshold = material.alphaThreshold,
+            .specularTexture = material.specularTexture,
+            .normalTexture = material.normalTexture,
+            .materialIndex = material.materialIndex,
+            .emission = material.emission};
         geometry.vertexOffset = poolOffset + at;
         geometry.vertexCount = static_cast<std::uint32_t>(part.vertices.size());
         for (std::size_t v = 0; v < part.vertices.size(); ++v)
@@ -178,8 +196,14 @@ std::vector<Geometry> SceneContents::stageModel(const Model& model, std::uint64_
         geometry.indexCount = static_cast<std::uint32_t>(part.indices.size());
         std::memcpy(bytes.data() + at, part.indices.data(), part.indices.size() * 2);
         at += layout.indices;
+        if (!part.normals.empty()) geometry.normalOffset = poolOffset + at + layout.skin;
         geometries.push_back(geometry);
-        if (!model.bones) continue;
+        if (!model.bones)
+        {
+            if (!part.normals.empty()) std::memcpy(bytes.data() + at, part.normals.data(), layout.normals);
+            at += layout.normals;
+            continue;
+        }
 
         skins.push_back(poolOffset + at);
         for (std::size_t v = 0; v < part.vertices.size(); ++v)
@@ -191,6 +215,8 @@ std::vector<Geometry> SceneContents::stageModel(const Model& model, std::uint64_
         }
 
         at += layout.skin;
+        if (!part.normals.empty()) std::memcpy(bytes.data() + at, part.normals.data(), layout.normals);
+        at += layout.normals;
     }
 
     return geometries;
@@ -227,7 +253,7 @@ void SceneContents::updateTextures(const GameScene& frame)
             const auto& parts = modelRecord.geometry->parts;
             for (std::uint32_t i = 0; i < parts.size() && i < MaxModelParts; ++i)
             {
-                if (parts[i].baseTexture != made.path) continue;
+                if (parts[i].baseTexture != made.path && parts[i].specularTexture != made.path && parts[i].normalTexture != made.path) continue;
 
                 const auto material = materialOf(parts[i]);
                 if (modelRecord.blas) memory.setMaterial(*modelRecord.blas, i, material);
@@ -238,6 +264,8 @@ void SceneContents::updateTextures(const GameScene& frame)
                 modelRecord.parts[i].flags = material.flags;
                 modelRecord.parts[i].texture = material.texture;
                 modelRecord.parts[i].alphaThreshold = material.alphaThreshold;
+                modelRecord.parts[i].specularTexture = material.specularTexture;
+                modelRecord.parts[i].normalTexture = material.normalTexture;
                 for (const auto& variant : modelRecord.variants)
                 {
                     const auto shown = std::find(variant.parts.begin(), variant.parts.end(), i);
@@ -261,30 +289,31 @@ void SceneContents::updateTextures(const GameScene& frame)
 void SceneContents::useTextures(const Model& model, bool isUsed, Update& update)
 {
     for (const auto& part : model.parts)
-    {
-        if (!part.baseTexture) continue;
-
-        if (isUsed)
+        for (const auto path : {part.baseTexture, part.specularTexture, part.normalTexture})
         {
-            textures[part.baseTexture].users.insert(model.hash);
-            continue;
+            if (!path) continue;
+
+            if (isUsed)
+            {
+                textures[path].users.insert(model.hash);
+                continue;
+            }
+
+            const auto found = textures.find(path);
+            if (found == textures.end()) continue;
+
+            found->second.users.erase(model.hash);
+            if (!found->second.users.empty()) continue;
+
+            if (found->second.slot)
+            {
+                memory.closeTexture(*found->second.slot);
+                --texturesHeld;
+            }
+
+            update.releasedTextures.push_back(found->first);
+            textures.erase(found);
         }
-
-        const auto found = textures.find(part.baseTexture);
-        if (found == textures.end()) continue;
-
-        found->second.users.erase(model.hash);
-        if (!found->second.users.empty()) continue;
-
-        if (found->second.slot)
-        {
-            memory.closeTexture(*found->second.slot);
-            --texturesHeld;
-        }
-
-        update.releasedTextures.push_back(found->first);
-        textures.erase(found);
-    }
 }
 
 // The frame's models: new ones registered, the placed ones' meshes into the pool and their structures
@@ -310,6 +339,9 @@ void SceneContents::updateModels(const GameScene& frame, Update& update)
                     record.bounds[axis] = std::min(record.bounds[axis], vertex[axis]);
                     record.bounds[3 + axis] = std::max(record.bounds[3 + axis], vertex[axis]);
                 }
+
+        for (std::uint32_t i = 0; i < model->parts.size() && i < MaxModelParts; ++i)
+            if (model->parts[i].role == MeshRole::Emissive) record.emitters.push_back(emitterOf(model->parts[i], i));
     }
 
     updateTextures(frame);
@@ -482,7 +514,7 @@ void SceneContents::updateCharacters(const GameScene& frame, Update& update)
         if (isNew)
         {
             std::uint64_t bytes{};
-            for (const auto i : shown) bytes += std::uint64_t{modelRecord.parts[i].vertexCount} * 16;
+            for (const auto i : shown) bytes += std::uint64_t{modelRecord.parts[i].vertexCount} * (modelRecord.parts[i].normalOffset ? 32 : 16);
             const auto offset = memory.allocate(bytes);
             std::vector<Geometry> geometries;
             std::uint64_t at{};
@@ -490,6 +522,10 @@ void SceneContents::updateCharacters(const GameScene& frame, Update& update)
             {
                 auto& geometry = geometries.emplace_back(modelRecord.parts[i]);
                 geometry.vertexOffset = offset.value_or(0) + at;
+                at += std::uint64_t{geometry.vertexCount} * 16;
+                if (!geometry.normalOffset) continue;
+
+                geometry.normalOffset = offset.value_or(0) + at;
                 at += std::uint64_t{geometry.vertexCount} * 16;
             }
 
@@ -514,10 +550,12 @@ void SceneContents::updateCharacters(const GameScene& frame, Update& update)
         for (const auto i : record.parts)
         {
             const auto& part = modelRecord.parts[i];
+            const auto posedVertices = record.poolOffset + at;
+            const std::uint64_t posedNormals = part.normalOffset ? posedVertices + std::uint64_t{part.vertexCount} * 16 : 0;
             skins.push_back({vertices, part.vertexCount, static_cast<std::uint32_t>(part.vertexOffset), static_cast<std::uint32_t>(modelRecord.skins[i]),
-                static_cast<std::uint32_t>(record.poolOffset + at), firstBone, {}});
+                static_cast<std::uint32_t>(posedVertices), firstBone, static_cast<std::uint32_t>(part.normalOffset), static_cast<std::uint32_t>(posedNormals)});
             vertices += part.vertexCount;
-            at += std::uint64_t{part.vertexCount} * 16;
+            at += std::uint64_t{part.vertexCount} * (part.normalOffset ? 32 : 16);
         }
 
         // Not refitted (the frame's scratch is full), the structure no longer matches the pose: left
@@ -594,6 +632,71 @@ void SceneContents::makeSea()
     if (!sea) memory.release(*offset, SeaBytes);
 }
 
+// A self-lit mesh's sphere and area, in its model's space.
+SceneContents::ModelRecord::Emitter SceneContents::emitterOf(const ModelPart& part, std::uint32_t index)
+{
+    std::array<float, 3> lowest{FLT_MAX, FLT_MAX, FLT_MAX}, highest{-FLT_MAX, -FLT_MAX, -FLT_MAX};
+    for (const auto& vertex : part.vertices)
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            lowest[axis] = std::min(lowest[axis], vertex[axis]);
+            highest[axis] = std::max(highest[axis], vertex[axis]);
+        }
+
+    ModelRecord::Emitter emitter{.part = index};
+    float squared{};
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        emitter.centre[axis] = (lowest[axis] + highest[axis]) / 2;
+        const float half = (highest[axis] - lowest[axis]) / 2;
+        squared += half * half;
+    }
+
+    emitter.radius = std::sqrt(squared);
+    for (std::size_t i = 0; i + 2 < part.indices.size(); i += 3)
+    {
+        const auto& a = part.vertices[part.indices[i]];
+        const auto& b = part.vertices[part.indices[i + 1]];
+        const auto& c = part.vertices[part.indices[i + 2]];
+        const std::array u{b[0] - a[0], b[1] - a[1], b[2] - a[2]}, v{c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+        const std::array cross{u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]};
+        emitter.area += std::sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]) / 2;
+    }
+
+    return emitter;
+}
+
+// The self-lit meshes of a placement near the eye, onto `emitters`.
+void SceneContents::addEmitters(const ModelRecord& record, const ModelInstance& placement, const ModelRecord::Variant* variant, std::uint32_t instance,
+    const std::array<float, 3>& eye, std::vector<GIEmitter>& emitters)
+{
+    const auto& t = placement.transform;
+    const float scale = std::sqrt(t[0] * t[0] + t[1] * t[1] + t[2] * t[2]);
+    for (const auto& emitter : record.emitters)
+    {
+        auto geometry = emitter.part;
+        if (variant)
+        {
+            const auto shown = std::find(variant->parts.begin(), variant->parts.end(), emitter.part);
+            if (shown == variant->parts.end()) continue;
+
+            geometry = static_cast<std::uint32_t>(shown - variant->parts.begin());
+        }
+
+        const auto& [x, y, z] = emitter.centre;
+        const std::array centre{t[0] * x + t[1] * y + t[2] * z + t[3], t[4] * x + t[5] * y + t[6] * z + t[7], t[8] * x + t[9] * y + t[10] * z + t[11]};
+        const auto& emission = record.parts[emitter.part].emission;
+        const float spread = emitter.area * scale * scale / std::numbers::pi_v<float>;
+        const float strongest = std::max({emission[0], emission[1], emission[2]}) * spread;
+        const float reach = std::sqrt(strongest / LeastEmitterLight) + emitter.radius * scale;
+        const float offset[]{centre[0] - eye[0], centre[1] - eye[1], centre[2] - eye[2]};
+        if (offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2] > MostEmitterDistance * MostEmitterDistance) continue;
+
+        emitters.push_back({{centre[0], centre[1], centre[2], emitter.radius * scale}, {emission[0] * spread, emission[1] * spread, emission[2] * spread, reach},
+            {instance, geometry, record.parts[emitter.part].indexCount / 3, 0}});
+    }
+}
+
 // The frame's instances: the game's models where the game has them (on screen or not), its characters,
 // its terrain and the sea.
 void SceneContents::addInstances(const GameScene& frame, Update& update)
@@ -635,6 +738,8 @@ void SceneContents::addInstances(const GameScene& frame, Update& update)
                 {*instance, placement.hash, {placement.transform[3], placement.transform[7], placement.transform[11]}, 0, isTrimmed ? placement.hiddenGroups : 0,
                     placement.rejection});
 
+        if (!record.emitters.empty()) addEmitters(record, placement, isTrimmed ? &*variant : nullptr, *instance, frame.eye, update.emitters);
+
         ++modelInstanceCount;
         const auto& parts = record.geometry->parts;
         if (isTrimmed)
@@ -643,6 +748,22 @@ void SceneContents::addInstances(const GameScene& frame, Update& update)
             for (const auto& part : parts) modelTriangles += part.indices.size() / 3;
     }
 
+    // The strongest at the eye are the rays' to aim at: the others' light comes through the rays that meet them.
+    emittersPlaced = static_cast<std::uint32_t>(update.emitters.size());
+    if (update.emitters.size() > GI_MAX_EMITTERS)
+    {
+        const auto strength = [&](const GIEmitter& emitter) {
+            const float offset[]{emitter.sphere.x - frame.eye[0], emitter.sphere.y - frame.eye[1], emitter.sphere.z - frame.eye[2]};
+            const float squared = offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2];
+            return std::max({emitter.light.x, emitter.light.y, emitter.light.z}) / std::max(squared, 0.01f);
+        };
+
+        std::nth_element(update.emitters.begin(), update.emitters.begin() + GI_MAX_EMITTERS, update.emitters.end(),
+            [&](const GIEmitter& a, const GIEmitter& b) { return strength(a) > strength(b); });
+        update.emitters.resize(GI_MAX_EMITTERS);
+    }
+
+    emittersAimedAt = static_cast<std::uint32_t>(update.emitters.size());
     update.triangles += modelTriangles;
     charactersTraced = 0;
     characterVertices = 0;
@@ -705,7 +826,8 @@ std::string SceneContents::status() const
         + std::to_string(characterTriangles / 1000) + "k triangles), " + std::to_string(charactersWaiting) + " waiting; terrain rings "
         + std::to_string(terrainRings) + " of " + std::to_string(GI_TERRAIN_RINGS) + "; past the instance cap: " + std::to_string(modelsPastCap)
         + " models, " + std::to_string(charactersPastCap) + " characters, " + std::to_string(ringsPastCap) + " terrain rings"
-        + (isSeaTraced ? "; the sea's plane traced" : "");
+        + (isSeaTraced ? "; the sea's plane traced" : "") + "; self-lit meshes: " + std::to_string(emittersPlaced) + " near the eye, "
+        + std::to_string(emittersAimedAt) + " aimed at";
 }
 
 // The character `id`'s shown mesh `shownIndex` (a geometry of its structure) as its model file has it.

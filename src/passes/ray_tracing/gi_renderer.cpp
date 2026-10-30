@@ -192,7 +192,7 @@ struct State
     ComPtr<ID3D12Resource> statsReadback, statsCounters;
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT statsFootprint{};
     std::uint64_t statsFence{}, lastStats{};
-    Shared depth, normal, albedo, output, shadow, shadowDebug, velocity, terrainPages, terrainHeights, localLightShadow, lightDebug, guideNormals,
+    Shared depth, normal, albedo, output, shadow, shadowDebug, velocity, terrainPages, terrainHeights, localLightShadow, lightDebug, materialSpecular, skyCube, guideNormals,
         guideSpecular, reflection, reflectionDistance, guideMaterial, guideTranslucency, lampMasks, lampDiffuse, lampSpecular;
 
     ~State()
@@ -1091,6 +1091,7 @@ Result render(const Frame& frame)
     // instances ----
     const bool terrain = frame.terrain.has_value();
     const scene_contents::GameScene game{.frameIndex = frame.frameIndex,
+        .eye = frame.eye,
         .newModels = frame.newModels,
         .hasNewLists = frame.modelInstancesUpdated,
         .placements = frame.modelInstances,
@@ -1149,6 +1150,10 @@ Result render(const Frame& frame)
             traced.lampDiffuse = openShared(s, s.lampDiffuse, frame.textures.lampDiffuse, "Opening the lamps' diffuse light").Get();
             traced.lampSpecular = openShared(s, s.lampSpecular, frame.textures.lampSpecular, "Opening the lamps' specular light").Get();
         }
+        auto* materialSpecular = frame.isPathTraced && frame.textures.materialSpecular
+            ? openShared(s, s.materialSpecular, frame.textures.materialSpecular, "Opening the materials' specular colours").Get()
+            : nullptr;
+        auto* skyCube = frame.isPathTraced && frame.textures.skyCube ? openShared(s, s.skyCube, frame.textures.skyCube, "Opening the sky's cube").Get() : nullptr;
         auto* terrainPages = terrain ? openShared(s, s.terrainPages, frame.terrain->pages, "Opening the terrain's page table").Get() : nullptr;
         auto* terrainHeights = terrain ? openShared(s, s.terrainHeights, frame.terrain->heights, "Opening the terrain's heights").Get() : nullptr;
 
@@ -1190,7 +1195,15 @@ Result render(const Frame& frame)
         constants.shadowDiagnostics = {frame.twoSidedShadows ? 1u : 0u, frame.shadowStarts ? 1u : 0u, std::min(probePixel[0], frame.width - 1),
             std::min(probePixel[1], frame.height - 1)};
         constants.lightDiagnostics = {0, 0, lightDebug ? static_cast<std::uint32_t>(frame.lightDebugView) : 0u, 0};
-        constants.reconstruction = {frame.forReconstruction ? 1u : 0u, 0, 0, 0};
+        constants.reconstruction = {frame.forReconstruction ? 1u : 0u, materialSpecular ? 1u : 0u, skyCube ? 1u : 0u, 0};
+        constants.emission = {frame.emissionScale, frame.emissionCap, 0, 0};
+        if (frame.isPathTraced)
+        {
+            const auto emitters = std::min<std::size_t>(update.emitters.size(), GI_MAX_EMITTERS);
+            std::copy_n(update.emitters.begin(), emitters, constants.emitters);
+            constants.emitterCount = {static_cast<std::uint32_t>(emitters), 0, 0, 0};
+        }
+
         // A ray a render pixel for Ray Reconstruction, whatever the ray quality: as many rays as High's four a
         // 2 x 2, the most a sample can take apart.
         constants.lightRays = {frame.forReconstruction ? 1u : frame.lightRays, 0, 0, 0};
@@ -1218,6 +1231,8 @@ Result render(const Frame& frame)
             descriptors.texture(15, terrainHeights, frame.terrain->heightsFormat);
         }
         if (velocity) descriptors.texture(17, velocity, frame.textures.velocityFormat);
+        if (materialSpecular) descriptors.texture(23, materialSpecular, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        if (skyCube) descriptors.cube(24, skyCube, DXGI_FORMAT_R16G16B16A16_FLOAT);
         if (debugShadows)
         {
             descriptors.outputBuffer(77, s.probe.Get(), sizeof(GIShadowProbe), 1);

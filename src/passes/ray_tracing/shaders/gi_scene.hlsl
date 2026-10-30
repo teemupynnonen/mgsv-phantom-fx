@@ -35,9 +35,15 @@ float3 PaletteTransform(uint bone, float3 position)
     return float3(dot(g_Palettes[3 * bone], p), dot(g_Palettes[3 * bone + 1], p), dot(g_Palettes[3 * bone + 2], p));
 }
 
+float3 PaletteRotation(uint bone, float3 direction)
+{
+    return float3(dot(g_Palettes[3 * bone].xyz, direction), dot(g_Palettes[3 * bone + 1].xyz, direction), dot(g_Palettes[3 * bone + 2].xyz, direction));
+}
+
 // One thread a vertex of the frame's characters (g_Dispatch.x of them, in g_Dispatch.y records): its
 // bind pose under its bones' palette matrices, weighted, into its posed place, as the game's skinning
-// shaders place it. The pool is still in the unordered access state, so it is read through its output.
+// shaders place it, its normal and tangent turned with it. The pool is still in the unordered access state,
+// so it is read through its output.
 [numthreads(64, 1, 1)]
 void Skin(uint did : SV_DispatchThreadID)
 {
@@ -48,7 +54,10 @@ void Skin(uint did : SV_DispatchThreadID)
     float4 bind = asfloat(g_GeometryPoolOut.Load4(record.bindOffset + 16 * vertex));
     uint4 skin = g_GeometryPoolOut.Load4(record.skinOffset + 16 * vertex);
     uint bones[4] = {skin.x & 0xFFFFu, skin.x >> 16, skin.y & 0xFFFFu, skin.y >> 16};
-    float3 position = 0.0f;
+    uint4 frame = record.bindNormalOffset ? g_GeometryPoolOut.Load4(record.bindNormalOffset + 16 * vertex) : uint4(0, 0, 0, 0);
+    float3 bindNormal = float3(f16tof32(frame.x), f16tof32(frame.x >> 16), f16tof32(frame.y));
+    float3 bindTangent = float3(f16tof32(frame.z), f16tof32(frame.z >> 16), f16tof32(frame.w));
+    float3 position = 0.0f, normal = 0.0f, tangent = 0.0f;
     float total = 0.0f;
     for (uint i = 0; i < 4; ++i)
     {
@@ -56,12 +65,18 @@ void Skin(uint did : SV_DispatchThreadID)
         if (weight == 0.0f) continue;
 
         position += weight * PaletteTransform(record.firstBone + bones[i], bind.xyz);
+        normal += weight * PaletteRotation(record.firstBone + bones[i], bindNormal);
+        tangent += weight * PaletteRotation(record.firstBone + bones[i], bindTangent);
         total += weight;
     }
 
     // The 8-bit weights' rounding leaves their sum near one: they are scaled to it.
     position = total > 0.0f ? position / total : bind.xyz;
     g_GeometryPoolOut.Store4(record.posedOffset + 16 * vertex, asuint(float4(position, bind.w)));
+    if (record.posedNormalOffset == 0u) return;
+
+    uint3 n = f32tof16(total > 0.0f ? normal : bindNormal), t = f32tof16(total > 0.0f ? tangent : bindTangent);
+    g_GeometryPoolOut.Store4(record.posedNormalOffset + 16 * vertex, uint4(n.x | (n.y << 16), n.z, t.x | (t.y << 16), t.z | (frame.w & 0xFFFF0000u)));
 }
 
 // The traced scene from the camera, shaded by its normals; red where it disagrees with the game's

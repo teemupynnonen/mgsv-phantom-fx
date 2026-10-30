@@ -22,6 +22,16 @@ constexpr std::uint8_t GlassAlpha = 0x10, CutOutAlpha = 0x20, TranslucentAlpha =
 // Fox Engine's string hash, CityHash64 1.0.3 of the name and its terminating zero with seeds
 // 0x9AE16A3B2F90404F and (first character << 16) + length, 48 bits kept.
 constexpr std::uint64_t BaseTextureParameter = 0x41EA7BE81B61, MaskTextureParameter = 0x3ED9B75CD480;
+// And "SpecularMap_Tex_LIN" (the G-buffer's g_tex_srm: r the specular rate, g the roughness), "NormalMap_Tex_NRM", and
+// the vectors "MatParamIndex_0" (x the material table's row, the G-buffer's cb4[0].x), "SelfColor" and
+// "SelfColorIntensity" (fox3dfw_constant*: the texture times the colour times the intensity's x).
+constexpr std::uint64_t SpecularTextureParameter = 0x104D6B98B10E, NormalTextureParameter = 0xCC4305511AE0;
+constexpr std::uint64_t MaterialIndexParameter = 0xCAB8E38487FF, SelfColorParameter = 0x557B9224571E, SelfColorIntensityParameter = 0xE40A3A2518CF;
+// Its alpha bits' additive blend: a glow card around a lamp (four vertices), no surface.
+constexpr std::uint8_t AdditiveAlpha = 0x01;
+// A self colour times intensity below this lights nothing: the sky's dome and the moon have 1, a mesh painted black
+// 0.16. The sun's light is about 20,000, and a lamp's bulb 80 and up.
+constexpr float LeastEmission = 10;
 
 // The alpha below which a cut-out mesh lets light through: the game's shadow pass discards below half its
 // per-draw m_param.w (ModelForward_Shadow), measured 1 on cut-out meshes' draws (0 where it tests
@@ -49,8 +59,11 @@ constexpr float CutOutThreshold = 0.5f;
 //   shadows").
 // - The object brush's bushes and grass cast no shadow in the game: their meshes are taken as leaves
 //   all the same, for the rays' shadows; the brush's props are solid.
-std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isCharacter, bool isVegetation, bool areMainViewCutOutsDropped)
+// - A self-lit mesh is taken for its light, its glass flag or not, but for an additive glow card, which is no surface.
+std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isCharacter, bool isVegetation, bool areMainViewCutOutsDropped, bool isSelfLit)
 {
+    if (isSelfLit && !(alpha & AdditiveAlpha)) return MeshRole::Emissive;
+
     const bool isCutOut = (alpha & (CutOutAlpha | DecalAlpha)) != 0;
     const bool isSeeThrough = (alpha & TranslucentAlpha) != 0;
     const bool isMainViewOnly = (shadow & CastsNoShadow) && !isVegetation;
@@ -89,6 +102,8 @@ std::uint32_t flagsOf(MeshRole role)
         return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_HAIR;
     case MeshRole::MainViewOnly:
         return GI_GEOMETRY_NO_SHADOW;
+    case MeshRole::Emissive:
+        return GI_GEOMETRY_NO_SHADOW | GI_GEOMETRY_EMISSIVE;
     case MeshRole::ShadowOnly:
         return GI_GEOMETRY_SHADOW_ONLY;
     case MeshRole::SunShadowOnly:
@@ -126,6 +141,7 @@ struct FileLayout
 {
     std::array<Block, 32> blocks{};
     std::uint64_t bufferData{}; // Section 1's vertex and index data
+    std::uint64_t vectors{};    // Section 1's material parameters: four floats each
     bool hasBones{};
 };
 
@@ -155,6 +171,7 @@ std::optional<FileLayout> layoutOf(const FileReader& file) noexcept
         if (!file.at(at, type) || !file.at(at + 4, offset)) return std::nullopt;
 
         if (type == 2) layout.bufferData = std::uint64_t{offset1} + offset;
+        if (type == 0) layout.vectors = std::uint64_t{offset1} + offset;
     }
 
     if (!layout.bufferData) return std::nullopt;
@@ -216,6 +233,45 @@ std::uint64_t textureOf(const FileReader& file, const FileLayout& layout, std::u
     }
 
     return 0;
+}
+
+// A mesh's vector for a parameter: its material instance's (block 4: vector count at +7, first vector parameter at
+// +10) parameter of that name (block 7: the name's StrCode64 index into block 22, the vector's index into section 1's
+// vectors). Nullopt when the mesh has none.
+std::optional<std::array<float, 4>> vectorOf(const FileReader& file, const FileLayout& layout, std::uint16_t materialInstance, std::uint64_t parameter)
+{
+    const auto& b = layout.blocks;
+    constexpr int MaterialInstances = 4, Parameters = 7, StrCodes = 22;
+    std::uint8_t count{};
+    std::uint16_t first{};
+    if (!layout.vectors || materialInstance >= b[MaterialInstances].count || !file.at(b[MaterialInstances].offset + 16ull * materialInstance + 7, count)
+        || !file.at(b[MaterialInstances].offset + 16ull * materialInstance + 10, first))
+        return std::nullopt;
+
+    for (std::uint32_t i = first; i < std::uint32_t{first} + count && i < b[Parameters].count; ++i)
+    {
+        std::uint16_t name{}, vector{};
+        std::uint64_t nameHash{};
+        if (!file.at(b[Parameters].offset + 4ull * i, name) || !file.at(b[Parameters].offset + 4ull * i + 2, vector) || name >= b[StrCodes].count
+            || !file.at(b[StrCodes].offset + 8ull * name, nameHash) || nameHash != parameter)
+            continue;
+
+        std::array<float, 4> value{};
+        if (file.at(layout.vectors + 16ull * vector, value)) return value;
+    }
+
+    return std::nullopt;
+}
+
+// A self-lit mesh's light in the game's units; all zero on any other mesh (LeastEmission).
+std::array<float, 3> emissionOf(const FileReader& file, const FileLayout& layout, std::uint16_t materialInstance)
+{
+    const auto color = vectorOf(file, layout, materialInstance, SelfColorParameter);
+    const auto intensity = vectorOf(file, layout, materialInstance, SelfColorIntensityParameter);
+    if (!color || !intensity) return {};
+
+    const std::array emission{(*color)[0] * (*intensity)[0], (*color)[1] * (*intensity)[0], (*color)[2] * (*intensity)[0]};
+    return std::max({emission[0], emission[1], emission[2]}) >= LeastEmission ? emission : std::array<float, 3>{};
 }
 
 // Diagnostics: the StrCode64 of a mesh's material's technique (as fox3DDF_Blin_NC): its material
@@ -295,7 +351,8 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
     const auto& b = layout->blocks;
     constexpr int Bones = 0, Meshes = 3, BoneGroups = 5, Assignments = 9, MeshFormats = 10, VertexFormats = 11, BufferOffsets = 14, FaceInfos = 17;
     // Vertex format usages and data types.
-    constexpr std::uint8_t Position = 0, BoneWeights = 1, BoneNumbers = 7, Uv0 = 8, ThreeFloats = 1, TwoHalves = 7, FourUnorms = 8, FourBytes = 9;
+    constexpr std::uint8_t Position = 0, BoneWeights = 1, Normal = 2, BoneNumbers = 7, Uv0 = 8, Tangent = 14, ThreeFloats = 1, FourHalves = 6, TwoHalves = 7,
+                           FourUnorms = 8, FourBytes = 9;
     if (!b[BufferOffsets].count) return nullptr;
 
     std::uint32_t facesOffset{};
@@ -329,7 +386,9 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
             || !file.at(meshAt + 16, firstFace) || !file.at(meshAt + 24, firstFaceInfo))
             return nullptr;
 
-        auto role = roleOf(alpha, shadow, model->bones != 0, isVegetation, areMainViewCutOutsDropped);
+        const auto emission = emissionOf(file, *layout, materialInstance);
+        const bool isSelfLit = emission != std::array<float, 3>{};
+        auto role = roleOf(alpha, shadow, model->bones != 0, isVegetation, areMainViewCutOutsDropped, isSelfLit);
         const bool isDropped = !role;
         if (isDropped)
         {
@@ -348,7 +407,7 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
             || !file.at(assignmentAt + 6, firstVertexFormat))
             return nullptr;
 
-        std::optional<Stream> positions, uvs, weights, numbers;
+        std::optional<Stream> positions, uvs, weights, numbers, normals, tangents;
         std::uint32_t vertexFormat = firstVertexFormat;
         for (std::uint32_t i = firstMeshFormat; i < std::uint32_t{firstMeshFormat} + meshFormatCount && i < b[MeshFormats].count; ++i)
         {
@@ -370,6 +429,8 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
                 if (usage == Uv0 && !uvs) uvs = stream;
                 if (usage == BoneWeights && !weights) weights = stream;
                 if (usage == BoneNumbers && !numbers) numbers = stream;
+                if (usage == Normal && !normals) normals = stream;
+                if (usage == Tangent && !tangents) tangents = stream;
             }
         }
 
@@ -395,13 +456,32 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
             part.textureIsMask = part.baseTexture != 0;
         }
 
+        part.specularTexture = textureOf(file, *layout, materialInstance, SpecularTextureParameter);
+        part.normalTexture = textureOf(file, *layout, materialInstance, NormalTextureParameter);
+        if (const auto index = vectorOf(file, *layout, materialInstance, MaterialIndexParameter))
+            part.materialIndex = static_cast<std::uint32_t>(std::clamp((*index)[0], 0.0f, 255.0f));
+        part.emission = emission;
+
         const bool textured = uvs && uvs->dataType == TwoHalves;
+        const bool hasNormals = normals && tangents && normals->dataType == FourHalves && tangents->dataType == FourHalves;
         part.vertices.resize(vertexCount);
         if (textured) part.uvs.resize(vertexCount);
+        if (hasNormals) part.normals.resize(vertexCount);
         for (std::uint32_t v = 0; v < vertexCount; ++v)
+        {
             if (!file.at(positions->at + std::uint64_t{v} * positions->stride, part.vertices[v])
                 || (textured && !file.at(uvs->at + std::uint64_t{v} * uvs->stride, part.uvs[v])))
                 return nullptr;
+
+            if (!hasNormals) continue;
+
+            std::array<std::uint16_t, 4> normal{}, tangent{};
+            if (!file.at(normals->at + std::uint64_t{v} * normals->stride, normal) || !file.at(tangents->at + std::uint64_t{v} * tangents->stride, tangent))
+                return nullptr;
+
+            std::copy(normal.begin(), normal.end(), part.normals[v].begin());
+            std::copy(tangent.begin(), tangent.end(), part.normals[v].begin() + 4);
+        }
 
         const auto indices = layout->bufferData + facesOffset + 2ull * (std::uint64_t{firstFace} + lodFirst);
         part.firstIndex = firstFace + lodFirst;
@@ -425,12 +505,16 @@ bool isCutOut(MeshRole role)
     return role == MeshRole::CutOut || role == MeshRole::Leaf || role == MeshRole::Hair;
 }
 
-Material materialOf(const ModelPart& part, std::optional<std::uint32_t> textureIndex)
+Material materialOf(const ModelPart& part, const MaterialTextures& textures)
 {
-    Material material{.flags = flagsOf(part.role) | (part.uvs.empty() ? 0u : GI_GEOMETRY_UV)};
-    if (!textureIndex || part.uvs.empty()) return material;
+    Material material{.flags = flagsOf(part.role) | (part.uvs.empty() ? 0u : GI_GEOMETRY_UV), .materialIndex = part.materialIndex, .emission = part.emission};
+    if (part.uvs.empty()) return material;
 
-    material.texture = *textureIndex + 1;
+    if (textures.specular) material.specularTexture = *textures.specular + 1;
+    if (textures.normal) material.normalTexture = *textures.normal + 1;
+    if (!textures.base) return material;
+
+    material.texture = *textures.base + 1;
     if (part.textureIsMask) material.flags |= GI_GEOMETRY_MASK;
     if (isCutOut(part.role))
     {

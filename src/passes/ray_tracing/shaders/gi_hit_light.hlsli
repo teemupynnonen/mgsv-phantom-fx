@@ -5,6 +5,7 @@
 #ifndef GI_HIT_LIGHT_HLSLI
 #define GI_HIT_LIGHT_HLSLI
 
+#include "ggx_specular.hlsli"
 #include "gi_common.hlsli"
 
 // ---- Bindings, after gi_common.hlsli's ----
@@ -292,11 +293,25 @@ void HitSurface(HashGridCache_Visibility visibility, out float3 world, out float
     normal = FacingNormal(t, visibility.direction);
 }
 
-// A hit's albedo: the sea's water; the G-buffer's where the camera sees the hit; otherwise its mesh's
-// albedo texture, or its mesh's mean.
-float3 HitAlbedo(float3 world, HashGridCache_Visibility visibility)
+// The level of detail a hit reads a texture at: the ray cone's, `footprint` metres across there; or without one,
+// a few texels' mean: the global illumination's light varies over centimetres to metres.
+float HitLevel(Texture2D<float4> texture, SceneTriangle t, float footprint)
 {
-    if (InstanceKind(g_Instances[visibility.instanceIndex]) & GI_INSTANCE_SEA) return float3(GI_SEA_ALBEDO);
+    uint width, height, levels;
+    texture.GetDimensions(0, width, height, levels);
+    if (footprint <= 0.0f) return max(float(levels) - 6.0f, 0.0f);
+
+    float2 uv0 = VertexUV(t.geometry, t.indices.x), uv1 = VertexUV(t.geometry, t.indices.y), uv2 = VertexUV(t.geometry, t.indices.z);
+    return clamp(TextureLod(t.v0, t.v1, t.v2, uv0, uv1, uv2, float2(width, height), footprint), 0.0f, float(levels) - 1.0f);
+}
+
+// A hit's albedo: the sea's water; none on a self-lit mesh, whose texture is its light; the G-buffer's where the
+// camera sees the hit; otherwise its mesh's albedo texture, or its mesh's mean.
+float3 HitAlbedo(float3 world, HashGridCache_Visibility visibility, float footprint)
+{
+    GIInstanceDesc instance = g_Instances[visibility.instanceIndex];
+    if (InstanceKind(instance) & GI_INSTANCE_SEA) return float3(GI_SEA_ALBEDO);
+    if (g_Geometries[FirstGeometry(instance) + visibility.geometryIndex].flags & GI_GEOMETRY_EMISSIVE) return 0.0f;
 
     float4 clip = mul(g_ViewProjection, float4(world, 1.0f));
     if (clip.w > 0.0f)
@@ -310,18 +325,145 @@ float3 HitAlbedo(float3 world, HashGridCache_Visibility visibility)
         }
     }
 
-    // The texture's mean over a few texels' patch: the light varies over centimetres to metres.
     SceneTriangle t = LoadTriangle(visibility.instanceIndex, visibility.geometryIndex, visibility.primitiveIndex);
     if (t.geometry.texture && (t.geometry.flags & GI_GEOMETRY_MASK) == 0)
     {
         Texture2D<float4> texture = g_SceneTextures[NonUniformResourceIndex(t.geometry.texture - 1)];
-        uint width, height, levels;
-        texture.GetDimensions(0, width, height, levels);
-        return texture.SampleLevel(g_WrapSampler, TriangleUV(t.geometry, t.indices, visibility.barycentrics), max(float(levels) - 6.0f, 0.0f)).rgb;
+        return texture.SampleLevel(g_WrapSampler, TriangleUV(t.geometry, t.indices, visibility.barycentrics), HitLevel(texture, t, footprint)).rgb;
     }
 
     uint4 learnt = g_GeometryAlbedo[t.row];
     return learnt.w ? float3(learnt.xyz) / (255.0f * learnt.w) : g_Frame.nearFar.z;
+}
+
+float3 HitAlbedo(float3 world, HashGridCache_Visibility visibility)
+{
+    return HitAlbedo(world, visibility, 0.0f);
+}
+
+// A self-lit mesh's light where a ray meets it: its own, times its texture's colour, in the rays' units.
+float3 EmissionAt(SceneTriangle t, float2 barycentrics)
+{
+    float3 light = t.geometry.emission.rgb * g_Frame.emission.x;
+    if (!t.geometry.texture || !(t.geometry.flags & GI_GEOMETRY_UV)) return light;
+
+    Texture2D<float4> texture = g_SceneTextures[NonUniformResourceIndex(t.geometry.texture - 1)];
+    return light * texture.SampleLevel(g_WrapSampler, TriangleUV(t.geometry, t.indices, barycentrics), 0.0f).rgb;
+}
+
+// The surface's normal at a hit, as the G-buffer has it: its vertices' normals and its normal map. On the side the
+// ray came from, and the triangle's own where a bent normal would face away from the ray.
+float3 ShadingNormal(SceneTriangle t, HashGridCache_Visibility visibility, float3 geometric, float footprint)
+{
+    if (!t.geometry.normalOffset) return geometric;
+
+    float2 b = visibility.barycentrics;
+    float3 weights = float3(1.0f - b.x - b.y, b.x, b.y);
+    float3 n0, n1, n2;
+    float4 t0, t1, t2;
+    VertexFrame(t.geometry, t.indices.x, n0, t0);
+    VertexFrame(t.geometry, t.indices.y, n1, t1);
+    VertexFrame(t.geometry, t.indices.z, n2, t2);
+
+    GIInstanceDesc instance = g_Instances[visibility.instanceIndex];
+    float3 normal = ToWorldDirection(instance, weights.x * n0 + weights.y * n1 + weights.z * n2);
+    float3 tangent = ToWorldDirection(instance, weights.x * t0.xyz + weights.y * t1.xyz + weights.z * t2.xyz);
+    if (!(dot(normal, normal) > 0.0f)) return geometric;
+
+    normal = normalize(normal);
+    if (t.geometry.normalTexture && (t.geometry.flags & GI_GEOMETRY_UV))
+    {
+        // fox3ddf_blin's decode: x in alpha, y in green, z what is left; its binormal is cross(normal, tangent) x w.
+        Texture2D<float4> map = g_SceneTextures[NonUniformResourceIndex(t.geometry.normalTexture - 1)];
+        float2 xy = map.SampleLevel(g_WrapSampler, TriangleUV(t.geometry, t.indices, b), HitLevel(map, t, footprint)).ag * 2.0f - 1.0f;
+        tangent = tangent - normal * dot(tangent, normal);
+        if (dot(tangent, tangent) > 0.0f)
+        {
+            tangent = normalize(tangent);
+            normal = normalize(xy.x * tangent + xy.y * t0.w * cross(normal, tangent) + sqrt(saturate(1.0f - dot(xy, xy))) * normal);
+        }
+    }
+
+    if (dot(normal, geometric) < 0.0f) normal = -normal;
+    return dot(normal, -visibility.direction) > 0.0f ? normal : geometric;
+}
+
+// A hit as path tracing's reflections shade it (HitOwnLight); `isMatte`, a matte surface of its triangle's normal, all
+// the global illumination's diffuse rays need: reading its material for them cost 2.5 ms and showed nothing
+// (2026-10-30). `footprint`: the ray's cone there (HitLevel).
+struct HitMaterial
+{
+    float3 world;
+    float3 geometric;     // Its triangle's normal, towards where the ray came from
+    float3 normal;        // What it is lit with
+    float3 albedo;
+    float3 specularColor; // At normal incidence, as the game's table and SRM give it
+    float roughness;
+    float3 emission;      // A self-lit mesh's light
+    bool isSelfLit;
+    bool isLeaf;
+};
+
+HitMaterial HitMaterialOf(HashGridCache_Visibility visibility, float footprint, bool isMatte)
+{
+    SceneTriangle t = LoadTriangle(visibility.instanceIndex, visibility.geometryIndex, visibility.primitiveIndex);
+    HitMaterial material;
+    material.world = TrianglePoint(t, visibility.barycentrics);
+    material.geometric = FacingNormal(t, visibility.direction);
+    material.normal = material.geometric;
+    material.albedo = 0.0f;
+    material.specularColor = 0.0f;
+    material.roughness = 1.0f;
+    material.emission = 0.0f;
+    material.isSelfLit = (t.geometry.flags & GI_GEOMETRY_EMISSIVE) != 0;
+    material.isLeaf = (t.geometry.flags & GI_GEOMETRY_LEAF) != 0;
+    if (material.isSelfLit)
+    {
+        material.emission = EmissionAt(t, visibility.barycentrics);
+        return material;
+    }
+
+    material.albedo = HitAlbedo(material.world, visibility, footprint);
+    if (isMatte || !g_Frame.reconstruction.y) return material;
+
+    // The game's sea has no SRM: water's own reflectance, as the guides give it (ray_tracing.cpp).
+    if (InstanceKind(g_Instances[visibility.instanceIndex]) & GI_INSTANCE_SEA)
+    {
+        material.specularColor = 0.02f;
+        material.roughness = 0.1f;
+        return material;
+    }
+
+    material.normal = ShadingNormal(t, visibility, material.geometric, footprint);
+    if (t.geometry.specularTexture && (t.geometry.flags & GI_GEOMETRY_UV))
+    {
+        // fox3ddf_blin's G-buffer: r the specular rate, g the roughness.
+        Texture2D<float4> srm = g_SceneTextures[NonUniformResourceIndex(t.geometry.specularTexture - 1)];
+        float2 rateAndRoughness = srm.SampleLevel(g_WrapSampler, TriangleUV(t.geometry, t.indices, visibility.barycentrics), HitLevel(srm, t, footprint)).rg;
+        material.specularColor = rateAndRoughness.x * g_MaterialSpecular.Load(int3(t.geometry.materialIndex, 0, 0)).rgb;
+        material.roughness = rateAndRoughness.y;
+    }
+
+    return material;
+}
+
+// Whether the rays towards self-lit meshes aim at this one (SampledEmitterLight).
+bool IsAimedAt(uint instance, uint geometry)
+{
+    for (uint i = 0; i < g_Frame.emitterCount.x; ++i)
+        if (g_Frame.emitters[i].place.x == instance && g_Frame.emitters[i].place.y == geometry) return true;
+
+    return false;
+}
+
+// What a diffuse ray takes of a self-lit mesh it meets: one the rays towards self-lit meshes aim at gives its diffuse
+// light that way, so only the others' light comes through the ray. The specular rays always take it: those
+// rays are what brings a self-lit mesh into a reflection.
+float3 DiffuseRayEmission(HashGridCache_Visibility visibility, float3 emission)
+{
+    if (!any(emission > 0.0f) || IsAimedAt(visibility.instanceIndex, visibility.geometryIndex)) return 0.0f;
+
+    return min(emission, g_Frame.emission.y);
 }
 
 // Leaves (GI_GEOMETRY_LEAF) let light through.
@@ -331,10 +473,11 @@ bool HitIsLeaf(HashGridCache_Visibility visibility)
 }
 
 // The light at a hit from one of the frame's point and spot lights, chosen by its light here without
-// shadows (weighted reservoir sampling, a candidate a light), through a shadow ray to it: its light over
-// the chance it was chosen.
-float3 SampledLocalLight(float3 world, float3 normal, float3 origin, float tolerance, inout Random random)
+// shadows (weighted reservoir sampling, a candidate a light), through a shadow ray to it: its light before
+// the cosine, over the chance it was chosen.
+float3 SampledLocalLightReaching(float3 world, float3 normal, float3 origin, float tolerance, inout Random random, out float3 towardsLight)
 {
+    towardsLight = normal;
     float total = 0.0f, chosenWeight = 0.0f;
     float3 chosenLight = 0.0f, chosenDirection = 0.0f;
     float chosenDistance = 0.0f, chosenClearance = 0.0f;
@@ -360,9 +503,86 @@ float3 SampledLocalLight(float3 world, float3 normal, float3 origin, float toler
 
     if (!(chosenWeight > 0.0f)) return 0.0f;
 
+    towardsLight = chosenDirection;
     float rayLength = chosenDistance - chosenClearance;
     float visibility = rayLength > 0.0f ? VisibilityFromSurface(origin, normal, tolerance, chosenDirection, rayLength, ShadowRayTowards(RayTowardsLamp)) : 1.0f;
-    return chosenLight * (total / chosenWeight * visibility);
+    return chosenLight * (total / (chosenWeight * dot(normal, chosenDirection)) * visibility);
+}
+
+// The same with the cosine: the diffuse light at the hit.
+float3 SampledLocalLight(float3 world, float3 normal, float3 origin, float tolerance, inout Random random)
+{
+    float3 toLight;
+    float3 reaching = SampledLocalLightReaching(world, normal, origin, tolerance, random, toLight);
+    return reaching * saturate(dot(normal, toLight));
+}
+
+// The diffuse light at a surface from one of the self-lit meshes the frame aims at (GIFrameConstants::emitters): one
+// chosen by its light here (weighted reservoir sampling), a triangle of it and a point on that, through a shadow ray:
+// its radiance at the point, times the cosines at both ends and the triangle's area over the squared distance, in the
+// game's diffuse light units (over pi), over the chances of what was chosen: an unbiased estimate of their diffuse
+// light. Their specular light comes by the reflections' own rays meeting them.
+float3 SampledEmitterLight(float3 world, float3 normal, float3 origin, float tolerance, inout Random random)
+{
+    float total = 0.0f, chosenWeight = 0.0f;
+    uint chosen = 0u;
+    for (uint i = 0; i < g_Frame.emitterCount.x; ++i)
+    {
+        float3 towardsCentre = g_Frame.emitters[i].sphere.xyz - world;
+        float centreSquared = dot(towardsCentre, towardsCentre);
+        float reach = g_Frame.emitters[i].light.w;
+        if (centreSquared >= reach * reach) continue;
+
+        // Above the surface's horizon, for as much of its sphere as may rise over it.
+        float radius = g_Frame.emitters[i].sphere.w;
+        float centreDistance = max(sqrt(centreSquared), 1e-3f);
+        float above = dot(normal, towardsCentre) / centreDistance + saturate(radius / centreDistance);
+        if (!(above > 0.0f)) continue;
+
+        float weight = luminance(g_Frame.emitters[i].light.rgb) * saturate(above) / max(centreSquared, radius * radius);
+        total += weight;
+        if (random.rand() * total < weight)
+        {
+            chosen = i;
+            chosenWeight = weight;
+        }
+    }
+
+    if (!(chosenWeight > 0.0f)) return 0.0f;
+
+    GIEmitter emitter = g_Frame.emitters[chosen];
+    SceneTriangle t = LoadTriangle(emitter.place.x, emitter.place.y, random.randInt(emitter.place.z));
+    float2 u = random.rand2();
+    float root = sqrt(u.x);
+    float2 barycentrics = float2(root * (1.0f - u.y), root * u.y);
+    float3 offset = TrianglePoint(t, barycentrics) - world;
+    float pointSquared = dot(offset, offset);
+    float pointDistance = sqrt(pointSquared);
+    float3 direction = offset / max(pointDistance, 1e-4f);
+    float cosine = dot(normal, direction);
+    float3 edges = cross(t.v1 - t.v0, t.v2 - t.v0);
+    float twiceArea = length(edges);
+    if (!(cosine > 0.0f) || !(twiceArea > 0.0f)) return 0.0f;
+
+    // The side it shines from: its vertices' normal, which knows it; both of a mesh without.
+    float cosineThere = abs(dot(edges, direction)) / twiceArea;
+    if (t.geometry.normalOffset)
+    {
+        float3 n0, n1, n2;
+        float4 unusedTangent;
+        VertexFrame(t.geometry, t.indices.x, n0, unusedTangent);
+        VertexFrame(t.geometry, t.indices.y, n1, unusedTangent);
+        VertexFrame(t.geometry, t.indices.z, n2, unusedTangent);
+        float3 facing = ToWorldDirection(g_Instances[emitter.place.x], (1.0f - barycentrics.x - barycentrics.y) * n0 + barycentrics.x * n1 + barycentrics.y * n2);
+        if (dot(facing, direction) > 0.0f) return 0.0f;
+    }
+
+    float3 radiance = min(EmissionAt(t, barycentrics), g_Frame.emission.y);
+    if (!any(radiance > 0.0f)) return 0.0f;
+
+    float visibility = VisibilityFromSurface(origin, normal, tolerance, direction, max(pointDistance - 0.01f, 0.0f), ShadowRayTowards(RayTowardsLamp));
+    float chances = emitter.place.z * total / chosenWeight;
+    return radiance * (visibility * cosine * cosineThere * twiceArea * chances / (TWO_PI * max(pointSquared, 1e-3f)));
 }
 
 // The share of the light on a leaf's far side it lets through to the near side, over the share it reflects
@@ -375,21 +595,46 @@ float3 SampledLocalLight(float3 world, float3 normal, float3 origin, float toler
 static const float LeafTransmittance = 0.5f;
 
 // The sun as a disc of its angular size at a hit: a shadow ray to a point on it from the side it lights,
-// a leaf's far side too. Its light before the albedo.
-float3 SunLight(float3 world, float3 normal, float3 origin, float tolerance, bool leaf, inout Random random)
+// a leaf's far side too. Its light before the cosine and the albedo.
+float3 SunReaching(float3 world, float3 normal, float3 origin, float tolerance, bool leaf, inout Random random, out float3 direction)
 {
+    direction = g_Frame.sunDirection.xyz;
     float3 towardsSun = g_Frame.sunDirection.xyz;
     bool sunFar = leaf && dot(normal, towardsSun) < 0.0f;
     float3 sunSide = sunFar ? -normal : normal;
-    float cosine = dot(sunSide, towardsSun);
-    if (!(cosine > 0.0f) || dot(g_Frame.sunColor.rgb, 1.0f) <= 0.0f) return 0.0f;
+    if (!(dot(sunSide, towardsSun) > 0.0f) || dot(g_Frame.sunColor.rgb, 1.0f) <= 0.0f) return 0.0f;
 
-    float3 direction = SunSample(random.rand2());
+    direction = SunSample(random.rand2());
     float3 sunOrigin = sunFar ? OffsetFromTriangle(world, sunSide) : origin;
     float visibility = VisibilityFromSurface(sunOrigin, sunSide, tolerance, direction, 1e4f, ShadowRayTowards(RayTowardsSun));
     if (visibility <= 0.0f) return 0.0f;
 
-    return g_Frame.sunColor.rgb * (cosine * visibility * (sunFar ? LeafTransmittance : 1.0f));
+    return g_Frame.sunColor.rgb * (visibility * (sunFar ? LeafTransmittance : 1.0f));
+}
+
+// With the cosine, its light before the albedo.
+float3 SunLight(float3 world, float3 normal, float3 origin, float tolerance, bool leaf, inout Random random)
+{
+    float3 direction;
+    return SunReaching(world, normal, origin, tolerance, leaf, random, direction) * abs(dot(normal, g_Frame.sunDirection.xyz));
+}
+
+// The light a hit sends towards `toEye` from the sun, a point or spot light and a self-lit mesh: their diffuse light
+// by its albedo, and with path tracing the sun's and the light's specular light by GGX, as the sun pass and the lamps
+// shade what the camera sees; a self-lit mesh's specular light is the specular ray that meets it. `origin` and
+// `tolerance` as OffsetFromTriangle and CopyTolerance give them for its triangle.
+float3 HitOwnLight(HitMaterial material, float3 toEye, float3 origin, float tolerance, inout Random random)
+{
+    float3 toSun, toLight;
+    float3 sun = SunReaching(material.world, material.geometric, origin, tolerance, material.isLeaf, random, toSun);
+    float3 lamp = SampledLocalLightReaching(material.world, material.geometric, origin, tolerance, random, toLight);
+    float sunCosine = dot(material.normal, toSun);
+    float3 light = material.albedo * (sun * (material.isLeaf ? abs(sunCosine) : saturate(sunCosine)) + lamp * saturate(dot(material.normal, toLight)));
+    light += material.albedo * SampledEmitterLight(material.world, material.geometric, origin, tolerance, random);
+    if (!any(material.specularColor > 0.0f)) return light;
+
+    float3 specular = GgxSpecular(sun, material.normal, toEye, toSun, material.roughness, material.specularColor);
+    return light + specular + GgxSpecular(lamp, material.normal, toEye, toLight, material.roughness, material.specularColor);
 }
 
 // The side a hit's cosine-weighted ray leaves from, and what its light counts: a leaf's ray goes to its
@@ -416,6 +661,7 @@ float3 HitDirectLight(float3 world, float3 normal, float3 albedo, bool leaf, ino
     light += SkyRadiance(skyDirection) * (skyWeight * VisibilityFromSurface(skyOrigin, skySide, tolerance, skyDirection, 1e4f, RayTowardsSurface));
 
     light += SampledLocalLight(world, normal, origin, tolerance, random);
+    light += SampledEmitterLight(world, normal, origin, tolerance, random);
     return albedo * light;
 }
 

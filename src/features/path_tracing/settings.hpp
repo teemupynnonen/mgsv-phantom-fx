@@ -10,6 +10,7 @@ struct PathTracing
 {
     bool on{};
     float reflections{1};
+    float emission{1};
 
     bool operator==(const PathTracing&) const = default;
 };
