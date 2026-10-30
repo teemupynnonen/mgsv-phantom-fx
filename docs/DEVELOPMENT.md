@@ -47,7 +47,11 @@ only feeds them (`DiagnosticLog` in `src/log.hpp`, tested with `if constexpr`):
 Its log's first line says "with the diagnostic log". Builds for in-game checks use this preset.
 It also sets `PHANTOM_FX_DEV_TOOLS` (`DevTools` in `src/dev_tools.hpp`), which adds the overlay's
 **Developer** page, below Diagnostics: **Travel** (see "Travel"), the **Lua console** (see "Game
-Lua") and the log switch above.
+Lua") and the log switch above, and the debug cases (see "Debug cases"). All of it is left out of a
+release build altogether, not just switched off: CMake drops their files and the `InspectPixels` kernel,
+and what they need elsewhere stands in `#if PHANTOM_FX_DEV_TOOLS`. Those files hook the system's file calls,
+patch Steam's interfaces and run what they are told, which security software rightly flags.
+`tools/automation/check_release.py` looks at a built add-on to prove it.
 
 `cmake --install build/release --component addon --prefix <dir>` collects the add-on, its DLLs,
 player documentation and licenses for distribution. The DLLs are at the install root;
@@ -218,6 +222,9 @@ what draws it, when that is the feature's own.
 | `src/game_lua.cpp`, `src/game_lua.hpp` | Lua in the game's script state, and the Developer page's console (see "Game Lua") |
 | `src/travel.cpp`, `src/travel.hpp` | The Developer page's travel: free roam in another map (see "Travel") |
 | `src/frame_log.cpp`, `src/frame_log.hpp` | Development diagnostics, off by default: shader log, F10 frame record, constant and texture dumps |
+| `src/automation.cpp`, `src/automation.hpp` | Dev builds: commands from files into the running game, F9's debug cases (see "Debug cases") |
+| `src/save_redirect.cpp`, `src/save_redirect.hpp` | The automation copy of the game: its saves, backups and display settings kept apart from the player's |
+| `tools/automation/` | Dev builds: `fx.py` talks to the running game, `case.py` reports a debug case, `install.ps1` and `launch.ps1` run the automation copy; `check_release.py` fails if any of it reached a release build |
 | `src/resource_dump.cpp`, `src/resource_dump.hpp` | Format names, constant rows, DDS saving for the dumps |
 | `src/shader_bytecode.cpp`, `src/shader_bytecode.hpp` | DXBC checksum (bytes 4 to 20 of the container), the instruction walk, the output saturation patch, the dither patch |
 | `src/log.cpp`, `src/log.hpp` | `PhantomFX.log` beside the add-on, one per game session |
@@ -378,6 +385,64 @@ where it started a pixel's light over within three frames, yellow under ten) and
 layer for that denoiser (see "Global illumination", "Denoiser"), jitter off, the game's FXAA for comparison (DLSS stays
 ready), and the frame, fallback and reset counts. All are off by default and not saved. Every 1800
 frames with DLSS on, `PhantomFX.log` gets a status line with the same counts.
+
+### Debug cases
+
+So lighting faults can be looked into without anyone sending pictures or numbers back and forth; the skill
+`.agents/skills/mgsv-automation` tells agents how to work with it. Dev builds only:
+**F9** freezes the game where it is and records a case; F9 again lets it go. The game stays frozen in between, so
+more can be asked of the same frame. Aim the screen's centre at the fault first if there is one spot to look at.
+
+- **What a case holds** (`PhantomFX-automation/cases/<time>/`): the frame as traced and as the game draws it, from
+  the same frozen camera and world (`traced.dds`, `vanilla.dds`); the ray tracing's textures (depth, normals,
+  albedo, the light, the sun's and lamps' shadows, reflections, the lamps' light); what the game's shadow map
+  alone says of each pixel (`game-shadow.dds`, 1 lit, 0 blocked, -1 no answer: `SHADOW_MAP` with `GAME_SHADOW` in
+  `sun_light_pass_shaders.hpp`, drawn after the sun pass with its inputs as bound); what the scene is at
+  (`state.txt`), the settings; and two records of every pixel.
+- **A record** (`scene.bin`, `revealed.bin`: `GIInspectPixel`, `InspectPixels` in `gi_shadow.hlsl`) has what the
+  camera's ray meets first, what the scene has within a tolerance of the game's surface, what blocks the ray to the
+  sun, and the game's distance. The `.tsv` beside it names every hit as the probes do.
+- **The revealed scene** answers what the scene lacks. The record is taken again with everything the scene leaves
+  out in it (`engine_scene::Reveal`): models hidden from every pass or faded out, hidden mesh groups, hidden
+  characters, and the meshes the mesh rules drop, each marked with why. A
+  camera ray that finds nothing in the scene at the game's surface finds it here, and a ray to the sun finds what
+  the game cast with. Taken as the scene restarts through the enhancements switch, as model files are read again
+  with their dropped meshes.
+- **The report** (`tools/automation/case.py`, `report.md`, with `scene-check.png`, `sun-check.png` and
+  `light-ratio.png`) compares three things with what the game itself says of the same frame: the scene with the
+  game's surfaces, the rays' shadow with its shadow map, the traced light with its own. Each finding is a region
+  with a pixel to probe and, from the revealed scene, what is there and why it was left out. Run it with
+  `uv run --with numpy --with pillow --with scipy python tools/automation/case.py`.
+
+The running game takes commands from files (`src/automation.hpp` lists them, `tools/automation/fx.py` sends them):
+the probes at any pixel (`probe <x> <y>`), the camera anywhere while frozen, settings and debug views, the Lua
+console, and `reveal <hash>`, which tries the scene with a model in it: a fix for a left-out model can be seen
+working before it is written. `fx.py case` records a case without the key.
+
+**Automation copy.** `tools/automation/install.ps1` makes a copy of the game from hard links with this build in it,
+`launch.ps1` runs it off-screen, `fx.py --copy boot` steps it from launch to free roam in about 40 seconds, and
+`fx.py --copy acc` goes on into the helicopter's cabin (`TppMission.ReserveMissionClear` for mission 40050). The title
+screen shows the same cabin but moves on by itself: a freeze there lands in a loading screen, which stalls under the pause
+and renders nothing. It reads
+and writes its own saves (`PhantomFX-automation/saves`, `src/save_redirect.hpp`), and `launch.ps1` checks the player's
+files are unchanged afterwards. Never run it beside the player's game: `launch.ps1` would put back saves the
+player's game wrote meanwhile.
+
+**Back to a case.** `fx.py replay [<case>]` takes a case of either game, the latest by default, and installs the
+checkout's build into a fresh copy with the case's settings; then it goes to the case's map and the player's
+place, sets its time and weather, freezes its camera, records the case again as `<case>-replay` and says how nearly
+the view matches. It takes about a minute, so a fix is checked against the player's frame after every rebuild. The cabin
+is reached as above. A story mission or a cutscene comes back as that place in the map's free roam, without what it
+put there.
+
+**Scenarios.** Spots that have looked wrong, or matter most, are kept in `tools/automation/scenarios.json`: each one's
+place, why it is there and the numbers its report gave, what to expect from then on. `fx.py scenario <name> "<why>" [<case>]`
+makes one from a case; `fx.py scenarios` takes a fresh copy with this checkout's build and the player's settings through
+them all, in about a minute each, and says what got worse, past what runs of one spot differ by (`WORSE_*` in `case.py`). Each
+run leaves `before-after.png` beside its report. After a change meant to show, `--accept` takes the run as the new
+expectation. A scenario's `via` names a free roam to go through first, where the way in changes the frame. Each scenario's
+picture and depth stay in `mgsv-automation/baselines`, out of the repository: they are the game's images. The numbers depend on
+the settings, so a run under others is a reason to accept, not a fault.
 
 ### Costs
 

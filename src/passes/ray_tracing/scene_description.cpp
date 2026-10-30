@@ -342,7 +342,7 @@ ModelFile fileKindOf(std::span<const std::uint8_t> file)
 // Each mesh the scene takes (roleOf) with its vertices and their texture coordinates, its mesh group,
 // and the indices of its most detailed triangles, as the game keeps them; a skinned model's vertices
 // also with their bones (readSkin).
-std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const std::uint8_t> bytes, Source source)
+std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const std::uint8_t> bytes, Source source, bool keepsDropped)
 {
     const FileReader file{bytes};
     const auto layout = layoutOf(file);
@@ -388,11 +388,14 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
 
         const auto emission = emissionOf(file, *layout, materialInstance);
         const bool isSelfLit = emission != std::array<float, 3>{};
-        const auto role = roleOf(alpha, shadow, model->bones != 0, isVegetation, areMainViewCutOutsDropped, isSelfLit);
-        if (!role)
+        auto role = roleOf(alpha, shadow, model->bones != 0, isVegetation, areMainViewCutOutsDropped, isSelfLit);
+        const bool isDropped = !role;
+        if (isDropped)
         {
             model->dropped.push_back({mesh, alpha, shadow, techniqueOf(file, *layout, materialInstance)});
-            continue;
+            if (!keepsDropped) continue;
+
+            role = MeshRole::Solid;
         }
 
         // The mesh's streams: its mesh formats in order, each followed by as many of its vertex
@@ -442,6 +445,7 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
         part.mesh = mesh;
         part.group = (*meshGroups)[mesh];
         part.role = *role;
+        part.isDropped = isDropped;
         part.alphaBits = alpha;
         part.shadowBits = shadow;
         part.technique = techniqueOf(file, *layout, materialInstance);

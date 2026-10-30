@@ -181,7 +181,7 @@ struct GIFrameConstants
     float4 shadowRange;  // The game's shadow map range (cPSLight): x: centre depth (c8.x); y: start distance (c8.y); z: fade rate (c6.x); w: 1 once known
     float4 shadowParams; // x: tangent of the sun's angular radius (SunSample); y: how much sun an alpha-tested mesh blocks; z: ray length; w: 1 on a fresh start
     uint4 objectMotion;  // x: 1 when g_ObjectVelocity (gi_common.hlsli) holds this frame's velocity of the game's moving meshes
-    uint4 shadowDiagnostics; // x: 1 for every surface casting from both sides (ShadowRayTowards); y: 1 for the debug view of where the shadow rays leave (ShadowStartColor)
+    uint4 shadowDiagnostics; // x: 1 for every surface casting from both sides (ShadowRayTowards); y: 1 for the debug view of where the shadow rays leave (ShadowStartColor); zw: the pixel the probes read
     uint4 lightDiagnostics;  // z: the light's debug view into g_LightDebug (CompositeLight), GI_LIGHT_DEBUG_*
     // x: 1 while DLSS Ray Reconstruction denoises (ray_reconstruction.hpp): the light takes a sample a render
     // pixel and goes out without its denoiser (gi_light.hlsl, PerRenderPixel), the sun's and the lights' shadows
@@ -297,6 +297,25 @@ struct GILightProbe
     uint4 hits[GI_PROBE_LIGHTS * GI_PROBE_LIGHT_HITS];
 };
 
+// A debug case's record of a pixel (InspectPixels in gi_shadow.hlsl, automation.hpp). A hit is its instance + 1
+// with its geometry above GI_HIT_INSTANCE_BITS, 0 for none; a distance is along its ray.
+struct GIInspectPixel
+{
+    uint viewHit;          // What the camera's ray meets first
+    float viewDistance;
+    uint surfaceHit;       // What the scene has at the game's surface (GI_INSPECT_SURFACE_*)
+    float surfaceDistance;
+    uint sunHit;           // What blocks the ray to the sun's centre, as the shadow rays trace it
+    float sunDistance;
+    float gameDistance;    // The game's surface from the eye, 0 for its sky
+    uint kinds;            // The three hits' GI_INSTANCE_*, a byte each, the camera's lowest
+};
+
+// How far off the game's surface a scene surface still counts as that surface, along the camera's ray: as
+// the tests of the depth are, so far parts of the terrain's coarse rings match.
+#define GI_INSPECT_SURFACE_METRES 0.05f
+#define GI_INSPECT_SURFACE_SHARE  0.02f
+
 // D3D12_RAYTRACING_INSTANCE_DESC: the frame's instances as the top level holds them, which the
 // kernels read too.
 struct GIInstanceDesc
@@ -311,6 +330,7 @@ struct GIInstanceDesc
 static_assert(sizeof(GIFrameConstants) % 16 == 0);
 static_assert(sizeof(GIInstanceDesc) == 64);
 static_assert(sizeof(GIGeometry) == 64);
+static_assert(sizeof(GIInspectPixel) == 32);
 }
 #endif
 

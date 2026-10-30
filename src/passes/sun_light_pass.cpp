@@ -2,6 +2,7 @@
 
 #include "constant_capture.hpp"
 #include "d3d11_helpers.hpp"
+#include "dev_tools.hpp"
 #include "features/upscaling/upscaler.hpp"
 #include "features/sun_contact_shadows/sun_contact_shadows.hpp"
 #include "frame_latch.hpp"
@@ -11,6 +12,7 @@
 #include "passes/ray_tracing/ray_tracing.hpp"
 #include "passes/sun_light_pass_shaders.hpp"
 #include "performance.hpp"
+#include "resource_dump.hpp"
 
 #include <wrl/client.h>
 #include <array>
@@ -69,6 +71,20 @@ ComPtr<ID3D11Device> device;
 // (pathTracedOf).
 std::array<ComPtr<ID3D11PixelShader>, 6> replacements;
 ComPtr<ID3D11Buffer> optionsBuffer;
+
+#if PHANTOM_FX_DEV_TOOLS
+// Diagnostics (keepGameShadow): the shader that draws the shadow map's answer, its target, and the depth
+// state it draws with, made from `gameShadowDepthOf`, the sun pass's.
+std::atomic<bool> keepsGameShadow{};
+ComPtr<ID3D11PixelShader> gameShadowShader;
+ComPtr<ID3D11RenderTargetView> gameShadowTarget;
+ComPtr<ID3D11DepthStencilState> gameShadowDepth, gameShadowDepthOf;
+// The answer. Under its own lock, held across no Direct3D call: the present saves it, and it holding
+// Direct3D 11's lock while waiting for resourceMutex, held by a sun pass waiting for Direct3D 11's, froze the
+// game (2026-10-30, both threads' stacks read from the hung process).
+std::mutex gameShadowMutex;
+ComPtr<ID3D11Texture2D> gameShadow;
+#endif
 
 std::size_t replacementOf(bool isShadowMapped, bool reflectsSky)
 {
@@ -130,6 +146,82 @@ void writeOptions(ID3D11DeviceContext* context, const Composition& composition, 
         hasContactShadow ? 1.0f : 0.0f, rayTraced ? 1.0f : 0.0f, {}};
     check(write(context, optionsBuffer.Get(), values), "Writing the sun shadow options");
 }
+
+#if PHANTOM_FX_DEV_TOOLS
+// Diagnostics: what the shadow map alone says, with the sun pass's state and inputs as bound, so pixels
+// the pass skips stay at -1. Before the pass's own draw and leaving the stencil as it is: the pass zeroes the
+// bit it tests as it draws (read 2026-10-30: pass op zero, write mask 8), so a draw after it found nothing.
+// Call with resourceMutex held.
+void drawGameShadow(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, UINT width, UINT height)
+{
+    if (!gameShadowShader)
+    {
+        const D3D_SHADER_MACRO defines[]{{"SHADOW_MAP", "1"}, {"SKY_REFLECTION", "0"}, {"GAME_SHADOW", "1"}, {}};
+        gameShadowShader = pixelShader(device.Get(), shaders::SunLight, "sun-light-game-shadow", defines);
+    }
+
+    ComPtr<ID3D11Texture2D> texture;
+    {
+        std::lock_guard lock(gameShadowMutex);
+        texture = gameShadow;
+    }
+
+    D3D11_TEXTURE2D_DESC desc{};
+    if (texture) texture->GetDesc(&desc);
+    if (desc.Width != width || desc.Height != height)
+    {
+        desc = {};
+        desc.Width = width;
+        desc.Height = height;
+        desc.MipLevels = desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_R16_FLOAT;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+        texture.Reset();
+        gameShadowTarget.Reset();
+        check(device->CreateTexture2D(&desc, nullptr, texture.GetAddressOf()), "Creating the game's shadow copy");
+        check(device->CreateRenderTargetView(texture.Get(), nullptr, gameShadowTarget.GetAddressOf()), "Creating the game's shadow target");
+        std::lock_guard lock(gameShadowMutex);
+        gameShadow = texture;
+    }
+
+    ComPtr<ID3D11RenderTargetView> targets[2];
+    ComPtr<ID3D11DepthStencilView> depthStencil;
+    context->OMGetRenderTargets(2, targets[0].GetAddressOf(), depthStencil.GetAddressOf());
+    ComPtr<ID3D11BlendState> blend;
+    FLOAT blendFactor[4]{};
+    UINT sampleMask{};
+    context->OMGetBlendState(blend.GetAddressOf(), blendFactor, &sampleMask);
+    ComPtr<ID3D11DepthStencilState> depthState;
+    UINT stencilReference{};
+    context->OMGetDepthStencilState(depthState.GetAddressOf(), &stencilReference);
+    if (!gameShadowDepth || gameShadowDepthOf != depthState)
+    {
+        D3D11_DEPTH_STENCIL_DESC depthDesc{};
+        if (depthState) depthState->GetDesc(&depthDesc);
+        depthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+        depthDesc.StencilWriteMask = 0;
+        gameShadowDepth.Reset();
+        check(device->CreateDepthStencilState(&depthDesc, gameShadowDepth.GetAddressOf()), "Creating the game's shadow depth state");
+        gameShadowDepthOf = depthState;
+    }
+
+    constexpr FLOAT NoAnswer[4]{-1, -1, -1, -1};
+    context->ClearRenderTargetView(gameShadowTarget.Get(), NoAnswer);
+    context->OMSetRenderTargets(1, gameShadowTarget.GetAddressOf(), depthStencil.Get());
+    context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+    context->OMSetDepthStencilState(gameShadowDepth.Get(), stencilReference);
+    context->PSSetShader(gameShadowShader.Get(), nullptr, 0);
+    check(write(context, optionsBuffer.Get(), ShaderOptions{}), "Writing the sun shadow options");
+    context->DrawInstanced(call.count, call.instances, call.first, call.firstInstance);
+
+    ID3D11RenderTargetView* const restored[]{targets[0].Get(), targets[1].Get()};
+    context->OMSetRenderTargets(2, restored, depthStencil.Get());
+    context->OMSetBlendState(blend.Get(), blendFactor, sampleMask);
+    context->OMSetDepthStencilState(depthState.Get(), stencilReference);
+}
+#endif
 
 // Path tracing lights this sun pass and traces its reflections: the main view's, while the rays run.
 bool isPathTraced(ID3D11DeviceContext* context, const Composition& composition)
@@ -199,6 +291,16 @@ bool drawSun(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, co
     context->PSSetShaderResources(ContactShadowSlot, 1, &contactShadow);
     context->PSSetShaderResources(RayTracedSlot, 1, &rayTraced);
     context->PSSetConstantBuffers(OptionsSlot, 1, optionsBuffer.GetAddressOf());
+#if PHANTOM_FX_DEV_TOOLS
+    if (keepsGameShadow.load(std::memory_order_relaxed) && sun.isShadowMapped && depth && viewportFillsTarget(context))
+    {
+        const auto size = contact_shadow_trace::depthSize(depth.Get());
+        drawGameShadow(context, call, static_cast<UINT>(size[0]), static_cast<UINT>(size[1]));
+        context->PSSetShader(replacements[replacement].Get(), nullptr, 0);
+        writeOptions(context, composition, contactShadow != nullptr, rayTraced != nullptr);
+    }
+#endif
+
     performance::Timed timed(context, performance::Pass::SunLight);
     context->DrawInstanced(call.count, call.instances, call.first, call.firstInstance);
     timed.end();
@@ -227,6 +329,17 @@ void detach() noexcept
     std::lock_guard lock(resourceMutex);
     for (auto& replacement : replacements) replacement.Reset();
     optionsBuffer.Reset();
+#if PHANTOM_FX_DEV_TOOLS
+    gameShadowShader.Reset();
+    gameShadowTarget.Reset();
+    gameShadowDepth.Reset();
+    gameShadowDepthOf.Reset();
+    {
+        std::lock_guard shadowLock(gameShadowMutex);
+        gameShadow.Reset();
+    }
+#endif
+
     device.Reset();
     pipelineFailed = false;
 }
@@ -255,6 +368,31 @@ bool failed() noexcept
 {
     return pipelineFailed;
 }
+
+#if PHANTOM_FX_DEV_TOOLS
+void keepGameShadow(bool isKept) noexcept
+{
+    if (isKept)
+    {
+        // Only this capture's sun passes may give the reference: indoors there are none.
+        std::lock_guard lock(gameShadowMutex);
+        gameShadow.Reset();
+    }
+
+    keepsGameShadow = isKept;
+}
+
+void saveGameShadow(ID3D11DeviceContext* context, const std::filesystem::path& file) noexcept
+{
+    ComPtr<ID3D11Texture2D> texture;
+    {
+        std::lock_guard lock(gameShadowMutex);
+        texture = gameShadow;
+    }
+
+    if (texture) saveTexture(context, texture.Get(), DXGI_FORMAT_UNKNOWN, file);
+}
+#endif
 
 Health softShadowHealth()
 {

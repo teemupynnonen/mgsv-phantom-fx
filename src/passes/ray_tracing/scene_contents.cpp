@@ -1,6 +1,8 @@
 // The scene contents; scene_contents.hpp describes them.
 #include "passes/ray_tracing/scene_contents.hpp"
 
+#include "dev_tools.hpp"
+
 #include <algorithm>
 #include <bit>
 #include <cfloat>
@@ -83,6 +85,23 @@ std::uint64_t modelBytes(const Model& model)
 
     return bytes;
 }
+
+#if PHANTOM_FX_DEV_TOOLS
+// Why only a revealed scene holds a model, as a debug case lists it.
+std::string_view rejectionText(scene_description::Rejection rejection)
+{
+    using enum scene_description::Rejection;
+    switch (rejection)
+    {
+    case HiddenFromEveryPass: return " [left out: hidden from every pass]";
+    case FadedOut: return " [left out: faded out]";
+    case MeshGroupsHidden: return " [left out: its mesh groups hidden]";
+    case None: return "";
+    }
+
+    return "";
+}
+#endif
 
 // One of a character model's meshes (Model::parts) as its file has it: its group and that group's state,
 // its alpha and shadow bytes, whether the character shows it and whether this frame's draws posed it.
@@ -524,6 +543,7 @@ void SceneContents::updateCharacters(const GameScene& frame, Update& update)
         auto& record = found->second;
         seen.insert(character.id);
         record.transform = character.transform;
+        record.rejection = character.rejection;
         const auto firstBone = static_cast<std::uint32_t>(palettes.size() / 12);
         palettes.insert(palettes.end(), character.palette.begin(), character.palette.end());
         std::uint64_t at{};
@@ -715,7 +735,8 @@ void SceneContents::addInstances(const GameScene& frame, Update& update)
 
         if (frame.shouldListInstances)
             update.instanced.push_back(
-                {*instance, placement.hash, {placement.transform[3], placement.transform[7], placement.transform[11]}, 0, isTrimmed ? placement.hiddenGroups : 0});
+                {*instance, placement.hash, {placement.transform[3], placement.transform[7], placement.transform[11]}, 0, isTrimmed ? placement.hiddenGroups : 0,
+                    placement.rejection});
 
         if (!record.emitters.empty()) addEmitters(record, placement, isTrimmed ? &*variant : nullptr, *instance, frame.eye, update.emitters);
 
@@ -759,7 +780,7 @@ void SceneContents::addInstances(const GameScene& frame, Update& update)
         }
 
         if (frame.shouldListInstances)
-            update.instanced.push_back({*instance, character.hash, {character.transform[3], character.transform[7], character.transform[11]}, id});
+            update.instanced.push_back({*instance, character.hash, {character.transform[3], character.transform[7], character.transform[11]}, id, 0, character.rejection});
 
         ++charactersTraced;
         const auto& parts = models.at(character.hash).parts;
@@ -869,7 +890,13 @@ std::string SceneContents::describeHit(std::span<const InstancedModel> instanced
 {
     if (!hit.x) return "nothing";
 
-    const auto instance = hit.x - 1, geometry = hit.y & 0x7FFFFFFFu, kind = hit.z;
+    const auto instance = hit.x - 1;
+    return std::format("{} at {:.2f} m, its {} face (instance {})", describeMesh(instanced, instance, hit.y & 0x7FFFFFFFu, hit.z), std::bit_cast<float>(hit.w),
+        (hit.y >> 31) ? "front" : "back", instance);
+}
+
+std::string SceneContents::describeMesh(std::span<const InstancedModel> instanced, std::uint32_t instance, std::uint32_t geometry, std::uint32_t kind) const
+{
     std::string what = (kind & GI_INSTANCE_SEA) ? "the sea" : "the terrain";
     if (kind & GI_INSTANCE_MODEL)
     {
@@ -887,14 +914,21 @@ std::string SceneContents::describeHit(std::span<const InstancedModel> instanced
             if (found != models.end() && partIndex < found->second.geometry->parts.size())
             {
                 const auto& part = found->second.geometry->parts[partIndex];
-                what += std::format(", mesh {} ({}, {} triangles, alpha {:#04x} shadow {:#04x}, technique {:x})", part.mesh,
+                what += std::format(", mesh {} ({}, group {}, {} triangles, alpha {:#04x} shadow {:#04x}, technique {:x})", part.mesh,
                     part.role == MeshRole::Hair ? "hair" : part.role == MeshRole::Leaf ? "leaves" : isCutOut(part.role) ? "cut-out" : "opaque",
-                    part.indices.size() / 3, part.alphaBits, part.shadowBits, part.technique);
+                    part.group, part.indices.size() / 3, part.alphaBits, part.shadowBits, part.technique);
+#if PHANTOM_FX_DEV_TOOLS
+                if (part.isDropped) what += " [dropped by the mesh rules]";
+#endif
             }
         }
+
+#if PHANTOM_FX_DEV_TOOLS
+        if (placed) what += std::string(rejectionText(placed->rejection));
+#endif
     }
 
-    return std::format("{} at {:.2f} m, its {} face (instance {})", what, std::bit_cast<float>(hit.w), (hit.y >> 31) ? "front" : "back", instance);
+    return what;
 }
 
 std::pair<std::string, std::uint64_t> SceneContents::describeRay(const std::array<float, 3>& from, const std::array<float, 3>& direction, float length) const

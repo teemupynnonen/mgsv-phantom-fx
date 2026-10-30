@@ -23,6 +23,8 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <map>
 #include <format>
 #include <memory>
 #include <mutex>
@@ -46,6 +48,9 @@
 #include "PopulateCells.h"
 #include "PopulateMultibounceCells.h"
 #include "PrepareGuides.h"
+#if PHANTOM_FX_DEV_TOOLS
+#include "InspectPixels.h"
+#endif
 #include "ProbeLocalLights.h"
 #include "ProbeShadows.h"
 #include "PurgeTiles.h"
@@ -91,7 +96,11 @@ constexpr std::uint32_t MaxMarks = 32;
 constexpr std::span<const unsigned char> Bytecode[]{GI_ClearNewGeometries, GI_DebugScene, GI_TerrainGrid, GI_Skin,
     GI_ClearCounters, GI_GenerateDispatch, GI_PrepareGuides, GI_TraceLight, GI_LearnAlbedo, GI_PurgeTiles, GI_PopulateMultibounceCells,
     GI_PopulateCells, GI_UpdateTiles, GI_UpdateMultibounceCells, GI_ResolveLight, GI_UpdateFoliageMemory, GI_CompositeLight, GI_TraceSunShadows, GI_ClassifyShadowTiles,
-    GI_FilterShadows, GI_DebugShadows, GI_ProbeShadows, GI_TraceLocalLightShadows, GI_FilterLocalLightShadows, GI_ProbeLocalLights, GI_TraceReflections, GI_TraceLampLight};
+    GI_FilterShadows, GI_DebugShadows, GI_ProbeShadows, GI_TraceLocalLightShadows, GI_FilterLocalLightShadows, GI_ProbeLocalLights, GI_TraceReflections, GI_TraceLampLight,
+#if PHANTOM_FX_DEV_TOOLS
+    GI_InspectPixels
+#endif
+};
 static_assert(std::size(Bytecode) == static_cast<std::size_t>(Kernel::Count));
 
 using Shared = OpenedTexture;
@@ -145,6 +154,16 @@ struct State
     std::array<bool, FramesInFlight> lightProbeWritten{};
     std::array<std::vector<LocalLight>, FramesInFlight> probedLights;
 
+#if PHANTOM_FX_DEV_TOOLS
+    // Diagnostics: a debug case's record of every pixel, made for its frame and let go once written: the
+    // slot of the frame it is in, and where it goes.
+    ComPtr<ID3D12Resource> inspect, inspectReadback;
+    std::optional<std::uint32_t> inspectSlot;
+    std::filesystem::path inspectFile;
+    std::array<std::uint32_t, 3> inspectSize{}; // Width, height, the frame's index
+    GIFrameConstants inspectConstants{};
+#endif
+
     // GPU timestamps between the named phases of each frame's list (Recorder::mark), read when the
     // frame's slot comes round again: into the settings window's costs, by pass. The scene's, the light's
     // and the shadows' times are averaged for the overlay; each phase's are summed for the log, with the
@@ -182,6 +201,12 @@ struct State
     }
 };
 std::unique_ptr<State> state;
+
+#if PHANTOM_FX_DEV_TOOLS
+// Diagnostics, for the thread that runs the commands.
+std::atomic<std::uint64_t> inspectionsWritten{};
+std::atomic<std::uint32_t> workWaiting{};
+#endif
 
 // The latest shadow probe as text, for the overlay (another thread) and the log; kept apart from
 // the state so stopping does not race the overlay.
@@ -763,6 +788,75 @@ void readProbe(State& s, std::uint32_t slot)
     }
 }
 
+#if PHANTOM_FX_DEV_TOOLS
+// What a debug case's record starts with, for tools/automation/case.py.
+struct InspectHeader
+{
+    char magic[4]{'F', 'X', 'I', '1'};
+    std::uint32_t width{}, height{}, frame{};
+    float viewProjectionInverse[16]{};
+    float eye[4]{};
+    float sunDirection[4]{};
+};
+
+// The record the slot's last frame wrote, once the GPU is past it: every pixel, then a line for each mesh a
+// hit names, as the probes name them.
+void readInspection(State& s, std::uint32_t slot)
+{
+    if (s.inspectSlot != slot) return;
+
+    s.inspectSlot.reset();
+    const auto [width, height, frameIndex] = s.inspectSize;
+    const std::uint64_t bytes = std::uint64_t{width} * height * sizeof(GIInspectPixel);
+    void* data{};
+    const D3D12_RANGE whole{0, static_cast<SIZE_T>(bytes)};
+    if (SUCCEEDED(s.inspectReadback->Map(0, &whole, &data)))
+    {
+        InspectHeader header;
+        header.width = width;
+        header.height = height;
+        header.frame = frameIndex;
+        const auto& constants = s.inspectConstants;
+        static_assert(sizeof(header.viewProjectionInverse) == sizeof(constants.viewProjectionInverse));
+        std::memcpy(header.viewProjectionInverse, &constants.viewProjectionInverse, sizeof(header.viewProjectionInverse));
+        std::memcpy(header.eye, &constants.eye, sizeof(header.eye));
+        std::memcpy(header.sunDirection, &constants.sunDirection, sizeof(header.sunDirection));
+
+        auto file = s.inspectFile;
+        std::ofstream record(file.replace_extension(".bin"), std::ios::binary | std::ios::trunc);
+        record.write(reinterpret_cast<const char*>(&header), sizeof(header));
+        record.write(static_cast<const char*>(data), static_cast<std::streamsize>(bytes));
+        record.close();
+
+        std::map<std::pair<std::uint32_t, std::uint32_t>, std::string> names;
+        const auto note = [&](std::uint32_t hit, std::uint32_t kind) {
+            if (!hit || names.contains({hit, kind})) return;
+
+            const auto instance = (hit & ((1u << GI_HIT_INSTANCE_BITS) - 1)) - 1;
+            names[{hit, kind}] = s.contents->describeMesh(s.instancedModels[slot], instance, hit >> GI_HIT_INSTANCE_BITS, kind);
+        };
+
+        const std::span pixels(static_cast<const GIInspectPixel*>(data), std::size_t{width} * height);
+        for (const auto& pixel : pixels)
+        {
+            note(pixel.viewHit, pixel.kinds & GI_INSTANCE_KINDS);
+            note(pixel.surfaceHit, (pixel.kinds >> 8) & GI_INSTANCE_KINDS);
+            note(pixel.sunHit, (pixel.kinds >> 16) & GI_INSTANCE_KINDS);
+        }
+
+        const D3D12_RANGE nothing{};
+        s.inspectReadback->Unmap(0, &nothing);
+
+        std::ofstream table(file.replace_extension(".tsv"), std::ios::trunc);
+        for (const auto& [key, name] : names) table << key.first << '\t' << key.second << '\t' << name << '\n';
+    }
+
+    s.inspect.Reset();
+    s.inspectReadback.Reset();
+    inspectionsWritten.fetch_add(1);
+}
+#endif
+
 // The lamp probe as text, and a key that changes when which lights reach the centre pixel, or what
 // blocks them, changes.
 std::pair<std::string, std::string> describeLightProbe(const State& s, std::span<const InstancedModel> instancedModels,
@@ -909,6 +1003,9 @@ Result render(const Frame& frame)
     readTimes(s, slot);
     readProbe(s, slot);
     readLightProbe(s, slot);
+#if PHANTOM_FX_DEV_TOOLS
+    readInspection(s, slot);
+#endif
     lap(ProbeStep);
     if constexpr (DiagnosticLog)
     {
@@ -970,6 +1067,20 @@ Result render(const Frame& frame)
         s.localShadowHeight = frame.height;
     }
     const bool probeLights = traceLocalLights && frame.probeLights;
+#if PHANTOM_FX_DEV_TOOLS
+    // One at a time: the record of a frame is written as its slot comes round.
+    const bool inspect = !frame.inspectTo.empty() && !s.inspectSlot;
+    const std::uint64_t inspectBytes = std::uint64_t{frame.width} * frame.height * sizeof(GIInspectPixel);
+    if (inspect)
+    {
+        s.inspect = createStorage(s.device.Get(), inspectBytes, "Creating a debug case's record");
+        s.inspectReadback = createBuffer(s.device.Get(), inspectBytes, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_NONE,
+            "Creating a debug case's readback");
+    }
+#else
+    constexpr bool inspect = false;
+#endif
+
     {
         std::lock_guard lock(probeMutex);
         if (!debugShadows) probeText.clear();
@@ -988,7 +1099,7 @@ Result render(const Frame& frame)
         .newTextures = frame.newTextures,
         .terrainEye = terrain ? std::optional(frame.eye) : std::nullopt,
         .seaCentre = frame.seaLevel ? std::optional(std::array{frame.eye[0], *frame.seaLevel, frame.eye[2]}) : std::nullopt,
-        .shouldListInstances = debugShadows || probeLights};
+        .shouldListInstances = debugShadows || probeLights || inspect};
     auto update = s.contents->update(game);
     s.instancedModels[slot] = std::move(update.instanced);
     result.releasedModels = std::move(update.releasedModels);
@@ -1080,7 +1191,9 @@ Result render(const Frame& frame)
         if (traceLight) s.light->fill(constants, frame.verticalFov, parity);
         if (traceShadows) s.shadows->fill(constants);
         constants.objectMotion = {velocity ? 1u : 0u, 0, 0, 0};
-        constants.shadowDiagnostics = {frame.twoSidedShadows ? 1u : 0u, frame.shadowStarts ? 1u : 0u, 0, 0};
+        const auto probePixel = frame.probePixel.value_or(std::array{frame.width / 2, frame.height / 2});
+        constants.shadowDiagnostics = {frame.twoSidedShadows ? 1u : 0u, frame.shadowStarts ? 1u : 0u, std::min(probePixel[0], frame.width - 1),
+            std::min(probePixel[1], frame.height - 1)};
         constants.lightDiagnostics = {0, 0, lightDebug ? static_cast<std::uint32_t>(frame.lightDebugView) : 0u, 0};
         constants.reconstruction = {frame.forReconstruction ? 1u : 0u, materialSpecular ? 1u : 0u, skyCube ? 1u : 0u, 0};
         constants.emission = {frame.emissionScale, frame.emissionCap, 0, 0};
@@ -1126,6 +1239,9 @@ Result render(const Frame& frame)
             descriptors.outputTexture(78, shadowDebug, DXGI_FORMAT_R8G8B8A8_UNORM);
         }
         if (lightDebug) descriptors.outputTexture(79, lightDebug, DXGI_FORMAT_R8G8B8A8_UNORM);
+#if PHANTOM_FX_DEV_TOOLS
+        if (inspect) descriptors.outputBuffer(97, s.inspect.Get(), sizeof(GIInspectPixel), std::uint64_t{frame.width} * frame.height);
+#endif
         if (traceReflections || traceLamps) path_tracing_rays::describe(descriptors, traced);
         if (traceLight) s.light->describe(descriptors, parity);
         if (traceShadows) s.shadows->describe(descriptors, parity, shadow);
@@ -1228,6 +1344,21 @@ Result render(const Frame& frame)
             recorder.transition(s.probe.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             s.probeWritten[slot] = true;
         }
+#if PHANTOM_FX_DEV_TOOLS
+        if (inspect)
+        {
+            recorder.mark("a debug case's record");
+            recorder.dispatch(Kernel::InspectPixels, groups(frame.width, 8), groups(frame.height, 8));
+            recorder.barrier();
+            recorder.transition(s.inspect.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            list.CopyBufferRegion(s.inspectReadback.Get(), 0, s.inspect.Get(), 0, inspectBytes);
+            s.inspectSlot = slot;
+            s.inspectFile = frame.inspectTo;
+            s.inspectSize = {frame.width, frame.height, frame.frameIndex};
+            s.inspectConstants = constants;
+        }
+#endif
+
         if (frame.showScene)
         {
             recorder.mark("scene view");
@@ -1273,9 +1404,24 @@ Result render(const Frame& frame)
     t.builtTriangles += stats.builtTriangles;
     t.waiting += stats.waiting;
     t.compactions += stats.compactedThisFrame;
+#if PHANTOM_FX_DEV_TOOLS
+    workWaiting = stats.waiting + s.contents->waitingWork();
+#endif
 
     return result;
 }
+
+#if PHANTOM_FX_DEV_TOOLS
+std::uint64_t inspections()
+{
+    return inspectionsWritten;
+}
+
+std::uint32_t waitingWork()
+{
+    return workWaiting;
+}
+#endif
 
 std::string shadowProbe()
 {

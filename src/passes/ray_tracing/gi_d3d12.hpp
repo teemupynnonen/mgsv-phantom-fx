@@ -1,6 +1,7 @@
 #pragma once
 
 #include "d3d12_helpers.hpp"
+#include "dev_tools.hpp"
 #include "log.hpp"
 #include "performance.hpp"
 
@@ -34,6 +35,9 @@ enum class Kernel : std::uint8_t
     TraceSunShadows, ClassifyShadowTiles, FilterShadows, DebugShadows, ProbeShadows, TraceLocalLightShadows, FilterLocalLightShadows, ProbeLocalLights,
     // reflections.hlsl and direct_light.hlsl (path tracing)
     TraceReflections, TraceLampLight,
+#if PHANTOM_FX_DEV_TOOLS
+    InspectPixels, // gi_shadow.hlsl: a debug case's record
+#endif
     Count
 };
 
