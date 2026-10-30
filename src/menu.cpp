@@ -751,7 +751,7 @@ void drawDiagnostics(const upscaler::Status& state)
     }
 
     if (const fxui::Item item({.id = "comparisons", .name = "Comparisons", .summary = "Each effect alone, or the game's own, to compare.",
-            .keywords = "jitter FXAA contact shadows GTVBAO SSILVB global illumination scene BVH only"});
+            .keywords = "jitter FXAA contact shadows GTVBAO SSGI global illumination scene only"});
         item)
     {
         changed |= fxui::checkbox("Jitter off", options.noJitter, "The upscaler gets the same pixel positions every frame. Edges stay aliased.");
@@ -759,7 +759,7 @@ void drawDiagnostics(const upscaler::Status& state)
         changed |= fxui::checkbox("Sun contact shadows only", options.onlyScreenSpaceShadows,
             "With sun contact shadows on, the sun is shadowed by them alone, without the shadow map.");
         changed |= fxui::checkbox("GTVBAO only", options.showAmbientOcclusion, "With GTVBAO on, the scene shows its occlusion alone: white where nothing occludes.");
-        changed |= fxui::checkbox("SSILVB only", options.showIndirectLight, "With SSILVB on, the scene shows the light it adds alone: black where nothing bounces.");
+        changed |= fxui::checkbox("SSGI only", options.showIndirectLight, "With SSGI on, the scene shows the light it adds alone: black where nothing bounces.");
         changed |= fxui::checkbox("Global illumination only", options.showGlobalIllumination, "With global illumination on, the scene shows its indirect light alone.");
         changed |= fxui::checkbox("GI BVH scene", options.showTracedScene,
             "With global illumination on, the scene shows the BVH's geometry, coloured by its normals and drawn alone: not through the game's "

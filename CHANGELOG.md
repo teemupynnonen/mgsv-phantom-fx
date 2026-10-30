@@ -4,6 +4,14 @@
 
 ### New
 
+- **Indirect lighting is now SSGI**, ported from the RenoDX MGSV add-on's indirect lighting
+  (`renodx-mgsv` `src/games/mgsv/il`), in place of SSILVB's visibility-bitmask gather: a golden-angle
+  gather of the neighbouring surfaces' light, temporal accumulation against the game's velocity
+  buffer (the velocity passes are forced on while it runs), an a-trous denoiser and a joint-bilateral
+  resolve. New settings: **Samples**, **Resolution** (full/half/quarter), **Denoise passes**,
+  **History** and a **Debug view**; **Radius** is now a share of the screen's height (was metres, so
+  saved values clamp). The `indirect_light` switch and the radius/strength keys are unchanged.
+
 - **Bushes and grass move with the wind in the ray-traced scene.** Their traced shadows, bounce light and reflections
   move with them. The clone plugin's rocks and props stay put.
 
