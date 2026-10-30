@@ -24,7 +24,9 @@ cbuffer GI : register(b0)
     float DiffuseScale;  // 0 shows the gather alone (the diagnostics)
     float Random;        // This frame's salt for the gather's rotation
     float MinSamples;    // Samples that must survive rejection
-    float Padding;
+    float Padding0;      // Rounds the buffer to 64 bytes
+    float Padding1;
+    float Padding2;
 };
 
 cbuffer Scene : register(b1)
@@ -96,7 +98,7 @@ Texture2D<float> Depth : register(t0);        // Reversed-Z, 0 on the sky
 Texture2D<float4> Normals : register(t1);     // The G-buffer's view-space normals
 Texture2D<float4> LightSource : register(t2); // The game's diffuse light, as the resolve reads it
 Texture2D<float4> Albedo : register(t3);      // Through the resolve's sRGB view, so linear
-Texture2D<float4> Specular : register(t4);    // The specular term; emissive rides here
+Texture2D<float4> Specular : register(t4);    // The specular light the resolve adds (its inLightSpecular)
 RWTexture2D<float4> Bounce : register(u0);
 
 #define SSGI_MAX_SAMPLES 16

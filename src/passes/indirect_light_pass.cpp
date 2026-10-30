@@ -198,7 +198,9 @@ void noteVelocity(ID3D11DeviceContext* context)
         viewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
         viewDesc.Texture2D.MipLevels = 1;
         ComPtr<ID3D11ShaderResourceView> view;
-        if (FAILED(device->CreateShaderResourceView(texture.Get(), &viewDesc, view.GetAddressOf()))) return;
+        const auto result = device->CreateShaderResourceView(texture.Get(), &viewDesc, view.GetAddressOf());
+        logOnce(std::string("SSGI: velocity view ") + (SUCCEEDED(result) ? "created" : "failed (" + hex(static_cast<std::uint32_t>(result)) + ")") + ".");
+        if (FAILED(result)) return;
         velocityTexture = texture;
         velocityView = std::move(view);
     }
@@ -243,13 +245,15 @@ bool drawResolve(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call
     bool lit{};
     if (composition.light)
     {
-        ComPtr<ID3D11ShaderResourceView> depth, diffuse, albedo;
+        ComPtr<ID3D11ShaderResourceView> depth, diffuse, albedo, specular;
         ComPtr<ID3D11Buffer> scene;
         context->PSGetShaderResources(ResolveDepthSlot, 1, depth.GetAddressOf());
         context->PSGetShaderResources(DiffuseSlot, 1, diffuse.GetAddressOf());
         context->PSGetShaderResources(AlbedoSlot, 1, albedo.GetAddressOf());
+        // The specular light the resolve adds to albedo x diffuse, as the RenoDX gather reads it;
+        // not the G-buffer's specular target, whose rgb is material data.
+        context->PSGetShaderResources(SpecularLightSlot, 1, specular.GetAddressOf());
         context->PSGetConstantBuffers(SceneSlot, 1, scene.GetAddressOf());
-        const auto specular = latestSpecular(sizeOf(depth.Get()));
         lit = ssgi::compute(context, depth.Get(), normalView.Get(), diffuse.Get(), albedo.Get(), specular.Get(), velocity().Get(), scene.Get(),
             diffuseWithLight);
     }

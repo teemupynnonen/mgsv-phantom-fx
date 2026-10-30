@@ -42,10 +42,11 @@ struct Parameters
     float diffuseScale;    // c2.z
     float random;          // c2.w
     float minSamples;      // c3.x
-    float padding;         // c3.y
+    float padding[3];      // c3.yzw; the buffer rounds to 64 bytes
 };
 
-static_assert(sizeof(Parameters) == 56); // c0.xy size, then twelve floats to c3.y
+// A constant buffer's size must be a multiple of 16.
+static_assert(sizeof(Parameters) == 64);
 
 // The game's compute slots the passes bind, saved around them.
 constexpr ComputeSlots PassSlots{.buffers = 2, .views = 8, .accesses = 8};
@@ -80,7 +81,9 @@ visibility_bitmask::Progress progress{"SSGI"};
 // Compiles the shaders once; call with resourceMutex held. Returns false when SSGI is unavailable.
 bool ensurePipeline()
 {
-    if (gatherShader) return true;
+    // The last object made marks a complete pipeline, so a failure part way through is retried
+    // rather than masked by the objects made before it.
+    if (parameterBuffer) return true;
     if (!device || pipelineFailed) return false;
 
     try
@@ -89,8 +92,9 @@ bool ensurePipeline()
         accumulateShader = computeShader(device.Get(), shaders::Accumulate, "ssgi-accumulate");
         filterShader = computeShader(device.Get(), shaders::Filter, "ssgi-filter");
         resolveShader = computeShader(device.Get(), shaders::Resolve, "ssgi-resolve");
-        parameterBuffer = makeConstantBuffer(device.Get(), sizeof(Parameters), "Creating the SSGI constants");
         fallback = makeComputeTexture(device.Get(), 1, 1, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the SSGI fallback");
+        // Last, so it marks a complete pipeline.
+        parameterBuffer = makeConstantBuffer(device.Get(), sizeof(Parameters), "Creating the SSGI constants");
         log("SSGI ready.");
 
         return true;
