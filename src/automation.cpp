@@ -265,6 +265,7 @@ void run(Script& running, const std::string& line)
     else if (command == "release")
     {
         photo_mode::release();
+        ray_tracing::clearProbe();
         if (std::exchange(probeTurnedOnView, false)) showDebugView(DebugView::FinalImage);
     }
     else if (command == "camera")
@@ -539,6 +540,12 @@ void onFrameStart() noexcept
     catch (const std::exception& error)
     {
         log(std::string("Automation: ") + error.what());
+        if (script)
+        {
+            script->output += std::string("error: ") + error.what() + "\n";
+            finish(*script);
+        }
+
         script.reset();
     }
 }

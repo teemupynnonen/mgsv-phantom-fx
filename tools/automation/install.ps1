@@ -53,7 +53,9 @@ Copy-Item (Join-Path $SeedSaves '*') $saves
 # The game's user data folder for the run: its own display settings, windowed at 1920x1080.
 $userData = Join-Path $Game 'PhantomFX-automation\local'
 New-Item -ItemType Directory -Force $userData | Out-Null
-$display = Get-ChildItem 'C:\Program Files (x86)\Steam\userdata\*\287700\local\TPP_GRAPHICS_CONFIG' | Select-Object -First 1 | Get-Content -Raw | ConvertFrom-Json
+$config = Get-ChildItem (Join-Path $Steam '..\..\..\userdata\*\287700\local\TPP_GRAPHICS_CONFIG') | Select-Object -First 1
+if (-not $config) { throw "No TPP_GRAPHICS_CONFIG in Steam's userdata: run the game once from Steam first." }
+$display = Get-Content $config.FullName -Raw | ConvertFrom-Json
 $display.graphics.videoout_setting.window_mode = 'Windowed'
 $display.graphics.videoout_setting.width = $Width
 $display.graphics.videoout_setting.height = $Height

@@ -372,6 +372,13 @@ bool failed() noexcept
 #if PHANTOM_FX_DEV_TOOLS
 void keepGameShadow(bool isKept) noexcept
 {
+    if (isKept)
+    {
+        // Only this capture's sun passes may give the reference: indoors there are none.
+        std::lock_guard lock(gameShadowMutex);
+        gameShadow.Reset();
+    }
+
     keepsGameShadow = isKept;
 }
 

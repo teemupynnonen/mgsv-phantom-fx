@@ -20,7 +20,7 @@ struct ID3D11Resource;
 // Lines:
 //   case [<name>]                 records a case (caseLines in automation.cpp)
 //   freeze                        photo mode frozen at the camera now
-//   release                       leaves the frozen camera, and the debug view `probe` turned on
+//   release                       leaves the frozen camera, `probe`'s pixel and the debug view it turned on
 //   camera <x> <y> <z> <yaw> <pitch>  photo mode frozen at that pose (photo_mode.hpp), radians
 //   move <x> <y> <z> <yaw> <pitch> <frames>  from the frozen camera there, one step each camera update
 //   wait <frames>                 lets that many frames present

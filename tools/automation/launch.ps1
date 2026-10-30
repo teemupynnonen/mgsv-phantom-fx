@@ -2,6 +2,7 @@
 # (install.ps1 writes them, src/save_redirect.hpp points the game at them).
 param(
     [string]$Game = (Join-Path $env:USERPROFILE 'Documents\Development\mgsv-automation\game'),
+    [string]$Steam = 'C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP',
     # Off-screen by default: the game keeps rendering there (not when minimised), out of the way.
     [switch]$Visible
 )
@@ -20,7 +21,8 @@ if (Get-Process mgsvtpp -ErrorAction SilentlyContinue) { throw 'The game is alre
 
 # The player's saves, their backups and display settings. The add-on keeps the run away from them; if
 # anything changes anyway, it is put back from this copy when the game exits.
-$playerFolders = Get-ChildItem 'C:\Program Files (x86)\Steam\userdata\*\287700\local', 'C:\Program Files (x86)\Steam\userdata\*\311340\remote' -Directory
+$userData = Join-Path $Steam '..\..\..\userdata'
+$playerFolders = Get-ChildItem (Join-Path $userData '*\287700\local'), (Join-Path $userData '*\311340\remote') -Directory
 $snapshot = Join-Path (Split-Path $Game) 'player-files-snapshot'
 if (Test-Path $snapshot) { Remove-Item $snapshot -Recurse -Force }
 $playerFiles = foreach ($folder in $playerFolders) {

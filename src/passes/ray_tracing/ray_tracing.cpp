@@ -1268,6 +1268,11 @@ void probeAt(std::uint32_t x, std::uint32_t y) noexcept
     probePixel = std::uint64_t{x} << 32 | (y + 1);
 }
 
+void clearProbe() noexcept
+{
+    probePixel = 0;
+}
+
 void inspect(const std::filesystem::path& file) noexcept
 {
     std::lock_guard lock(executionMutex);

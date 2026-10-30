@@ -79,8 +79,9 @@ ID3D11ShaderResourceView* lightDebug(UINT width, UINT height) noexcept;
 // Diagnostics: the probes at the screen's centre as text, with the debug view on: the sun's, while there is
 // a sun, and the lamps', with the ray-traced lights.
 std::string shadowProbe();
-// Diagnostics (automation.hpp): the pixel the probes read in place of the screen's centre.
+// Diagnostics (automation.hpp): the pixel the probes read in place of the screen's centre, and back to it.
 void probeAt(std::uint32_t x, std::uint32_t y) noexcept;
+void clearProbe() noexcept;
 // A debug case's record of every pixel at the next kick, into `file` with the extensions .bin and .tsv
 // (gi_renderer::Frame::inspectTo); how many have been written; what the scene has yet to make.
 void inspect(const std::filesystem::path& file) noexcept;
