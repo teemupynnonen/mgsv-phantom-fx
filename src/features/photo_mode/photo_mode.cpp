@@ -1,6 +1,7 @@
 #include "features/photo_mode/photo_mode.hpp"
 
 #include "clock.hpp"
+#include "dev_tools.hpp"
 #include "device_check.hpp"
 #include "features/photo_mode/focus.hpp"
 #include "game_code.hpp"
@@ -13,6 +14,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <string>
 
 namespace phantom_fx::photo_mode
@@ -114,6 +116,18 @@ std::atomic<std::uint32_t*> pauseRequest{};
 FreeCamera freeCamera;
 LONGLONG lastStep{};
 
+#if PHANTOM_FX_DEV_TOOLS
+// Automation's camera, and the one the last camera update used.
+struct Motion
+{
+    Pose from, to;
+    int step{}, steps{};
+};
+std::mutex poseMutex;
+std::optional<Pose> heldPose, renderedPose;
+std::optional<Motion> motion;
+#endif
+
 enum Key : std::uint8_t { Forward = 1, Back = 2, Left = 4, Right = 8, Up = 16, Down = 32, Fast = 64 };
 
 std::uint8_t* activeCamera(std::uint8_t* selector)
@@ -156,8 +170,56 @@ FreeCamera fromGame(const CameraState& game)
         std::clamp(std::asin(std::clamp(forward[1], -1.0f, 1.0f)), -MaxPitch, MaxPitch), game.focusDistance};
 }
 
+#if PHANTOM_FX_DEV_TOOLS
+void place(FreeCamera& camera, const Pose& pose)
+{
+    std::memcpy(camera.position, pose.position, sizeof(camera.position));
+    camera.yaw = pose.yaw;
+    camera.pitch = std::clamp(pose.pitch, -MaxPitch, MaxPitch);
+}
+
+Pose poseOf(const FreeCamera& camera)
+{
+    Pose pose;
+    std::memcpy(pose.position, camera.position, sizeof(pose.position));
+    pose.yaw = camera.yaw;
+    pose.pitch = camera.pitch;
+
+    return pose;
+}
+
+Pose between(const Pose& from, const Pose& to, float t)
+{
+    Pose pose;
+    for (int i = 0; i < 3; ++i) pose.position[i] = from.position[i] + (to.position[i] - from.position[i]) * t;
+    pose.yaw = from.yaw + (to.yaw - from.yaw) * t;
+    pose.pitch = from.pitch + (to.pitch - from.pitch) * t;
+
+    return pose;
+}
+
+// The held camera for this camera update: a moving one steps once per update.
+std::optional<Pose> held()
+{
+    std::scoped_lock lock(poseMutex);
+    if (motion)
+    {
+        heldPose = between(motion->from, motion->to, static_cast<float>(++motion->step) / static_cast<float>(motion->steps));
+        if (motion->step >= motion->steps) motion.reset();
+    }
+
+    return heldPose;
+}
+
+void remember(const Pose& pose)
+{
+    std::scoped_lock lock(poseMutex);
+    renderedPose = pose;
+}
+#endif
+
 // The rotation is the yaw about +y after the pitch about +x; looking up is a negative turn about +x.
-CameraState photoState(const FreeCamera& camera, const CameraState& game)
+CameraState photoState(const FreeCamera& camera, const CameraState& game, bool isSharp)
 {
     const float sy = std::sin(camera.yaw / 2), cy = std::cos(camera.yaw / 2);
     const float sp = std::sin(-camera.pitch / 2), cp = std::cos(-camera.pitch / 2);
@@ -167,7 +229,7 @@ CameraState photoState(const FreeCamera& camera, const CameraState& game)
     std::memcpy(state.transform, rotation, sizeof(rotation));
     std::memcpy(state.transform + 4, camera.position, sizeof(camera.position));
     state.focusDistance = camera.focusDistance;
-    state.aperture = blur ? fNumber.load() : SharpAperture;
+    state.aperture = blur && !isSharp ? fNumber.load() : SharpAperture;
     state.anyAperture = 1;
 
     return state;
@@ -235,8 +297,13 @@ double secondsSince(LONGLONG& last)
 void selectorUpdate(std::uint8_t* selector)
 {
     auto* camera = activeCamera(selector);
-    const bool wanted = requested;
-    // Without a camera (a loading screen) the request lapses.
+#if PHANTOM_FX_DEV_TOOLS
+    const auto heldCamera = held();
+#else
+    constexpr bool heldCamera = false;
+#endif
+    const bool wanted = requested || heldCamera;
+    // Without a camera (a loading screen) the request lapses; a held camera waits for one.
     if (wanted && !flying && !camera) requested = false;
     else if (wanted && !flying)
     {
@@ -258,6 +325,9 @@ void selectorUpdate(std::uint8_t* selector)
     if (!flying || !camera)
     {
         originalSelectorUpdate(selector);
+#if PHANTOM_FX_DEV_TOOLS
+        if (camera) remember(poseOf(fromGame(stateOf(camera))));
+#endif
         return;
     }
 
@@ -265,14 +335,23 @@ void selectorUpdate(std::uint8_t* selector)
     const int turnX = mouseX.exchange(0), turnY = mouseY.exchange(0);
     const std::uint8_t keys = heldKeys;
     const auto game = stateOf(camera);
-    fly(freeCamera, keys, turnX, turnY, seconds);
-    if (const float target = focus::distance(); target > 0)
-        freeCamera.focusDistance += (target - freeCamera.focusDistance) * (1 - std::exp(-seconds / FocusTime));
+#if PHANTOM_FX_DEV_TOOLS
+    if (heldCamera) place(freeCamera, *heldCamera);
+    else
+#endif
+    {
+        fly(freeCamera, keys, turnX, turnY, seconds);
+        if (const float target = focus::distance(); target > 0)
+            freeCamera.focusDistance += (target - freeCamera.focusDistance) * (1 - std::exp(-seconds / FocusTime));
+    }
 
     // Only this update sees the free camera; the game's camera keeps its own.
-    apply(camera, photoState(freeCamera, game));
+    apply(camera, photoState(freeCamera, game, static_cast<bool>(heldCamera)));
     originalSelectorUpdate(selector);
     apply(camera, game);
+#if PHANTOM_FX_DEV_TOOLS
+    remember(poseOf(freeCamera));
+#endif
 }
 
 // In photo mode the mouse turns the free camera and the game gets no presses. Releases still reach
@@ -366,9 +445,47 @@ bool uiHidden() noexcept
 
 void leave() noexcept
 {
+    if constexpr (DevTools) release();
+
     requested = false;
     flying = false;
     pause(false);
     focus::setActive(false);
 }
+
+#if PHANTOM_FX_DEV_TOOLS
+void hold(const Pose& pose) noexcept
+{
+    std::scoped_lock lock(poseMutex);
+    heldPose = pose;
+    motion.reset();
+}
+
+void move(const Pose& pose, int updates) noexcept
+{
+    std::scoped_lock lock(poseMutex);
+    const auto from = heldPose ? *heldPose : renderedPose.value_or(pose);
+    if (updates > 0) motion = Motion{from, pose, 0, updates};
+    else heldPose = pose;
+}
+
+void release() noexcept
+{
+    std::scoped_lock lock(poseMutex);
+    heldPose.reset();
+    motion.reset();
+}
+
+bool isHeld() noexcept
+{
+    std::scoped_lock lock(poseMutex);
+    return heldPose.has_value();
+}
+
+std::optional<Pose> lastCamera() noexcept
+{
+    std::scoped_lock lock(poseMutex);
+    return renderedPose;
+}
+#endif
 }

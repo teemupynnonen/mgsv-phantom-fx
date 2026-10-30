@@ -384,10 +384,23 @@ void skinThroughBoneGroup()
 }
 }
 
+// A debug case's revealed scene: a mesh the rules drop is kept as solid and marked, and still listed as dropped.
+void revealedSceneKeepsDroppedMeshes()
+{
+    const auto file = modelFile({{16, 5}, {0, 0}}, false);
+    const auto revealed = describeModel(1, file, Source::VisibilityManager, true);
+    expect(revealed != nullptr && revealed->parts.size() == 2, "A revealed model keeps the mesh the rules drop.");
+    expect(revealed->parts[0].isDropped && revealed->parts[0].role == MeshRole::Solid, "The kept mesh is solid and marked.");
+    expect(!revealed->parts[1].isDropped, "A mesh the rules take is not marked.");
+    expect(revealed->dropped.size() == 1, "The kept mesh is still listed as dropped.");
+    expect(describeModel(1, file, Source::VisibilityManager)->parts.size() == 1, "Without it the scene takes what it always took.");
+}
+
 int main()
 {
     try
     {
+        revealedSceneKeepsDroppedMeshes();
         tarpSheetsCastThroughStandIn();
         solidStandInsCastTheSunAlone();
         pylonLattice();

@@ -519,6 +519,7 @@ void drawDiagnostics(const upscaler::Status& state)
 }
 }
 
+#if PHANTOM_FX_DEV_TOOLS
 // Free roam in another of the game's maps.
 void drawTravel()
 {
@@ -589,6 +590,7 @@ void drawDeveloper()
             core::applyDiagnostics(options);
     }
 }
+#endif
 
 void draw()
 {
@@ -620,7 +622,9 @@ void draw()
         drawDisplay(wanted);
         drawWorld();
         drawDiagnostics(state);
-        if constexpr (DevTools) drawDeveloper();
+#if PHANTOM_FX_DEV_TOOLS
+        drawDeveloper();
+#endif
     }
 
     if (enhancements != core::enhancementsOn()) core::setEnhancements(enhancements);

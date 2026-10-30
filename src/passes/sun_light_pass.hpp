@@ -5,6 +5,7 @@
 #include "ui_redirect.hpp"
 
 #include <d3d11.h>
+#include <filesystem>
 
 // The game's sun light pass (docs/DEVELOPMENT.md, "Sun light and shadows"): the engine lights the sun
 // in one full-screen pass whose shaders sample the shadow map themselves. While a sun shadow effect
@@ -27,6 +28,11 @@ void detach() noexcept;
 void configure(const Configuration& configuration) noexcept;
 // The replacement shaders did not compile, so the game draws its own sun shadows (see PhantomFX.log).
 bool failed() noexcept;
+// Diagnostics (automation.hpp): while on, each main sun pass also draws what the game's shadow map alone
+// says of each pixel, R16_FLOAT, 1 lit, 0 blocked, -1 where the pass draws nothing or has no map;
+// a debug case's reference for the rays' shadows.
+void keepGameShadow(bool isKept) noexcept;
+void saveGameShadow(ID3D11DeviceContext* context, const std::filesystem::path& file) noexcept;
 // For the budget: the soft shadows are a mode of the replacement shaders, and the ray-traced shadows
 // reach the sun through them.
 Health softShadowHealth();

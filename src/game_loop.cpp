@@ -1,5 +1,6 @@
 #include "game_loop.hpp"
 
+#include "automation.hpp"
 #include "character.hpp"
 #include "dev_tools.hpp"
 #include "device_check.hpp"
@@ -50,6 +51,7 @@ void frameStart(std::uint8_t* loop, void* argument)
     {
         travel::onFrameStart();
         game_lua::onFrameStart();
+        automation::onFrameStart();
     }
     originalFrameStart(loop, argument);
     current = frame;

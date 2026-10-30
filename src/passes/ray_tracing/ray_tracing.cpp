@@ -6,6 +6,7 @@
 #include "command_list_notes.hpp"
 #include "constant_capture.hpp"
 #include "d3d11_helpers.hpp"
+#include "dev_tools.hpp"
 #include "features/global_illumination/gi_lighting.hpp"
 #include "features/path_tracing/path_tracing.hpp"
 #include "features/ray_traced_lights/local_lights.hpp"
@@ -20,6 +21,7 @@
 #include "passes/ray_tracing/gi_textures.hpp"
 #include "passes/ray_tracing/shaders/gi_shared.h"
 #include "performance.hpp"
+#include "resource_dump.hpp"
 
 #include <Windows.h>
 #include <d3d11_4.h>
@@ -29,6 +31,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <format>
 #include <mutex>
 #include <optional>
@@ -345,6 +348,12 @@ ComPtr<ID3D11Texture2D> terrainPages, terrainHeights;
 SharedTexture depthOut, normalOut, albedoOut;
 std::string failure;
 std::atomic<std::uint64_t> lastKick{}; // GetTickCount64 of the last frame lit
+#if PHANTOM_FX_DEV_TOOLS
+// Diagnostics: a debug case's pixel for the probes, as x << 32 | y + 1 (0 for the screen's centre), and the
+// record the next kick makes.
+std::atomic<std::uint64_t> probePixel{};
+std::filesystem::path inspectNext;
+#endif
 // Diagnostics: the kicks' CPU time in performance counter ticks, and the kicks, since the last log.
 std::atomic<std::int64_t> kickTicks{};
 std::atomic<std::uint64_t> kicksSinceLog{};
@@ -891,6 +900,12 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     frame.localLights = std::move(localLightsToTrace);
     frame.localLightRays = static_cast<std::uint32_t>(options.lightRays);
     frame.probeLights = options.debugShadows;
+#if PHANTOM_FX_DEV_TOOLS
+    if (const auto pixel = probePixel.load(std::memory_order_relaxed))
+        frame.probePixel = std::array{static_cast<std::uint32_t>(pixel >> 32), static_cast<std::uint32_t>(pixel) - 1};
+
+    frame.inspectTo = std::exchange(inspectNext, {});
+#endif
     frame.waitValue = inputsReady;
     frame.signalValue = ++fenceValue;
     const auto result = gi_renderer::render(frame);
@@ -1225,6 +1240,47 @@ ID3D11ShaderResourceView* lightDebug(UINT width, UINT height) noexcept
     const bool fits = lightDebugWritten && lightDebugOutput.width == width && lightDebugOutput.height == height;
     return fits ? lightDebugOutput.view.Get() : nullptr;
 }
+
+#if PHANTOM_FX_DEV_TOOLS
+void probeAt(std::uint32_t x, std::uint32_t y) noexcept
+{
+    probePixel = std::uint64_t{x} << 32 | (y + 1);
+}
+
+void inspect(const std::filesystem::path& file) noexcept
+{
+    std::lock_guard lock(executionMutex);
+    inspectNext = file;
+}
+
+std::uint64_t inspections() noexcept
+{
+    return gi_renderer::inspections();
+}
+
+std::size_t waitingWork() noexcept
+{
+    return engine_scene::waitingFiles() + gi_renderer::waitingWork();
+}
+
+void saveTextures(ID3D11DeviceContext* context, const std::filesystem::path& folder) noexcept
+{
+    try
+    {
+        std::scoped_lock lock(executionMutex, lightMutex);
+        const std::pair<const char*, ID3D11Texture2D*> textures[]{{"depth", depthOut.texture.Get()}, {"normal", normalOut.texture.Get()},
+            {"albedo", albedoOut.texture.Get()}, {"light", output.texture.Get()}, {"sun-shadow", shadowOutput.texture.Get()},
+            {"lamp-shadow", localLightOutput.texture.Get()}, {"reflection", reflectionOutput.texture.Get()}, {"lamp-diffuse", lampDiffuseOutput.texture.Get()},
+            {"lamp-specular", lampSpecularOutput.texture.Get()}};
+        for (const auto& [name, texture] : textures)
+            if (texture) saveTexture(context, texture, DXGI_FORMAT_UNKNOWN, folder / (std::string(name) + ".dds"));
+    }
+    catch (const std::exception& error)
+    {
+        log(std::string("Saving the ray tracing's textures failed: ") + error.what());
+    }
+}
+#endif
 
 std::string shadowProbe()
 {

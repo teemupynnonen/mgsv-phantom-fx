@@ -8,6 +8,7 @@
 #include <wrl/client.h>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -78,6 +79,15 @@ ID3D11ShaderResourceView* lightDebug(UINT width, UINT height) noexcept;
 // Diagnostics: the probes at the screen's centre as text, with the debug view on: the sun's, while there is
 // a sun, and the lamps', with the ray-traced lights.
 std::string shadowProbe();
+// Diagnostics (automation.hpp): the pixel the probes read in place of the screen's centre.
+void probeAt(std::uint32_t x, std::uint32_t y) noexcept;
+// A debug case's record of every pixel at the next kick, into `file` with the extensions .bin and .tsv
+// (gi_renderer::Frame::inspectTo); how many have been written; what the scene has yet to make.
+void inspect(const std::filesystem::path& file) noexcept;
+std::uint64_t inspections() noexcept;
+std::size_t waitingWork() noexcept;
+// The frame's textures, each as a DDS file named for it in `folder`, on the immediate context.
+void saveTextures(ID3D11DeviceContext* context, const std::filesystem::path& folder) noexcept;
 // What DLSS Ray Reconstruction reads beside the colour, made from the G-buffer at the kick while it is
 // asked for (upscaler.cpp), at the render size.
 struct ReconstructionGuides

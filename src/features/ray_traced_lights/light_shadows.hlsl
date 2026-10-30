@@ -157,7 +157,7 @@ RWStructuredBuffer<GILightProbe> g_LightProbe : register(u92);
 void ProbeLocalLights()
 {
     GILightProbe probe = (GILightProbe)0;
-    uint2 centre = g_Frame.dimensions.xy / 2;
+    uint2 centre = g_Frame.shadowDiagnostics.zw;
     float depth = g_Depth.Load(int3(centre, 0));
     if (depth > 0.0f)
     {

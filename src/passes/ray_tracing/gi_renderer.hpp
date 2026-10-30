@@ -8,6 +8,7 @@
 #include <d3d11_4.h>
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -129,6 +130,11 @@ struct Frame
     std::vector<LocalLight> localLights;
     std::uint32_t localLightRays{1};
     bool probeLights{}; // Diagnostics: the lamp probe at the screen's centre (lightProbe), sun or none
+    // Diagnostics: the pixel the probes read in place of the screen's centre.
+    std::optional<std::array<std::uint32_t, 2>> probePixel;
+    // Diagnostics: a debug case's record of every pixel (GIInspectPixel) and what its hits are, to `inspectTo`
+    // with the extensions .bin and .tsv.
+    std::filesystem::path inspectTo;
     std::uint64_t waitValue{}, signalValue{}; // On the shared fence
 };
 
@@ -150,6 +156,9 @@ Result render(const Frame& frame);
 
 // For the overlay: instances, triangles and memory in use.
 std::string status();
+// Diagnostics: the records written (Frame::inspectTo), and what the scene has yet to make.
+std::uint64_t inspections();
+std::uint32_t waitingWork();
 // For the overlay: the latest shadow probe as text, a few frames old; empty while the debug view is
 // off. Logged by itself whenever what blocks the probe's sun ray changes.
 std::string shadowProbe();
