@@ -446,7 +446,9 @@ void configure(const Configuration& configuration) noexcept
         .globalIllumination = configuration.effects.runs(Effect::GlobalIllumination),
         .rayTracing = configuration.effects.tracesScene(),
         .showOcclusion = diagnostics.showAmbientOcclusion,
-        .showLight = diagnostics.showIndirectLight,
+        // SSGI's debug views draw its light alone too: the game's resolve would multiply it by the
+        // albedo, and the gathered light is what is being judged.
+        .showLight = diagnostics.showIndirectLight || configuration.settings.indirectLight.debug >= 1,
         .showGlobalIllumination = diagnostics.showGlobalIllumination,
         .showTracedScene = diagnostics.showTracedScene,
     };

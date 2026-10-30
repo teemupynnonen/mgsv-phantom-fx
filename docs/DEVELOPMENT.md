@@ -3838,9 +3838,10 @@ used. Off, the add-on only checks a flag on each full-screen draw.
 - **Diagnostics.** "SSGI only" writes the light without the game's diffuse light and draws the
   resolve with `shaders::Show`: the bounce alone, as light before the albedo. The **Debug view**
   setting shows the gather alone, the history delta, the history length, the reprojection offset or
-  the measured variance. Both views write the resolve's alpha, `sqrt(luminance / 32)`, which exposure,
-  bloom and depth of field read from the scene target (`CopyReductionX4`, `DOF_ScatterBakeFirst`);
-  with 1 there, they blurred the view.
+  the measured variance, and it draws through `shaders::Show` too: the game's resolve would multiply
+  the light by the albedo, and the gathered light is what is being judged. Both views write the
+  resolve's alpha, `sqrt(luminance / 32)`, which exposure, bloom and depth of field read from the
+  scene target (`CopyReductionX4`, `DOF_ScatterBakeFirst`); with 1 there, they blurred the view.
 
 Not handled:
 

@@ -236,7 +236,8 @@ bool compute(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D
     parameters.historyBlend = light.history;
     parameters.historyValid = (historyValid && velocityOk) ? 1.0f : 0.0f;
     parameters.debug = static_cast<float>(light.debug);
-    parameters.diffuseScale = settings.shownAlone ? 0.0f : 1.0f;
+    // The diagnostics and every debug view show SSGI's light alone, without the game's diffuse.
+    parameters.diffuseScale = (settings.shownAlone || light.debug >= 1) ? 0.0f : 1.0f;
     parameters.random = static_cast<float>((frameCounter.load() * 2654435761u) & 0xFFFFu) / 65535.0f;
     parameters.minSamples = 1.0f;
 

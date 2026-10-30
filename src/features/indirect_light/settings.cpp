@@ -75,6 +75,7 @@ void describe(IndirectLight& light, SettingVisitor& visit)
             .label = "Debug view",
             .choices = DebugViews,
             .control = ChoiceControl::Dropdown,
-            .tip = "Shows a diagnostic view instead of the scene."});
+            .tip = "Shows a diagnostic view instead of the scene, the gathered light alone (before the game multiplies it by the "
+                   "albedo)."});
 }
 }  // namespace phantom_fx
