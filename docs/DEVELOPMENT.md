@@ -248,7 +248,7 @@ what draws it, when that is the feature's own.
 | `third_party/bend_sss/bend_sss_cpu.h` | Bend Studio's dispatch layout, unchanged (Apache License 2.0) |
 | `src/passes/forward_water_pass.*` | The game's rivers and liquids, with what the rays replace in their draw and the caustics composed in. `forward_scene.hpp`: the HLSL the shaders over the game's forward draws share: the scene's constants, the fog, the scene's depth |
 | `src/passes/indirect_light_pass.*` | The game's sky light, upscale and resolve: the G-buffer notes, the resolve's white occlusion and diffuse light, the diagnostics views, the ray-traced scene's notes. `indirect_light_pass_shaders.hpp`: the diagnostics views |
-| `src/passes/visibility_bitmask.*` | The visibility bitmask march GTVBAO uses: the depth prefilter, the march, the denoiser. `visibility_bitmask_shaders.hpp`: the march (GTVBAO from three-gtvbao; its `LIGHT` 1 branch, which gathered light as SSRT3 does, is unused since the SSGI port), XeGTAO's noise and denoiser |
+| `src/passes/visibility_bitmask.*` | The visibility bitmask march GTVBAO uses: the depth prefilter, the march, the denoiser; SSGI takes the prefilter's distance mips for its per-tap occlusion test (`prefilterDistances`). `visibility_bitmask_shaders.hpp`: the march (GTVBAO from three-gtvbao; its `LIGHT` 1 branch, which gathered light as SSRT3 does, is unused since the SSGI port), XeGTAO's noise and denoiser |
 | `src/passes/ray_tracing/ray_tracing.*` | The ray-traced scene's frame on Direct3D 11: the kick, the waits, the shared textures the global illumination and the ray-traced shadows hand back |
 | `src/passes/ray_tracing/kick_traces.*` | What each kick traces, the one answer for everything that makes, runs or reads a trace (see "What a kick traces") |
 | `src/passes/ray_tracing/trace.*` | A trace's steps, and the traces in the order the frame runs them (see "What a kick traces") |
@@ -3810,12 +3810,16 @@ used. Off, the add-on only checks a flag on each full-screen draw.
   velocity pass runs with the jittered projection), so no jitter term is subtracted.
 - **Gather** (`ssgi_shaders.hpp` `shaders::Gather`), recorded at the resolve's draw on its deferred
   context, with the game's compute bindings saved and restored: from the resolve's depth (`t11`),
-  diffuse light (`t9`), albedo (`t8`, its sRGB view, so linear), the sun pass's specular target and
+  diffuse light (`t9`), albedo (`t8`, its sRGB view, so linear), the specular light (`t10`) and
   `cPSScene`. A golden-angle disk of up to 16 jittered taps per pixel, each rejected by plane
   elevation, source facing and inverse-square distance, returns the mean `albedo x diffuse +
   specular` of the taps that survive; alpha is validity. The radius is a share of the screen's
   height (80% by default), and the same radius in view units at the pixel's depth. Into an
   `R16G16B16A16_FLOAT` bounce target at the gather's size (full, half or quarter, rounded up).
+  Before it, `visibility_bitmask::prefilterDistances` fills this add-on's own copy of the distance
+  mips at the render size, and each tap marches them (the **Visibility** setting's steps, 5 by
+  default) from the receiver to the sample: a surface nearer than the ray blocks the tap, so light
+  does not bleed through occluders, which the disk alone would not see. 0 disables the test.
 - **Accumulate** (`shaders::Accumulate`): reprojects with the velocity, fetches the ping-ponged
   history bilinearly, clips it to this frame's 3x3 neighbourhood, and rejects on depth, normal and
   screen bounds (a separate aux target carries the history's depth and normal). The blend is an

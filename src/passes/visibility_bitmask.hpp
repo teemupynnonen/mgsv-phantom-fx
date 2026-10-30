@@ -10,14 +10,14 @@
 #include <cstdint>
 #include <string>
 
-// The visibility bitmask march (docs/DEVELOPMENT.md, "Ambient occlusion", "Indirect lighting"): XeGTAO's
+// The visibility bitmask march (docs/DEVELOPMENT.md, "Ambient occlusion", "SSGI"): XeGTAO's
 // depth prefilter, then for each pixel the sectors of the hemisphere that depth samples cover, then
-// XeGTAO's edge-aware denoiser. GTVBAO (gtvbao.hpp) marches for the occlusion, SSILVB (ssilvb.hpp) for
-// the light the sectors receive.
+// XeGTAO's edge-aware denoiser. GTVBAO (gtvbao.hpp) marches for the occlusion; SSGI (ssgi.hpp) marches
+// the prefiltered distances itself, per gather tap, to test what blocks each one.
 namespace phantom_fx::visibility_bitmask
 {
 // The compute shaders' constant buffer (PHANTOM_FX_MARCH_PARAMETERS in visibility_bitmask_shaders.hpp),
-// which SSILVB's upsample and the global illumination's combine read too.
+// which the global illumination's combine reads too.
 struct Parameters
 {
     std::uint32_t size[2];
@@ -57,10 +57,27 @@ struct Progress
 // texture hold their own references. True when it made one.
 bool ensureTarget(ID3D11Device* device, Target& target, UINT width, UINT height, DXGI_FORMAT format, const char* what);
 
+// The prefiltered distances at the render size and their smaller copies: one view reads them all,
+// one output view each writes them. A pass that marches the distances itself (SSGI's per-tap
+// visibility test) keeps its own, apart from the march's.
+constexpr UINT DistanceMipCount = 5;
+struct DistanceMips
+{
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> view;
+    std::array<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>, DistanceMipCount> access;
+    UINT width{}, height{};
+};
+
+// Records the depth prefilter into `mips` at the render size, for a pass that marches the distances
+// itself. `parameters` carry the size and the falloff radius; `specular` (may be null) tells foliage.
+void prefilterDistances(ID3D11DeviceContext* context, const Parameters& parameters, ID3D11Buffer* scene, ID3D11ShaderResourceView* depth,
+    ID3D11ShaderResourceView* specular, DistanceMips& mips);
+
 void attach(ID3D11Device* device) noexcept;
 // Releases everything; only when no Direct3D work can run (device teardown, unload).
 void detach() noexcept;
-// Compiles the shaders while GTVBAO or SSILVB runs, before their first frame.
+// Compiles the shaders while GTVBAO or SSGI runs, before their first frame.
 void configure(const Configuration& configuration) noexcept;
 // Compiles the shaders once; false when they are unavailable (see PhantomFX.log).
 bool ready() noexcept;

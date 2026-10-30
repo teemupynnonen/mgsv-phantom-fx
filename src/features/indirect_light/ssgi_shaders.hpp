@@ -24,8 +24,8 @@ cbuffer GI : register(b0)
     float DiffuseScale;  // 0 shows the gather alone (the diagnostics)
     float Random;        // This frame's salt for the gather's rotation
     float MinSamples;    // Samples that must survive rejection
-    float Padding0;      // Rounds the buffer to 64 bytes
-    float Padding1;
+    float Visibility;    // Ray-march steps per tap for the occlusion test, 0 disables it
+    float Padding1;      // Rounds the buffer to 64 bytes
     float Padding2;
 };
 
@@ -99,9 +99,25 @@ Texture2D<float4> Normals : register(t1);     // The G-buffer's view-space norma
 Texture2D<float4> LightSource : register(t2); // The game's diffuse light, as the resolve reads it
 Texture2D<float4> Albedo : register(t3);      // Through the resolve's sRGB view, so linear
 Texture2D<float4> Specular : register(t4);    // The specular light the resolve adds (its inLightSpecular)
+// The prefiltered distances and their smaller copies (visibility_bitmask's prefilter), negative on
+// foliage; the per-tap occlusion test marches them.
+Texture2D<float> Distances : register(t5);
 RWTexture2D<float4> Bounce : register(u0);
 
 #define SSGI_MAX_SAMPLES 16
+
+static const uint DistanceMipCount = 5;
+static const float DistanceMipOffset = 3.3;
+static const uint VisibilityStepLimit = 8;
+
+// The distance at a sample `offset` pixels from the receiver, from a smaller copy the farther it
+// lies; negative on foliage.
+float signedDistanceAt(int2 texel, float offset)
+{
+    uint mip = uint(round(clamp(log2(max(offset, 1.0)) - DistanceMipOffset, 0, DistanceMipCount - 1)));
+    uint2 mipSize = max(Size >> mip, 1);
+    return Distances.Load(int3(min(uint2(max(texel, int2(0, 0))) >> mip, mipSize - 1), mip));
+}
 
 [numthreads(8, 8, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
@@ -158,6 +174,32 @@ void main(uint3 tid : SV_DispatchThreadID)
 
         const float distance = sqrt(distanceSq);
         const float3 direction = delta / distance;
+
+        // Visibility: march the tap's ray over the prefiltered distances; a surface nearer than the
+        // ray blocks the sample. The disk alone would not see an occluder and would bleed its light
+        // through.
+        const uint visibilitySteps = (uint)clamp(Visibility, 0.0, (float)VisibilityStepLimit);
+        if (visibilitySteps > 0)
+        {
+            const float2 rayPixels = float2(samplePixel) - float2(centre);
+            const float pixelLength = length(rayPixels);
+            bool blocked = false;
+            [loop]
+            for (uint k = 0; k < visibilitySteps; ++k)
+            {
+                const float f = (k + 0.5) / visibilitySteps;
+                const int2 q = int2(round(float2(centre) + rayPixels * f));
+                const float surface = abs(signedDistanceAt(q, f * pixelLength));
+                const float ray = length(P + direction * (f * distance));
+                const float thickness = clamp(0.12 * ray, 0.02, max(radiusWorld, 0.02));
+                if (surface < ray - thickness)
+                {
+                    blocked = true;
+                    break;
+                }
+            }
+            if (blocked) continue;
+        }
 
         // A sample on the same surface is the pixel's own light: adding it back is what makes a
         // gather read as a halo rather than as bounce. The soft ramp is the cosine term too.

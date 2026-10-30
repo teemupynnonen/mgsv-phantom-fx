@@ -27,10 +27,11 @@ void present() noexcept;
 // ---- Recording, on the game's render and worker threads (indirect_light_pass.cpp) ----
 // The game's diffuse light with SSGI's added, into `lit` at the render size, from what the resolve
 // binds: its depth, diffuse light, albedo and specular light (the resolve's inLightSpecular, not the
-// G-buffer's specular material). `velocity` is the game's velocity buffer for this frame, or null;
-// without it the temporal accumulation collapses to the raw gather. False leaves the resolve the
-// game's diffuse light this frame.
+// G-buffer's specular material). `specularMaterial` is the G-buffer's specular target, which tells
+// the distance prefilter foliage (may be null). `velocity` is the game's velocity buffer for this
+// frame, or null; without it the temporal accumulation collapses to the raw gather. False leaves the
+// resolve the game's diffuse light this frame.
 bool compute(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D11ShaderResourceView* normals, ID3D11ShaderResourceView* diffuse,
-    ID3D11ShaderResourceView* albedo, ID3D11ShaderResourceView* specular, ID3D11ShaderResourceView* velocity, ID3D11Buffer* scene,
-    visibility_bitmask::Target& lit);
+    ID3D11ShaderResourceView* albedo, ID3D11ShaderResourceView* specular, ID3D11ShaderResourceView* specularMaterial,
+    ID3D11ShaderResourceView* velocity, ID3D11Buffer* scene, visibility_bitmask::Target& lit);
 }  // namespace phantom_fx::ssgi

@@ -1,5 +1,6 @@
 #include "features/indirect_light/ssgi.hpp"
 
+#include "constant_capture.hpp"
 #include "d3d11_helpers.hpp"
 #include "features/indirect_light/ssgi_shaders.hpp"
 #include "features/motion_blur/motion_blur.hpp"
@@ -42,7 +43,8 @@ struct Parameters
     float diffuseScale;    // c2.z
     float random;          // c2.w
     float minSamples;      // c3.x
-    float padding[3];      // c3.yzw; the buffer rounds to 64 bytes
+    float visibility;      // c3.y
+    float padding[2];      // c3.zw; the buffer rounds to 64 bytes
 };
 
 // A constant buffer's size must be a multiple of 16.
@@ -76,6 +78,9 @@ std::array<Target, 2> moments;     // Luminance moments, RG16F
 UINT historyIndex{};
 UINT historyWidth{}, historyHeight{};
 bool historyValid{};
+// The prefiltered distances at the render size, for the gather's per-tap occlusion test; the march
+// keeps its own, apart from this.
+visibility_bitmask::DistanceMips mips;
 visibility_bitmask::Progress progress{"SSGI"};
 
 // Compiles the shaders once; call with resourceMutex held. Returns false when SSGI is unavailable.
@@ -160,6 +165,7 @@ void detach() noexcept
     historyIndex = 0;
     historyWidth = historyHeight = 0;
     historyValid = false;
+    mips = {};
     device.Reset();
     pipelineFailed = false;
 }
@@ -193,7 +199,8 @@ void present() noexcept
 }
 
 bool compute(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D11ShaderResourceView* normals, ID3D11ShaderResourceView* diffuse,
-    ID3D11ShaderResourceView* albedo, ID3D11ShaderResourceView* specular, ID3D11ShaderResourceView* velocity, ID3D11Buffer* scene, Target& lit)
+    ID3D11ShaderResourceView* albedo, ID3D11ShaderResourceView* specular, ID3D11ShaderResourceView* specularMaterial,
+    ID3D11ShaderResourceView* velocity, ID3D11Buffer* scene, Target& lit)
 {
     const auto settings = latch.frame();
 
@@ -240,8 +247,41 @@ bool compute(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D
     parameters.diffuseScale = (settings.shownAlone || light.debug >= 1) ? 0.0f : 1.0f;
     parameters.random = static_cast<float>((frameCounter.load() * 2654435761u) & 0xFFFFu) / 65535.0f;
     parameters.minSamples = 1.0f;
+    parameters.visibility = light.visibility;
 
     const SavedComputeState saved(context, PassSlots);
+
+    // The prefiltered distances for the gather's per-tap occlusion test. Without the march's
+    // pipeline the test is off and the gather binds the fallback.
+    const visibility_bitmask::DistanceMips* distanceMips = nullptr;
+    if (parameters.visibility > 0.0f && visibility_bitmask::ready())
+    {
+        visibility_bitmask::Parameters vbParameters{};
+        vbParameters.size[0] = width;
+        vbParameters.size[1] = height;
+        // The mips' falloff radius: the gather's world radius at a nominal 50 m, from the projection.
+        float invP11 = 1.0f / 3.1f;
+        if (scene)
+            if (const auto sceneConstants = constant_capture::written<game_constants::SceneConstants>(scene))
+                invP11 = std::max(sceneConstants->projectionParam[1], 1e-3f);
+        vbParameters.radius = light.radius * 2.0f * 50.0f * invP11;
+        vbParameters.maxRadiusPixels = visibility_bitmask::MaxRadiusShare * static_cast<float>(height);
+        try
+        {
+            visibility_bitmask::prefilterDistances(context, vbParameters, scene, depth, specularMaterial, mips);
+            distanceMips = &mips;
+        }
+        catch (const std::exception& error)
+        {
+            log(std::string("SSGI: the distance prefilter failed, the occlusion test is off: ") + error.what());
+            parameters.visibility = 0.0f;
+        }
+    }
+    else
+    {
+        parameters.visibility = 0.0f;
+    }
+
     ID3D11Buffer* buffers[]{parameterBuffer.Get(), scene};
     context->CSSetConstantBuffers(0, 2, buffers);
 
@@ -262,7 +302,8 @@ bool compute(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D
     // 1. The gather samples the game's diffuse light and writes the bounce target.
     constants(parameters);
     run(gatherShader.Get(),
-        {depth, normals, diffuse, albedo, specular ? specular : fallback.view.Get()},
+        {depth, normals, diffuse, albedo, specular ? specular : fallback.view.Get(),
+            distanceMips ? distanceMips->view.Get() : fallback.view.Get()},
         {bounce.access.Get()}, gatherWidth, gatherHeight);
 
     // 2. Temporal accumulation against the previous result.

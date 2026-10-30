@@ -70,6 +70,14 @@ void describe(IndirectLight& light, SettingVisitor& visit)
             .format = "%.0f %%",
             .readoutScale = 100,
             .tip = "Ceiling on how much of the previous frame survives: the bounce accumulates over frames up to this, which steadies it."});
+    visit.slider(light.visibility,
+        {.iniKey = "indirect_light_visibility",
+            .label = "Visibility",
+            .max = 8,
+            .standard = Defaults.visibility,
+            .format = "%.0f",
+            .tip = "Ray-march steps per gather tap over the prefiltered depth, testing what blocks it: occluders stop the light "
+                   "instead of bleeding through. 0 turns the occlusion test off."});
     visit.choice(light.debug,
         {.iniKey = "indirect_light_debug",
             .label = "Debug view",

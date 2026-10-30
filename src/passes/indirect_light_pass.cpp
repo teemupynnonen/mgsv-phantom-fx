@@ -254,8 +254,9 @@ bool drawResolve(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call
         // not the G-buffer's specular target, whose rgb is material data.
         context->PSGetShaderResources(SpecularLightSlot, 1, specular.GetAddressOf());
         context->PSGetConstantBuffers(SceneSlot, 1, scene.GetAddressOf());
-        lit = ssgi::compute(context, depth.Get(), normalView.Get(), diffuse.Get(), albedo.Get(), specular.Get(), velocity().Get(), scene.Get(),
-            diffuseWithLight);
+        const auto specularMaterial = latestSpecular(sizeOf(depth.Get()));
+        lit = ssgi::compute(context, depth.Get(), normalView.Get(), diffuse.Get(), albedo.Get(), specular.Get(), specularMaterial.Get(), velocity().Get(),
+            scene.Get(), diffuseWithLight);
     }
 
     if (!lit && !composition.occlusion) return false;
