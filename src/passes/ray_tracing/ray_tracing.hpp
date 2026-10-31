@@ -104,6 +104,9 @@ ID3D11ShaderResourceView* reflection(UINT width, UINT height) noexcept;
 ID3D11ShaderResourceView* reflectionMap(UINT width, UINT height) noexcept;
 // Their hit distance, R16_FLOAT, for Ray Reconstruction (ray_reconstruction.hpp). Null while off.
 ID3D11Texture2D* reflectionDistance(UINT width, UINT height) noexcept;
+// On the immediate context, once the game drew this frame's glass and mirrors (glass.hpp): their reflections, on the scene the
+// kick built, waited for before anything after runs. False when the kick traced no reflections.
+bool traceSurfaces() noexcept;
 // The point and spot lights' light the last kick path traced (direct_light.hlsl), at the render size,
 // R16G16B16A16_FLOAT times the exposure.
 struct LampLight

@@ -7,6 +7,7 @@
 #include "constant_capture.hpp"
 #include "d3d11_helpers.hpp"
 #include "features/global_illumination/gi_lighting.hpp"
+#include "features/path_tracing/glass.hpp"
 #include "features/path_tracing/path_tracing.hpp"
 #include "features/path_tracing/sky_capture.hpp"
 #include "features/ray_traced_lights/local_lights.hpp"
@@ -804,7 +805,8 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     for (const auto& model : engineScene.newModels)
         for (const auto& part : model->parts)
         {
-            gi_textures::want(part.baseTexture, scene_description::isCutOut(part.role) ? gi_textures::Use::CutOut : gi_textures::Use::Colour);
+            const bool isGlass = part.role == scene_description::MeshRole::Glass;
+            gi_textures::want(part.baseTexture, isGlass ? gi_textures::Use::Data : scene_description::isCutOut(part.role) ? gi_textures::Use::CutOut : gi_textures::Use::Colour);
             gi_textures::want(part.specularTexture, gi_textures::Use::Data);
             gi_textures::want(part.normalTexture, gi_textures::Use::Data);
         }
@@ -855,6 +857,10 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         textures.lampSpecular = lampSpecular;
         textures.materialSpecular = materialSpecular.texture.Get();
         textures.skyCube = skyCube;
+        const auto surfaces = glass::beginFrame(immediate.Get(), depthOut.width, depthOut.height);
+        textures.surfaceDepth = surfaces.depth;
+        textures.surfaceNormal = surfaces.normal;
+        textures.surfaceReflection = surfaces.reflection;
     }
 
     frame.width = depthOut.width;
@@ -1309,6 +1315,37 @@ void reconstructed() noexcept
 bool isPathTracing() noexcept
 {
     return wereReflectionsTraced.load(std::memory_order_relaxed) && !failed && sinceKick() < 1000;
+}
+
+bool traceSurfaces() noexcept
+{
+    // Lists recorded before the scene stopped can still run.
+    if (!enabled.load(std::memory_order_relaxed)) return false;
+
+    std::lock_guard lock(executionMutex);
+    if (!immediate || failed) return false;
+
+    try
+    {
+        const performance::Timed timed(immediate.Get(), performance::Pass::GiWait);
+        const auto inputsReady = fenceValue + 1;
+        const auto traced = fenceValue + 2;
+        check(immediate->Signal(fence.Get(), inputsReady), "Signalling the glass");
+        immediate->Flush();
+        fenceValue = inputsReady;
+        if (!gi_renderer::traceSurfaces(inputsReady, traced)) return false;
+
+        fenceValue = traced;
+        check(immediate->Wait(fence.Get(), traced), "Waiting for the glass's reflections");
+        lightSignalled = lightWaited = traced;
+
+        return true;
+    }
+    catch (const std::exception& error)
+    {
+        fail(error.what());
+        return false;
+    }
 }
 
 ID3D11ShaderResourceView* reflection(UINT width, UINT height) noexcept
