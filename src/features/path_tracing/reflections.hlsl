@@ -18,7 +18,7 @@ RWTexture2D<float> g_ReflectionDistance : register(u94);   // The ray's hit dist
 RWTexture2D<float4> g_ReflectionMap : register(u98);       // The hit as the game's reflection map holds it (ReflectionBlend): rgb its light, a how much it blends
 Texture2D<float> g_SurfaceDepth : register(t26);           // The nearest glass or mirror the game drew at each pixel (glass.hpp); 0 without
 Texture2D<float4> g_SurfaceNormal : register(t27);         // Its world-space normal, its roughness in w
-RWTexture2D<float4> g_SurfaceReflection : register(u99);   // What it reflects, times the exposure
+RWTexture2D<float4> g_SurfaceReflection : register(u99);   // What it reflects, times the exposure; a: the ray's hit distance
 
 // FP16's largest, which Ray Reconstruction takes as the sky.
 static const float SkyHitDistance = 65504.0f;
@@ -289,5 +289,5 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
     float hitDistance;
     bool isRough = normalRoughness.w >= RoughSurface;
     float3 light = ReflectedLight(origin, normal, CopyTolerance(world), direction, PixelCone(world, g_Frame.rayCone.x + alpha), isRough, random, hitDistance);
-    g_SurfaceReflection[did] = float4(min(RemoveNaNs(light) * g_Frame.nearFar.w, BrightestHit), 1.0f);
+    g_SurfaceReflection[did] = float4(min(RemoveNaNs(light) * g_Frame.nearFar.w, BrightestHit), hitDistance);
 }

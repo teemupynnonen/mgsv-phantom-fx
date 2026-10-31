@@ -59,6 +59,7 @@ std::mutex resourceMutex;
 ComPtr<ID3D11Device> device;
 ComPtr<ID3D11PixelShader> glassShader, colorGlassShader, mirrorShader, compositeShader;
 ComPtr<ID3D11VertexShader> fullScreenShader;
+ComPtr<ID3D11ComputeShader> guidesShader;
 ComPtr<ID3D11BlendState> surfaceBlend, colorOnly;
 ComPtr<ID3D11DepthStencilState> behindGameDepth;
 ComPtr<ID3D11Buffer> compositeParameters;
@@ -68,8 +69,9 @@ ComputeTexture reflection;
 ComPtr<ID3D11Texture2D> sceneCopy;
 ComPtr<ID3D11ShaderResourceView> sceneCopyView;
 bool hasPipelineFailed{};
-// The immediate context's: the frame's lists ran a surface's draw, into this scene; the targets hold a frame's surfaces.
-bool hasSurfaces{}, areTargetsDrawn{};
+// The immediate context's: the frame's lists ran a surface's draw, into this scene; the targets hold a frame's surfaces; the
+// frame's surfaces reflect, and Ray Reconstruction has yet to hear of them.
+bool hasSurfaces{}, areTargetsDrawn{}, hasReflected{};
 ComPtr<ID3D11RenderTargetView> scene;
 
 ComPtr<ID3D11PixelShader> surfaceShader(const char* source, const char* name, const D3D_SHADER_MACRO* defines = nullptr)
@@ -94,6 +96,10 @@ bool ensurePipeline()
         check(device->CreateVertexShader(fullScreenCode->GetBufferPointer(), fullScreenCode->GetBufferSize(), nullptr, fullScreenShader.ReleaseAndGetAddressOf()),
             "Creating the glass's vertex shader");
         compositeParameters = makeConstantBuffer(device.Get(), sizeof(CompositeParameters), "Creating the glass's constants");
+
+        const auto guidesCode = compile(shaders::ReconstructionGuides, "glass-guides", "cs_5_0");
+        check(device->CreateComputeShader(guidesCode->GetBufferPointer(), guidesCode->GetBufferSize(), nullptr, guidesShader.ReleaseAndGetAddressOf()),
+            "Creating the glass's guides");
 
         // The nearest surface is the last drawn: the game sorts what blends. The weights blend as the game blends the
         // surfaces, so a pane drawn twice weighs as it shows.
@@ -231,6 +237,7 @@ void detach() noexcept
     mirrorShader.Reset();
     compositeShader.Reset();
     fullScreenShader.Reset();
+    guidesShader.Reset();
     surfaceBlend.Reset();
     colorOnly.Reset();
     behindGameDepth.Reset();
@@ -241,7 +248,7 @@ void detach() noexcept
     sceneCopyView.Reset();
     scene.Reset();
     device.Reset();
-    hasPipelineFailed = hasSurfaces = areTargetsDrawn = false;
+    hasPipelineFailed = hasSurfaces = areTargetsDrawn = hasReflected = false;
 }
 
 void present() noexcept
@@ -357,7 +364,7 @@ SurfaceTextures beginFrame(ID3D11DeviceContext* immediate, UINT width, UINT heig
         if (std::exchange(areTargetsDrawn, false))
             for (const auto* target : {&depthTarget, &normalTarget, &weightTarget}) immediate->ClearRenderTargetView(target->renderTarget.Get(), ClearColor);
 
-        hasSurfaces = false;
+        hasSurfaces = hasReflected = false;
         scene.Reset();
 
         return {depthTarget.texture.texture.Get(), normalTarget.texture.texture.Get(), reflection.texture.Get()};
@@ -396,11 +403,28 @@ void executing(ID3D11DeviceContext* context, std::uint64_t list) noexcept
         std::lock_guard lock(resourceMutex);
         const performance::Timed timed(context, performance::Pass::PathTracedLight);
         composite(context, target.Get(), path_tracing::reflectionStrength());
+        hasReflected = true;
         logOnce("Glass and mirrors: their reflections are traced, in place of the game's.");
     }
     catch (const std::exception& error)
     {
         logOnce(std::string("Glass: no reflections this frame: ") + error.what());
     }
+}
+
+ComPtr<ID3D11ShaderResourceView> guideReconstruction(ID3D11DeviceContext* immediate, ID3D11UnorderedAccessView* normals, ID3D11UnorderedAccessView* hitDistance) noexcept
+{
+    std::lock_guard lock(resourceMutex);
+    if (!std::exchange(hasReflected, false) || !normals || !hitDistance) return nullptr;
+
+    ID3D11ShaderResourceView* inputs[]{normalTarget.texture.view.Get(), weightTarget.texture.view.Get(), reflection.view.Get()};
+    ID3D11UnorderedAccessView* outputs[]{depthTarget.texture.access.Get(), normals, hitDistance};
+    immediate->CSSetShader(guidesShader.Get(), nullptr, 0);
+    immediate->CSSetShaderResources(0, 3, inputs);
+    immediate->CSSetUnorderedAccessViews(0, 3, outputs, nullptr);
+    immediate->Dispatch((weightTarget.texture.width + 7) / 8, (weightTarget.texture.height + 7) / 8, 1);
+    immediate->ClearState();
+
+    return depthTarget.texture.view;
 }
 }

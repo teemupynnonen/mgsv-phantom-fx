@@ -1716,9 +1716,19 @@ the game's lights) is left alone until it runs.
     nothing behind the pane taken for a copy of it. A mirror reflects all of a ray: it has no row of the table, and its mask is
     on the second texture coordinates, which the scene does not keep. So glass shows in reflections, and mirrors in each
     other. The rays leave out glass's tint.
-  - **Open, not measured in game yet.** Ray Reconstruction's guides at those pixels still describe what is behind
-    the glass, but for the depth of model glass; its guide says to give depth, normal and hit distance from one surface or
-    the other, so reflections may smear in motion. The glass with `Prim_TppFxGlassMat*` and `tpp3dfw_MetalicBacteriaGlass` are
+  - **Ray Reconstruction** (`glass::guideReconstruction`). Most glass draws no depth, so the motion, made from depth, moved a
+    pane's detail as what is behind it, and with the guides of that too its cracks melted away in motion and came back
+    once still (the player's hospital window, 2026-10-31: the same pose settled, then arrived at in half a second, 0.6 m to
+    the side; the same held-still turn of 0.08 radians as a control, which depth does not change). Most of that detail is the
+    traced reflection's: with the game's reflection in its place, `path_traced_reflections=0`, the pane has a third of it
+    and keeps 87% moving. Where a pixel's glass covers at least `DominantCover` of it, 0.1, its depth, motion, normal,
+    roughness and reflection hit distance go in place of what is behind, as NVIDIA's guide (3.4.1, 3.4.9) asks of a window.
+    In one scene, detail kept moving went from 45% to 71%, off the glass 85%, and the difference from settled from 0.0114 to
+    0.0073; turning stayed at 71 to 72%, as a wrong depth predicts. Cover 0.5 keeps less than 0.25, and 0.1 and 0.05 are the
+    same. Blending the albedos too gained no more than repeat runs differ by (0.0074 to 0.0070) and takes three textures, so
+    they stay as they are. The gap left to 85% is unexplained; the reflection's noise is the suspect, as neighbouring pixels
+    differ by about four times its mean.
+  - The glass with `Prim_TppFxGlassMat*` and `tpp3dfw_MetalicBacteriaGlass` are
     no part of this: none drew in 205 F10 records.
 - **Hits** (`HitMaterialOf`, `gi_hit_light.hlsli`). The G-buffer's shaders (`fox3ddf_blin` and its family) take a
   surface's look from three textures and one number, and the scene reads the same from the model file: the

@@ -3,6 +3,33 @@
 // HLSL for glass and mirrors on Direct3D 11 (glass.hpp), compiled at runtime with d3dcompiler_47.
 namespace phantom_fx::glass::shaders
 {
+// Where glass dominates, tells Ray Reconstruction of it, as its guide asks of a window: depth, normal and hit distance
+// from the one surface. The normal and the hit distance go into its guides; `SurfaceDepth` is left with the depth of those
+// pixels alone, for the upscaler's motion (upscaler_shaders.hpp, Inputs). Below this cover what is behind the pane dominates.
+inline constexpr char ReconstructionGuides[] = R"(
+Texture2D<float4> SurfaceNormal : register(t0);
+Texture2D<float4> SurfaceWeight : register(t1);
+Texture2D<float4> SurfaceReflection : register(t2);
+RWTexture2D<float> SurfaceDepth : register(u0);
+RWTexture2D<float4> Normals : register(u1);
+RWTexture2D<float> HitDistance : register(u2);
+
+static const float DominantCover = 0.1;
+
+[numthreads(8, 8, 1)]
+void main(uint2 pixel : SV_DispatchThreadID)
+{
+    if (SurfaceWeight[pixel].a < DominantCover)
+    {
+        SurfaceDepth[pixel] = 0;
+        return;
+    }
+
+    Normals[pixel] = SurfaceNormal[pixel];
+    HitDistance[pixel] = SurfaceReflection[pixel].a;
+}
+)";
+
 // What the surfaces' shaders share: the game's constants, and what they write into the surface targets.
 inline constexpr char SurfaceCommon[] = R"(
 cbuffer cPSScene : register(b2)

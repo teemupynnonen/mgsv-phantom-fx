@@ -15,7 +15,9 @@
 //   drawn again into the surface targets: the nearest surface's depth and normal at each pixel, and the weight the
 //   game's shader gives its reflection (draw);
 // - before the exposure's list, the first after the scene, a second short trace reflects those pixels
-//   (ray_tracing::traceSurfaces), and what they reflect is added over the scene at those weights (executing).
+//   (ray_tracing::traceSurfaces), and what they reflect is added over the scene at those weights (executing);
+// - Ray Reconstruction is told of the glass where it dominates, or it moves the pane's detail as what is behind it
+//   (guideReconstruction).
 //
 // So whatever the game draws reflects, its shapes and normals its own: a character's visor needs no pose from the rays.
 // A frame without glass traces nothing.
@@ -44,10 +46,14 @@ struct SurfaceTextures
 {
     ID3D11Texture2D* depth{};      // R32_FLOAT, as the game's depth; 0 without a surface
     ID3D11Texture2D* normal{};     // R16G16B16A16_FLOAT: world space, the roughness in w
-    ID3D11Texture2D* reflection{}; // R16G16B16A16_FLOAT: what it reflects, in the scene's units
+    ID3D11Texture2D* reflection{}; // R16G16B16A16_FLOAT: what it reflects, in the scene's units; a: the ray's hit distance
 };
 // At the kick (ray_tracing.cpp): the surface targets, empty for this frame's, at the render size; all null when unavailable.
 SurfaceTextures beginFrame(ID3D11DeviceContext* immediate, UINT width, UINT height) noexcept;
 // Before the immediate context executes `list`: the trace and what it adds, before the exposure's.
 void executing(ID3D11DeviceContext* context, std::uint64_t list) noexcept;
+// Before the upscaler's inputs, with Ray Reconstruction's guides to write into: the depth of the glass that dominates its
+// pixels, 0 elsewhere, for the depth and motion it reads; null when no glass reflected this frame. Clears the compute state.
+Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> guideReconstruction(ID3D11DeviceContext* immediate, ID3D11UnorderedAccessView* normals,
+    ID3D11UnorderedAccessView* hitDistance) noexcept;
 }

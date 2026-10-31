@@ -1304,7 +1304,7 @@ std::optional<ReconstructionGuides> reconstructionGuides(UINT width, UINT height
     std::lock_guard lock(executionMutex);
     if (!guidesKick || guidesKick != kicks || guideNormals.width != width || guideNormals.height != height) return std::nullopt;
 
-    return ReconstructionGuides{guideNormals.texture, guideDiffuse.texture, guideSpecular.texture};
+    return ReconstructionGuides{guideNormals.texture, guideDiffuse.texture, guideSpecular.texture, guideNormals.access};
 }
 
 void reconstructed() noexcept
@@ -1378,6 +1378,11 @@ Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> surfaceDepth(UINT width, UINT h
 {
     std::lock_guard lock(lightMutex);
     return sizeOf(publishedDepth.Get()) == std::pair{width, height} ? publishedDepth : nullptr;
+}
+
+ID3D11UnorderedAccessView* reflectionDistanceAccess(UINT width, UINT height) noexcept
+{
+    return reflectionDistance(width, height) ? reflectionDistanceOutput.access.Get() : nullptr;
 }
 
 ID3D11Texture2D* reflectionDistance(UINT width, UINT height) noexcept
