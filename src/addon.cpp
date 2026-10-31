@@ -35,6 +35,7 @@
 #include "log.hpp"
 #include "menu.hpp"
 #include "modules.hpp"
+#include "passes/depth_of_field_pass.hpp"
 #include "passes/indirect_light_pass.hpp"
 #include "passes/local_light_pass.hpp"
 #include "passes/ray_tracing/engine_scene.hpp"
@@ -245,7 +246,7 @@ bool onDraw(command_list* list, uint32_t vertices, uint32_t instances, uint32_t 
     // does not matter.
     const bool drawn = atmosphere::draw(context, call, shader) || indirect_light_pass::draw(context, call, shader)
         || sun_light_pass::draw(context, call, shader) || path_tracing::draw(context, call, shader) || sea::draw(context, call, shader)
-        || hdr::draw(context, call, shader) || upscaler::draw(context, call, shader);
+        || hdr::draw(context, call, shader) || depth_of_field_pass::draw(context, call, shader) || upscaler::draw(context, call, shader);
 
     // The game's sky, then again for the rays; the physical sky's own draw does the same (atmosphere.cpp).
     if (!drawn && sky_capture::isWanted())
