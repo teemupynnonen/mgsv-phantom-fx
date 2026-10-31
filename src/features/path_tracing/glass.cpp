@@ -1,4 +1,5 @@
 // Glass and mirrors on Direct3D 11; glass.hpp describes them.
+#include "features/forward_shadows/forward_shadows.hpp"
 #include "features/path_tracing/glass.hpp"
 
 #include "command_list_notes.hpp"
@@ -57,7 +58,7 @@ struct Target
 // ---- Direct3D, guarded by resourceMutex, never held through a Direct3D call on a recording thread ----
 std::mutex resourceMutex;
 ComPtr<ID3D11Device> device;
-ComPtr<ID3D11PixelShader> glassShader, colorGlassShader, mirrorShader, compositeShader;
+ComPtr<ID3D11PixelShader> glassShader, colorGlassShader, mirrorShader, waterShader, compositeShader;
 ComPtr<ID3D11VertexShader> fullScreenShader;
 ComPtr<ID3D11ComputeShader> guidesShader;
 ComPtr<ID3D11BlendState> surfaceBlend, colorOnly;
@@ -91,6 +92,7 @@ bool ensurePipeline()
         glassShader = surfaceShader(shaders::GlassSurface, "glass-surface");
         colorGlassShader = surfaceShader(shaders::GlassSurface, "glass-surface-color", color);
         mirrorShader = surfaceShader(shaders::MirrorSurface, "mirror-surface");
+        waterShader = surfaceShader(shaders::WaterSurface, "water-surface");
 
         const auto fullScreenCode = compile(path_tracing::shaders::FullScreen, "glass-full-screen", "vs_5_0");
         check(device->CreateVertexShader(fullScreenCode->GetBufferPointer(), fullScreenCode->GetBufferSize(), nullptr, fullScreenShader.ReleaseAndGetAddressOf()),
@@ -199,7 +201,8 @@ void composite(ID3D11DeviceContext* immediate, ID3D11RenderTargetView* target, f
     check(write(immediate, compositeParameters.Get(), CompositeParameters{strength}), "Writing the glass's constants");
     immediate->CopyResource(sceneCopy.Get(), sceneTexture.Get());
 
-    ID3D11ShaderResourceView* inputs[]{sceneCopyView.Get(), weightTarget.texture.view.Get(), reflection.view.Get()};
+    ID3D11ShaderResourceView* inputs[]{sceneCopyView.Get(), weightTarget.texture.view.Get(), reflection.view.Get(),
+        ray_tracing::forwardShadow(desc.Width, desc.Height)};
     const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(desc.Width), static_cast<float>(desc.Height), 0, 1};
     immediate->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     immediate->IASetInputLayout(nullptr);
@@ -207,7 +210,7 @@ void composite(ID3D11DeviceContext* immediate, ID3D11RenderTargetView* target, f
     immediate->GSSetShader(nullptr, nullptr, 0);
     immediate->PSSetShader(compositeShader.Get(), nullptr, 0);
     immediate->PSSetConstantBuffers(0, 1, compositeParameters.GetAddressOf());
-    immediate->PSSetShaderResources(0, 3, inputs);
+    immediate->PSSetShaderResources(0, 4, inputs);
     immediate->OMSetRenderTargets(1, &target, nullptr);
     immediate->OMSetBlendState(colorOnly.Get(), nullptr, 0xFFFFFFFF);
     immediate->OMSetDepthStencilState(nullptr, 0);
@@ -310,8 +313,29 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         // it covers and the fog over it, and the traced reflection takes the cube map's place at its weight.
         ID3D11ShaderResourceView* none{};
         context->PSSetShaderResources(row->reflectionSlot, 1, &none);
+        // Its shadow map leaves too (t8): the rays' shadow takes its place at the composite (forward_shadows).
+        constexpr UINT GlassShadowSlot = 8, ShadowSamplerSlot = 15;
+        ID3D11ShaderResourceView* gameShadow{};
+        ID3D11SamplerState* gameSampler{};
+        ID3D11ShaderResourceView* litShadow{};
+        ID3D11SamplerState* litSampler{};
+        const bool shadowReplaced = forward_shadows::tracedShadowResources(context, &litShadow, &litSampler);
+        if (shadowReplaced)
+        {
+            context->PSGetShaderResources(GlassShadowSlot, 1, &gameShadow);
+            context->PSGetSamplers(ShadowSamplerSlot, 1, &gameSampler);
+            context->PSSetShaderResources(GlassShadowSlot, 1, &litShadow);
+            context->PSSetSamplers(ShadowSamplerSlot, 1, &litSampler);
+        }
         context->DrawIndexedInstanced(call.count, call.instances, call.first, call.vertexOffset, call.firstInstance);
         context->PSSetShaderResources(row->reflectionSlot, 1, reflected.GetAddressOf());
+        if (shadowReplaced)
+        {
+            context->PSSetShaderResources(GlassShadowSlot, 1, &gameShadow);
+            context->PSSetSamplers(ShadowSamplerSlot, 1, &gameSampler);
+            if (gameShadow) gameShadow->Release();
+            if (gameSampler) gameSampler->Release();
+        }
 
         ID3D11RenderTargetView* const targets[3]{depth.Get(), normal.Get(), weight.Get()};
         drawSurface(context, call, surface.Get(), targets, blend.Get(), depthTest.Get(), gameTarget.Get(), gameDepth.Get());
@@ -328,12 +352,49 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
     }
 }
 
+void recordWater(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call) noexcept
+{
+    try
+    {
+        ComPtr<ID3D11RenderTargetView> gameTarget;
+        ComPtr<ID3D11DepthStencilView> gameDepth;
+        context->OMGetRenderTargets(1, gameTarget.GetAddressOf(), gameDepth.GetAddressOf());
+        const auto [width, height] = sizeOf(gameTarget.Get());
+
+        ComPtr<ID3D11PixelShader> surface;
+        ComPtr<ID3D11BlendState> blend;
+        ComPtr<ID3D11DepthStencilState> depthTest;
+        ComPtr<ID3D11RenderTargetView> depth, normal, weight;
+        {
+            std::lock_guard lock(resourceMutex);
+            if (!waterShader || weightTarget.texture.width != width || weightTarget.texture.height != height) return;
+
+            surface = waterShader;
+            blend = surfaceBlend;
+            depthTest = behindGameDepth;
+            depth = depthTarget.renderTarget;
+            normal = normalTarget.renderTarget;
+            weight = weightTarget.renderTarget;
+        }
+
+        if (!viewportFillsTarget(context)) return;
+
+        ID3D11RenderTargetView* const targets[3]{depth.Get(), normal.Get(), weight.Get()};
+        drawSurface(context, call, surface.Get(), targets, blend.Get(), depthTest.Get(), gameTarget.Get(), gameDepth.Get());
+        notes.note(reinterpret_cast<std::uint64_t>(context), [&](Notes& contextNotes) {
+            contextNotes.hasSurfaces = true;
+            contextNotes.scene = gameTarget;
+        });
+    }
+    catch (...)
+    {
+    }
+}
+
 void recorded(std::uint64_t into, std::uint64_t from) noexcept
 {
     notes.recorded(into, from);
-}
-
-void forget(std::uint64_t contextOrList) noexcept
+}void forget(std::uint64_t contextOrList) noexcept
 {
     notes.forget(contextOrList);
 }

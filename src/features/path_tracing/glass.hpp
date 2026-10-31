@@ -33,6 +33,9 @@ void present() noexcept;
 void note(ID3D11DeviceContext* context, game_shaders::DrawnShader& shader) noexcept;
 // A glass or mirror draw, drawn here while the reflections are traced; returns true when the game's draw must be skipped.
 bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_shaders::DrawnShader& shader) noexcept;
+// A river or another liquid, after its own draw (forward_shadows): the surface into the same targets glass uses, so
+// the surface trace reflects it too. Its cube map is already bound black by the caller.
+void recordWater(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call) noexcept;
 // What `from` recorded now belongs to `into`: FinishCommandList, or a command list executed in a deferred context.
 void recorded(std::uint64_t into, std::uint64_t from) noexcept;
 void forget(std::uint64_t contextOrList) noexcept;
