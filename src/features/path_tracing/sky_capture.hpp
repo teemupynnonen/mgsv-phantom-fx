@@ -1,6 +1,5 @@
 #pragma once
 
-#include "phantom_fx_settings.hpp"
 #include "ui_redirect.hpp"
 
 #include <d3d11.h>
@@ -14,7 +13,6 @@ namespace phantom_fx::sky_capture
 {
 void attach(ID3D11Device* device) noexcept;
 void detach() noexcept;
-void configure(const Configuration& configuration) noexcept;
 void present() noexcept;
 
 // Whether the game's sky draws are drawn here too, while path tracing runs.
