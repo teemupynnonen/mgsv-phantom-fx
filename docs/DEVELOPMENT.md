@@ -3311,15 +3311,15 @@ focus edges at the render size (`features/depth_of_field`).
     taps, from about 11 render pixels of radius, the taps spread out and a small lamp's disc breaks
     into them. One fill as wide as the taps are apart lands on the neighbouring taps, so the first ring
     is 0.105 of the radius and the second 0.05. Offline, the gather's maths at 60 render pixels: a lamp's
-    ripple 0.65 with one fill, 0.25 with 192 taps, 0.12 with two fills; frame 32570's scene against a
+    ripple 0.65 with one fill, 0.42 with 192 taps, 0.12 with two fills; frame 32570's scene against a
     true disc, rms 1.12, 0.98, 0.61 of 255. Mips the width of the gap were worse than either, at 1.97.
   - The composite stretches the layer with a cubic B-spline in four bilinear taps (Sigg and Hadwiger
     2005). A pixel's cover is its own radius: sharp under half a render pixel, all blur over one and a
     half. The radius follows the game's formula, starting at its smallest size (c12.x), and comes from
     a second channel of the cover draw.
   - Measured on the copy (4K, Quality, Ray Reconstruction, f/1.4), against a true disc blur of the
-    no-blur frame: detail, rms 8.80 (game) to 7.71; a flat wall, 2.05 to 2.26, slightly worse. Blurs
-    over the 96 taps are unmeasured, and so is the cost.
+    no-blur frame: detail, rms 8.80 (game) to 7.75; a flat wall, 2.05 to 1.78. Lamps at strong blurs
+    were checked offline alone, and the cost is unmeasured.
 
   The near layer stays the game's with either.
 
