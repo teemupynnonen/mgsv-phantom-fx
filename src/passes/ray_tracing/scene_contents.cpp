@@ -888,7 +888,7 @@ std::string SceneContents::describeHit(std::span<const InstancedModel> instanced
             {
                 const auto& part = found->second.geometry->parts[partIndex];
                 what += std::format(", mesh {} ({}, {} triangles, alpha {:#04x} shadow {:#04x}, technique {:x})", part.mesh,
-                    part.role == MeshRole::Hair ? "hair" : part.role == MeshRole::Leaf ? "leaves" : isCutOut(part.role) ? "cut-out" : "opaque",
+                    part.role == MeshRole::Hair ? "hair" : part.role == MeshRole::Leaf ? "leaves" : part.role == MeshRole::Glass ? "glass" : part.role == MeshRole::Mirror ? "mirror" : isCutOut(part.role) ? "cut-out" : "opaque",
                     part.indices.size() / 3, part.alphaBits, part.shadowBits, part.technique);
             }
         }

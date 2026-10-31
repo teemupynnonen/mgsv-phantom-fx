@@ -21,6 +21,9 @@ void describe(gi_d3d12::Descriptors& d, const Textures& textures)
     if (textures.reflectionMap) d.outputTexture(98, textures.reflectionMap, DXGI_FORMAT_R16G16B16A16_FLOAT);
     if (textures.lampDiffuse) d.outputTexture(95, textures.lampDiffuse, DXGI_FORMAT_R16G16B16A16_FLOAT);
     if (textures.lampSpecular) d.outputTexture(96, textures.lampSpecular, DXGI_FORMAT_R16G16B16A16_FLOAT);
+    if (textures.surfaceDepth) d.texture(26, textures.surfaceDepth, DXGI_FORMAT_R32_FLOAT);
+    if (textures.surfaceNormal) d.texture(27, textures.surfaceNormal, DXGI_FORMAT_R16G16B16A16_FLOAT);
+    if (textures.surfaceReflection) d.outputTexture(99, textures.surfaceReflection, DXGI_FORMAT_R16G16B16A16_FLOAT);
 }
 
 void recordLamps(gi_d3d12::Recorder& r, std::uint32_t width, std::uint32_t height)
@@ -34,6 +37,13 @@ void recordReflections(gi_d3d12::Recorder& r, std::uint32_t width, std::uint32_t
 {
     r.mark("path-traced reflections", performance::Pass::Reflections);
     r.dispatch(Kernel::TraceReflections, groups(width, 8), groups(height, 8));
+    r.barrier();
+}
+
+void recordSurfaceReflections(gi_d3d12::Recorder& r, std::uint32_t width, std::uint32_t height)
+{
+    r.mark("glass reflections", performance::Pass::Reflections);
+    r.dispatch(Kernel::TraceSurfaceReflections, groups(width, 8), groups(height, 8));
     r.barrier();
 }
 }

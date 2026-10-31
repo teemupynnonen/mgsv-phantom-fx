@@ -33,7 +33,7 @@ enum class Kernel : std::uint8_t
     // gi_shadow.hlsl, gi_shadow_filter.hlsl (the sun's), light_shadows.hlsl (the lights')
     TraceSunShadows, ClassifyShadowTiles, FilterShadows, DebugShadows, ProbeShadows, TraceLocalLightShadows, FilterLocalLightShadows, ProbeLocalLights,
     // reflections.hlsl and direct_light.hlsl (path tracing)
-    TraceReflections, TraceLampLight,
+    TraceReflections, TraceSurfaceReflections, TraceLampLight,
     Count
 };
 

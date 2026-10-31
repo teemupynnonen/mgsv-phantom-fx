@@ -57,6 +57,7 @@
 #include "TraceLocalLightShadows.h"
 #include "TraceReflections.h"
 #include "TraceSunShadows.h"
+#include "TraceSurfaceReflections.h"
 #include "UpdateFoliageMemory.h"
 #include "UpdateMultibounceCells.h"
 #include "UpdateTiles.h"
@@ -91,7 +92,7 @@ constexpr std::uint32_t MaxMarks = 32;
 constexpr std::span<const unsigned char> Bytecode[]{GI_ClearNewGeometries, GI_DebugScene, GI_TerrainGrid, GI_Skin,
     GI_ClearCounters, GI_GenerateDispatch, GI_PrepareGuides, GI_TraceLight, GI_LearnAlbedo, GI_PurgeTiles, GI_PopulateMultibounceCells,
     GI_PopulateCells, GI_UpdateTiles, GI_UpdateMultibounceCells, GI_ResolveLight, GI_UpdateFoliageMemory, GI_CompositeLight, GI_TraceSunShadows, GI_ClassifyShadowTiles,
-    GI_FilterShadows, GI_DebugShadows, GI_ProbeShadows, GI_TraceLocalLightShadows, GI_FilterLocalLightShadows, GI_ProbeLocalLights, GI_TraceReflections, GI_TraceLampLight};
+    GI_FilterShadows, GI_DebugShadows, GI_ProbeShadows, GI_TraceLocalLightShadows, GI_FilterLocalLightShadows, GI_ProbeLocalLights, GI_TraceReflections, GI_TraceSurfaceReflections, GI_TraceLampLight};
 static_assert(std::size(Bytecode) == static_cast<std::size_t>(Kernel::Count));
 
 using Shared = OpenedTexture;
@@ -99,6 +100,13 @@ using Shared = OpenedTexture;
 // Diagnostics: the steps of a frame's CPU time.
 enum CpuStep { WaitStep, ProbeStep, ContentsStep, RecordStep, CpuSteps };
 constexpr const char* CpuStepNames[CpuSteps]{"waiting for the GPU", "the probe", "the scene's contents", "recording"};
+
+// What a frame's lists bind.
+struct FrameBinding
+{
+    D3D12_GPU_VIRTUAL_ADDRESS constants{}, topLevel{};
+    D3D12_GPU_DESCRIPTOR_HANDLE srvs{}, uavs{}, textures{};
+};
 
 struct State
 {
@@ -109,6 +117,17 @@ struct State
     std::array<ComPtr<ID3D12CommandAllocator>, FramesInFlight> allocators;
     std::array<std::uint64_t, FramesInFlight> submitted{};
     ComPtr<ID3D12GraphicsCommandList4> list;
+    // Glass and mirrors' list (traceSurfaces), after the frame's, in the same slot.
+    std::array<ComPtr<ID3D12CommandAllocator>, FramesInFlight> surfaceAllocators;
+    ComPtr<ID3D12GraphicsCommandList4> surfaceList;
+    // What that list binds and writes, from the last render that traced reflections, until it runs.
+    struct SurfaceTrace
+    {
+        std::uint32_t slot{}, width{}, height{};
+        FrameBinding binding;
+        ID3D12Resource* reflection{};
+    };
+    std::optional<SurfaceTrace> surfaceTrace;
     HANDLE event{};
     std::uint64_t frames{};
 
@@ -174,7 +193,8 @@ struct State
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT statsFootprint{};
     std::uint64_t statsFence{}, lastStats{};
     Shared depth, normal, albedo, output, shadow, shadowDebug, velocity, terrainPages, terrainHeights, localLightShadow, lightDebug, materialSpecular, skyCube, guideNormals,
-        guideSpecular, reflection, reflectionDistance, reflectionMap, guideMaterial, guideLobe, specularTable, lampMasks, lampDiffuse, lampSpecular;
+        guideSpecular, reflection, reflectionDistance, reflectionMap, guideMaterial, guideLobe, specularTable, lampMasks, lampDiffuse, lampSpecular, surfaceDepth,
+        surfaceNormal, surfaceReflection;
 
     ~State()
     {
@@ -469,6 +489,14 @@ void start(ID3D11Device* device11, HANDLE sharedFence)
 
     const D3D12_COMMAND_QUEUE_DESC queue{D3D12_COMMAND_LIST_TYPE_COMPUTE};
     check(s->device->CreateCommandQueue(&queue, IID_PPV_ARGS(&s->queue)), "Creating the Direct3D 12 queue");
+
+    for (auto& allocator : s->surfaceAllocators)
+        check(s->device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COMPUTE, IID_PPV_ARGS(&allocator)), "Creating a command allocator");
+
+    check(s->device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COMPUTE, s->surfaceAllocators[0].Get(), nullptr, IID_PPV_ARGS(&s->surfaceList)),
+        "Creating the command list");
+    check(s->surfaceList->Close(), "Closing the command list");
+
     for (auto& allocator : s->allocators)
         check(s->device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COMPUTE, IID_PPV_ARGS(&allocator)), "Creating a command allocator");
 
@@ -623,6 +651,9 @@ void readTimes(State& s, std::uint32_t slot)
     performance::Milliseconds passes{};
     for (std::size_t i = 0; i + 1 < marks.size(); ++i)
     {
+        // From the frame's list's end to the next list's start: the game's own work.
+        if (!*marks[i].phase) continue;
+
         const double milliseconds = ticks[i + 1] >= ticks[i] ? static_cast<double>(ticks[i + 1] - ticks[i]) * toMilliseconds : 0.0;
         if (const auto pass = marks[i].pass) passes[static_cast<std::size_t>(*pass)] += static_cast<float>(milliseconds);
         auto& phases = s.tally.phases;
@@ -888,6 +919,33 @@ void logTally(State& s)
     t.since = now;
 }
 
+namespace
+{
+void bindFrame(State& s, ID3D12GraphicsCommandList4& list, const FrameBinding& frame)
+{
+    ID3D12DescriptorHeap* heaps[]{s.heap.Get()};
+    list.SetDescriptorHeaps(1, heaps);
+    list.SetComputeRootSignature(s.rootSignature.Get());
+    list.SetComputeRootConstantBufferView(0, frame.constants);
+    list.SetComputeRootDescriptorTable(2, frame.srvs);
+    list.SetComputeRootDescriptorTable(3, frame.uavs);
+    list.SetComputeRootShaderResourceView(4, frame.topLevel);
+    list.SetComputeRootDescriptorTable(5, frame.textures);
+}
+
+// A timestamp in `list` at each of a Recorder's marks, into the slot's.
+std::function<void(const char*, std::optional<performance::Pass>)> timestampMarker(State& s, ID3D12GraphicsCommandList4& list, std::uint32_t slot)
+{
+    return [&s, &list, slot](const char* phase, std::optional<performance::Pass> pass) {
+        auto& marks = s.marks[slot];
+        if (marks.size() >= MaxMarks) return;
+
+        list.EndQuery(s.timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * MaxMarks + static_cast<UINT>(marks.size()));
+        marks.push_back({phase ? phase : "", pass});
+    };
+}
+}
+
 Result render(const Frame& frame)
 {
     auto& s = *state;
@@ -900,6 +958,7 @@ Result render(const Frame& frame)
     };
 
     Result result;
+    s.surfaceTrace.reset();
     const auto slot = static_cast<std::uint32_t>(s.frames++ % FramesInFlight);
     waitFor(s, s.submitted[slot]);
     lap(WaitStep);
@@ -989,6 +1048,7 @@ Result render(const Frame& frame)
         .terrainEye = terrain ? std::optional(frame.eye) : std::nullopt,
         .seaCentre = frame.seaLevel ? std::optional(std::array{frame.eye[0], *frame.seaLevel, frame.eye[2]}) : std::nullopt,
         .shouldListInstances = debugShadows || probeLights};
+    std::optional<State::SurfaceTrace> surfaceTrace;
     auto update = s.contents->update(game);
     s.instancedModels[slot] = std::move(update.instanced);
     result.releasedModels = std::move(update.releasedModels);
@@ -1031,6 +1091,12 @@ Result render(const Frame& frame)
             traced.reflection = openShared(s, s.reflection, frame.textures.reflection, "Opening the reflections").Get();
             traced.reflectionDistance = openShared(s, s.reflectionDistance, frame.textures.reflectionDistance, "Opening the reflections' hit distance").Get();
             traced.reflectionMap = openShared(s, s.reflectionMap, frame.textures.reflectionMap, "Opening the reflection map").Get();
+            if (frame.textures.surfaceDepth)
+            {
+                traced.surfaceDepth = openShared(s, s.surfaceDepth, frame.textures.surfaceDepth, "Opening the glass's depth").Get();
+                traced.surfaceNormal = openShared(s, s.surfaceNormal, frame.textures.surfaceNormal, "Opening the glass's normals").Get();
+                traced.surfaceReflection = openShared(s, s.surfaceReflection, frame.textures.surfaceReflection, "Opening the glass's reflections").Get();
+            }
         }
         if (traceLamps)
         {
@@ -1139,30 +1205,17 @@ Result render(const Frame& frame)
             if (probeLights) descriptors.outputBuffer(92, s.lightProbe.Get(), sizeof(GILightProbe), 1);
         }
 
-        ID3D12DescriptorHeap* heaps[]{s.heap.Get()};
         // The game's textures stay in the common state between frames: the shaders' reads promote them.
         auto textureRange = s.heap->GetGPUDescriptorHandleForHeapStart();
         textureRange.ptr += std::uint64_t{TableSize} * FramesInFlight * s.descriptorSize;
-        const auto bind = [&] {
-            list.SetDescriptorHeaps(1, heaps);
-            list.SetComputeRootSignature(s.rootSignature.Get());
-            list.SetComputeRootConstantBufferView(0, uploads.address + constantsOffset);
-            list.SetComputeRootDescriptorTable(2, descriptors.srvTable());
-            list.SetComputeRootDescriptorTable(3, descriptors.uavTable());
-            list.SetComputeRootShaderResourceView(4, scene.topLevel()->GetGPUVirtualAddress());
-            list.SetComputeRootDescriptorTable(5, textureRange);
-        };
+        const FrameBinding binding{uploads.address + constantsOffset, scene.topLevel()->GetGPUVirtualAddress(), descriptors.srvTable(), descriptors.uavTable(), textureRange};
+        const auto bind = [&] { bindFrame(s, list, binding); };
         bind();
         Recorder recorder(list, s.pipelines, s.dispatchSignature.Get(), s.dispatchArguments.Get());
         auto& marks = s.marks[slot];
         marks.clear();
         recorder.rebinder = bind;
-        recorder.marker = [&](const char* phase, std::optional<performance::Pass> pass) {
-            if (marks.size() >= MaxMarks) return;
-
-            list.EndQuery(s.timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * MaxMarks + static_cast<UINT>(marks.size()));
-            marks.push_back({phase ? phase : "", pass});
-        };
+        recorder.marker = timestampMarker(s, list, slot);
 
         // The shared textures, in the state the passes use each in: they leave the common state first and go
         // back to it after. Those the frame does not use are null.
@@ -1239,6 +1292,8 @@ Result render(const Frame& frame)
 
         if (traceReflections) path_tracing_rays::recordReflections(recorder, frame.width, frame.height);
 
+        if (traced.surfaceReflection) surfaceTrace = State::SurfaceTrace{slot, frame.width, frame.height, binding, traced.surfaceReflection};
+
         if constexpr (DiagnosticLog)
         {
             if (traceLight && !frame.showScene) copyStats(s, recorder, output, frame);
@@ -1263,6 +1318,7 @@ Result render(const Frame& frame)
     check(s.queue->Signal(s.fence.Get(), frame.signalValue), "Signalling the global illumination");
     s.submitted[slot] = frame.signalValue;
     lap(RecordStep);
+    s.surfaceTrace = surfaceTrace;
 
     const double cpu = clock::millisecondsOf(clock::ticksNow() - started);
     const auto stats = scene.stats();
@@ -1277,6 +1333,47 @@ Result render(const Frame& frame)
     t.compactions += stats.compactedThisFrame;
 
     return result;
+}
+
+bool traceSurfaces(std::uint64_t waitValue, std::uint64_t signalValue)
+{
+    if (!state || !state->surfaceTrace) return false;
+
+    auto& s = *state;
+    const auto trace = *std::exchange(s.surfaceTrace, std::nullopt);
+    check(s.surfaceAllocators[trace.slot]->Reset(), "Resetting a command allocator");
+    check(s.surfaceList->Reset(s.surfaceAllocators[trace.slot].Get(), nullptr), "Resetting the command list");
+    auto& list = *s.surfaceList.Get();
+    try
+    {
+        bindFrame(s, list, trace.binding);
+        Recorder recorder(list, s.pipelines, s.dispatchSignature.Get(), s.dispatchArguments.Get());
+        auto& marks = s.marks[trace.slot];
+        const auto firstMark = static_cast<UINT>(marks.size());
+        recorder.marker = timestampMarker(s, list, trace.slot);
+        recorder.transition(trace.reflection, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        path_tracing_rays::recordSurfaceReflections(recorder, trace.width, trace.height);
+        recorder.transition(trace.reflection, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+        recorder.mark(nullptr);
+        const auto marked = static_cast<UINT>(marks.size()) - firstMark;
+        list.ResolveQueryData(s.timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, trace.slot * MaxMarks + firstMark, marked, s.timestampReadback.Get(),
+            (std::uint64_t{trace.slot} * MaxMarks + firstMark) * 8);
+        check(list.Close(), "Recording the glass's reflections");
+    }
+    catch (...)
+    {
+        // The next trace resets the list, which it can only once closed.
+        list.Close();
+        throw;
+    }
+
+    check(s.queue->Wait(s.fence.Get(), waitValue), "Waiting for the glass");
+    ID3D12CommandList* lists[]{s.surfaceList.Get()};
+    s.queue->ExecuteCommandLists(1, lists);
+    check(s.queue->Signal(s.fence.Get(), signalValue), "Signalling the glass's reflections");
+    s.submitted[trace.slot] = signalValue;
+
+    return true;
 }
 
 std::string shadowProbe()

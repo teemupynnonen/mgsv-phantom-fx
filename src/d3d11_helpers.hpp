@@ -90,8 +90,9 @@ template<class Data> [[nodiscard]] HRESULT write(ID3D11DeviceContext* context, I
     return result;
 }
 
-// `miscFlags` is SharedWithD3D12 for a texture Direct3D 12 reads or writes too.
-inline ComputeTexture makeComputeTexture(ID3D11Device* device, UINT width, UINT height, DXGI_FORMAT format, const char* what, UINT miscFlags = 0)
+// `miscFlags` is SharedWithD3D12 for a texture Direct3D 12 reads or writes too; `moreBindFlags` for one drawn into as well.
+inline ComputeTexture makeComputeTexture(ID3D11Device* device, UINT width, UINT height, DXGI_FORMAT format, const char* what, UINT miscFlags = 0,
+    UINT moreBindFlags = 0)
 {
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width = width;
@@ -100,7 +101,7 @@ inline ComputeTexture makeComputeTexture(ID3D11Device* device, UINT width, UINT 
     desc.Format = format;
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS | moreBindFlags;
     desc.MiscFlags = miscFlags;
     ComputeTexture made{.width = width, .height = height};
     check(device->CreateTexture2D(&desc, nullptr, made.texture.GetAddressOf()), what);
