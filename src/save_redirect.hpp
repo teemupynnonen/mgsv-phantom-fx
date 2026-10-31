@@ -11,6 +11,6 @@
 namespace phantom_fx::save_redirect
 {
 // Hooks steam_api64.dll's SteamRemoteStorage and SteamUser, with MinHook initialised, and logs what
-// was done. False when the files could not be redirected.
+// was done. False when the files could not be redirected; what was hooked stays, so the game must not go on.
 bool install(const std::filesystem::path& cloud, const std::filesystem::path& userData) noexcept;
 }

@@ -207,13 +207,15 @@ void drawGameShadow(ID3D11DeviceContext* context, const ui_redirect::DrawCall& c
         gameShadowDepthOf = depthState;
     }
 
+    // The last that can fail: from here the game's targets are unbound.
+    check(write(context, optionsBuffer.Get(), ShaderOptions{}), "Writing the sun shadow options");
+
     constexpr FLOAT NoAnswer[4]{-1, -1, -1, -1};
     context->ClearRenderTargetView(gameShadowTarget.Get(), NoAnswer);
     context->OMSetRenderTargets(1, gameShadowTarget.GetAddressOf(), depthStencil.Get());
     context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
     context->OMSetDepthStencilState(gameShadowDepth.Get(), stencilReference);
     context->PSSetShader(gameShadowShader.Get(), nullptr, 0);
-    check(write(context, optionsBuffer.Get(), ShaderOptions{}), "Writing the sun shadow options");
     context->DrawInstanced(call.count, call.instances, call.first, call.firstInstance);
 
     ID3D11RenderTargetView* const restored[]{targets[0].Get(), targets[1].Get()};
@@ -295,7 +297,17 @@ bool drawSun(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, co
     if (keepsGameShadow.load(std::memory_order_relaxed) && sun.isShadowMapped && depth && viewportFillsTarget(context))
     {
         const auto size = contact_shadow_trace::depthSize(depth.Get());
-        drawGameShadow(context, call, static_cast<UINT>(size[0]), static_cast<UINT>(size[1]));
+        try
+        {
+            drawGameShadow(context, call, static_cast<UINT>(size[0]), static_cast<UINT>(size[1]));
+        }
+        catch (const std::exception& error)
+        {
+            // Only a debug case's reference: the sun pass still draws, bound as it is.
+            keepsGameShadow = false;
+            logOnce(std::string("Debug case: the game's shadow could not be kept: ") + error.what());
+        }
+
         context->PSSetShader(replacements[replacement].Get(), nullptr, 0);
         writeOptions(context, composition, contactShadow != nullptr, rayTraced != nullptr);
     }

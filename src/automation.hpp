@@ -12,7 +12,7 @@ struct ID3D11Resource;
 // each under another name first and rename it, so it is never read half written.
 //
 // With `saves` and `local` folders in it, the game is the automation copy: its saves are read from and
-// written to there, and its backups and display settings (save_redirect.hpp), or the commands stay off.
+// written to there, and its backups and display settings (save_redirect.hpp), or the game quits at once.
 // Without them it is the player's game, on the player's saves.
 //
 // F9 freezes the game and records a debug case into `cases/<time>`; F9 again lets it go.

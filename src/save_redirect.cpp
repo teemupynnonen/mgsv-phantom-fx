@@ -171,7 +171,7 @@ HANDLE WINAPI findFirstFile(LPCWSTR pattern, LPWIN32_FIND_DATAW found)
 
 // Each interface is one object for the process, so its vtable is changed once, the first time the game
 // asks for it.
-void patch(void* object, std::span<const Replacement> replacements, const char* what)
+bool patch(void* object, std::span<const Replacement> replacements, const char* what)
 {
     auto** const table = *static_cast<void***>(object);
     const auto slots = std::ranges::max(replacements, {}, &Replacement::first).first + 1;
@@ -179,12 +179,14 @@ void patch(void* object, std::span<const Replacement> replacements, const char* 
     if (!VirtualProtect(table, slots * sizeof(void*), PAGE_READWRITE, &protection))
     {
         log(std::string("The game's ") + what + " could not be redirected; this run may change the player's files.");
-        return;
+        return false;
     }
 
     for (const auto& [slot, function] : replacements) table[slot] = function;
     VirtualProtect(table, slots * sizeof(void*), protection, &protection);
     log(std::string("The game's ") + what + " are redirected.");
+
+    return true;
 }
 
 void* getStorage()
@@ -206,14 +208,14 @@ void redirectUser(void* user)
 
     char folder[MAX_PATH]{};
     const auto steamsAnswer = reinterpret_cast<GetUserDataFolder>((*static_cast<void***>(user))[GetUserDataFolderSlot]);
-    if (steamsAnswer(user, folder, MAX_PATH) && *folder)
+    if (!steamsAnswer(user, folder, MAX_PATH) || !*folder)
     {
-        playerUserData = std::filesystem::path(folder).wstring();
-        playerUserDataKnown.store(true, std::memory_order_release);
+        log("Steam did not say where the player's user data folder is.");
+        return;
     }
-    else log("Steam did not say where the player's user data folder is; only the game's later questions are redirected.");
 
-    patch(user, Replacements, "user data folder calls");
+    playerUserData = std::filesystem::path(folder).wstring();
+    if (patch(user, Replacements, "user data folder calls")) playerUserDataKnown.store(true, std::memory_order_release);
 }
 
 void* getUser()
@@ -246,6 +248,8 @@ bool install(const std::filesystem::path& cloud, const std::filesystem::path& us
 
     // The game has already started Steam, so the player's folder is known before any file opens.
     getUser();
+    if (!playerUserDataKnown.load(std::memory_order_acquire)) return false;
+
     if (!hook(L"kernel32.dll", "CreateFileW", &createFile, originalCreateFile) || !hook(L"kernel32.dll", "DeleteFileW", &deleteFileWide, originalDeleteFileWide)
         || !hook(L"kernel32.dll", "DeleteFileA", &deleteFileNarrow, originalDeleteFileNarrow)
         || !hook(L"kernel32.dll", "GetFileAttributesW", &getFileAttributes, originalGetFileAttributes)
