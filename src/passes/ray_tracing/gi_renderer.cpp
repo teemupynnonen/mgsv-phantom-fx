@@ -32,35 +32,8 @@
 #include <string>
 #include <utility>
 
-// The kernels, compiled by DXC at build time (CMakeLists.txt).
-#include "ClassifyShadowTiles.h"
-#include "ClearCounters.h"
-#include "ClearNewGeometries.h"
-#include "CompositeLight.h"
-#include "DebugScene.h"
-#include "DebugShadows.h"
-#include "FilterLocalLightShadows.h"
-#include "FilterShadows.h"
-#include "GenerateDispatch.h"
-#include "LearnAlbedo.h"
-#include "PopulateCells.h"
-#include "PopulateMultibounceCells.h"
-#include "PrepareGuides.h"
-#include "ProbeLocalLights.h"
-#include "ProbeShadows.h"
-#include "PurgeTiles.h"
-#include "ResolveLight.h"
-#include "Skin.h"
-#include "TerrainGrid.h"
-#include "TraceLampLight.h"
-#include "TraceLight.h"
-#include "TraceLocalLightShadows.h"
-#include "TraceReflections.h"
-#include "TraceSunShadows.h"
-#include "TraceSurfaceReflections.h"
-#include "UpdateFoliageMemory.h"
-#include "UpdateMultibounceCells.h"
-#include "UpdateTiles.h"
+// The kernels' DXIL, in gi_d3d12::Kernel's order (CMakeLists.txt).
+#include "gi_kernel_bytecode.h"
 
 namespace phantom_fx::gi_renderer
 {
@@ -87,13 +60,6 @@ constexpr float DefaultAlbedo = 0.2f;
 constexpr float AlphaTestedBlocking = 0.5f, ShadowRayLength = 5000;
 // Diagnostics: the most phases a frame's list times.
 constexpr std::uint32_t MaxMarks = 32;
-
-// The kernels' DXIL in gi_d3d12::Kernel's order.
-constexpr std::span<const unsigned char> Bytecode[]{GI_ClearNewGeometries, GI_DebugScene, GI_TerrainGrid, GI_Skin,
-    GI_ClearCounters, GI_GenerateDispatch, GI_PrepareGuides, GI_TraceLight, GI_LearnAlbedo, GI_PurgeTiles, GI_PopulateMultibounceCells,
-    GI_PopulateCells, GI_UpdateTiles, GI_UpdateMultibounceCells, GI_ResolveLight, GI_UpdateFoliageMemory, GI_CompositeLight, GI_TraceSunShadows, GI_ClassifyShadowTiles,
-    GI_FilterShadows, GI_DebugShadows, GI_ProbeShadows, GI_TraceLocalLightShadows, GI_FilterLocalLightShadows, GI_ProbeLocalLights, GI_TraceReflections, GI_TraceSurfaceReflections, GI_TraceLampLight};
-static_assert(std::size(Bytecode) == static_cast<std::size_t>(Kernel::Count));
 
 using Shared = OpenedTexture;
 
@@ -1038,34 +1004,34 @@ Result render(const Frame& frame)
         constants.lightRays = {traces.isForReconstruction ? 1u : frame.lightRays, 0, 0, 0};
 
         // ---- Descriptors ----
-        descriptors.texture(0, depth, DXGI_FORMAT_R32_FLOAT);
-        descriptors.texture(1, normal, DXGI_FORMAT_R10G10B10A2_UNORM);
-        descriptors.texture(2, albedo, DXGI_FORMAT_R8G8B8A8_UNORM);
-        descriptors.buffer(4, s.upload[slot].Get(), newGeometriesOffset, 4, newGeometryCount);
-        descriptors.buffer(12, s.upload[slot].Get(), skinOffset, sizeof(GISkinRecord), skinCount);
-        descriptors.buffer(13, s.upload[slot].Get(), paletteOffset, 16, paletteRows);
-        descriptors.buffer(5, scene.instanceBuffer(), 0, sizeof(GIInstanceDesc), instanceCount);
-        descriptors.rawBuffer(6, scene.pool(), gi_scene::Scene::PoolBytes);
-        descriptors.buffer(16, scene.geometryTable(), 0, sizeof(GIGeometry), MaxGeometries);
-        descriptors.outputTexture(0, output, DXGI_FORMAT_R16G16B16A16_FLOAT);
-        descriptors.outputRawBuffer(1, scene.pool(), gi_scene::Scene::PoolBytes);
-        descriptors.outputBuffer(4, s.counters.Get(), 4, GI_COUNTER_COUNT);
-        descriptors.outputBuffer(5, s.dispatchArguments.Get(), 16, GI_DISPATCH_SLOTS);
-        descriptors.outputBuffer(6, s.geometryAlbedo.Get(), 16, MaxGeometries);
+        descriptors.texture(binding::Depth, depth, DXGI_FORMAT_R32_FLOAT);
+        descriptors.texture(binding::Normal, normal, DXGI_FORMAT_R10G10B10A2_UNORM);
+        descriptors.texture(binding::Albedo, albedo, DXGI_FORMAT_R8G8B8A8_UNORM);
+        descriptors.buffer(binding::NewGeometries, s.upload[slot].Get(), newGeometriesOffset, 4, newGeometryCount);
+        descriptors.buffer(binding::SkinRecords, s.upload[slot].Get(), skinOffset, sizeof(GISkinRecord), skinCount);
+        descriptors.buffer(binding::Palettes, s.upload[slot].Get(), paletteOffset, 16, paletteRows);
+        descriptors.buffer(binding::Instances, scene.instanceBuffer(), 0, sizeof(GIInstanceDesc), instanceCount);
+        descriptors.rawBuffer(binding::GeometryPool, scene.pool(), gi_scene::Scene::PoolBytes);
+        descriptors.buffer(binding::Geometries, scene.geometryTable(), 0, sizeof(GIGeometry), MaxGeometries);
+        descriptors.outputTexture(binding::Output, output, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        descriptors.outputRawBuffer(binding::GeometryPoolOut, scene.pool(), gi_scene::Scene::PoolBytes);
+        descriptors.outputBuffer(binding::Counters, s.counters.Get(), 4, GI_COUNTER_COUNT);
+        descriptors.outputBuffer(binding::DispatchArgs, s.dispatchArguments.Get(), 16, GI_DISPATCH_SLOTS);
+        descriptors.outputBuffer(binding::GeometryAlbedo, s.geometryAlbedo.Get(), 16, MaxGeometries);
         if (terrain)
         {
-            descriptors.texture(14, terrainPages, frame.terrain->pagesFormat);
-            descriptors.texture(15, terrainHeights, frame.terrain->heightsFormat);
+            descriptors.texture(binding::TerrainPages, terrainPages, frame.terrain->pagesFormat);
+            descriptors.texture(binding::TerrainHeights, terrainHeights, frame.terrain->heightsFormat);
         }
-        if (velocity) descriptors.texture(17, velocity, frame.textures.velocityFormat);
-        if (materialSpecular) descriptors.texture(23, materialSpecular, DXGI_FORMAT_R16G16B16A16_FLOAT);
-        if (skyCube) descriptors.cube(24, skyCube, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        if (velocity) descriptors.texture(binding::ObjectVelocity, velocity, frame.textures.velocityFormat);
+        if (materialSpecular) descriptors.texture(binding::MaterialSpecular, materialSpecular, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        if (skyCube) descriptors.cube(binding::SkyCube, skyCube, DXGI_FORMAT_R16G16B16A16_FLOAT);
         if (frame.debugShadows)
         {
-            descriptors.outputBuffer(77, s.probe.Get(), sizeof(GIShadowProbe), 1);
-            descriptors.outputTexture(78, shadowDebug, DXGI_FORMAT_R8G8B8A8_UNORM);
+            descriptors.outputBuffer(binding::ShadowProbe, s.probe.Get(), sizeof(GIShadowProbe), 1);
+            descriptors.outputTexture(binding::ShadowDebug, shadowDebug, DXGI_FORMAT_R8G8B8A8_UNORM);
         }
-        if (lightDebug) descriptors.outputTexture(79, lightDebug, DXGI_FORMAT_R8G8B8A8_UNORM);
+        if (lightDebug) descriptors.outputTexture(binding::LightDebug, lightDebug, DXGI_FORMAT_R8G8B8A8_UNORM);
         if (traces.tracesReflections || traces.tracesLampLight) path_tracing_rays::describe(descriptors, traced);
         if (traces.tracesLight) s.light->describe(descriptors, parity);
         if (traces.tracesSun) s.shadows->describe(descriptors, parity, shadow);
@@ -1078,8 +1044,8 @@ Result render(const Frame& frame)
         // The game's textures stay in the common state between frames: the shaders' reads promote them.
         auto textureRange = s.heap->GetGPUDescriptorHandleForHeapStart();
         textureRange.ptr += std::uint64_t{TableSize} * FramesInFlight * s.descriptorSize;
-        const FrameBinding binding{uploads.address + constantsOffset, scene.topLevel()->GetGPUVirtualAddress(), descriptors.srvTable(), descriptors.uavTable(), textureRange};
-        const auto bind = [&] { bindFrame(s, list, binding); };
+        const FrameBinding frameBinding{uploads.address + constantsOffset, scene.topLevel()->GetGPUVirtualAddress(), descriptors.srvTable(), descriptors.uavTable(), textureRange};
+        const auto bind = [&] { bindFrame(s, list, frameBinding); };
         bind();
         Recorder recorder(list, s.pipelines, s.dispatchSignature.Get(), s.dispatchArguments.Get());
         auto& marks = s.marks[slot];
@@ -1152,7 +1118,7 @@ Result render(const Frame& frame)
 
         if (traces.tracesReflections) path_tracing_rays::recordReflections(recorder, frame.width, frame.height);
 
-        if (traces.tracesGlass) surfaceTrace = State::SurfaceTrace{slot, frame.width, frame.height, binding, traced.surfaceReflection};
+        if (traces.tracesGlass) surfaceTrace = State::SurfaceTrace{slot, frame.width, frame.height, frameBinding, traced.surfaceReflection};
 
         if constexpr (DiagnosticLog)
         {

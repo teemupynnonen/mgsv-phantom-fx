@@ -87,36 +87,36 @@ void Light::fill(gi::GIFrameConstants& constants, float verticalFov, std::uint32
 void Light::describe(gi_d3d12::Descriptors& d, std::uint32_t parity) const
 {
     const auto now = parity, last = 1 - parity;
-    d.outputTexture(7, viewZ[now].Get(), DXGI_FORMAT_R32_FLOAT);
-    d.outputTexture(8, normalRoughness.Get(), DXGI_FORMAT_R10G10B10A2_UNORM);
-    d.outputTexture(9, motion.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
-    d.outputTexture(10, noisy[0].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
-    d.outputTexture(11, noisy[1].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
-    d.outputTexture(12, denoised[0].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
-    d.outputTexture(13, denoised[1].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
-    d.outputTexture(14, partial.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
-    d.outputTexture(15, path.Get(), DXGI_FORMAT_R32G32B32A32_UINT);
-    d.outputBuffer(16, hash.Get(), 4, HashTiles);
-    d.outputBuffer(17, decay.Get(), 4, HashTiles);
-    d.outputBuffer(18, values.Get(), 8, HashCells);
-    d.outputBuffer(19, indirectValues.Get(), 8, HashCells);
-    d.outputBuffer(20, updateTiles.Get(), 4, HashTiles);
-    d.outputBuffer(21, updateValues.Get(), 4, std::uint64_t{HashCells} * 4);
-    d.outputBuffer(22, updateIndirectValues.Get(), 4, std::uint64_t{HashCells} * 4);
-    d.outputBuffer(23, visibility.Get(), 16, std::uint64_t{rayCount} * 2);
-    d.outputBuffer(24, visibilityCells.Get(), 4, std::uint64_t{rayCount} * 2);
-    d.outputBuffer(25, visibilityQueries.Get(), 4, std::uint64_t{rayCount} * 2);
-    d.outputBuffer(26, multibounce.Get(), 8, rayCount);
-    d.outputBuffer(27, packedTiles[now].Get(), 4, HashTiles);
-    d.outputBuffer(28, packedTiles[last].Get(), 4, HashTiles);
-    d.outputBuffer(29, lights.Get(), 4, std::uint64_t{rayCount} * 2);
-    d.outputTexture(30, viewZ[last].Get(), DXGI_FORMAT_R32_FLOAT);
-    d.outputBuffer(31, foliageKeys.Get(), 4, GI_FOLIAGE_MEMORY_SLOTS);
-    d.outputBuffer(32, foliageTouched.Get(), 4, GI_FOLIAGE_MEMORY_SLOTS);
-    d.outputBuffer(33, foliageAdded.Get(), 4, std::uint64_t{GI_FOLIAGE_MEMORY_SLOTS} * 4);
-    d.outputBuffer(34, foliageLight.Get(), 8, GI_FOLIAGE_MEMORY_SLOTS);
-    d.outputTexture(35, pick.Get(), DXGI_FORMAT_R8_UINT);
-    d.outputTexture(36, validation.Get(), DXGI_FORMAT_R8G8B8A8_UNORM);
+    d.outputTexture(binding::Light_ViewZ, viewZ[now].Get(), DXGI_FORMAT_R32_FLOAT);
+    d.outputTexture(binding::Light_NormalRoughness, normalRoughness.Get(), DXGI_FORMAT_R10G10B10A2_UNORM);
+    d.outputTexture(binding::Light_Motion, motion.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
+    d.outputTexture(binding::Light_Noisy.at(0), noisy[0].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
+    d.outputTexture(binding::Light_Noisy.at(1), noisy[1].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
+    d.outputTexture(binding::Light_Denoised.at(0), denoised[0].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
+    d.outputTexture(binding::Light_Denoised.at(1), denoised[1].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
+    d.outputTexture(binding::Light_Partial, partial.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
+    d.outputTexture(binding::Light_Path, path.Get(), DXGI_FORMAT_R32G32B32A32_UINT);
+    d.outputBuffer(binding::HashGridCache_HashBuffer, hash.Get(), 4, HashTiles);
+    d.outputBuffer(binding::HashGridCache_DecayTileBuffer, decay.Get(), 4, HashTiles);
+    d.outputBuffer(binding::HashGridCache_ValueBuffer, values.Get(), 8, HashCells);
+    d.outputBuffer(binding::HashGridCache_ValueIndirectBuffer, indirectValues.Get(), 8, HashCells);
+    d.outputBuffer(binding::HashGridCache_UpdateTileBuffer, updateTiles.Get(), 4, HashTiles);
+    d.outputBuffer(binding::HashGridCache_UpdateCellValueBuffer, updateValues.Get(), 4, std::uint64_t{HashCells} * 4);
+    d.outputBuffer(binding::HashGridCache_UpdateCellValueIndirectBuffer, updateIndirectValues.Get(), 4, std::uint64_t{HashCells} * 4);
+    d.outputBuffer(binding::HashGridCache_VisibilityBuffer, visibility.Get(), 16, std::uint64_t{rayCount} * 2);
+    d.outputBuffer(binding::HashGridCache_VisibilityCellBuffer, visibilityCells.Get(), 4, std::uint64_t{rayCount} * 2);
+    d.outputBuffer(binding::HashGridCache_VisibilityQueryBuffer, visibilityQueries.Get(), 4, std::uint64_t{rayCount} * 2);
+    d.outputBuffer(binding::HashGridCache_MultibounceInfoBuffer, multibounce.Get(), 8, rayCount);
+    d.outputBuffer(binding::HashGridCache_PackedTileIndexBuffer, packedTiles[now].Get(), 4, HashTiles);
+    d.outputBuffer(binding::HashGridCache_PreviousPackedTileIndexBuffer, packedTiles[last].Get(), 4, HashTiles);
+    d.outputBuffer(binding::HashGridCache_LightBuffer, lights.Get(), 4, std::uint64_t{rayCount} * 2);
+    d.outputTexture(binding::Light_LastViewZ, viewZ[last].Get(), DXGI_FORMAT_R32_FLOAT);
+    d.outputBuffer(binding::FoliageMemory_Keys, foliageKeys.Get(), 4, GI_FOLIAGE_MEMORY_SLOTS);
+    d.outputBuffer(binding::FoliageMemory_Touched, foliageTouched.Get(), 4, GI_FOLIAGE_MEMORY_SLOTS);
+    d.outputBuffer(binding::FoliageMemory_Added, foliageAdded.Get(), 4, std::uint64_t{GI_FOLIAGE_MEMORY_SLOTS} * 4);
+    d.outputBuffer(binding::FoliageMemory_Light, foliageLight.Get(), 8, GI_FOLIAGE_MEMORY_SLOTS);
+    d.outputTexture(binding::Light_Pick, pick.Get(), DXGI_FORMAT_R8_UINT);
+    d.outputTexture(binding::Light_Validation, validation.Get(), DXGI_FORMAT_R8G8B8A8_UNORM);
 }
 
 void Light::record(gi_d3d12::Recorder& r, std::uint32_t parity, const gi_denoiser::Camera& camera, std::uint32_t frameSlot,
