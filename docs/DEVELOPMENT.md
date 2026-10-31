@@ -59,7 +59,7 @@ documentation and licenses are in `PhantomFX/`.
 ctest --test-dir build/release
 ```
 
-This runs ten tests that need neither the game nor a GPU. `tests/upscaler_tests.cpp`: settings
+This runs eleven tests that need neither the game nor a GPU. `tests/upscaler_tests.cpp`: settings
 (defaults, round trip, clamping, invalid files and values), the mode maths (render scales, texture LOD
 bias), the render size plan (DLSS's own size or the nominal one, rounded up to even and never above the
 output size, Custom's DLSS quality, the settings that make a new plan), the frames (when one starts,
@@ -98,6 +98,8 @@ finds: path tracing keeping the rays of what it replaces, waiting for Ray Recons
 for the game's tables, a kick without a sun or lights, a cost measurement leaving the light out, the scene
 view and the glass's targets. `tests/shared_textures_tests.cpp`: a shared output on a WARP device: nothing to
 read until written, the same size keeping what it holds, a new size or a replaced texture leaving it unwritten.
+`tests/d3d12_host_tests.cpp`: Direct3D 12 work at a point of the immediate context, on WARP devices: each side reads what
+the other just wrote, frame after frame as the lists come round, and a failed evaluation leaves the next one fine.
 `tests/kernel_table_tests.cpp`: what the build makes of the compiled kernels: each kind of binding its own type,
 what the root signature binds left out, a slot with two names, a name with two shapes and a kernel without
 bindings failing.
@@ -158,7 +160,7 @@ what draws it, when that is the feature's own.
 
 | Folder | What draws it |
 | --- | --- |
-| `upscaling/` | `upscaler.*`: DLSS or FSR before the grading, in place of FXAA: NGX, composite, the grading at the output size, texture LOD bias. `frames.*`: the frames the upscaler runs on: when one starts, its main view and its jitter. `render_size_plan.*`: the render size plan, from the upscaler, mode and output size, with DLSS's own size from NGX. `upscaler_shaders.hpp`: the upscaler's inputs and motion vectors, composite with RCAS and debug views, stretch fallback. `fsr_upscaler.*`: FSR upscaling on Direct3D 12. `ray_reconstruction.*`: DLSS Ray Reconstruction on Direct3D 12 (see "Ray Reconstruction"). `fxaa.*`: hook on the FXAA plugin, the FXAA pass at any post processing setting |
+| `upscaling/` | `upscaler.*`: DLSS or FSR before the grading, in place of FXAA: NGX, composite, the grading at the output size, texture LOD bias. `frames.*`: the frames the upscaler runs on: when one starts, its main view and its jitter. `render_size_plan.*`: the render size plan, from the upscaler, mode and output size, with DLSS's own size from NGX. `d3d12_host.*`: Direct3D 12 work at a point of the immediate context, for FSR and Ray Reconstruction (see "FSR upscaling"). `upscaler_shaders.hpp`: the upscaler's inputs and motion vectors, composite with RCAS and debug views, stretch fallback. `fsr_upscaler.*`: FSR upscaling on Direct3D 12. `ray_reconstruction.*`: DLSS Ray Reconstruction on Direct3D 12 (see "Ray Reconstruction"). `fxaa.*`: hook on the FXAA plugin, the FXAA pass at any post processing setting |
 | `frame_generation/` | `presenter.*`: the game's stand-in swap chain, presented through Direct3D 12. `frame_generation.*`: DLSS Frame Generation, Streamline, its inputs and camera, Reflex. `fsr_frame_generation.*`: AMD's swap chain and its inputs |
 | `sun/` | Settings only: the sun size the soft and ray-traced shadows and the global illumination share |
 | `soft_shadows/` | Settings only: a mode of the sun light pass's shaders (`passes/sun_light_pass.*`) |
@@ -1534,7 +1536,7 @@ add-on (1.7.1). FSR runs on Direct3D 12 only.
 
 - **Interop.** The colour, depth, motion and output textures are created shared while FSR is chosen.
   A native Direct3D 12 device on the game's GPU opens them
-  (`src/features/upscaling/fsr_upscaler.cpp`); Direct3D 11 signals a shared fence and flushes after the inputs pass, Direct3D 12 runs FSR on its own queue,
+  (`src/features/upscaling/fsr_upscaler.cpp`, on `d3d12_host::Host`, which Ray Reconstruction shares); Direct3D 11 signals a shared fence and flushes after the inputs pass, Direct3D 12 runs FSR on its own queue,
   and Direct3D 11 waits on the GPU before the composite reads the output.
 - **Colour.** FSR is made for linear colour, so the inputs pass decodes the sRGB-encoded image into
   `R16G16B16A16_FLOAT`, the game's 8-bit LDR one too, and the composite encodes FSR's output again,

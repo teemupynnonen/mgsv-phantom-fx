@@ -226,7 +226,7 @@ add_library(phantom_fx SHARED src/addon.cpp src/core.cpp src/modules.cpp src/fea
     src/passes/local_light_pass.cpp src/features/lamp_contact_shadows/lamp_contact_shadows.cpp src/features/lamp_soft_shadows/lamp_soft_shadows.cpp
     src/features/depth_of_field/depth_of_field.cpp src/passes/indirect_light_pass.cpp src/passes/visibility_bitmask.cpp src/features/ambient_occlusion/gtvbao.cpp
     src/features/indirect_light/ssilvb.cpp src/features/global_illumination/light_combine.cpp src/features/photo_mode/photo_mode.cpp src/features/photo_mode/focus.cpp src/features/hdr/hdr.cpp src/weather.cpp src/character.cpp src/game_lua.cpp src/travel.cpp src/features/volumetric_fog/atmosphere.cpp src/features/sea/sea.cpp src/sun_movement.cpp
-    src/fidelityfx.cpp src/features/upscaling/fsr_upscaler.cpp src/features/upscaling/ray_reconstruction.cpp src/features/path_tracing/path_tracing.cpp src/features/path_tracing/glass.cpp src/features/path_tracing/path_tracing_rays.cpp src/features/path_tracing/sky_capture.cpp src/features/frame_generation/fsr_frame_generation.cpp src/performance.cpp src/performance_menu.cpp
+    src/fidelityfx.cpp src/features/upscaling/d3d12_host.cpp src/features/upscaling/fsr_upscaler.cpp src/features/upscaling/ray_reconstruction.cpp src/features/path_tracing/path_tracing.cpp src/features/path_tracing/glass.cpp src/features/path_tracing/path_tracing_rays.cpp src/features/path_tracing/sky_capture.cpp src/features/frame_generation/fsr_frame_generation.cpp src/performance.cpp src/performance_menu.cpp
     src/passes/ray_tracing/ray_tracing.cpp src/passes/ray_tracing/kick_traces.cpp src/passes/ray_tracing/trace.cpp src/passes/ray_tracing/shared_textures.cpp src/passes/ray_tracing/engine_scene.cpp src/passes/ray_tracing/scene_description.cpp src/passes/ray_tracing/engine_brush.cpp src/passes/ray_tracing/gi_inputs.cpp src/features/ray_traced_lights/local_lights.cpp src/features/ray_traced_lights/light_choice.cpp src/features/ray_traced_lights/lamp_shadow_rays.cpp src/passes/ray_tracing/gi_renderer.cpp src/passes/ray_tracing/gi_scene.cpp src/passes/ray_tracing/scene_contents.cpp src/passes/ray_tracing/gi_textures.cpp src/features/global_illumination/gi_light.cpp src/features/global_illumination/gi_denoiser.cpp src/features/global_illumination/gi_lighting.cpp src/features/ray_traced_shadows/gi_shadow.cpp
     "${CMAKE_BINARY_DIR}/version.rc")
 add_dependencies(phantom_fx gi_kernels)
@@ -337,6 +337,14 @@ if(BUILD_TESTING)
     target_compile_definitions(shader_bytecode_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(shader_bytecode_tests PRIVATE /W4 /WX /permissive- /utf-8)
     add_test(NAME shader_bytecode COMMAND shader_bytecode_tests)
+
+    add_executable(d3d12_host_tests tests/d3d12_host_tests.cpp src/features/upscaling/d3d12_host.cpp src/log.cpp)
+    target_include_directories(d3d12_host_tests PRIVATE src)
+    target_link_libraries(d3d12_host_tests PRIVATE d3d11 d3d12 dxgi d3dcompiler)
+    target_compile_features(d3d12_host_tests PRIVATE cxx_std_20)
+    target_compile_definitions(d3d12_host_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(d3d12_host_tests PRIVATE /W4 /WX /permissive- /utf-8)
+    add_test(NAME d3d12_host COMMAND d3d12_host_tests)
 
     add_executable(command_list_notes_tests tests/command_list_notes_tests.cpp)
     target_include_directories(command_list_notes_tests PRIVATE src)
