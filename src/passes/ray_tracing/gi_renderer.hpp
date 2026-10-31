@@ -40,7 +40,6 @@ struct Textures
     // gi_common.hlsli), as the game's view reads it; null when this frame's did not come before the kick.
     ID3D11Texture2D* velocity{};
     DXGI_FORMAT velocityFormat{};
-    ID3D11Texture2D* localLightShadow{}; // R16_FLOAT, the share of the point and spot lights' light that reaches; null without lights
     ID3D11Texture2D* lightDebug{}; // R8G8B8A8_UNORM, the light's debug view (CompositeLight, LightDebugView); null while off
     // Path tracing (reflections.hlsl): Ray Reconstruction's guides (ray_tracing::ReconstructionGuides), the reflected light
     // (R16G16B16A16_FLOAT, times the specular albedo and the exposure), its hit distance (R16_FLOAT) and the game's
@@ -134,11 +133,10 @@ struct Frame
     bool twoSidedShadows{};  // Diagnostics: rays towards lights blocked by every surface from both sides, as until 2026-10-26
     LightDebugView lightDebugView{}; // Diagnostics, with textures.lightDebug
     std::uint32_t lightRays{2}; // The light's rays a light pixel, 1 to 4 (TraceLight)
-    // The point and spot lights whose shadows go into textures.localLightShadow, at most GI_MAX_LOCAL_LIGHTS,
-    // and the rays a pixel they take.
+    // The chosen lights, at most GI_MAX_LOCAL_LIGHTS, and the shadow rays a pixel they take.
     std::vector<LocalLight> localLights;
     std::uint32_t localLightRays{1};
-    bool probeLights{}; // Diagnostics: the lamp probe at the screen's centre (lightProbe), sun or none
+    bool probeLights{}; // Diagnostics: the lamp probe at the screen's centre (lamp_shadow_rays::probe), sun or none
     std::uint64_t waitValue{}, signalValue{}; // On the shared fence
 };
 
@@ -168,7 +166,4 @@ std::string status();
 // For the overlay: the latest shadow probe as text, a few frames old; empty while the debug view is
 // off. Logged by itself whenever what blocks the probe's sun ray changes.
 std::string shadowProbe();
-// The same of the lamp probe: the strongest point and spot lights at the screen's centre and what blocks
-// each; logged whenever those change.
-std::string lightProbe();
 }

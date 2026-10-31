@@ -59,7 +59,7 @@ documentation and licenses are in `PhantomFX/`.
 ctest --test-dir build/release
 ```
 
-This runs eight tests that need neither the game nor a GPU. `tests/upscaler_tests.cpp`: settings
+This runs nine tests that need neither the game nor a GPU. `tests/upscaler_tests.cpp`: settings
 (defaults, round trip, clamping, invalid files and values), the mode maths (render scales, texture LOD
 bias), the render size plan (DLSS's own size or the nominal one, rounded up to even and never above the
 output size, Custom's DLSS quality, the settings that make a new plan), the frames (when one starts,
@@ -96,7 +96,8 @@ at the fourth present, the next frame recorded during a present, and the lists w
 `tests/kick_traces_tests.cpp`: what a kick traces, from settings through the effect plan and what the kick
 finds: path tracing keeping the rays of what it replaces, waiting for Ray Reconstruction, the lamps waiting
 for the game's tables, a kick without a sun or lights, a cost measurement leaving the light out, the scene
-view and the glass's targets.
+view and the glass's targets. `tests/shared_textures_tests.cpp`: a shared output on a WARP device: nothing to
+read until written, the same size keeping what it holds, a new size or a replaced texture leaving it unwritten.
 Everything else is checked in the game.
 
 ## Package a release
@@ -163,7 +164,7 @@ what draws it, when that is the feature's own.
 | `lamp_soft_shadows/` | `lamp_soft_shadows.*`: the replacement shaders a point or spot light with a shadow map lights with, and their options. `lamp_soft_shadows_shaders.hpp`: the game's `SSLighting2_Point` and `SSLighting2_Spot` rebuilt, with the light's shadow map filtered by contact-hardening soft shadows |
 | `contact_shadow_shape/` | Settings only: the contrast, reach, thickness and fade of the contact shadow trace (`passes/contact_shadow_trace.*`), which the sun's and the lamps' share |
 | `ray_traced_shadows/` | `gi_shadow.*`: the sun's shadow rays and the FidelityFX Shadow Denoiser on Direct3D 12. `gi_shadow.hlsl`, `gi_shadow_filter.hlsl`: the rays, the denoiser's temporal pass and filters |
-| `ray_traced_lights/` | `local_lights.*`: the game's point and spot light draws kept for their stencil, their light drawn again at the sun pass's list with specular and the rays' shadow (see "Ray-traced lights"). `light_choice.*`: which lights a kick gives the rays (each light's reach, the light cap) and each light as the rays take it. `light_shadow_rays.*`, `light_shadows.hlsl`: the lights' shadow rays and filter on Direct3D 12 |
+| `ray_traced_lights/` | `local_lights.*`: the game's point and spot light draws kept for their stencil, their light drawn again at the sun pass's list with specular and the rays' shadow (see "Ray-traced lights"). `light_choice.*`: which lights a kick gives the rays (each light's reach, the light cap) and each light as the rays take it. `lamp_shadow_rays.*`, `light_shadows.hlsl`: the lamps' shadow rays and filter, a trace (see "What a kick traces") |
 | `global_illumination/` | `gi_light.*`, `gi_light.hlsl`: the light on Direct3D 12, its rays, the denoiser's inputs and the render size (see "Global illumination"); their hits' light and the hash grid cache in `passes/ray_tracing/shaders/gi_hit_light.hlsli`. `gi_denoiser.*`: NVIDIA NRD's RELAX denoiser without NRI. `gi_lighting.*`: the game's sky and sun in the light's terms. `light_combine.*`: the traced light in place of the game's probe light at the resolve |
 | `path_tracing/` | `path_tracing.*`: path tracing on Direct3D 11: the traced reflections added at the resolve and blended as the game blends its own, the lamps' light added at the draw point, the masks' atlas (see "Path tracing"). `path_tracing_shaders.hpp`: those draws. `glass.*`, `glass_shaders.hpp`: glass and mirrors, their surfaces drawn beside the game's and what they reflect added over the scene. `sky_capture.*`: the game's sky drawn again for the rays. `path_tracing_rays.*`: its passes on Direct3D 12. `reflections.hlsl`, `direct_light.hlsl`: the reflections and the point and spot lights |
 | `ambient_occlusion/` | `gtvbao.*`: GTVBAO's occlusion multiplied into the indirect light at the upscale. `gtvbao_shaders.hpp`: that multiply |
@@ -188,6 +189,8 @@ what draws it, when that is the feature's own.
 | `src/passes/visibility_bitmask.*` | The visibility bitmask march GTVBAO and SSILVB share: the depth prefilter, the march, the denoiser. `visibility_bitmask_shaders.hpp`: the march (GTVBAO from three-gtvbao, SSILVB's light as SSRT3 gathers it), XeGTAO's noise and denoiser |
 | `src/passes/ray_tracing/ray_tracing.*` | The ray-traced scene's frame on Direct3D 11: the kick, the waits, the shared textures the global illumination and the ray-traced shadows hand back |
 | `src/passes/ray_tracing/kick_traces.*` | What each kick traces, the one answer for everything that makes, runs or reads a trace (see "What a kick traces") |
+| `src/passes/ray_tracing/trace.*` | A trace's steps, and the traces in the order the frame runs them (see "What a kick traces") |
+| `src/passes/ray_tracing/shared_textures.*` | What Direct3D 11 and 12 share: the Direct3D 11 half of a trace's results, and the rows that open, transition and bind a trace's textures |
 | `src/passes/ray_tracing/gi_renderer.*` | The Direct3D 12 side: the device, the scene's frame (the scene contents' update, then the recording), each feature's passes recorded in turn, the probes |
 | `src/passes/ray_tracing/scene_contents.*` | The scene contents: the game's models, their variants, characters, terrain rings, the sea's plane and textures the ray-traced scene holds, made as the scene memory has room and let go after a while unplaced; each frame's instances of them; their diagnostics (status, the probes' hits, F10's `models.txt`) (see "Ray-traced scene") |
 | `src/passes/ray_tracing/scene_memory.hpp` | The scene memory: the seam the scene contents reach the GPU through (the pool, structures, texture slots, instances) |
@@ -2285,6 +2288,18 @@ game's tables and the glass's targets. The kick makes the textures of what it tr
 `Frame::traces`, and the threads recording the next frame read the last kick's answer
 (`ray_tracing::isPathTracing`). Only the path-traced question comes earlier (`isPathTraced`), because the
 kick takes the lights and sets up the glass for it.
+
+A trace owns what it needs on both Direct3D sides, behind `trace::Trace`, and `trace::inOrder` lists them in
+the frame's order. The kick calls `gather` on each, on Direct3D 11: it makes the trace's results. The frame
+then calls `prepare` on each, for its memory and last probe, and `bind` and `record` on those the kick runs.
+`release` gives its Direct3D 12 memory back when the rays stop, and `detach` the rest.
+
+A trace declares each texture it shares in a `SharedRow`: format, read or write, slot. `SharedBindings` opens it
+in Direct3D 12, puts it in the frame's tables, moves it out of the common state for the frame's passes and back,
+and marks a `SharedOutput` written once the frame is submitted. A `SharedOutput` keeps its own lock, since the kick
+and the threads recording the next frame use it at the same time.
+
+So far the lamps' shadow rays are a trace (`lamp_shadow_rays.*`); the others are recorded by `gi_renderer` itself.
 
 ### Smaller views
 
