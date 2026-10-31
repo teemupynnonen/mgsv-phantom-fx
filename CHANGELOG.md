@@ -6,6 +6,10 @@
   four pixels, so the blur bit into the rim of anything in focus in steps, and the lower the render size the wider
   the steps: DLSS and Ray Reconstruction kept them as detail. Each pixel's own depth now decides, so in-focus edges
   stay as clean as any other edge at every upscaling mode.
+- **Depth of field: a lens's blur for the background.** A new **Depth of field** item on the Camera page sets
+  **Background blur**. **Lens**, the default, spreads each point over a smooth disc, as a real lens does. **MGSV**
+  keeps the game's softer blur. What is in front of the focus keeps the game's blur with either.
+- **Motion blur moves to the Camera page.**
 - **The sea.** A new **Sea** switch under atmosphere replaces the sea around Mother Base: waves from a real
   ocean spectrum that rise and roll with the wind, bigger in rain, with foam where their crests break. It is
   lit like the rest of the world, so it reflects the sky, the sun and the platforms and takes their shadows;

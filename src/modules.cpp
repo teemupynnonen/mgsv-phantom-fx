@@ -68,7 +68,7 @@ constexpr Module Modules[]{
     {.attach = atmosphere::attach, .configure = atmosphere::configure, .present = atmosphere::present, .detach = atmosphere::detach},
     {.attach = sea::attach, .configure = sea::configure, .present = sea::present, .detach = sea::detach},
 
-    {.attach = withDevice<depth_of_field_pass::attach>, .detach = depth_of_field_pass::detach},
+    {.attach = withDevice<depth_of_field_pass::attach>, .configure = depth_of_field_pass::configure, .detach = depth_of_field_pass::detach},
     {.configure = motion_blur::configure},
     {.configure = frame_rate::configure},
     {.configure = photo_mode::configure},

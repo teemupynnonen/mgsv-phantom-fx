@@ -201,7 +201,7 @@ set(PHANTOM_FX_FEATURES src/features/upscaling/settings.cpp src/features/frame_g
     src/features/ray_traced_lights/settings.cpp src/features/lamp_contact_shadows/settings.cpp src/features/lamp_soft_shadows/settings.cpp
     src/features/contact_shadow_shape/settings.cpp src/features/global_illumination/settings.cpp src/features/ambient_occlusion/settings.cpp
     src/features/indirect_light/settings.cpp src/features/path_tracing/settings.cpp src/features/volumetric_fog/settings.cpp src/features/sea/settings.cpp src/features/photo_mode/settings.cpp src/features/hdr/settings.cpp src/features/frame_rate/settings.cpp
-    src/features/motion_blur/settings.cpp)
+    src/features/motion_blur/settings.cpp src/features/depth_of_field/settings.cpp)
 
 # The add-on uses ReShade's ImGui through the overlay function table, so none is linked.
 add_library(phantom_fx SHARED src/addon.cpp src/core.cpp src/modules.cpp src/features/upscaling/upscaler.cpp src/features/upscaling/render_size_plan.cpp src/features/upscaling/frames.cpp src/menu.cpp src/menu_budget.cpp src/fxui/fxui.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES} src/camera.cpp src/constant_capture.cpp

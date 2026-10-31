@@ -170,6 +170,7 @@ what draws it, when that is the feature's own.
 | `hdr/` | `hdr.*`: the float scene, in SDR too, and HDR10 output: the swap chain, the float scene targets and their sRGB views, the shader patches, the grading and output passes (see "HDR"). `hdr_shaders.hpp`: the encode and decode of the float scene, bloom's reduction, the grading, the output to PQ or, in SDR, to the game's 8 bits with a dither |
 | `frame_rate/` | `frame_rate.*`: hook on the frame wait setter, the optional 60 fps unlock |
 | `motion_blur/` | `motion_blur.*`: hooks on the motion blur plugin, velocity passes every frame |
+| `depth_of_field/` | Settings only: what blurs the background (`passes/depth_of_field_pass.*`) |
 
 ### Passes
 
@@ -177,7 +178,7 @@ what draws it, when that is the feature's own.
 | --- | --- |
 | `src/passes/sun_light_pass.*` | The game's sun light pass drawn with replacement shaders, with soft shadows, the sun's contact shadows and the ray-traced shadow composed in. `sun_light_pass_shaders.hpp`: the game's sun light shaders rebuilt with them |
 | `src/passes/local_light_pass.*` | The game's point and spot light draws, with the lamps' contact shadows and soft shadows composed in: the marking and lighting draws |
-| `src/passes/depth_of_field_pass.*` | The game's depth of field with its focus edges at the render size: each pixel's own cover from its depth, the far layer kept apart, the composite (see "Depth of field"). `depth_of_field_pass_shaders.hpp`: the cover and the composite |
+| `src/passes/depth_of_field_pass.*` | The game's depth of field with its focus edges at the render size: each pixel's own cover from its depth, the far layer kept apart, the composite, and the lens's far blur (see "Depth of field"). `depth_of_field_pass_shaders.hpp`: the cover, the lens's passes and the composites |
 | `src/passes/contact_shadow_trace.*` | Bend Studio's screen-space shadow trace, for the sun's and the lamps' contact shadows. `contact_shadow_trace_shaders.hpp`: Bend's trace ported to FXC |
 | `third_party/bend_sss/bend_sss_cpu.h` | Bend Studio's dispatch layout, unchanged (Apache License 2.0) |
 | `src/passes/indirect_light_pass.*` | The game's sky light, upscale and resolve: the G-buffer notes, the resolve's white occlusion and diffuse light, the diagnostics views, the ray-traced scene's notes. `indirect_light_pass_shaders.hpp`: the diagnostics views |
@@ -3299,6 +3300,24 @@ focus edges at the render size (`depth_of_field_pass`).
 - **What it leaves.** A far blur's bokeh no longer spreads over what is in focus in front of it, which
   a lens would not do either. Far cover under 5% fades out, as a colour from so little of a pixel
   stands for nothing.
+- **The background's blur** (Camera, **Depth of field**, `depth_of_field_far_blur`). **MGSV** keeps the
+  game's far layer in the composite above. It is a soft smear, not a lens's disc: built from layers
+  down to 1/16 size, it falls off like a Gaussian. **Lens**, the default, skips the game's
+  `CompositeFar` draw and makes its own layer at half the render size, at the composite:
+  - The prefilter leaves out what is in focus and weighs each pixel down by how bright it is (Karis),
+    so one noisy ray cannot turn into a disc. Its colour is multiplied by the radius, so a bilinear tap
+    beside an in-focus texel keeps its colour.
+  - A disc gather of up to 96 taps on a golden-angle spiral, where a tap counts if its own blur reaches
+    this far (Jimenez 2014, "scatter as you gather"), then an 8-tap fill between the taps.
+  - The composite stretches the layer with a cubic B-spline in four bilinear taps (Sigg and Hadwiger
+    2005). A pixel's cover is its own radius: sharp under half a render pixel, all blur over one and a
+    half. The radius follows the game's formula, starting at its smallest size (c12.x), and comes from
+    a second channel of the cover draw.
+  - Measured on the copy (4K, Quality, Ray Reconstruction, f/1.4), against a true disc blur of the
+    no-blur frame: detail, rms 8.80 (game) to 7.71; a flat wall, 2.05 to 2.26, slightly worse. Blurs
+    over the 96 taps are unmeasured, and so is the cost.
+
+  The near layer stays the game's with either.
 
 Photo mode blurs with it: it sets the active camera's focus distance (`+0x38`), f-number (`+0x44`,
 the overlay's **f-stop**, or f/64 with the blur off) and the byte that allows any aperture
