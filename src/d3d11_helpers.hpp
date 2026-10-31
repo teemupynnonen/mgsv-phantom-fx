@@ -158,6 +158,32 @@ inline bool viewportFillsTarget(ID3D11DeviceContext* context)
     return count && viewport.Width >= static_cast<float>(width) && viewport.Height >= static_cast<float>(height);
 }
 
+// The render targets bound before the first empty slot.
+inline UINT targetCount(UINT count, ID3D11RenderTargetView* const* targets)
+{
+    UINT found = 0;
+    while (found < count && targets[found]) ++found;
+
+    return found;
+}
+
+// Whether the bound targets are the G-buffer's: three of the same size, 8 bits a channel, with depth. In order the
+// albedo, the normals and the specular target.
+inline bool isGBuffer(UINT count, ID3D11RenderTargetView* const* targets, ID3D11DepthStencilView* depth)
+{
+    if (!depth || targetCount(count, targets) != 3) return false;
+
+    const auto size = sizeOf(targets[0]);
+    for (UINT i = 0; i < 3; ++i)
+    {
+        const auto desc = textureDesc(targets[i]);
+        if (std::pair{desc.Width, desc.Height} != size || (desc.Format != DXGI_FORMAT_B8G8R8A8_TYPELESS && desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM))
+            return false;
+    }
+
+    return true;
+}
+
 // Thread groups for the 8 x 8 kernels to cover `texels` along an axis.
 inline UINT groups(UINT texels)
 {

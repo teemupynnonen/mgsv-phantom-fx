@@ -37,8 +37,8 @@ constexpr GamePass NotedPasses[]{GamePass::SkyLight, GamePass::IndirectUpscale, 
 // And those they draw in the game's place, or skip.
 constexpr GamePass DrawnPasses[]{GamePass::IndirectUpscale, GamePass::Resolve, GamePass::GameOcclusion};
 
-constexpr UINT NormalSlot = 0;   // The sky light's g_NormalTexture
-constexpr UINT SpecularSlot = 1; // The sun's g_SpecularTexture
+constexpr UINT NormalSlot = 0;     // The sky light's g_NormalTexture
+constexpr UINT SpecularTarget = 2; // Among the G-buffer's targets
 constexpr UINT LobeSlot = 8, FresnelSlot = 9, MaterialSlot = 10; // The sun's g_lut2, g_lut1 and g_MaterialTexture
 constexpr UINT DepthSlot = 2;    // The upscale's inDepthBuffer
 constexpr UINT SceneSlot = game_constants::SceneConstants::Slot; // In the upscale and the resolves
@@ -59,9 +59,10 @@ FrameLatch<Composition> latch;
 std::atomic<bool> active{}, pipelineFailed{};
 
 // The normals each context's sky light pass bound, for the upscale it records next. The resolve is
-// in another command list; it takes the G-buffer normals any sky light pass bound last. The sun pass
-// comes after the upscale, so the march takes the specular target from an earlier frame's: the
-// same texture while the render size stays.
+// in another command list; it takes the G-buffer normals any sky light pass bound last. The specular
+// target comes from the G-buffer's own binding, not from the sun pass that reads it: some scenes have
+// none (the hospital), and a view kept from an earlier one would hold on to a target the game replaced
+// at a new render size, its picture frozen.
 std::mutex gBufferMutex;
 std::unordered_map<ID3D11DeviceContext*, ComPtr<ID3D11ShaderResourceView>> normals;
 ComPtr<ID3D11ShaderResourceView> lastNormals, lastSpecular;
@@ -123,16 +124,13 @@ void noteNormals(ID3D11DeviceContext* context)
     normals[context] = std::move(view);
 }
 
-void noteSpecular(ID3D11DeviceContext* context)
+void noteTables(ID3D11DeviceContext* context)
 {
-    ComPtr<ID3D11ShaderResourceView> view;
     MaterialTables tables;
-    context->PSGetShaderResources(SpecularSlot, 1, view.GetAddressOf());
     context->PSGetShaderResources(LobeSlot, 1, tables.lobe.GetAddressOf());
     context->PSGetShaderResources(FresnelSlot, 1, tables.fresnel.GetAddressOf());
     context->PSGetShaderResources(MaterialSlot, 1, tables.materials.GetAddressOf());
     std::lock_guard lock(gBufferMutex);
-    lastSpecular = std::move(view);
     if (tables.lobe && tables.fresnel && tables.materials) lastTables = std::move(tables);
 }
 
@@ -154,8 +152,8 @@ ComPtr<ID3D11ShaderResourceView> latestNormals()
     return lastNormals;
 }
 
-// The specular target a sun pass bound last, if it has the render size; otherwise none, and the
-// march treats nothing as foliage.
+// The specular target the game bound last, if it has the render size; otherwise none, and the march
+// treats nothing as foliage.
 ComPtr<ID3D11ShaderResourceView> latestSpecular(std::pair<UINT, UINT> size)
 {
     ComPtr<ID3D11ShaderResourceView> view;
@@ -435,7 +433,7 @@ void note(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         case GamePass::IndirectUpscale:
             if (composition.globalIllumination && mainView && ray_tracing::lightRuns()) light_combine::drawProbeLightAside(context, call);
             return;
-        case GamePass::Sun: noteSpecular(context); return;
+        case GamePass::Sun: noteTables(context); return;
         default: return;
         }
     }
@@ -443,6 +441,45 @@ void note(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
     {
         std::lock_guard lock(resourceMutex);
         logOnce(std::string("GTVBAO or SSILVB: a pass kept the game's drawing: ") + error.what());
+    }
+    catch (...)
+    {
+    }
+}
+
+void targetsBound(UINT count, ID3D11RenderTargetView* const* targets, ID3D11DepthStencilView* depth) noexcept
+{
+    if (!active.load(std::memory_order_relaxed)) return;
+
+    try
+    {
+        if (!isGBuffer(count, targets, depth)) return;
+
+        auto* target = targets[SpecularTarget];
+        const auto texture = resourceOf(target);
+        {
+            std::lock_guard lock(gBufferMutex);
+            if (resourceOf(lastSpecular.Get()) == texture) return;
+        }
+
+        D3D11_RENDER_TARGET_VIEW_DESC targetDesc{};
+        target->GetDesc(&targetDesc);
+        D3D11_SHADER_RESOURCE_VIEW_DESC viewDesc{};
+        viewDesc.Format = targetDesc.Format;
+        viewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        viewDesc.Texture2D.MipLevels = 1;
+        ComPtr<ID3D11Device> targetDevice;
+        target->GetDevice(targetDevice.GetAddressOf());
+        ComPtr<ID3D11ShaderResourceView> view;
+        check(targetDevice->CreateShaderResourceView(texture.Get(), &viewDesc, view.GetAddressOf()), "Viewing the G-buffer's specular target");
+
+        std::lock_guard lock(gBufferMutex);
+        lastSpecular = std::move(view);
+    }
+    catch (const std::exception& error)
+    {
+        std::lock_guard lock(resourceMutex);
+        logOnce(std::string("GTVBAO, SSILVB or the rays: no specular target: ") + error.what());
     }
     catch (...)
     {
