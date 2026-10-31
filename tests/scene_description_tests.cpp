@@ -19,21 +19,25 @@ void expect(bool condition, const char* message)
     if (!condition) throw std::runtime_error(message);
 }
 
-// The StrCode64s of the texture parameters a material names its textures by (Base_Tex_SRGB, Mask_Tex_LIN),
+// The StrCode64s of the texture parameters a material names its textures by (Base_Tex_SRGB, Mask_Tex_LIN, Base_Tex_LIN),
 // and the path hash of mesh i's texture, TexturePath + i.
-constexpr std::uint64_t BaseTexture = 0x41EA7BE81B61, MaskTexture = 0x3ED9B75CD480, TexturePath = 0x5000;
-// And of the vectors a material gives (SelfColor, SelfColorIntensity, MatParamIndex_0).
-constexpr std::uint64_t SelfColor = 0x557B9224571E, SelfColorIntensity = 0xE40A3A2518CF, MaterialIndex = 0xCAB8E38487FF;
+constexpr std::uint64_t BaseTexture = 0x41EA7BE81B61, MaskTexture = 0x3ED9B75CD480, LinearBaseTexture = 0x679A3387A4DF, TexturePath = 0x5000;
+// And of the vectors a material gives (SelfColor, SelfColorIntensity, MatParamIndex_0, GlassColor), and a mirror's technique
+// (fox3DFW_ParallaxReflection).
+constexpr std::uint64_t SelfColor = 0x557B9224571E, SelfColorIntensity = 0xE40A3A2518CF, MaterialIndex = 0xCAB8E38487FF, GlassColor = 0xBE61C83A81D,
+                        ParallaxReflection = 0x2EB4D1D33DF8;
 
 // A mesh of a test model file: its alpha and shadow bytes, whether its vertices have texture coordinates,
-// its material's one texture parameter (BaseTexture, MaskTexture, or 0 for none), and with an intensity its
-// vectors: that SelfColorIntensity, a SelfColor of (1, 0.5, 0.25) and a MatParamIndex_0 of `materialRow`.
+// its material's one texture parameter (BaseTexture, MaskTexture, LinearBaseTexture, or 0 for none), and with an intensity its
+// vectors: that SelfColorIntensity, a SelfColor of (1, 0.5, 0.25) and a MatParamIndex_0 of `materialRow`; a GlassColor
+// vector, or the mirror's technique.
 struct TestMesh
 {
     std::uint8_t alpha{}, shadow{};
     bool hasUvs{};
     std::uint64_t textureParameter{};
     float selfIntensity{}, materialRow{};
+    bool isGlass{}, isMirror{};
 };
 
 template<class T> void put(std::vector<std::uint8_t>& bytes, T value)
@@ -85,12 +89,13 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
     auto& meshBlock = block(3, meshes.size(), 48);
     auto& materialInstances = block(4, meshes.size(), 16);
     auto& textures = block(6, meshes.size(), 4);
-    auto& parameters = block(7, 4 * meshes.size(), 4);
+    auto& parameters = block(7, 5 * meshes.size(), 4);
+    auto& materials = block(8, 2, 4);
     auto& assignments = block(9, meshes.size(), 8);
     auto& meshFormats = block(10, 2 * meshes.size(), 8);
     auto& faceInfos = block(17, meshes.size(), 8);
     auto& paths = block(21, meshes.size(), 8);
-    auto& names = block(22, meshes.size() + 3, 8);
+    auto& names = block(22, meshes.size() + 5, 8);
     std::vector<std::uint8_t> vertexFormats;
     const auto format = [&](std::uint8_t usage, std::uint8_t dataType, std::uint16_t element) {
         put(vertexFormats, usage);
@@ -106,16 +111,17 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
         putAt<std::uint16_t>(meshBlock, 48 * i + 10, 3); // Vertices
         putAt<std::uint32_t>(meshBlock, 48 * i + 16, 3u * i);
         putAt<std::uint64_t>(meshBlock, 48 * i + 24, i); // Face info
+        putAt<std::uint16_t>(materialInstances, 16 * i + 4, mesh.isMirror ? 1 : 0); // The second material has the mirror's technique
         materialInstances[16 * i + 6] = mesh.textureParameter != 0;
         putAt<std::uint16_t>(materialInstances, 16 * i + 8, i);
-        // Its three vectors' parameters, after every mesh's texture parameter.
-        const auto firstVector = static_cast<std::uint16_t>(meshes.size() + 3 * i);
-        materialInstances[16 * i + 7] = mesh.selfIntensity > 0 ? 3 : 0;
+        // Its four vectors' parameters, after every mesh's texture parameter.
+        const auto firstVector = static_cast<std::uint16_t>(meshes.size() + 4 * i);
+        materialInstances[16 * i + 7] = mesh.isGlass ? 4 : mesh.selfIntensity > 0 ? 3 : 0;
         putAt<std::uint16_t>(materialInstances, 16 * i + 10, firstVector);
-        for (std::uint16_t k = 0; k < 3; ++k)
+        for (std::uint16_t k = 0; k < 4; ++k)
         {
             putAt<std::uint16_t>(parameters, 4 * (firstVector + k), static_cast<std::uint16_t>(meshes.size() + k));
-            putAt<std::uint16_t>(parameters, 4 * (firstVector + k) + 2, static_cast<std::uint16_t>(3 * i + k));
+            putAt<std::uint16_t>(parameters, 4 * (firstVector + k) + 2, static_cast<std::uint16_t>(4 * i + k));
         }
 
         putAt<std::uint16_t>(textures, 4 * i + 2, i);
@@ -146,6 +152,9 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
     putAt<std::uint64_t>(names, 8 * meshes.size(), SelfColor);
     putAt<std::uint64_t>(names, 8 * (meshes.size() + 1), SelfColorIntensity);
     putAt<std::uint64_t>(names, 8 * (meshes.size() + 2), MaterialIndex);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 3), GlassColor);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 4), ParallaxReflection);
+    putAt<std::uint16_t>(materials, 4 * 1 + 2, static_cast<std::uint16_t>(meshes.size() + 4));
     blocks[11] = {static_cast<std::uint16_t>(vertexFormats.size() / 4), vertexFormats};
     block(14, 1, 16); // One buffer, from the buffer data's start
 
@@ -182,7 +191,8 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
     putAt<std::uint32_t>(file, info + 12, 0);
     putAt<std::uint32_t>(file, info + 16, static_cast<std::uint32_t>(data.size()));
     for (const auto& mesh : meshes)
-        for (const float value : {1.0f, 0.5f, 0.25f, 1.0f, mesh.selfIntensity, 0.0f, 0.0f, 0.0f, mesh.materialRow, 0.0f, 0.0f, 0.0f}) put(data, value);
+        for (const float value : {1.0f, 0.5f, 0.25f, 1.0f, mesh.selfIntensity, 0.0f, 0.0f, 0.0f, mesh.materialRow, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f})
+            put(data, value);
 
     putAt<std::uint32_t>(file, 48, static_cast<std::uint32_t>(file.size()));
     file.insert(file.end(), data.begin(), data.end());
@@ -260,11 +270,43 @@ void pylonLattice()
     expect(rigid({{32, 1}, {128, 66}}) == Roles{Dropped, MeshRole::CutOut}, "A pylon's lattice casts through its cut-out stand-in.");
 }
 
-// A helicopter's windows kept the sun out of its cabin (2026-10-25); glass drawn into the shadow maps casts
-// solid, untested.
-void mainViewGlassDropped()
+// Alpha bit 4 is no glass: it marks a mesh drawn forward, after the G-buffer, most of them fox3DFW_ConstantSRGB (the game's
+// files, 2026-10-31). Those the main view alone shows are dropped; those cast are solid.
+void forwardMeshesWithoutGlassMaterial()
 {
-    expect(rigid({{16, 5}, {16, 4}}) == Roles{Dropped, MeshRole::Solid}, "Glass the main view alone shows is dropped; cast glass is solid.");
+    expect(rigid({{16, 5}, {16, 4}}) == Roles{Dropped, MeshRole::Solid}, "A forward mesh without a glass material is no glass.");
+}
+
+// Windows, visors and lenses, whatever their bytes (the game's files, 2026-10-31): glass is the material with a GlassColor.
+void glassIsItsMaterial()
+{
+    const auto pane = [](std::uint8_t alpha, std::uint8_t shadow) { return TestMesh{.alpha = alpha, .shadow = shadow, .isGlass = true}; };
+    expect(rigid({pane(16, 5), pane(80, 133), pane(16, 4), pane(80, 132), pane(49, 5), pane(17, 5)}) == Roles(6, MeshRole::Glass),
+        "A rigid model's glass is glass, seen or cast.");
+    expect(character({pane(16, 5), pane(80, 133)}) == Roles(2, MeshRole::Glass), "A character's glasses and visors are glass.");
+    expect(rigid({{.alpha = 16, .shadow = 5, .hasUvs = true, .textureParameter = BaseTexture, .selfIntensity = 80, .isGlass = true}}) == Roles{MeshRole::Emissive},
+        "A self-lit mesh is taken for its light first.");
+}
+
+// The hospital's mirrors (2026-10-31): fox3DFW_ParallaxReflection, a painted picture of the room, not a reflection.
+void mirrorsAreGlass()
+{
+    expect(rigid({{.alpha = 16, .shadow = 36, .isMirror = true}, {.alpha = 80, .shadow = 133, .isMirror = true}}) == Roles(2, MeshRole::Mirror),
+        "A mirror is taken for what it is, whatever its bytes.");
+}
+
+void glassKeepsItsMask()
+{
+    const auto model = modelOf({{.alpha = 16, .shadow = 5, .hasUvs = true, .textureParameter = LinearBaseTexture, .isGlass = true},
+                                   {.alpha = 16, .shadow = 36, .hasUvs = true, .textureParameter = MaskTexture, .isMirror = true}},
+        Source::VisibilityManager);
+    expect(partOf(*model, 0).baseTexture == TexturePath, "Glass's mask is its Base_Tex_LIN.");
+    expect(partOf(*model, 1).baseTexture == 0, "A mirror has none: neither its painted picture nor a mask on coordinates the scene keeps.");
+
+    const auto material = materialOf(partOf(*model, 0), {.base = 6});
+    expect(material.flags == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_GLASS | GI_GEOMETRY_UV) && material.texture == 7 && material.alphaThreshold == 0.0f,
+        "Glass is non-opaque for the rays to choose, and tests no alpha.");
+    expect(materialOf(partOf(*model, 1), {}).flags == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_GLASS | GI_GEOMETRY_MIRROR | GI_GEOMETRY_UV), "A mirror is glass that reflects all.");
 }
 
 // Sky domes kilometres wide around the camera blocked the sky for the global illumination.
@@ -316,12 +358,6 @@ void characterStandInDropped()
 void characterMainViewSolid()
 {
     expect(character({{0, 1}}) == Roles{MeshRole::Solid}, "A character's solid meshes cast, even those the game never casts with.");
-}
-
-// The helicopter's windows (2026-10-25).
-void characterGlassDropped()
-{
-    expect(character({{16, 5}}) == Roles{Dropped}, "A character's glass the main view alone shows is dropped.");
 }
 
 void bushesAreLeaves()
@@ -382,8 +418,8 @@ void cutOutWaitsForTexture()
     expect(solid.flags == GI_GEOMETRY_UV && solid.texture == 7 && solid.alphaThreshold == 0.0f, "A solid mesh takes its texture's colour, not its alpha.");
 }
 
-// Fox Engine's self-lit meshes carry the glass bit and the main view's alone (alpha 0x10, shadow 0x25, a lamp's bulb):
-// taken for their light where the glass they look like is dropped. A glow card, additive (alpha 0x11), is no surface; the sky's
+// Fox Engine's self-lit meshes carry the forward bit and the main view's alone (alpha 0x10, shadow 0x25, a lamp's bulb):
+// taken for their light where other such meshes are dropped. A glow card, additive (alpha 0x11), is no surface; the sky's
 // dome and the moon have an intensity of 1, and a mesh painted black less: they stay what they were.
 void selfLitMeshes()
 {
@@ -436,7 +472,10 @@ int main()
         tarpSheetsCastThroughStandIn();
         solidStandInsCastTheSunAlone();
         pylonLattice();
-        mainViewGlassDropped();
+        forwardMeshesWithoutGlassMaterial();
+        glassIsItsMaterial();
+        mirrorsAreGlass();
+        glassKeepsItsMask();
         skyDomeDropped();
         innerWallsMainViewOnly();
         crossedCardsDropped();
@@ -445,7 +484,6 @@ int main()
         hairTaken();
         characterStandInDropped();
         characterMainViewSolid();
-        characterGlassDropped();
         bushesAreLeaves();
         sameFileDependsOnSource();
         materialPerRole();

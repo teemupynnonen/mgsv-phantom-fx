@@ -63,6 +63,11 @@ struct Textures
     // R16G16B16A16_FLOAT), and the sky from every side (sky_capture.hpp), null until captured.
     ID3D11Texture2D* materialSpecular{};
     ID3D11Texture2D* skyCube{};
+    // And glass and mirrors (glass.hpp), which traceSurfaces traces: the nearest one's depth (R32_FLOAT) and normal with its
+    // roughness (R16G16B16A16_FLOAT) at each pixel, what it reflects (R16G16B16A16_FLOAT); null while off.
+    ID3D11Texture2D* surfaceDepth{};
+    ID3D11Texture2D* surfaceNormal{};
+    ID3D11Texture2D* surfaceReflection{};
 };
 
 using Matrix = std::array<float, 16>; // Rows applied as dot(row, v), as the engine's
@@ -157,6 +162,11 @@ bool started() noexcept;
 // Records and submits the frame: waits for frame.waitValue on the shared fence, signals
 // frame.signalValue when the output is written. Throws on Direct3D 12 errors.
 Result render(const Frame& frame);
+
+// After the game drew this frame's glass and mirrors: their reflections, on the scene render built. Waits for `waitValue` on
+// the shared fence and signals `signalValue` when they are written. False, with nothing submitted, when the last render
+// traced no reflections. Throws on Direct3D 12 errors.
+bool traceSurfaces(std::uint64_t waitValue, std::uint64_t signalValue);
 
 // For the overlay: instances, triangles and memory in use.
 std::string status();
