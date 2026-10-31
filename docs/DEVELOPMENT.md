@@ -177,6 +177,7 @@ what draws it, when that is the feature's own.
 | --- | --- |
 | `src/passes/sun_light_pass.*` | The game's sun light pass drawn with replacement shaders, with soft shadows, the sun's contact shadows and the ray-traced shadow composed in. `sun_light_pass_shaders.hpp`: the game's sun light shaders rebuilt with them |
 | `src/passes/local_light_pass.*` | The game's point and spot light draws, with the lamps' contact shadows and soft shadows composed in: the marking and lighting draws |
+| `src/passes/depth_of_field_pass.*` | The game's depth of field with its focus edges at the render size: each pixel's own cover from its depth, the far layer kept apart, the composite (see "Depth of field"). `depth_of_field_pass_shaders.hpp`: the cover and the composite |
 | `src/passes/contact_shadow_trace.*` | Bend Studio's screen-space shadow trace, for the sun's and the lamps' contact shadows. `contact_shadow_trace_shaders.hpp`: Bend's trace ported to FXC |
 | `third_party/bend_sss/bend_sss_cpu.h` | Bend Studio's dispatch layout, unchanged (Apache License 2.0) |
 | `src/passes/indirect_light_pass.*` | The game's sky light, upscale and resolve: the G-buffer notes, the resolve's white occlusion and diffuse light, the diagnostics views, the ray-traced scene's notes. `indirect_light_pass_shaders.hpp`: the diagnostics views |
@@ -3200,18 +3201,43 @@ with the game's Depth of Field option on runs the `DOF_Scatter*` passes; `DOF_0_
   pixel through an sRGB decode, raises bright pixels to the HDR luminance in alpha (`a^2 x 32`,
   capped at `cPSObject` c11.y), and takes each pixel's blur radius from depth as
   `c12.z x (z - c12.w) / z` (`ReconstructViewZ`), clamped to c11.w in front and c11.z behind. Near
-  and far split at device depth c11.x.
+  and far split at device depth c11.x. It gathers the four depths under each half-size pixel: the near
+  layer's radius comes from the nearest, the far layer's from the farthest, and the far colour from
+  the four behind c11.x alone. One background pixel of four makes all four blurred.
 - **Scatter.** `DOF_ScatterBakeSecond` makes 1/4, 1/8 and 1/16 size levels. `DOF_ScatterSprite`
   (indexed, 2048 quads a draw) draws a quad per pixel of a level, sized by its blur, shaped by a
   64x64 bokeh texture and divided by its area, with additive blending; big blurs go to the small
   levels. Near, then far. Small blurs are gathered with a few taps (`DOF_ScatterGather1`,
-  `CompositeNear`, `CompositeFar`).
+  `CompositeNear`, `CompositeFar`). `CompositeNear` draws into the half-size result and `CompositeFar`
+  blends under it (one minus the target's alpha, plus the target). The far layer's cover is at least
+  `saturate(2 (r - c12.x) / (c12.y - c12.x))`, `r` the half-size pixel's radius.
 - **`DOF_ScatterCompositeFinal`** writes `blur + (1 - coverage) x scene` from the half-size result
   and a copy of the scene (`CopyRenderBuffer`) into the scene target, sRGB-encoded, alpha kept.
 - Weak points: everything is half size or less, so slight blur turns blocky and shimmers at focus
   edges; one depth splits near from far; the HDR lights are not tonemapped back, so they clip.
 
-The add-on draws the game's depth of field as it is, before DLSS (see "What the add-on changes").
+The add-on keeps the game's depth of field before DLSS (see "What the add-on changes"), with its
+focus edges at the render size (`depth_of_field_pass`).
+
+- **Why.** The farthest of four depths lays the blur over the rim of whatever is in focus, in steps
+  of a half-size pixel. Those steps stay where they are as the jitter moves the image, so DLSS and Ray
+  Reconstruction keep them, and they widen as the render size falls: 2 output pixels at native 4K, 3.4
+  at Balanced. In frame 32570 (Balanced, 4K), the steps along a photo's edge fell every 48 render
+  columns, on the columns the block rule gives from that frame's depth (29, 76, 123), not on the
+  geometry's (every 24).
+- **The pass.** At `DOF_ScatterBakeFirst`, while the game's constants are bound, a draw at the render
+  size works out each pixel's own far cover by the formulas above. `DOF_ScatterCompositeFar` draws
+  into a layer of its own, unblended, which leaves the near layer alone in the game's target. The
+  composite is then `near + (1 - near.a) x lerp(scene, far.rgb / far.a, own cover)`. The half-size far
+  layer gives the blur's colour, and each render pixel's depth says how much shows. That edge is the
+  geometry's, which moves with the jitter and which DLSS resolves as any other. Where the two covers
+  agree this is the game's blend; the game's shaders and these on WARP agree to under an 8-bit step
+  over four lenses, and to the last digit in the composite. The near layer stays as the game drew it,
+  because near blur rightly spreads over what is in focus behind it.
+- **What it leaves.** A far blur's bokeh no longer spreads over what is in focus in front of it, which
+  a lens would not do either. Far cover under 5% fades out, as a colour from so little of a pixel
+  stands for nothing.
+
 Photo mode blurs with it: it sets the active camera's focus distance (`+0x38`), f-number (`+0x44`,
 the overlay's **f-stop**, or f/64 with the blur off) and the byte that allows any aperture
 (`+0xEA`) for the selector's update, which copies them into `GrCamera` (see "Photo mode").
