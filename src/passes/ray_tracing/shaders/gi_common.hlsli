@@ -449,12 +449,14 @@ float TextureLod(float3 v0, float3 v1, float3 v2, float2 uv0, float2 uv1, float2
     return log2(max(footprint * sqrt(texelArea / max(worldArea, 1e-12f)), 1e-6f));
 }
 
-// Whether a cut-out geometry (the only non-opaque one) stops a ray where the ray crosses it: with its
+// Whether a cut-out geometry (non-opaque, as glass is) stops a ray where the ray crosses it: with its
 // texture, where the texture's alpha is at least the game's threshold at the level of detail the ray's
-// cone (`footprint` metres across there) meets; without, as `untextured` says.
+// cone (`footprint` metres across there) meets; without, as `untextured` says. Glass never does: the sun's and
+// a lamp's light come through it, and only a reflection's rays meet it (TraceClosest's `canMeetGlass`).
 bool CutOutBlocks(uint row, uint primitive, float2 barycentrics, bool untextured, float footprint, float3x4 objectToWorld)
 {
     GIGeometry geometry = g_Geometries[row];
+    if (geometry.flags & GI_GEOMETRY_GLASS) return false;
     if ((geometry.flags & GI_GEOMETRY_ALPHA_TEXTURE) == 0) return untextured;
 
     uint3 i = TriangleIndices(geometry, primitive);
@@ -511,8 +513,9 @@ float2 LightCone(float3 origin)
 // `untextured` says; the ray's cone (`cone`: its width at the origin and its growth a metre, metres)
 // picks the texture's level of detail. Without, every triangle is opaque. Every ray tests alpha: the
 // global illumination's rays once took every triangle as opaque, and a bank of grass, a heap of solid
-// cards to them, went dark (2026-10-23).
-SceneHit TraceClosest(float3 origin, float3 direction, float minDistance, float maxDistance, uint mask, bool alphaTest, bool untextured, float2 cone)
+// cards to them, went dark (2026-10-23). With `canMeetGlass`, glass stops it (GI_GEOMETRY_GLASS).
+SceneHit TraceClosest(float3 origin, float3 direction, float minDistance, float maxDistance, uint mask, bool alphaTest, bool untextured, float2 cone,
+    bool canMeetGlass = false)
 {
     RayDesc ray;
     ray.Origin = origin;
@@ -529,7 +532,8 @@ SceneHit TraceClosest(float3 origin, float3 direction, float minDistance, float 
         {
             uint row = query.CandidateInstanceContributionToHitGroupIndex() + query.CandidateGeometryIndex();
             float footprint = cone.x + query.CandidateTriangleRayT() * cone.y;
-            if (CutOutBlocks(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), untextured, footprint, query.CandidateObjectToWorld3x4()))
+            bool isGlassHit = canMeetGlass && (g_Geometries[row].flags & GI_GEOMETRY_GLASS) != 0;
+            if (isGlassHit || CutOutBlocks(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), untextured, footprint, query.CandidateObjectToWorld3x4()))
                 query.CommitNonOpaqueTriangleHit();
         }
 
@@ -690,6 +694,7 @@ bool StopsShadowRay(uint instance, uint geometry, bool dxrFrontFace, bool isTowa
 static const uint RayTowardsSurface = 0u; // The camera's and the global illumination's rays
 static const uint RayTowardsSun = 1u;
 static const uint RayTowardsLamp = 2u;
+static const uint RayAlongReflection = 3u; // Towards a surface too, and it meets glass (TraceReflectionRay)
 
 // Rays towards a light take the game's shadow maps' faces (StopsShadowRay), unless the diagnostics ask
 // for every surface from both sides, as until 2026-10-26 (shadowDiagnostics.x): they are then taken as
@@ -721,7 +726,7 @@ bool IsDarkSelfLit(uint instance, uint geometry)
 
 bool StopsRay(uint instance, uint geometry, bool dxrFrontFace, uint towards)
 {
-    if (towards == RayTowardsSurface) return !IsShadowOnly(instance, geometry) && !IsDarkSelfLit(instance, geometry);
+    if (towards == RayTowardsSurface || towards == RayAlongReflection) return !IsShadowOnly(instance, geometry) && !IsDarkSelfLit(instance, geometry);
 
     return StopsShadowRay(instance, geometry, dxrFrontFace, towards == RayTowardsLamp);
 }
@@ -758,7 +763,7 @@ SceneHit TraceFromSurface(float3 origin, float3 normal, float tolerance, float3 
     SceneHit hit;
     for (uint attempt = 0; attempt < 6; ++attempt)
     {
-        hit = TraceClosest(origin, direction, start, maxDistance, mask, alphaTest, false, cone);
+        hit = TraceClosest(origin, direction, start, maxDistance, mask, alphaTest, false, cone, towards == RayAlongReflection);
         bool copy = hit.hit && IsCopyOfSurface(hit, normal, direction, tolerance);
         CountDiagnostic(GI_COUNTER_COPIES, copy);
         bool passed = copy || (hit.hit && !StopsRay(hit.instance, hit.geometry, hit.frontFace, towards));

@@ -13,7 +13,7 @@
   water instead of the sky. A **Waves** slider sets the wind against the weather's. It costs about 0.3 ms.
 - **Path tracing.** A new **Path tracing** switch under lighting, with DLSS Ray Reconstruction and the
   global illumination on: reflections are traced on every surface, sharp on smooth ones and spread on
-  rough ones, in place of the game's screen-space and sky reflections (water and glass keep the game's;
+  rough ones, in place of the game's screen-space and sky reflections (water keeps the game's;
   in rain, wet surfaces take the traced ones), and the sun and every lamp and flashlight light the scene
   from the path tracer, each light with its own soft shadow where lights overlap, keeping the game's own
   highlights on its materials. Each surface reflects
@@ -22,6 +22,9 @@
   so shiny things stay shiny in reflections and reflections show other reflections. Glowing bulbs and signs
   light what is around them, with a **Self-lit surfaces** slider. Reflections of the sky show the game's real
   sky, with its horizon, clouds, sun glow and weather.
+- **Glass and mirrors reflect.** With path tracing, windows, vehicle glass, glasses, visors and mirrors show what is
+  really around them, at the strength the game gives each, in place of its small cube maps and the mirrors' painted
+  pictures. The rays see them too: light comes through, and they show in reflections.
 - **DLSS Ray Reconstruction.** A new **Ray Reconstruction** switch under the upscaler, for NVIDIA RTX GPUs,
   shown while a ray-traced effect is on: NVIDIA's model cleans up the ray-traced global illumination,
   shadows and lights and upscales in one step, in place of DLSS and the add-on's own denoisers, with a

@@ -18,7 +18,8 @@ void describe(PathTracing& pathTracing, SettingVisitor& visit)
             .tag = "Experimental",
             .tip = "With DLSS Ray Reconstruction denoising, the reflections and the direct light are traced too. A reflection ray from every "
                    "pixel, sharp on smooth surfaces and spread on rough ones, in place of the game's screen-space and sky reflections; water "
-                   "and glass keep the game's. The sun lit by its traced shadow alone, and every point and spot light by the path tracer, "
+                   "keeps the game's, and glass and mirrors reflect what is really around them. The sun lit by its traced shadow alone, and "
+                   "every point and spot light by the path tracer, "
                    "each with a shadow ray, in place of the game's light shaders. Rays that hit a surface see its real material, reflect on from "
                    "shiny surfaces, take light from glowing ones and see the game's own sky where they get away. The "
                    "sun's and the lights' rays are its own: it replaces ray-traced shadows and lights while on. Needs the global illumination on "
