@@ -1,9 +1,11 @@
 #include "remaster/remaster.hpp"
 
+#include "dev_tools.hpp"
 #include "phantom_fx_settings.hpp"
 #include "remaster/game_materials.hpp"
 #include "remaster/in_force.hpp"
 #include "remaster/rule_file.hpp"
+#include "remaster/tool.hpp"
 
 #include <Windows.h>
 #include <atomic>
@@ -19,7 +21,6 @@ constexpr int MaterialsResource = 1; // materials.rc.in
 
 std::atomic<std::shared_ptr<const std::vector<Rule>>> inForce{std::make_shared<const std::vector<Rule>>()};
 std::atomic<bool> isOn{true};
-std::atomic<std::uint64_t> met{}, changed{};
 
 std::string_view embeddedRulesText() noexcept
 {
@@ -34,40 +35,28 @@ std::string_view embeddedRulesText() noexcept
 
 std::string rulesText()
 {
-#if PHANTOM_FX_DEV_TOOLS
-    if (auto saved = savedRulesText()) return std::move(*saved);
-#endif
+    if constexpr (DevTools)
+        if (auto saved = savedRulesText()) return std::move(*saved);
 
     return std::string(embeddedRulesText());
 }
 
+// A material takes the first rule for it.
+void applyFirstRule(const game_materials::Material& material, const std::vector<Rule>& rules, Direction direction)
+{
+    for (const auto& rule : rulesOf(rules, material.name))
+        if (applyRule(material.packed, rule, direction)) return;
+}
+
 void onNewMaterial(const game_materials::Material& material) noexcept
 {
-    met.fetch_add(1, std::memory_order_relaxed);
-    if (!isOn.load(std::memory_order_relaxed)) return;
-
-    const auto rules = inForce.load();
-    for (const auto& rule : rulesOf(*rules, material.name))
-    {
-        if (!applyRule(material.packed, rule, Direction::Forward)) continue;
-
-        changed.fetch_add(1, std::memory_order_relaxed);
-        return;
-    }
+    if (isOn.load(std::memory_order_relaxed)) applyFirstRule(material, *inForce.load(), Direction::Forward);
 }
 
 void sweep(const std::vector<Rule>& rules, Direction direction)
 {
-    game_materials::forEachMaterial([&](const game_materials::Material& material) {
-        for (const auto& rule : rulesOf(rules, material.name))
-            if (applyRule(material.packed, rule, direction)) return;
-    });
+    game_materials::forEachMaterial([&](const game_materials::Material& material) { applyFirstRule(material, rules, direction); });
 }
-}
-
-std::shared_ptr<const std::vector<Rule>> rulesInForce()
-{
-    return inForce.load();
 }
 
 void putInForce(std::vector<Rule> rules)
@@ -75,49 +64,66 @@ void putInForce(std::vector<Rule> rules)
     inForce.store(std::make_shared<const std::vector<Rule>>(std::move(rules)));
 }
 
+#if PHANTOM_FX_DEV_TOOLS
+std::shared_ptr<const std::vector<Rule>> rulesInForce()
+{
+    return inForce.load();
+}
+
+bool areRulesOn() noexcept
+{
+    return isOn.load(std::memory_order_relaxed);
+}
+
 void sweep(const Rule& rule, Direction direction)
 {
     sweep(std::vector{rule}, direction);
 }
-
-Counts counts() noexcept
-{
-    return {met.load(std::memory_order_relaxed), changed.load(std::memory_order_relaxed)};
-}
+#endif
 
 std::string hook() noexcept
 {
+    constexpr std::string_view NotUsed = "Materials: the rules are not used: ";
+
     try
     {
         auto parsed = parseRules(rulesText());
-        if (!parsed.error.empty()) return "Materials: the rules are not used: " + parsed.error;
+        if (!parsed.error.empty()) return std::format("{}{}", NotUsed, parsed.error);
         if (parsed.rules.empty() && !DevTools) return "Materials: no rules.";
 
         const auto count = parsed.rules.size();
         putInForce(std::move(parsed.rules));
 
         auto failure = game_materials::hookNewMaterials(onNewMaterial);
-#if PHANTOM_FX_DEV_TOOLS
-        if (failure.empty()) failure = hookTool();
-#endif
+        if constexpr (DevTools)
+            if (failure.empty()) failure = hookTool();
+
         if (failure.empty()) return std::format("Materials: {} rules.", count);
 
         // The rays read the rules too, so without the hook they go as well.
         putInForce({});
 
-        return "Materials: the rules are not used: " + failure;
+        return std::format("{}{}", NotUsed, failure);
     }
     catch (const std::exception& error)
     {
-        return std::string("Materials: the rules are not used: ") + error.what();
+        return std::string(NotUsed) + error.what();
     }
 }
 
 void configure(const Configuration& configuration) noexcept
 {
-    if (isOn.exchange(configuration.enhancements) == configuration.enhancements) return;
+    const bool isTurnedOn = configuration.areEnhancementsOn;
+    if (isOn.exchange(isTurnedOn) == isTurnedOn) return;
 
-    sweep(*inForce.load(), configuration.enhancements ? Direction::Forward : Direction::Back);
+    if constexpr (DevTools) endBlink();
+
+    sweep(*inForce.load(), isTurnedOn ? Direction::Forward : Direction::Back);
+}
+
+void present() noexcept
+{
+    if constexpr (DevTools) presentTool();
 }
 
 void tuneFileSelfLight(std::uint64_t material, std::array<float, 4>& color, std::array<float, 4>& intensity)

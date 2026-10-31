@@ -17,5 +17,8 @@ struct ParsedRules
 };
 
 ParsedRules parseRules(std::string_view text);
+
+#if PHANTOM_FX_DEV_TOOLS
 std::string writeRules(std::vector<Rule> rules);
+#endif
 }

@@ -16,7 +16,7 @@ struct Material
     std::uint32_t index{}; // Its row in the pool
     std::uint64_t name{};
     std::uint64_t technique{};
-    std::uint32_t uses{};
+    std::int32_t uses{};
     PackedMaterial packed; // The game's own memory
 };
 

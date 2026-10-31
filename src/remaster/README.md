@@ -12,9 +12,12 @@ In a dev build, open the overlay, then **Developer** > **Materials**.
 1. **Show** picks the kind of material. **Self-lit** lists brightest first.
 2. **Drawn now** keeps the list to what the game drew in the last second.
 3. Pick a material. It blinks on screen, so you can see it is the right one. Press **Blink on screen** to stop.
-4. Move its sliders. The change shows on the next frame.
+4. Move its sliders. The change shows on the next frame. A slider's reset button takes that value back,
+   and a rule with nothing left goes.
 5. Give it a label, then press **Save**. That writes `src/remaster/materials.json` in the checkout the
    build came from. Commit that file.
+
+The rules are off with the visual enhancements (F1), and the tool waits until they are back on.
 
 A dev build reads that file at start. Other builds read the copy built into the add-on.
 
@@ -46,25 +49,31 @@ game's data ever differs.
 Materials the game has merged are one material. Two lamps that share a name, shader, textures and values
 are tuned together.
 
+Going back works by value too, so pick a `to` that no other material of the name holds. If one does, F1
+takes it for a tuned one and sets it to `from`, and the tool lists it as tuned.
+
 ## What it reaches
 
 - The rasterised image: at once.
-- The rays: self-lit light only, read from the model file. It takes effect when the game next loads the model.
+- The rays: self-lit light only, read from the model file, so a change reaches them at the next start. A material
+  under an intensity of 10 stays out of the rays, whatever a rule makes it.
 - Not a lamp's light on the room. That is a separate game light.
 - Not surface colour or roughness: textures hold those, not constants.
 - Not every glow. Some use no `SelfColorIntensity`: look under **All**.
 
 ## Detaching it
 
-Everything lives in this folder. To take it out, delete the folder and `tests/remaster_tests.cpp`, then
-remove:
+Everything that runs lives in this folder. To take it out, delete the folder and `tests/remaster_tests.cpp`,
+then remove:
 
 | File | Lines |
 | --- | --- |
 | `CMakeLists.txt` | `include(src/remaster/remaster.cmake)` |
 | `src/addon.cpp` | `log(remaster::hook());` and the include |
 | `src/modules.cpp` | The `remaster::configure` row and the include |
-| `src/menu.cpp` | `remaster::drawTool();` and the include |
+| `src/menu.cpp` | The `remaster::drawTool()` line and the include |
 | `src/passes/ray_tracing/engine_scene.cpp` | The last argument of `describeModel` and the include |
+| `docs/DEVELOPMENT.md` | The `src/remaster/` row, "Materials", and the mentions under "Build" and "Package a release" |
 
-`scene_description`'s `SelfLightFilter` and `Configuration::enhancements` know nothing of this tool, and can stay.
+That leaves the add-on working. Two small things only this tool uses stay behind, to remove as well for a clean
+tree: `SelfLightFilter` in `scene_description` with its test `tunedSelfLight`, and `Configuration::areEnhancementsOn`.

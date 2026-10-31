@@ -17,6 +17,8 @@ constexpr std::uintptr_t MaterialPoolRva = 0x2B743B0, TechniquePoolRva = 0x2B743
 constexpr std::size_t PoolRows = 0x8, PoolCapacity = 0x10, PoolSlots = 0x20, SlotSize = 0xC, SlotUses = 0x4;
 constexpr std::size_t MaterialSize = 0xD0, MaterialName = 0x8, MaterialTechnique = 0x20, MaterialRegisterCount = 0x24, MaterialRegisters = 0x30;
 constexpr std::size_t TechniqueSize = 0x50, TechniqueName = 0x8, TechniqueParameters = 0x28, TechniquePacking = 0x30;
+// A technique's lists: where each one's items are.
+constexpr std::size_t ListItems = 0x8;
 // A handle: the row << 17, and in the low bits what it is a handle to.
 constexpr std::uint32_t HandleKindBits = 0x7F, HandleRowShift = 17, MaterialHandle = 7, TechniqueHandle = 4;
 
@@ -70,7 +72,7 @@ std::optional<Material> materialAt(std::uint32_t row) noexcept
     const auto name = read<std::uint64_t>(at + MaterialName);
     const auto technique = read<std::uint32_t>(at + MaterialTechnique);
     const auto registers = read<std::uint8_t>(at + MaterialRegisterCount);
-    const auto uses = read<std::uint32_t>(materials->slots + std::uintptr_t{row} * SlotSize + SlotUses);
+    const auto uses = read<std::int32_t>(materials->slots + std::uintptr_t{row} * SlotSize + SlotUses);
     if (!name || !technique || !registers || !uses || *registers > MostRegisters || (*technique & HandleKindBits) != TechniqueHandle) return std::nullopt;
 
     const auto techniqueRow = *technique >> HandleRowShift;
@@ -83,8 +85,8 @@ std::optional<Material> materialAt(std::uint32_t row) noexcept
     if (!techniqueName || !parameters || !packing) return std::nullopt;
 
     const auto parameterCount = read<std::uint32_t>(*parameters);
-    const auto parameterNames = read<std::uintptr_t>(*parameters + 8);
-    const auto packingBytes = read<std::uintptr_t>(*packing + 8);
+    const auto parameterNames = read<std::uintptr_t>(*parameters + ListItems);
+    const auto packingBytes = read<std::uintptr_t>(*packing + ListItems);
     if (!parameterCount || !parameterNames || !packingBytes || !*parameterNames || !*packingBytes || !*parameterCount || *parameterCount > MostParameters) return std::nullopt;
 
     const std::size_t components = std::size_t{*registers} * ComponentsInRegister;
@@ -104,7 +106,7 @@ void forEachMaterial(const std::function<void(const Material&)>& visit)
     if (!materials) return;
 
     for (std::uint32_t row = 0; row < materials->capacity; ++row)
-        if (const auto material = materialAt(row); material && static_cast<int>(material->uses) > 0) visit(*material);
+        if (const auto material = materialAt(row); material && material->uses > 0) visit(*material);
 }
 
 std::string hookNewMaterials(NewMaterial onNew) noexcept

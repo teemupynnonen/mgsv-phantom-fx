@@ -203,7 +203,7 @@ struct Configuration
     const Diagnostics& diagnostics;
     LeftOut leftOut; // By a cost measurement's step: what the plan does not cover
     bool supportedBuild{};
-    bool enhancements{}; // The enhancements switch (F1)
+    bool areEnhancementsOn{}; // The enhancements switch (F1)
     EffectPlan effects;
 };
 

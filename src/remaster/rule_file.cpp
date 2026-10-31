@@ -17,7 +17,7 @@ using Json = nlohmann::basic_json<nlohmann::ordered_map, std::vector, std::strin
 
 constexpr std::size_t MostComponents = 4;
 
-Value valueOf(const Json& entry)
+Value parsedValue(const Json& entry)
 {
     auto value = entry.get<Value>();
     if (value.empty() || value.size() > MostComponents) throw std::runtime_error("a value has one to four components");
@@ -25,7 +25,7 @@ Value valueOf(const Json& entry)
     return value;
 }
 
-Rule ruleOf(const Json& entry)
+Rule parsedRule(const Json& entry)
 {
     const auto material = hashOf(entry.at("material").get<std::string>());
     if (!material) throw std::runtime_error("the material is no hash of twelve digits");
@@ -36,7 +36,7 @@ Rule ruleOf(const Json& entry)
         const auto parameter = parameterOf(name);
         if (!parameter) throw std::runtime_error(std::format("no parameter is called {}", name));
 
-        rule.changes.push_back({.parameter = *parameter, .from = valueOf(change.at("from")), .to = valueOf(change.at("to"))});
+        rule.changes.push_back({.parameter = *parameter, .from = parsedValue(change.at("from")), .to = parsedValue(change.at("to"))});
         if (rule.changes.back().from.size() != rule.changes.back().to.size()) throw std::runtime_error(std::format("{} changes its number of components", name));
     }
 
@@ -58,7 +58,7 @@ ParsedRules parseRules(std::string_view text)
     {
         try
         {
-            rules.push_back(ruleOf(materials[i]));
+            rules.push_back(parsedRule(materials[i]));
         }
         catch (const std::exception& error)
         {
@@ -71,6 +71,7 @@ ParsedRules parseRules(std::string_view text)
     return {.rules = std::move(rules)};
 }
 
+#if PHANTOM_FX_DEV_TOOLS
 std::string writeRules(std::vector<Rule> rules)
 {
     sortRules(rules);
@@ -94,4 +95,5 @@ std::string writeRules(std::vector<Rule> rules)
 
     return text + (rules.empty() ? "]\n}\n" : "\n  ]\n}\n");
 }
+#endif
 }

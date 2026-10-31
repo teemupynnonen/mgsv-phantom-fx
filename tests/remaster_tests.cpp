@@ -199,6 +199,49 @@ void aRuleGoesBack()
     expect(!applyRule(lamp.packed(), DimLamp, Direction::Back), "An untuned material has nothing to go back from.");
 }
 
+void retuningStartsAChange()
+{
+    Rule rule{.material = 1};
+    retune(rule, SelfColorIntensity, {221182}, {40000});
+
+    expect(rule.changes.size() == 1 && rule.changes[0].parameter == SelfColorIntensity, "The first move of a slider starts a change.");
+    expect(rule.changes[0].from == Value{221182} && rule.changes[0].to == Value{40000}, "It goes from what the material held.");
+}
+
+void retuningKeepsWhereItStarted()
+{
+    Rule rule{.material = 1};
+    retune(rule, SelfColorIntensity, {221182}, {40000});
+    retune(rule, SelfColorIntensity, {40000}, {20000});
+
+    expect(rule.changes[0].from == Value{221182} && rule.changes[0].to == Value{20000}, "A later move changes only where it goes.");
+}
+
+void retuningBackDropsTheChange()
+{
+    Rule rule{.material = 1};
+    retune(rule, SelfColorIntensity, {221182}, {40000});
+    retune(rule, SelfColorIntensity, {40000}, {221182});
+
+    expect(rule.changes.empty(), "A value back where it started changes nothing.");
+}
+
+// A file's rule may give fewer components than the material holds, and a tuned one must still read back:
+// the file refuses a `to` of another size than its `from`, and with it every rule.
+void retuningKeepsAHandWrittenChangesSize()
+{
+    Rule rule{.label = "Lamp", .material = 1, .changes = {{.parameter = SelfColor, .from = {1}, .to = {0.5f}}}};
+    retune(rule, SelfColor, {0.5f, 1, 1, 1}, {0.25f, 1, 1, 1});
+
+    expect(rule.changes[0].to == Value{0.25f}, "A hand-written change keeps its components.");
+    expect(parseRules(writeRules({rule})).error.empty(), "The tuned rule still reads.");
+
+    Rule longer{.material = 1, .changes = {{.parameter = SelfColorIntensity, .from = {600, 7}, .to = {300, 7}}}};
+    retune(longer, SelfColorIntensity, {300}, {150});
+
+    expect(longer.changes[0].to == Value{150, 7}, "What the material does not hold stays as it was.");
+}
+
 void findsTheRulesOfAMaterial()
 {
     std::vector<Rule> rules{{.material = 2}, {.material = 1}, {.material = 2}};
@@ -258,6 +301,10 @@ int main()
         aRuleNeedsAllItsValues();
         aRuleLeavesATechniqueWithoutItsParameter();
         aRuleGoesBack();
+        retuningStartsAChange();
+        retuningKeepsWhereItStarted();
+        retuningBackDropsTheChange();
+        retuningKeepsAHandWrittenChangesSize();
         findsTheRulesOfAMaterial();
         tunesASelfLitMaterialAsAFileHasIt();
         aSelfLitRuleNeedsBothValues();

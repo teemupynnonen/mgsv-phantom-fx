@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <charconv>
 #include <format>
+#include <ranges>
 
 namespace phantom_fx::remaster
 {
@@ -16,11 +17,11 @@ struct KnownParameter
 
 // The names found so far; the game's files keep only the hashes.
 constexpr KnownParameter KnownParameters[]{
-    {"SelfColor", 0x557B9224571E},
-    {"SelfColorIntensity", 0xE40A3A2518CF},
-    {"GlassColor", 0x0BE61C83A81D},
+    {"SelfColor", SelfColorParameter},
+    {"SelfColorIntensity", SelfColorIntensityParameter},
+    {"GlassColor", GlassColorParameter},
     {"GlassRoughness", 0xCD7F1E1D4699},
-    {"ReflectionColor", 0x279B21D6EEA8},
+    {"ReflectionColor", ReflectionColorParameter},
     {"Incidence_Color", 0xCF54D1661DF2},
     {"URepeat_UV", 0xE544FE2CA129},
     {"VRepeat_UV", 0xE7C7FA3697B2},
@@ -47,7 +48,7 @@ template<class Visit> void forEachComponent(const PackedMaterial& material, std:
 }
 
 // Whether the material has `value`, in the components it holds and `value` gives.
-bool holds(const PackedMaterial& material, std::uint64_t parameter, const Value& value)
+bool hasValue(const PackedMaterial& material, std::uint64_t parameter, const Value& value)
 {
     bool isCompared{}, isSame{true};
     forEachComponent(material, parameter, [&](float held, std::size_t component) {
@@ -61,22 +62,10 @@ bool holds(const PackedMaterial& material, std::uint64_t parameter, const Value&
 }
 
 // The same for a vector as a model file has it: all four components.
-bool holds(const std::array<float, 4>& vector, const Value& value)
+bool hasValue(const std::array<float, 4>& vector, const Value& value)
 {
     return std::equal(value.begin(), value.end(), vector.begin());
 }
-}
-
-Value valueOf(const PackedMaterial& material, std::uint64_t parameter)
-{
-    Value value;
-    forEachComponent(material, parameter, [&](float held, std::size_t component) {
-        if (value.size() <= component) value.resize(component + 1);
-
-        value[component] = held;
-    });
-
-    return value;
 }
 
 void setValue(const PackedMaterial& material, std::uint64_t parameter, const Value& value)
@@ -88,7 +77,7 @@ void setValue(const PackedMaterial& material, std::uint64_t parameter, const Val
 
 bool isAwaited(const PackedMaterial& material, const Rule& rule, Direction direction)
 {
-    const auto isHeld = [&](const Change& change) { return holds(material, change.parameter, direction == Direction::Forward ? change.from : change.to); };
+    const auto isHeld = [&](const Change& change) { return hasValue(material, change.parameter, direction == Direction::Forward ? change.from : change.to); };
 
     return !rule.changes.empty() && std::ranges::all_of(rule.changes, isHeld);
 }
@@ -116,7 +105,6 @@ void sortRules(std::vector<Rule>& rules)
 std::span<const Rule> rulesOf(std::span<const Rule> rules, std::uint64_t material)
 {
     const auto found = std::ranges::equal_range(rules, material, {}, &Rule::material);
-
     return {found.begin(), found.end()};
 }
 
@@ -131,12 +119,12 @@ void tuneSelfLight(std::span<const Rule> rules, std::uint64_t material, std::arr
     // The rule's other parameters are not in the file's reading, so only these two tell lamps apart.
     for (const auto& rule : rulesOf(rules, material))
     {
-        const auto isTheRules = [&](const Change& change) {
+        const auto isExpected = [&](const Change& change) {
             const auto* vector = vectorOf(change.parameter);
-            return !vector || holds(*vector, change.from);
+            return !vector || hasValue(*vector, change.from);
         };
         const auto isLight = [&](const Change& change) { return vectorOf(change.parameter) != nullptr; };
-        if (!std::ranges::any_of(rule.changes, isLight) || !std::ranges::all_of(rule.changes, isTheRules)) continue;
+        if (!std::ranges::any_of(rule.changes, isLight) || !std::ranges::all_of(rule.changes, isExpected)) continue;
 
         for (const auto& change : rule.changes)
             if (auto* vector = vectorOf(change.parameter)) std::ranges::copy(change.to, vector->begin());
@@ -163,21 +151,42 @@ std::optional<std::uint64_t> hashOf(std::string_view text)
 std::string parameterText(std::uint64_t parameter)
 {
     const auto known = std::ranges::find(KnownParameters, parameter, &KnownParameter::hash);
-
     return known != std::end(KnownParameters) ? std::string(known->name) : hashText(parameter);
 }
 
 std::optional<std::uint64_t> parameterOf(std::string_view text)
 {
     const auto known = std::ranges::find(KnownParameters, text, &KnownParameter::name);
-
     return known != std::end(KnownParameters) ? known->hash : hashOf(text);
+}
+
+#if PHANTOM_FX_DEV_TOOLS
+Value valueOf(const PackedMaterial& material, std::uint64_t parameter)
+{
+    Value value;
+    forEachComponent(material, parameter, [&](float held, std::size_t component) {
+        if (value.size() <= component) value.resize(component + 1);
+
+        value[component] = held;
+    });
+
+    return value;
+}
+
+void retune(Rule& rule, std::uint64_t parameter, const Value& held, const Value& value)
+{
+    auto change = std::ranges::find(rule.changes, parameter, &Change::parameter);
+    if (change == rule.changes.end()) change = rule.changes.insert(rule.changes.end(), Change{parameter, held, {}});
+
+    change->to = change->from;
+    std::ranges::copy(value | std::views::take(change->to.size()), change->to.begin());
+    if (change->to == change->from) rule.changes.erase(change);
 }
 
 std::uint64_t parameterOfLowHalf(std::uint32_t lowHalf)
 {
     const auto known = std::ranges::find(KnownParameters, lowHalf, [](const KnownParameter& parameter) { return static_cast<std::uint32_t>(parameter.hash); });
-
     return known != std::end(KnownParameters) ? known->hash : lowHalf;
 }
+#endif
 }

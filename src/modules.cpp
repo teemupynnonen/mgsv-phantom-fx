@@ -74,7 +74,7 @@ constexpr Module Modules[]{
     {.configure = frame_rate::configure},
     {.configure = photo_mode::configure},
     {.detach = focus::detach},
-    {.configure = remaster::configure, .present = remaster::presentTool},
+    {.configure = remaster::configure, .present = remaster::present},
 };
 }
 

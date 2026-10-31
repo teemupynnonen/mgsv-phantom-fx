@@ -10,9 +10,9 @@ cmake --preset release
 cmake --build --preset release
 ```
 
-CMake downloads MinHook, the DLSS SDK v310.9.1 headers, loader, `nvngx_dlss.dll` and `nvngx_dlssd.dll`, and the
-ReShade 6.8.0 add-on headers with the Dear ImGui header, each pinned by commit and checked by
-SHA-256. Frame generation needs the Streamline SDK 2.14.1, which only its release archive carries:
+CMake downloads MinHook, the DLSS SDK v310.9.1 headers, loader, `nvngx_dlss.dll` and `nvngx_dlssd.dll`, the
+ReShade 6.8.0 add-on headers with the Dear ImGui header, and the nlohmann/json 3.12.0 header, each pinned by commit
+and checked by SHA-256. Frame generation needs the Streamline SDK 2.14.1, which only its release archive carries:
 the first configure downloads it once (about 280 MB, checked by SHA-256) and keeps the headers,
 license and x64 runtime files. FSR needs the AMD FSR SDK 2.3.0's API headers and AMD's signed
 Direct3D 12 DLLs, pinned by commit and checked by SHA-256 like the rest (about 66 MB). The add-on is
@@ -47,7 +47,7 @@ only feeds them (`DiagnosticLog` in `src/log.hpp`, tested with `if constexpr`):
 Its log's first line says "with the diagnostic log". Builds for in-game checks use this preset.
 It also sets `PHANTOM_FX_DEV_TOOLS` (`DevTools` in `src/dev_tools.hpp`), which adds the overlay's
 **Developer** page, below Diagnostics: **Travel** (see "Travel"), the **Lua console** (see "Game
-Lua") and the log switch above.
+Lua"), **Materials** (`src/remaster/README.md`) and the log switch above.
 
 `cmake --install build/release --component addon --prefix <dir>` collects the add-on, its DLLs,
 player documentation and licenses for distribution. The DLLs are at the install root;
@@ -121,7 +121,7 @@ This produces `build/release/PhantomFX-<version>.zip` and its `.sha256` checksum
 | `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`, `sl.reflex.dll`, `sl.pcl.dll`, `nvngx_dlssg.dll` | NVIDIA Streamline and the frame generation model |
 | `amd_fidelityfx_loader_dx12.dll`, `amd_fidelityfx_upscaler_dx12.dll`, `amd_fidelityfx_framegeneration_dx12.dll` | AMD FSR upscaling and frame generation |
 | `PhantomFX/README.md`, `CHANGELOG.md`, `LICENSE` | Player documentation and the add-on's license |
-| `PhantomFX/*-LICENSE.txt` | NVIDIA DLSS, NVIDIA Streamline, NVIDIA NRD (global illumination's denoiser), AMD FSR SDK, MinHook, ReShade, Dear ImGui, AMD FidelityFX (RCAS), Bend Studio (screen-space shadows), three-gtvbao and Intel XeGTAO (GTVBAO), AMD Capsaicin (global illumination) |
+| `PhantomFX/*-LICENSE.txt` | NVIDIA DLSS, NVIDIA Streamline, NVIDIA NRD (global illumination's denoiser), AMD FSR SDK, MinHook, ReShade, Dear ImGui, nlohmann/json (the material rules), AMD FidelityFX (RCAS), Bend Studio (screen-space shadows), three-gtvbao and Intel XeGTAO (GTVBAO), AMD Capsaicin (global illumination) |
 
 CPack packages only the `addon` component, so SDK headers, static libraries, tests, debug symbols
 and local settings are left out. ReShade is installed separately by the player.

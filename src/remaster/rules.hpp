@@ -1,5 +1,7 @@
 #pragma once
 
+#include "dev_tools.hpp"
+
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -14,7 +16,8 @@ namespace phantom_fx::remaster
 // A parameter's components, from x on.
 using Value = std::vector<float>;
 
-inline constexpr std::uint64_t SelfColorParameter = 0x557B9224571E, SelfColorIntensityParameter = 0xE40A3A2518CF;
+inline constexpr std::uint64_t SelfColorParameter = 0x557B9224571E, SelfColorIntensityParameter = 0xE40A3A2518CF, GlassColorParameter = 0x0BE61C83A81D,
+                               ReflectionColorParameter = 0x279B21D6EEA8;
 
 // A parameter of a material goes from one value to another. `parameter` is the StrCode64 of its name.
 struct Change
@@ -48,9 +51,6 @@ enum class Direction : std::uint8_t
     Back
 };
 
-// The parameter's components the material has, empty when its technique has no such parameter.
-Value valueOf(const PackedMaterial& material, std::uint64_t parameter);
-
 // Puts `value` in the components the material has.
 void setValue(const PackedMaterial& material, std::uint64_t parameter, const Value& value);
 
@@ -80,6 +80,15 @@ std::optional<std::uint64_t> hashOf(std::string_view text);
 std::string parameterText(std::uint64_t parameter);
 std::optional<std::uint64_t> parameterOf(std::string_view text);
 
+#if PHANTOM_FX_DEV_TOOLS
+// The parameter's components the material has, empty when its technique has no such parameter.
+Value valueOf(const PackedMaterial& material, std::uint64_t parameter);
+
+// The rule now takes the parameter to `value`, the material holding `held` there. A new change starts
+// from `held`, a change back where it started goes, and a change keeps the components its `from` has.
+void retune(Rule& rule, std::uint64_t parameter, const Value& held, const Value& value);
+
 // A technique keeps only the low half of a name: the whole hash where the name is known.
 std::uint64_t parameterOfLowHalf(std::uint32_t lowHalf);
+#endif
 }

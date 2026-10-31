@@ -1,11 +1,12 @@
 // The remastering tool on the Developer page; only a dev build has this file (remaster.cmake).
-#include "remaster/remaster.hpp"
+#include "remaster/tool.hpp"
 
 #include "fxui/fxui.hpp"
 #include "game_code.hpp"
 #include "game_loop.hpp"
 #include "remaster/game_materials.hpp"
 #include "remaster/in_force.hpp"
+#include "remaster/remaster.hpp"
 #include "remaster/rule_file.hpp"
 
 #include <Windows.h>
@@ -17,9 +18,8 @@
 #include <format>
 #include <fstream>
 #include <iterator>
-#include <optional>
-#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace phantom_fx::remaster
@@ -39,10 +39,11 @@ constexpr std::uint64_t PacketMaterialBits = 0x7FFF;
 constexpr std::uint32_t DrawnNowFrames = 60;
 constexpr int FramesBetweenRefreshes = 30;
 constexpr ULONGLONG BlinkMilliseconds = 400;
+// The page counts as closed after this many presents without it.
+constexpr std::uint64_t PresentsUnseen = 2;
 
-constexpr std::uint64_t GlassColorParameter = 0x0BE61C83A81D;
 // What blinks: the first of these a material has, else its first parameter.
-constexpr std::uint64_t BlinkingParameters[]{SelfColorIntensityParameter, GlassColorParameter, 0x279B21D6EEA8}; // ReflectionColor
+constexpr std::uint64_t BlinkingParameters[]{SelfColorIntensityParameter, GlassColorParameter, ReflectionColorParameter};
 
 enum class Show : std::uint8_t
 {
@@ -53,10 +54,10 @@ enum class Show : std::uint8_t
 
 constexpr fxui::Choice<Show> ShowChoices[]{{Show::SelfLit, "Self-lit"}, {Show::Glass, "Glass"}, {Show::All, "All"}};
 
-// A line of the list.
+// A line of the list: a material by its row in the game's pool.
 struct Row
 {
-    std::uint32_t material{};
+    std::uint32_t poolRow{};
     std::uint64_t name{};
     float brightness{};
     std::string text;
@@ -65,7 +66,7 @@ struct Row
 // A parameter of the selected material, zeroed for the dark half of a blink.
 struct Blink
 {
-    std::uint32_t material{};
+    std::uint32_t poolRow{};
     std::uint64_t parameter{};
     Value held;
 };
@@ -90,15 +91,14 @@ void replayDraw(void* state, const std::uint64_t* packet, std::uint32_t first, s
     originalReplay(state, packet, first, second);
 }
 
-bool isDrawnNow(std::uint32_t material)
+bool isDrawnNow(std::uint32_t poolRow)
 {
-    return game_loop::currentFrame() - lastDrawn[material].load(std::memory_order_relaxed) < DrawnNowFrames;
+    return game_loop::currentFrame() - lastDrawn[poolRow].load(std::memory_order_relaxed) < DrawnNowFrames;
 }
 
 const std::filesystem::path& rulesFile()
 {
     static const std::filesystem::path file(u8"" PHANTOM_FX_MATERIALS_FILE);
-
     return file;
 }
 
@@ -119,15 +119,16 @@ bool isShown(const Material& material)
     return true;
 }
 
-// The rule that made the material what it is now.
-template<class Rules> auto ruleOn(Rules& rules, const Material& material)
+// The rule that made the material what it is now. Rules match by value, so another material of the
+// name that holds this `to` by itself reads as tuned too.
+template<class Rules> auto ruleAppliedTo(const Material& material, Rules& rules)
 {
     return std::ranges::find_if(rules, [&](const Rule& rule) { return rule.material == material.name && isAwaited(material.packed, rule, Direction::Back); });
 }
 
 std::string rowText(const Material& material, const std::vector<Rule>& rules)
 {
-    const auto rule = ruleOn(rules, material);
+    const auto rule = ruleAppliedTo(material, rules);
     const auto tuned = rule == rules.end() ? std::string{} : "  [" + (rule->label.empty() ? "tuned" : rule->label) + "]";
     const auto first = show == Show::SelfLit ? std::format("{:>9.0f}", brightnessOf(material)) : "technique " + hashText(material.technique);
 
@@ -156,32 +157,23 @@ void select(const Row& row)
     label = {};
     framesToRefresh = 0;
 
-    const auto material = game_materials::materialAt(row.material);
+    const auto material = game_materials::materialAt(row.poolRow);
     if (!material) return;
 
     const auto rules = rulesInForce();
-    const auto rule = ruleOn(*rules, *material);
+    const auto rule = ruleAppliedTo(*material, *rules);
     if (rule != rules->end()) rule->label.copy(label.data(), label.size() - 1);
 }
 
 // The selected material, while its row still holds it.
 std::optional<Material> selectedMaterial()
 {
-    const auto material = selected ? game_materials::materialAt(selected->material) : std::nullopt;
+    const auto material = selected ? game_materials::materialAt(selected->poolRow) : std::nullopt;
     if (material && material->name == selected->name) return material;
 
     selected.reset();
 
     return std::nullopt;
-}
-
-void endBlink() noexcept
-{
-    if (!blink) return;
-
-    if (const auto material = game_materials::materialAt(blink->material)) setValue(material->packed, blink->parameter, blink->held);
-
-    blink.reset();
 }
 
 std::uint64_t blinkingParameter(const Material& material)
@@ -201,48 +193,31 @@ void startBlink(const Material& material)
     setValue(material.packed, parameter, Value(blink->held.size(), 0));
 }
 
-// Publishes `rules` after one rule of them went from `before` to `after`: the materials under `before`
-// come back from it, and those it is for go under `after`.
-void replaceRule(std::vector<Rule> rules, const Rule& before, const Rule& after)
+void noteChange()
 {
-    sweep(before, Direction::Back);
-    sweep(after, Direction::Forward);
-    sortRules(rules);
-    putInForce(std::move(rules));
     hasUnsavedChanges = true;
     framesToRefresh = 0;
 }
 
-// The parameter of the material goes to `value`: the change of the rule on it, a new one if need be.
+// The parameter of the material goes to `value`: the materials under the rule on it come back and go
+// under the rule as it is now, or a new one.
 void edit(const Material& material, std::uint64_t parameter, const Value& value)
 {
     auto rules = *rulesInForce();
-    auto rule = ruleOn(rules, material);
+    auto rule = ruleAppliedTo(material, rules);
     if (rule == rules.end()) rule = rules.insert(rules.end(), Rule{.material = material.name});
 
     const auto before = *rule;
-    auto change = std::ranges::find(rule->changes, parameter, &Change::parameter);
-    if (change == rule->changes.end()) change = rule->changes.insert(rule->changes.end(), Change{parameter, valueOf(material.packed, parameter), {}});
-
-    change->to = value;
-    if (change->to == change->from) rule->changes.erase(change);
+    retune(*rule, parameter, valueOf(material.packed, parameter), value);
 
     const auto after = *rule;
     if (after.changes.empty()) rules.erase(rule);
 
-    replaceRule(std::move(rules), before, after);
-}
-
-void removeRule(const Material& material)
-{
-    auto rules = *rulesInForce();
-    const auto rule = ruleOn(rules, material);
-    if (rule == rules.end()) return;
-
-    const auto before = *rule;
-    rules.erase(rule);
-    replaceRule(std::move(rules), before, {});
-    label = {};
+    sweep(before, Direction::Back);
+    sweep(after, Direction::Forward);
+    sortRules(rules);
+    putInForce(std::move(rules));
+    noteChange();
 }
 
 void save()
@@ -283,7 +258,7 @@ fxui::SliderSpec sliderFor(float original)
 Value originalOf(const Material& material, std::uint64_t parameter, const Value& value)
 {
     const auto rules = rulesInForce();
-    const auto rule = ruleOn(*rules, material);
+    const auto rule = ruleAppliedTo(material, *rules);
     if (rule == rules->end()) return value;
 
     const auto change = std::ranges::find(rule->changes, parameter, &Change::parameter);
@@ -305,6 +280,7 @@ void drawParameter(const Material& material, std::uint64_t parameter)
         isChanged |= fxui::slider(text.c_str(), value[component], sliderFor(component < original.size() ? original[component] : value[component]));
     }
 
+    if (value != original && original[0] != 0) fxui::hint(std::format("{:.3g} times the game's value", value[0] / original[0]));
     if (isChanged) edit(material, parameter, value);
 }
 
@@ -320,7 +296,7 @@ void drawSelected(const Material& material)
     for (const auto lowHalf : material.packed.parameters) drawParameter(material, parameterOfLowHalf(lowHalf));
 
     auto rules = *rulesInForce();
-    const auto rule = ruleOn(rules, material);
+    const auto rule = ruleAppliedTo(material, rules);
     if (rule == rules.end()) return;
 
     fxui::subheading("Label");
@@ -329,11 +305,8 @@ void drawSelected(const Material& material)
     {
         rule->label = text;
         putInForce(std::move(rules));
-        hasUnsavedChanges = true;
-        framesToRefresh = 0;
+        noteChange();
     }
-
-    if (fxui::button("Back to the game's values", "Takes the rule away, here and from the file at the next save.")) removeRule(material);
 }
 
 void drawList()
@@ -349,7 +322,7 @@ void drawList()
     for (std::size_t i = 0; i < rows.size(); ++i)
     {
         names.push_back(rows[i].text);
-        if (selected && rows[i].material == selected->material) shownRow = i;
+        if (selected && rows[i].poolRow == selected->poolRow) shownRow = i;
     }
 
     const auto preview = selected ? selected->text : std::format("{} materials", rows.size());
@@ -374,12 +347,21 @@ std::string hookTool() noexcept
     return status == MH_OK ? "" : MH_StatusToString(status);
 }
 
+void endBlink() noexcept
+{
+    if (!blink) return;
+
+    if (const auto material = game_materials::materialAt(blink->poolRow)) setValue(material->packed, blink->parameter, blink->held);
+
+    blink.reset();
+}
+
 void presentTool() noexcept
 {
     ++presents;
 
     // A material must not stay dark once the tool is no longer drawn.
-    if (presents - lastShown > 2) endBlink();
+    if (presents - lastShown > PresentsUnseen) endBlink();
 }
 
 void drawTool()
@@ -389,13 +371,18 @@ void drawTool()
 
     const fxui::Item item({.id = "remaster",
         .name = "Materials",
-        .summary = "Tunes the game's materials, such as a lamp too bright, and saves the rules into the repository, for every build to ship.",
+        .summary = "Tunes the game's materials and saves the rules into the repository.",
         .keywords = "remaster material lamp self-lit bright emission glass tune rule"});
     if (!item) return;
 
-    const auto count = counts();
+    // With the rules off, what a material holds is not what a rule made it.
+    if (!areRulesOn())
+    {
+        fxui::note(Tone::Dim, "The rules are off while the visual enhancements are off.");
+        return;
+    }
+
     fxui::fact("Rules", std::format("{}{}", rulesInForce()->size(), hasUnsavedChanges ? ", not saved" : ""));
-    fxui::fact("Made so far", std::format("{} materials, {} changed", count.met, count.changed));
 
     drawList();
 

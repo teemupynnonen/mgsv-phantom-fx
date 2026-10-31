@@ -579,7 +579,7 @@ void drawDeveloper()
 
     drawTravel();
     drawLuaConsole();
-    remaster::drawTool();
+    if constexpr (DevTools) remaster::drawTool();
     if constexpr (DiagnosticLog)
     {
         auto options = core::currentDiagnostics();
