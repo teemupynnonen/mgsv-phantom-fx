@@ -23,8 +23,8 @@ public:
 
     // Marks a fresh start, which has no history to blend.
     void fill(gi::GIFrameConstants& constants) const;
-    // Its views in the frame's tables, by the slots gi_shadow.hlsli gives them; `output` is
-    // the shared shadow, in the unordered access state while the passes run.
+    // Its views in the frame's tables; `output` is the shared shadow, in the unordered access
+    // state while the passes run.
     void describe(gi_d3d12::Descriptors& descriptors, std::uint32_t parity, ID3D12Resource* output) const;
     // The rays, then the denoiser's passes, into the output; the rays alone `forReconstruction`. Needs the
     // frame's scene built.

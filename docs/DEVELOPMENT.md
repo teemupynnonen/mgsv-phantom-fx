@@ -59,7 +59,7 @@ documentation and licenses are in `PhantomFX/`.
 ctest --test-dir build/release
 ```
 
-This runs ten tests that need neither the game nor a GPU. `tests/upscaler_tests.cpp`: settings
+This runs eleven tests that need neither the game nor a GPU. `tests/upscaler_tests.cpp`: settings
 (defaults, round trip, clamping, invalid files and values), the mode maths (render scales, texture LOD
 bias), the render size plan (DLSS's own size or the nominal one, rounded up to even and never above the
 output size, Custom's DLSS quality, the settings that make a new plan), the frames (when one starts,
@@ -100,6 +100,9 @@ view and the glass's targets. `tests/shared_textures_tests.cpp`: a shared output
 read until written, the same size keeping what it holds, a new size or a replaced texture leaving it unwritten.
 `tests/d3d12_host_tests.cpp`: Direct3D 12 work at a point of the immediate context, on WARP devices: each side reads what
 the other just wrote, frame after frame as the lists come round, and a failed evaluation leaves the next one fine.
+`tests/kernel_table_tests.cpp`: what the build makes of the compiled kernels: each kind of binding its own type,
+what the root signature binds left out, a slot with two names, a name with two shapes and a kernel without
+bindings failing.
 Everything else is checked in the game.
 
 ## Package a release
@@ -203,6 +206,8 @@ what draws it, when that is the feature's own.
 | `src/passes/ray_tracing/gi_inputs.*` | What the ray tracing takes from the game's draws: the main camera of the frame drawn, its skinned meshes' bones, the terrain's inputs |
 | `src/passes/ray_tracing/gi_textures.*` | Shared copies of the game's textures the ray-traced scene's meshes use, from its texture manager (see "Ray-traced scene") |
 | `src/passes/ray_tracing/gi_d3d12.hpp` | The kernels, root signature and descriptor tables every ray-traced feature shares |
+| `src/passes/ray_tracing/gi_slots.hpp` | The slots of those tables, a type a kind; `gi_bindings.h`, generated, names each one (see "Kernels and their slots") |
+| `tools/kernel_bindings/` | Build tool: C++'s slot names, `Kernel` enum and table of DXIL, from the compiled kernels (see "Kernels and their slots") |
 | `src/passes/ray_tracing/shaders/` | HLSL the ray-traced features share: `gi_shared.h` (also C++), `gi_common.hlsli`, `gi_shadow.hlsli` (where shadow rays leave a surface; the FidelityFX Shadow Denoiser's data access), `gi_hit_light.hlsli` (a ray's hit lit as the global illumination lights it, the hash grid cache), `ggx_specular.hlsli` (the specular of what path tracing's rays hit), `gi_scene.hlsl` |
 | `third_party/ffx_denoiser_shadows/` | AMD's FidelityFX Shadow Denoiser headers, unchanged (MIT; `licenses/AMD-FidelityFX-LICENSE.txt`) |
 
@@ -2296,12 +2301,40 @@ the frame's order. The kick calls `gather` on each, on Direct3D 11: it makes the
 then calls `prepare` on each, for its memory and last probe, and `bind` and `record` on those the kick runs.
 `release` gives its Direct3D 12 memory back when the rays stop, and `detach` the rest.
 
-A trace declares each texture it shares in a `SharedRow`: format, read or write, slot. `SharedBindings` opens it
+A trace declares each texture it shares in a `SharedRow`: its format and slot, whose kind says read or write. `SharedBindings` opens it
 in Direct3D 12, puts it in the frame's tables, moves it out of the common state for the frame's passes and back,
 and marks a `SharedOutput` written once the frame is submitted. A `SharedOutput` keeps its own lock, since the kick
 and the threads recording the next frame use it at the same time.
 
 So far the lamps' shadow rays are a trace (`lamp_shadow_rays.*`); the others are recorded by `gi_renderer` itself.
+
+### Kernels and their slots
+
+A kernel's HLSL is the one home of its slots: the `register()` lines, each in the file of the trace that owns it. A
+kernel's one home is its `add_gi_kernels` line in `CMakeLists.txt`. The build reads the rest from the compiled kernels,
+so nothing is typed twice.
+
+`tools/kernel_bindings` reflects each kernel's DXIL with DXC's own reflection (`dxcompiler.dll`, beside `dxc.exe`) and
+writes three headers into `build/<preset>/gi_shaders`:
+
+| Header | What it holds | Who includes it |
+| --- | --- | --- |
+| `gi_bindings.h` | Each slot by its HLSL name without `g_`, in `namespace binding`: `binding::Depth`, `binding::Light_Noisy.at(1)` | `gi_d3d12.hpp` |
+| `gi_kernel_list.h` | The `Kernel` enum, in `add_gi_kernels` order | `gi_d3d12.hpp` |
+| `gi_kernel_bytecode.h` | `Bytecode`, every kernel's DXIL in that order (about 8 MB of headers) | `gi_renderer.cpp` |
+
+To add a resource: declare it in the HLSL, use it in a kernel, then bind `binding::Name`. DXC drops what no kernel
+uses, so until then the name does not exist. To add a kernel: add it to `add_gi_kernels`.
+
+The build stops when a slot has two names, a name has two shapes across kernels, or a kernel has no bindings. Each kind of
+binding has a type of its own (`gi_slots.hpp`), so `Descriptors::texture` does not compile with an output's slot, and `at()` past the
+end of an array does not compile either.
+
+Not checked: a view's format against the HLSL (a write-only `RWTexture2D<float4>` on a UNORM texture is fine, a typed
+load needs `unorm`), and a slot left null at run time, which the optional inputs are on purpose.
+
+The tool reads DXC's reflection and not the binding table DXC prints in each kernel's `.h`: that table is for people,
+and runs its columns together (`UAVunorm_f32`).
 
 ### Smaller views
 

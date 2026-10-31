@@ -44,11 +44,11 @@ ID3D12Resource* SharedBindings::share(const SharedRow& row, ID3D11Texture2D* tex
 {
     check(opened.open(device, texture), row.opening);
     auto* resource = opened.resource.Get();
-    const bool isWrite = row.access == Access::Write;
-    if (isWrite) descriptors.outputTexture(row.slot, resource, row.format);
-    else descriptors.texture(row.slot, resource, row.format);
+    const auto* written = std::get_if<binding::OutputTextureSlot>(&row.slot);
+    if (written) descriptors.outputTexture(*written, resource, row.format);
+    else descriptors.texture(std::get<binding::TextureSlot>(row.slot), resource, row.format);
 
-    uses.push_back({resource, isWrite ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, texture, output});
+    uses.push_back({resource, written ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, texture, output});
 
     return resource;
 }

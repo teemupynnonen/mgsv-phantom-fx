@@ -31,14 +31,11 @@ using kick_traces::KickTraces;
 using scene_contents::instancedAt;
 using scene_contents::InstancedModel;
 using scene_contents::SceneContents;
-using shared_textures::Access;
 using shared_textures::SharedOutput;
 using shared_textures::SharedRow;
 using trace::TraceFrame;
 
-// By the slots light_shadows.hlsl gives them.
-constexpr SharedRow ShareRow{DXGI_FORMAT_R16_FLOAT, Access::Write, 89, "Opening the lights' shadow"};
-constexpr UINT RaysSlot = 90, FirstFilterSlot = 91, ProbeSlot = 92;
+constexpr SharedRow ShareRow{DXGI_FORMAT_R16_FLOAT, binding::LocalLightShadow, "Opening the lights' shadow"};
 
 // The lamp probe as text, and a key that changes when which lights reach the centre pixel, or what
 // blocks them, changes.
@@ -138,9 +135,9 @@ public:
     void bind(const TraceFrame& frame, trace::TraceBindings& bindings) override
     {
         bindings.shared.share(ShareRow, gathered, opened, &output);
-        bindings.descriptors.outputTexture(RaysSlot, rays.Get(), DXGI_FORMAT_R16G16_FLOAT);
-        bindings.descriptors.outputTexture(FirstFilterSlot, firstFilter.Get(), DXGI_FORMAT_R16G16_FLOAT);
-        if (isProbedIn(frame.frame)) bindings.descriptors.outputBuffer(ProbeSlot, probe.Get(), sizeof(GILightProbe), 1);
+        bindings.descriptors.outputTexture(binding::LocalShadowRays, rays.Get(), DXGI_FORMAT_R16G16_FLOAT);
+        bindings.descriptors.outputTexture(binding::LocalShadowFirst, firstFilter.Get(), DXGI_FORMAT_R16G16_FLOAT);
+        if (isProbedIn(frame.frame)) bindings.descriptors.outputBuffer(binding::LightProbe, probe.Get(), sizeof(GILightProbe), 1);
     }
 
     void record(const TraceFrame& frame, gi_d3d12::Recorder& recorder) override

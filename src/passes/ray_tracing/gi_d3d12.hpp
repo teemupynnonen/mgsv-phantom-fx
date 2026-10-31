@@ -1,6 +1,8 @@
 #pragma once
 
 #include "d3d12_helpers.hpp"
+#include "gi_bindings.h"
+#include "gi_kernel_list.h"
 #include "log.hpp"
 #include "performance.hpp"
 
@@ -22,25 +24,11 @@ namespace phantom_fx::gi_d3d12
 {
 using Microsoft::WRL::ComPtr;
 
-// Every kernel, in the order of their DXIL in gi_renderer.cpp.
-enum class Kernel : std::uint8_t
-{
-    // gi_scene.hlsl
-    ClearNewGeometries, DebugScene, TerrainGrid, Skin,
-    // gi_light.hlsl
-    ClearCounters, GenerateDispatch, PrepareGuides, TraceLight, LearnAlbedo, PurgeTiles, PopulateMultibounceCells, PopulateCells, UpdateTiles,
-    UpdateMultibounceCells, ResolveLight, UpdateFoliageMemory, CompositeLight,
-    // gi_shadow.hlsl, gi_shadow_filter.hlsl (the sun's), light_shadows.hlsl (the lights')
-    TraceSunShadows, ClassifyShadowTiles, FilterShadows, DebugShadows, ProbeShadows, TraceLocalLightShadows, FilterLocalLightShadows, ProbeLocalLights,
-    // reflections.hlsl and direct_light.hlsl (path tracing)
-    TraceReflections, TraceSurfaceReflections, TraceLampLight,
-    Count
-};
-
 using Pipelines = std::array<ComPtr<ID3D12PipelineState>, static_cast<std::size_t>(Kernel::Count)>;
 
-// The descriptor tables (gi_common.hlsli, gi_light.hlsl, gi_shadow.hlsli).
+// The descriptor tables.
 constexpr UINT SrvCount = 32, UavCount = 112, TableSize = SrvCount + UavCount;
+static_assert(binding::TextureSlots <= SrvCount && binding::OutputSlots <= UavCount);
 
 // The GI files call these as gi_d3d12::check and so on (d3d12_helpers.hpp, hresult.hpp).
 using phantom_fx::check;
@@ -113,28 +101,28 @@ public:
         for (UINT i = 0; i < UavCount; ++i) device->CreateUnorderedAccessView(nullptr, nullptr, &nullUav, at(SrvCount + i));
     }
 
-    void texture(UINT slot, ID3D12Resource* resource, DXGI_FORMAT format, UINT mips = 1)
+    void texture(binding::TextureSlot slot, ID3D12Resource* resource, DXGI_FORMAT format, UINT mips = 1)
     {
         D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
         desc.Format = format;
         desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
         desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         desc.Texture2D.MipLevels = mips;
-        device->CreateShaderResourceView(resource, &desc, at(slot));
+        device->CreateShaderResourceView(resource, &desc, at(slot.index));
     }
 
     // A texture of six slices as a cube.
-    void cube(UINT slot, ID3D12Resource* resource, DXGI_FORMAT format)
+    void cube(binding::CubeSlot slot, ID3D12Resource* resource, DXGI_FORMAT format)
     {
         D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
         desc.Format = format;
         desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
         desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         desc.TextureCube.MipLevels = 1;
-        device->CreateShaderResourceView(resource, &desc, at(slot));
+        device->CreateShaderResourceView(resource, &desc, at(slot.index));
     }
 
-    void buffer(UINT slot, ID3D12Resource* resource, std::uint64_t offset, std::uint64_t stride, std::uint64_t count)
+    void buffer(binding::BufferSlot slot, ID3D12Resource* resource, std::uint64_t offset, std::uint64_t stride, std::uint64_t count)
     {
         D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
         desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
@@ -142,11 +130,11 @@ public:
         desc.Buffer.FirstElement = offset / stride;
         desc.Buffer.NumElements = static_cast<UINT>(std::max<std::uint64_t>(count, 1));
         desc.Buffer.StructureByteStride = static_cast<UINT>(stride);
-        device->CreateShaderResourceView(resource, &desc, at(slot));
+        device->CreateShaderResourceView(resource, &desc, at(slot.index));
     }
 
     // A buffer as a ByteAddressBuffer.
-    void rawBuffer(UINT slot, ID3D12Resource* resource, std::uint64_t bytes)
+    void rawBuffer(binding::RawBufferSlot slot, ID3D12Resource* resource, std::uint64_t bytes)
     {
         D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
         desc.Format = DXGI_FORMAT_R32_TYPELESS;
@@ -154,36 +142,36 @@ public:
         desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         desc.Buffer.NumElements = static_cast<UINT>(bytes / 4);
         desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
-        device->CreateShaderResourceView(resource, &desc, at(slot));
+        device->CreateShaderResourceView(resource, &desc, at(slot.index));
     }
 
-    void outputTexture(UINT slot, ID3D12Resource* resource, DXGI_FORMAT format, UINT mip = 0)
+    void outputTexture(binding::OutputTextureSlot slot, ID3D12Resource* resource, DXGI_FORMAT format, UINT mip = 0)
     {
         D3D12_UNORDERED_ACCESS_VIEW_DESC desc{};
         desc.Format = format;
         desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
         desc.Texture2D.MipSlice = mip;
-        device->CreateUnorderedAccessView(resource, nullptr, &desc, at(SrvCount + slot));
+        device->CreateUnorderedAccessView(resource, nullptr, &desc, at(SrvCount + slot.index));
     }
 
-    void outputBuffer(UINT slot, ID3D12Resource* resource, std::uint64_t stride, std::uint64_t count)
+    void outputBuffer(binding::OutputBufferSlot slot, ID3D12Resource* resource, std::uint64_t stride, std::uint64_t count)
     {
         D3D12_UNORDERED_ACCESS_VIEW_DESC desc{};
         desc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
         desc.Buffer.NumElements = static_cast<UINT>(std::max<std::uint64_t>(count, 1));
         desc.Buffer.StructureByteStride = static_cast<UINT>(stride);
-        device->CreateUnorderedAccessView(resource, nullptr, &desc, at(SrvCount + slot));
+        device->CreateUnorderedAccessView(resource, nullptr, &desc, at(SrvCount + slot.index));
     }
 
     // A buffer as a RWByteAddressBuffer.
-    void outputRawBuffer(UINT slot, ID3D12Resource* resource, std::uint64_t bytes)
+    void outputRawBuffer(binding::OutputRawBufferSlot slot, ID3D12Resource* resource, std::uint64_t bytes)
     {
         D3D12_UNORDERED_ACCESS_VIEW_DESC desc{};
         desc.Format = DXGI_FORMAT_R32_TYPELESS;
         desc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
         desc.Buffer.NumElements = static_cast<UINT>(bytes / 4);
         desc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
-        device->CreateUnorderedAccessView(resource, nullptr, &desc, at(SrvCount + slot));
+        device->CreateUnorderedAccessView(resource, nullptr, &desc, at(SrvCount + slot.index));
     }
 
     D3D12_GPU_DESCRIPTOR_HANDLE srvTable() const { return gpu; }
