@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Photo mode crawls with C.** Holding C moves the free camera at 0.5 m/s, next to Shift's 25 m/s, for
+  lining up a close shot.
 - **The sea.** A new **Sea** switch under atmosphere replaces the sea around Mother Base: waves from a real
   ocean spectrum that rise and roll with the wind, bigger in rain, with foam where their crests break. It is
   lit like the rest of the world, so it reflects the sky, the sun and the platforms and takes their shadows;

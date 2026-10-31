@@ -11,6 +11,7 @@
 #include "constant_capture.hpp"
 #include "core.hpp"
 #include "d3d12_helpers.hpp"
+#include "dev_tools.hpp"
 #include "device_check.hpp"
 #include "features/frame_generation/fsr_frame_generation.hpp"
 #include "features/frame_generation/presenter.hpp"
@@ -584,7 +585,10 @@ void onReshadePresent(effect_runtime* runtime)
     if (runtime->is_key_pressed(VK_F4)) photo_mode::toggleBlur();
 
     const auto down = [runtime](uint32_t key) { return !overlayOpen && runtime->is_key_down(key); };
-    photo_mode::setControls({down('W'), down('S'), down('A'), down('D'), down(VK_SPACE), down(VK_CONTROL), down(VK_SHIFT)});
+    if constexpr (DevTools)
+        if (!overlayOpen && runtime->is_key_pressed(VK_RETURN)) photo_mode::teleport();
+
+    photo_mode::setControls({down('W'), down('S'), down('A'), down('D'), down(VK_SPACE), down(VK_CONTROL), down(VK_SHIFT), down('C')});
 }
 }
 

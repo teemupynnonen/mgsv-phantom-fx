@@ -4,6 +4,7 @@
 #include "dev_tools.hpp"
 #include "device_check.hpp"
 #include "features/frame_generation/frame_generation.hpp"
+#include "features/photo_mode/photo_mode.hpp"
 #include "game_code.hpp"
 #include "game_lua.hpp"
 #include "travel.hpp"
@@ -49,6 +50,7 @@ void frameStart(std::uint8_t* loop, void* argument)
     if constexpr (DevTools)
     {
         travel::onFrameStart();
+        photo_mode::onFrameStart();
         game_lua::onFrameStart();
     }
     originalFrameStart(loop, argument);

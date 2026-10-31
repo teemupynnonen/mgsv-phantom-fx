@@ -1,9 +1,12 @@
 #include "features/photo_mode/photo_mode.hpp"
 
 #include "clock.hpp"
+#include "dev_tools.hpp"
 #include "device_check.hpp"
 #include "features/photo_mode/focus.hpp"
+#include "fxui/fxui.hpp"
 #include "game_code.hpp"
+#include "game_lua.hpp"
 #include "log.hpp"
 
 #include <Windows.h>
@@ -13,7 +16,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <format>
 #include <string>
+#include <utility>
 
 namespace phantom_fx::photo_mode
 {
@@ -68,7 +73,7 @@ constexpr std::size_t HoldMask = 8, SkipJump = 0x25;
 constexpr unsigned char TestBit = 0x01, NoBit = 0x00, JumpIfZero = 0x74, Jump = 0xEB;
 
 // Metres per second, radians per mouse count.
-constexpr float Speed = 5, FastSpeed = 25, MouseSensitivity = 0.001f;
+constexpr float Speed = 5, FastSpeed = 25, SlowSpeed = 0.5f, MouseSensitivity = 0.001f;
 // Just short of straight up or down, where the yaw would be lost.
 constexpr float MaxPitch = 1.55f;
 // A hitch does not throw the camera.
@@ -109,12 +114,24 @@ std::atomic<float> fNumber{1.4f};
 std::atomic<std::uint8_t> heldKeys{};
 std::atomic<int> mouseX{}, mouseY{};
 std::atomic<std::uint32_t*> pauseRequest{};
+std::atomic<bool> teleportRequested{};
 
 // Game thread only.
 FreeCamera freeCamera;
 LONGLONG lastStep{};
 
-enum Key : std::uint8_t { Forward = 1, Back = 2, Left = 4, Right = 8, Up = 16, Down = 32, Fast = 64 };
+// Where the last Enter sends the player: the free camera's position and yaw, taken at the selector update
+// it arrives on, and the warp run at a frame start after leaving photo mode has let the game's time run.
+// The dev build only.
+struct Warp
+{
+    float position[3]{};
+    float yaw{};
+};
+Warp warp;
+bool warpPending{};
+
+enum Key : std::uint8_t { Forward = 1, Back = 2, Left = 4, Right = 8, Up = 16, Down = 32, Fast = 64, Slow = 128 };
 
 std::uint8_t* activeCamera(std::uint8_t* selector)
 {
@@ -181,7 +198,8 @@ void fly(FreeCamera& camera, std::uint8_t keys, int turnX, int turnY, float seco
 
     const auto axis = [keys](Key positive, Key negative) { return static_cast<float>((keys & positive) != 0) - static_cast<float>((keys & negative) != 0); };
     const float ahead = axis(Forward, Back), aside = axis(Right, Left), rise = axis(Up, Down);
-    const float distance = (keys & Fast ? FastSpeed : Speed) * seconds;
+    const float speed = keys & Slow ? SlowSpeed : keys & Fast ? FastSpeed : Speed;
+    const float distance = speed * seconds;
     const float forward[3]{std::cos(camera.pitch) * std::sin(camera.yaw), std::sin(camera.pitch), std::cos(camera.pitch) * std::cos(camera.yaw)};
     const float right[3]{-std::cos(camera.yaw), 0, std::sin(camera.yaw)};
     for (int i = 0; i < 3; ++i) camera.position[i] += distance * (ahead * forward[i] + aside * right[i]);
@@ -235,6 +253,17 @@ double secondsSince(LONGLONG& last)
 void selectorUpdate(std::uint8_t* selector)
 {
     auto* camera = activeCamera(selector);
+    // Enter asks for the player to go where the free camera is. The warp waits for the game's time, so
+    // the request also leaves photo mode: the unpause below is in this same call, and the next frame
+    // start runs the warp with the game running.
+    if (teleportRequested.exchange(false) && flying && camera)
+    {
+        std::memcpy(warp.position, freeCamera.position, sizeof(warp.position));
+        warp.yaw = static_cast<float>(std::remainder(freeCamera.yaw, 6.2831853f));
+        warpPending = true;
+        requested = false;
+    }
+
     const bool wanted = requested;
     // Without a camera (a loading screen) the request lapses.
     if (wanted && !flying && !camera) requested = false;
@@ -356,7 +385,8 @@ void configure(const Configuration& configuration) noexcept
 void setControls(const Controls& controls) noexcept
 {
     heldKeys = static_cast<std::uint8_t>((controls.forward ? Forward : 0) | (controls.back ? Back : 0) | (controls.left ? Left : 0)
-        | (controls.right ? Right : 0) | (controls.up ? Up : 0) | (controls.down ? Down : 0) | (controls.fast ? Fast : 0));
+        | (controls.right ? Right : 0) | (controls.up ? Up : 0) | (controls.down ? Down : 0) | (controls.fast ? Fast : 0)
+        | (controls.slow ? Slow : 0));
 }
 
 bool uiHidden() noexcept
@@ -364,10 +394,69 @@ bool uiHidden() noexcept
     return hideUi || flying;
 }
 
+void teleport() noexcept
+{
+    if constexpr (DevTools) teleportRequested = true;
+}
+
+void onFrameStart() noexcept
+{
+    if constexpr (!DevTools) return;
+
+    if (!std::exchange(warpPending, false)) return;
+
+    // The game's own warp, as Infinite Heaven's InfTppUtil.Warp sends it: WarpAndWaitBlock for the player
+    // (object 0), SetPosition for the vehicle or walker gear the player is in. rotY takes radians.
+    const auto script = std::format(R"(
+if not (vars and GameObject and TppGameObject) then return "The game's scripts are not ready." end
+local kind = math.floor(vars.missionCode / 10000)
+if kind ~= 1 and kind ~= 3 then return "Only in a mission or free roam." end
+local id = 0
+if vars.playerVehicleGameObjectId and vars.playerVehicleGameObjectId ~= GameObject.NULL_ID then id = vars.playerVehicleGameObjectId end
+local type = GameObject.GetTypeIndex(id)
+local rotY = {:.5f}
+local pos = {{{:.3f}, {:.3f}, {:.3f}}}
+if type == TppGameObject.GAME_OBJECT_TYPE_PLAYER2 then
+  GameObject.SendCommand(id, {{id = "WarpAndWaitBlock", pos = pos, rotY = rotY}})
+elseif type == TppGameObject.GAME_OBJECT_TYPE_VEHICLE then
+  GameObject.SendCommand(id, {{id = "SetPosition", position = Vector3(pos[1], pos[2], pos[3]), rotY = rotY}})
+elseif type == TppGameObject.GAME_OBJECT_TYPE_WALKERGEAR2 or type == TppGameObject.GAME_OBJECT_TYPE_COMMON_WALKERGEAR2 then
+  GameObject.SendCommand(id, {{id = "SetPosition", pos = pos, rotY = rotY}})
+else
+  return "The player is not on foot, in a vehicle or on walker gear."
+end
+)",
+        warp.yaw, warp.position[0], warp.position[1], warp.position[2]);
+
+    const auto outcome = game_lua::run(script, "=PhantomFX photo mode teleport");
+    if (!outcome)
+    {
+        fxui::toast(fxui::Tone::Warn, "Teleport", "The game's scripts are not running yet.");
+        return;
+    }
+
+    if (!outcome->ran)
+    {
+        log("Photo mode's teleport failed: " + outcome->text);
+        fxui::toast(fxui::Tone::Bad, "Teleport failed", "See PhantomFX.log.");
+        return;
+    }
+
+    if (!outcome->text.empty())
+    {
+        fxui::toast(fxui::Tone::Warn, "Teleport", outcome->text);
+        return;
+    }
+
+    log(std::format("Photo mode: the player warped to {:.3f}, {:.3f}, {:.3f}.", warp.position[0], warp.position[1], warp.position[2]));
+}
+
 void leave() noexcept
 {
     requested = false;
     flying = false;
+    teleportRequested = false;
+    warpPending = false;
     pause(false);
     focus::setActive(false);
 }

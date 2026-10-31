@@ -166,7 +166,7 @@ what draws it, when that is the feature's own.
 | `indirect_light/` | `ssilvb.*`: SSILVB's light, brought to the render size and added to the diffuse light the resolve reads. `ssilvb_shaders.hpp`: the upsample |
 | `volumetric_fog/` | `atmosphere.*`: the larger fog texture, the game's fog pass over all of it, the shadowed fill before the resolve. `atmosphere_shaders.hpp`: the game's fog formula per froxel with the sun shadowed; Hillaire's atmosphere tables, the physical fog and sky (Epic Games' reference, MIT) |
 | `sea/` | `sea.*`: the sea's waves and its surface in the G-buffer in place of the game's sea, its level and wind from the game's, its depth for the guides and its level for the ray-traced scene (see "Sea"). `sea_shaders.hpp`: the spectrum, the FFT, the maps, the surface |
-| `photo_mode/` | `photo_mode.*`: photo mode (F2), the game's pause, a free camera through the camera selector, the game's input held back; hiding the UI (F3). `focus.*`: its autofocus |
+| `photo_mode/` | `photo_mode.*`: photo mode (F2), the game's pause, a free camera through the camera selector, the game's input held back; hiding the UI (F3); the dev build's Enter teleport. `focus.*`: its autofocus |
 | `hdr/` | `hdr.*`: the float scene, in SDR too, and HDR10 output: the swap chain, the float scene targets and their sRGB views, the shader patches, the grading and output passes (see "HDR"). `hdr_shaders.hpp`: the encode and decode of the float scene, bloom's reduction, the grading, the output to PQ or, in SDR, to the game's 8 bits with a dither |
 | `frame_rate/` | `frame_rate.*`: hook on the frame wait setter, the optional 60 fps unlock |
 | `motion_blur/` | `motion_blur.*`: hooks on the motion blur plugin, velocity passes every frame |
@@ -3310,9 +3310,15 @@ F2 does nothing.
   (loading screens) the request lapses.
 - **Flight.** Each selector update, the mouse turns the camera (0.001 rad per raw count; pitch within
   ±1.55 rad). W and S move along the view, A and D along the horizontal right, Space and Ctrl along
-  +y: 5 m/s, 25 m/s with Shift, by real time (`QueryPerformanceCounter`, at most 0.1 s a step). The
-  active camera's rotation and position are replaced for the original update and put back after it,
-  so the game's camera keeps its own.
+  +y: 5 m/s, 25 m/s with Shift, 0.5 m/s with C, by real time (`QueryPerformanceCounter`, at most 0.1 s
+  a step). The active camera's rotation and position are replaced for the original update and put back
+  after it, so the game's camera keeps its own.
+- **Teleport (dev build only).** Enter leaves photo mode and warps the player to the free camera's
+  position, facing the camera's yaw. The game's warp needs game time, so the request is taken at the
+  next selector update (which also clears the pause) and run at the next frame start through the game's
+  Lua (`game_lua.hpp`), from `game_loop`'s frame start in its DevTools block: `GameObject.SendCommand`
+  with `WarpAndWaitBlock` for the player (object 0), or `SetPosition` for the vehicle or walker gear
+  they are in; missions and free roam only. It is the call Infinite Heaven's `InfTppUtil.Warp` makes.
 - **Input.** In photo mode the raw input reader takes the mouse's movement for the free camera and
   gives the game only button and key releases, so nothing held when photo mode started stays held
   after it. The keys come from ReShade, and not while its overlay is open.
