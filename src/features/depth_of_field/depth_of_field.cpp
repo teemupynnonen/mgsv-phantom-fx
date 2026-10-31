@@ -33,8 +33,8 @@ struct Layers
 // ---- Direct3D, guarded by resourceMutex ----
 std::mutex resourceMutex;
 ComPtr<ID3D11Device> device;
-ComPtr<ID3D11PixelShader> coverageShader, compositeShader, prefilterShader, gatherShader, fillShader, lensCompositeShader;
-DrawTarget coverage, farLayer, prefiltered, gathered;
+ComPtr<ID3D11PixelShader> coverageShader, compositeShader, prefilterShader, gatherShader, wideFillShader, fineFillShader, lensCompositeShader;
+DrawTarget coverage, farLayer, prefiltered, gathered, filled;
 
 // How far this thread has come through the depth of field's draws, which it records together. Each step
 // needs the one before, so a frame that misses one is the game's own.
@@ -145,6 +145,7 @@ void drawLens(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call)
     constexpr DXGI_FORMAT Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
     ensureDrawTarget(device.Get(), prefiltered, width, height, Format, "Creating the depth of field's prefiltered light");
     ensureDrawTarget(device.Get(), gathered, width, height, Format, "Creating the depth of field's gather");
+    ensureDrawTarget(device.Get(), filled, width, height, Format, "Creating the depth of field's fill");
     ensureDrawTarget(device.Get(), farLayer, width, height, Format, "Creating the depth of field's far layer");
 
     const SavedOutput saved(context);
@@ -152,7 +153,8 @@ void drawLens(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call)
     context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
     drawLayer(context, call, prefiltered, prefilterShader.Get(), {.coverage = coverage.view.Get()});
     drawLayer(context, call, gathered, gatherShader.Get(), {.light = prefiltered.view.Get()});
-    drawLayer(context, call, farLayer, fillShader.Get(), {.light = gathered.view.Get(), .radii = prefiltered.view.Get()});
+    drawLayer(context, call, filled, wideFillShader.Get(), {.light = gathered.view.Get(), .radii = prefiltered.view.Get()});
+    drawLayer(context, call, farLayer, fineFillShader.Get(), {.light = filled.view.Get(), .radii = prefiltered.view.Get()});
     bindLayers(context, {});
 }
 
@@ -187,11 +189,13 @@ void attach(ID3D11Device* gameDevice) noexcept
     device = gameDevice;
     try
     {
+        const D3D_SHADER_MACRO wideFill[]{{"RING_WIDTH", "0.105"}, {}}, fineFill[]{{"RING_WIDTH", "0.05"}, {}};
         coverageShader = pixelShader(device.Get(), shaders::Coverage, "depth-of-field-coverage");
         compositeShader = pixelShader(device.Get(), shaders::Composite, "depth-of-field-composite");
         prefilterShader = pixelShader(device.Get(), shaders::FarPrefilter, "depth-of-field-prefilter");
         gatherShader = pixelShader(device.Get(), shaders::FarGather, "depth-of-field-gather");
-        fillShader = pixelShader(device.Get(), shaders::FarFill, "depth-of-field-fill");
+        wideFillShader = pixelShader(device.Get(), shaders::FarFill, "depth-of-field-wide-fill", wideFill);
+        fineFillShader = pixelShader(device.Get(), shaders::FarFill, "depth-of-field-fine-fill", fineFill);
         // Last, so it marks a complete pipeline.
         lensCompositeShader = pixelShader(device.Get(), shaders::LensComposite, "depth-of-field-lens-composite");
     }
@@ -208,12 +212,14 @@ void detach() noexcept
     compositeShader.Reset();
     prefilterShader.Reset();
     gatherShader.Reset();
-    fillShader.Reset();
+    wideFillShader.Reset();
+    fineFillShader.Reset();
     lensCompositeShader.Reset();
     coverage = {};
     farLayer = {};
     prefiltered = {};
     gathered = {};
+    filled = {};
     device.Reset();
 }
 

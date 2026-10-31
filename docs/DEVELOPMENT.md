@@ -3307,7 +3307,12 @@ focus edges at the render size (`features/depth_of_field`).
     so one noisy ray cannot turn into a disc. Its colour is multiplied by the radius, so a bilinear tap
     beside an in-focus texel keeps its colour.
   - A disc gather of up to 96 taps on a golden-angle spiral, where a tap counts if its own blur reaches
-    this far (Jimenez 2014, "scatter as you gather"), then an 8-tap fill between the taps.
+    this far (Jimenez 2014, "scatter as you gather"), then two 8-tap fills between the taps. Past 96
+    taps, from about 11 render pixels of radius, the taps spread out and a small lamp's disc breaks
+    into them. One fill as wide as the taps are apart lands on the neighbouring taps, so the first ring
+    is 0.105 of the radius and the second 0.05. Offline, the gather's maths at 60 render pixels: a lamp's
+    ripple 0.65 with one fill, 0.25 with 192 taps, 0.12 with two fills; frame 32570's scene against a
+    true disc, rms 1.12, 0.98, 0.61 of 255. Mips the width of the gap were worse than either, at 1.97.
   - The composite stretches the layer with a cubic B-spline in four bilinear taps (Sigg and Hadwiger
     2005). A pixel's cover is its own radius: sharp under half a render pixel, all blur over one and a
     half. The radius follows the game's formula, starting at its smallest size (c12.x), and comes from
