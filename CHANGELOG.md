@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Rivers, liquids and glass take the rays' shadow and reflections.** They are drawn forward, over the lit
+  scene, and sample the game's shadow map alone; their draws now leave that map out and use the traced shadow
+  instead, with the bed's shadow kept under the water. Their cube map is replaced by a surface the glass module
+  traces after the scene, so the water reflects what is around it - from where it is now, not where it was a
+  frame ago - at 0.3 of water's reflectance. Caustics on the bed under a river stand in for the focus the rays
+  cannot form.
+
 - **Depth of field: no more jagged edges around what is in focus.** The game decided what is blurred in blocks of
   four pixels, so the blur bit into the rim of anything in focus in steps, and the lower the render size the wider
   the steps: DLSS and Ray Reconstruction kept them as detail. Each pixel's own depth now decides, so in-focus edges

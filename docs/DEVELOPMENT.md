@@ -3284,6 +3284,33 @@ screen-space reflections, the global illumination and path tracing take it as an
 - **Cost** (2026-10-30, 4K output): 0.27 ms for the waves and the surface (the budget's timed passes). The
   lighting and the rays the sea's pixels then take are in the cost measurement's step for it.
 
+## Forward surfaces: rivers, liquids and glass
+
+They are drawn forward, over the lit scene, after the G-buffer and so after the kick: the rays know nothing of
+them, and the game's own shaders sample its shadow map alone, so a character's shadow stood on a river where the
+ground had the rays'.
+
+Two halves, one mechanism:
+
+- **Shadow.** At a river's or liquid's draw (`forward_shadows`, `src/features/forward_shadows/`) the game's shadow
+  map is replaced by a 1x1 white one and the sampler that always compares, and the scene is multiplied by the
+  rays' shadow at the surface's pixels. The map's shadow is the bed's, left in the deferred lighting under the
+  water, and the surface itself only dims to 0.95 - a water surface is mostly the sky reflected in it. Glass
+  takes the same pair from `forward_shadows::tracedShadowResources`, blanked at its own draw in `glass::draw`.
+- **Reflection.** The forward draw blanks the game's cube map and records the water as a surface
+  (`glass::recordWater`), the same way glass and mirrors are recorded: depth, a zero normal (the water's is its
+  depth's slope) and the menu's share of what it reflects. The glass module's second trace
+  (`TraceSurfaceReflections`, reflections.hlsl) runs after the scene, so it reflects from where the water is
+  now: no lag, and no reprojection to undo one. What it reflects is scaled by water's reflectance at the eye's
+  angle (`WaterReflectance`, Karis' split-sum fit, F0 0.02), and added over the scene at the exposure by the
+  glass composite.
+- **Shadow of a surface.** `TraceSurfaceReflections` also traces the sun for each surface pixel, into
+  `g_ForwardShadow` (u97): the forward multiply and the glass composite read it.
+
+Why the surfaces are one ray a pixel: they are drawn after the upscaler, so neither Ray Reconstruction nor the
+add-on's denoisers see them; their grain is the trace's own, and the water's ripples stay the game's own normal
+map rather than something the trace knows.
+
 ## Depth of field
 
 How Fox Engine blurs, read from the shaders' debug names and the camera plugin's code. Every frame
