@@ -47,6 +47,10 @@
 - **Ray tracing: the helicopter's cabin has its walls.** Between missions the rays passed through the cabin's
   walls, as it is held apart from the rest of the game's models: sunlight flooded in, and with path tracing the
   cabin was about four times as bright as the game's own. It is now dark inside, with daylight through its windows.
+- **Path tracing: no ghost image after changing the upscaling mode.** In places without sunlight, such as
+  the hospital, changing the mode and going back left a frozen picture of the earlier view over the scene
+  until the game restarted. The reflections and lamps now always read the current frame's materials, and
+  keep them at any upscaling mode.
 - **Ray-traced shadows: no lit halo around sunlit characters.** A character in the sun in front of a
   shaded wall left a lit band on the wall along their outline, wider the lower the render scale. The
   shadow denoiser no longer mixes a pixel's shadow with what lies in front of or behind it.

@@ -310,8 +310,10 @@ bool onClearDepthStencil(command_list* list, resource_view view, const float* de
 
 void onBindRenderTargets(command_list* list, uint32_t count, const resource_view* targets, resource_view depth)
 {
-    sea::targetsBound(native(list), count, reinterpret_cast<ID3D11RenderTargetView* const*>(targets),
-        reinterpret_cast<ID3D11DepthStencilView*>(depth.handle));
+    auto* const views = reinterpret_cast<ID3D11RenderTargetView* const*>(targets);
+    auto* const depthView = reinterpret_cast<ID3D11DepthStencilView*>(depth.handle);
+    sea::targetsBound(native(list), count, views, depthView);
+    indirect_light_pass::targetsBound(count, views, depthView);
 }
 
 void onBindPipeline(command_list* list, pipeline_stage stages, pipeline pipeline)

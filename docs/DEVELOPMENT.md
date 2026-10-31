@@ -2906,10 +2906,13 @@ flag on each full-screen draw.
 - **Recognition.** By checksum at `init_pipeline`: the sky light, the upscale, the ten resolves, the
   two SSAO passes (see "Ambient occlusion") and the two sun passes (`SunLight_DL_CS_ES`,
   `SunLight_DL_ES`). At the sky light's draw the add-on keeps the normals it binds for that deferred
-  context. At a sun pass's draw it keeps the G-buffer's specular target (`t1`,
-  `g_SpecularTexture`), whose `z` is the material. The sun comes after the upscale, so the march
-  reads an earlier frame's binding: the same texture while the render size stays. `onDraw` calls
-  GTVBAO before the sun shadows, which draw the sun pass themselves.
+  context. Each time the game binds the G-buffer it keeps a view of the third target, the specular
+  target, whose `z` is the material. The sun pass reads it too (`t1`, `g_SpecularTexture`) but cannot
+  give it: not every scene has one (mission 10010's hospital room has none), and a
+  view kept from it would outlive the target. The game makes new targets at a new render size, so
+  back at the first size the old view fits and shows that moment's picture for good, as a ghost in
+  everything path tracing reads from the specular target. `onDraw` calls GTVBAO before the sun
+  shadows, which draw the sun pass themselves.
 - **Depth prefilter** (`shaders::PrefilterDepths`, XeGTAO's depth MIPs), first: the view distance
   at the render size and four smaller copies in one `R32_FLOAT` texture, each 8x8 group covering
   16x16 pixels. Each copy is XeGTAO's `DepthMIPFilter` of the 2x2 below: the weighted mean, fading
