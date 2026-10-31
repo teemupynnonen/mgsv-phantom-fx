@@ -233,6 +233,7 @@ what draws it, when that is the feature's own.
 | `src/dev_tools.hpp` | Whether the build has the Developer page (the dev preset) |
 | `src/game_lua.cpp`, `src/game_lua.hpp` | Lua in the game's script state, and the Developer page's console (see "Game Lua") |
 | `src/travel.cpp`, `src/travel.hpp` | The Developer page's travel: free roam in another map (see "Travel") |
+| `src/remaster/` | The remastering tool: rules that change the game's materials as they are made, saved in `materials.json` and built into the add-on, and the Developer page item that tunes them (see its `README.md`, and "Materials") |
 | `src/frame_log.cpp`, `src/frame_log.hpp` | Development diagnostics, off by default: shader log, F10 frame record, constant and texture dumps |
 | `src/resource_dump.cpp`, `src/resource_dump.hpp` | Format names, constant rows, DDS saving for the dumps |
 | `src/shader_bytecode.cpp`, `src/shader_bytecode.hpp` | DXBC checksum (bytes 4 to 20 of the container), the instruction walk, the output saturation patch, the dither patch |
@@ -1189,6 +1190,45 @@ level at Camp Omega's cliffs. No names in the exe: the class names here are desc
   forward, not glass: most of those are `fox3DFW_ConstantSRGB`. One with shadow bit 0 the game never casts,
   and the scene leaves it out for every model. Glass is known by its material instead (see "Path tracing",
   "Glass and mirrors"): taken as solid, a helicopter's windows kept the sun out of its cabin (2026-10-25).
+
+### Materials
+
+The pixel shaders' `cPSMaterial` (`b4`, `float4 m_materials[8]`) has no copy on the GPU: it comes from a pool in main
+memory at every draw, so a write to the pool shows at the next one. Zeroing the self-lit materials from outside
+the running game put out a floodlight panel and a wall lamp's bulb and they came back with the values; the light
+those lamps throw on the walls stayed, as it is a game light of its own (2026-11-01). The remastering tool
+(`src/remaster`) stands on this.
+
+- **The pool.** At `[0x2B743B0]`: its rows at `+0x8`, their number at `+0x10` (5248), those in use at `+0x14`, a slot
+  for each row at `+0x20` (12 bytes: the next in its hash bucket at `+2`, its uses at `+4`, its state at `+8`). A handle
+  is the row << 17 with what it is a handle to in the low bits, 7 for a material.
+- **A material.** 0xD0 bytes: its name's StrCode64 at `+0x8` (48 bits), a hash of the rest at `+0x18`, its technique's
+  handle at `+0x20` (kind 4 on model materials; 2 and 12 for others), the registers it uses at `+0x24`, its textures in
+  the low 4 bits of `+0x25`, the eight registers at `+0x30`, the textures' handles at `+0xB0`.
+- **A technique.** Pool at `[0x2B743A8]`, rows of 0x50 bytes: its name's StrCode64 at `+0x8`; at `+0x28` a list of its
+  parameters (their number, then at `+8` a pointer to the low 32 bits of their names); at `+0x30` an object whose `+8`
+  points at the packing, a byte for each register component: parameter << 2 | which of its components. So
+  `SelfColor` fills register 0 of the self-lit techniques and `SelfColorIntensity` is x of register 1. The game's own
+  setter by name is `0x27A1C0`.
+- **Self-lit shaders.** `fox3dfw_constant*`: texture x `cb4[0]` x `cb4[1].x` x the exposure (`cb2[23].z`), linear.
+- **A draw.** The replay `0x2D6310` takes the material's row from the low 15 bits of the packet's first word (all ones
+  for none), `0x2D6A60` copies its registers into constant slot 4 (`0x2C5F30`), and `0x2C5A10` maps the buffer
+  `WRITE_DISCARD` and copies them in. Each slot holds its buffer, its source in main memory at `+8` and its size at `+0x18`.
+- **Making one.** A model's first build is `0x26B1D0`, in the order of the file's material instances; `0x26C750` makes
+  a model's materials again from its file, and `0x1CDC70` is the game's own call of it. A model's materials: `[model +
+  0x188]`, their number at `+0x58`, their handles at `+0x60`. Values go in raw, but for `MatParamIndex_0` to `3`, which
+  `0x269D30` scales. `0x27AD70` looks a builder's hash up, else makes a row and calls `0x1C8960`.
+- **Merging.** `0x1C8960` takes a handle, hashes the material (`0x27AC10`: name, technique, counts, textures, registers),
+  and if an equal one is in the pool (`0x279FA0`, the same fields) drops it and returns that one. So a row is one look
+  and a row's uses can span model files: a lamp type is one row. Changing a material at run time is `0x1CA1B0` (a
+  row of its own, cloned if shared), the write, `0x1C8960` again; `0x276B70` is that for one vector, with hundreds of
+  callers. A row's hash is only for this merge: a write that leaves it stale makes the next equal build a row of its own.
+- **Files share vectors.** 322 of 707 loaded files have a material vector that two materials read, so a value cannot
+  be changed by writing it in the file. Names are not unique either: 734 names over 1332 material instances;
+  `ca117249330f` had three lamps of 221182, 100000 and 600 in one mission.
+- **The values.** Mission 10070 had 21 self-lit material instances of at least 10: 61 to 341,182, median 20,000, the sun
+  about 20,000. Of 2670 rows 15 use all eight registers. Most materials carry only `MatParamIndex_0`, UV repeats,
+  `Incidence_Color`, the glass parameters or the self-lit ones: a surface's colour and roughness are its textures'.
 
 ## What the add-on changes
 

@@ -17,6 +17,7 @@
 #include "menu_budget.hpp"
 #include "passes/ray_tracing/ray_tracing.hpp"
 #include "performance.hpp"
+#include "remaster/remaster.hpp"
 #include "travel.hpp"
 #include "weather.hpp"
 
@@ -578,6 +579,7 @@ void drawDeveloper()
 
     drawTravel();
     drawLuaConsole();
+    remaster::drawTool();
     if constexpr (DiagnosticLog)
     {
         auto options = core::currentDiagnostics();

@@ -38,6 +38,7 @@ struct TestMesh
     std::uint64_t textureParameter{};
     float selfIntensity{}, materialRow{};
     bool isGlass{}, isMirror{};
+    std::uint64_t materialName{};
 };
 
 template<class T> void put(std::vector<std::uint8_t>& bytes, T value)
@@ -95,7 +96,7 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
     auto& meshFormats = block(10, 2 * meshes.size(), 8);
     auto& faceInfos = block(17, meshes.size(), 8);
     auto& paths = block(21, meshes.size(), 8);
-    auto& names = block(22, meshes.size() + 5, 8);
+    auto& names = block(22, 2 * meshes.size() + 5, 8);
     std::vector<std::uint8_t> vertexFormats;
     const auto format = [&](std::uint8_t usage, std::uint8_t dataType, std::uint16_t element) {
         put(vertexFormats, usage);
@@ -111,6 +112,8 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
         putAt<std::uint16_t>(meshBlock, 48 * i + 10, 3); // Vertices
         putAt<std::uint32_t>(meshBlock, 48 * i + 16, 3u * i);
         putAt<std::uint64_t>(meshBlock, 48 * i + 24, i); // Face info
+        putAt<std::uint16_t>(materialInstances, 16 * i, static_cast<std::uint16_t>(meshes.size() + 5 + i)); // Its name, after the parameters'
+        putAt<std::uint64_t>(names, 8 * (meshes.size() + 5 + i), mesh.materialName);
         putAt<std::uint16_t>(materialInstances, 16 * i + 4, mesh.isMirror ? 1 : 0); // The second material has the mirror's technique
         materialInstances[16 * i + 6] = mesh.textureParameter != 0;
         putAt<std::uint16_t>(materialInstances, 16 * i + 8, i);
@@ -439,6 +442,35 @@ void selfLitMeshes()
         "An ordinary mesh keeps its role, with its row of the material table.");
 }
 
+// A self-lit material another part of the add-on tunes: the scene's light follows, by the material's name, and however dim
+// it gets the mesh stays what the file makes it.
+void tunedSelfLight()
+{
+    constexpr std::uint64_t Lamp = 0xE45333B9516F;
+    const auto file = modelFile({{.alpha = 0x10, .shadow = 0x25, .hasUvs = true, .textureParameter = BaseTexture, .selfIntensity = 80, .materialName = Lamp}});
+
+    static float intensityWanted{};
+    const SelfLightFilter tuneLamp = [](std::uint64_t material, std::array<float, 4>& color, std::array<float, 4>& intensity) {
+        if (material != Lamp) return;
+
+        color[2] = 0;
+        intensity[0] = intensityWanted;
+    };
+
+    intensityWanted = 10;
+    const auto tuned = describeModel(1, file, Source::VisibilityManager, tuneLamp);
+    expect(tuned && partOf(*tuned, 0).emission == std::array{10.0f, 5.0f, 0.0f}, "The light is what the filter leaves of its colour and intensity.");
+
+    intensityWanted = 0;
+    const auto dark = describeModel(1, file, Source::VisibilityManager, tuneLamp);
+    expect(dark && partOf(*dark, 0).role == MeshRole::Emissive, "A lamp tuned to nothing is still a lamp.");
+    expect(partOf(*dark, 0).emission == std::array{0.0f, 0.0f, 0.0f}, "It gives no light.");
+
+    const auto other = modelFile({{.alpha = 0x10, .shadow = 0x25, .hasUvs = true, .textureParameter = BaseTexture, .selfIntensity = 80, .materialName = 1}});
+    const auto untuned = describeModel(1, other, Source::VisibilityManager, tuneLamp);
+    expect(untuned && partOf(*untuned, 0).emission == std::array{80.0f, 40.0f, 20.0f}, "Another material's name is no match.");
+}
+
 void unreadableFiles()
 {
     const auto file = modelFile({{0, 0}});
@@ -489,6 +521,7 @@ int main()
         materialPerRole();
         cutOutWaitsForTexture();
         selfLitMeshes();
+        tunedSelfLight();
         unreadableFiles();
         skinThroughBoneGroup();
         std::cout << "Scene description tests passed.\n";

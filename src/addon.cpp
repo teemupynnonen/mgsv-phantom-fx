@@ -43,6 +43,7 @@
 #include "passes/ray_tracing/ray_tracing.hpp"
 #include "passes/sun_light_pass.hpp"
 #include "performance.hpp"
+#include "remaster/remaster.hpp"
 #include "render_scale.hpp"
 #include "sun_movement.hpp"
 #include "weather.hpp"
@@ -616,6 +617,7 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshadeMo
     log(photo_mode::hook());
     log(game_loop::hook());
     log(engine_scene::hook());
+    log(remaster::hook());
     log(character::allowFobCharacters());
     log(sun_movement::makeSmooth());
     if (isSupportedGameBuild() && !weather::supported()) log("The weather manager has unexpected code; the weather menu is unavailable.");

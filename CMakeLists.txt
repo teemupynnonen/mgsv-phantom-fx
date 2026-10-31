@@ -353,6 +353,8 @@ if(BUILD_TESTING)
     add_test(NAME command_list_notes COMMAND command_list_notes_tests)
 endif()
 
+include(src/remaster/remaster.cmake)
+
 # Package only runtime files and documentation, not dependency development files.
 set(CPACK_GENERATOR ZIP)
 set(CPACK_COMPONENTS_ALL addon)

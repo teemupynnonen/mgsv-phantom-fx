@@ -276,15 +276,34 @@ std::optional<std::array<float, 4>> vectorOf(const FileReader& file, const FileL
     return std::nullopt;
 }
 
-// A self-lit mesh's light in the game's units; all zero on any other mesh (LeastEmission).
-std::array<float, 3> emissionOf(const FileReader& file, const FileLayout& layout, std::uint16_t materialInstance)
+// A material instance's name (block 4 at +0, an index into block 22), 0 when the file does not say.
+std::uint64_t materialNameOf(const FileReader& file, const FileLayout& layout, std::uint16_t materialInstance)
 {
-    const auto color = vectorOf(file, layout, materialInstance, SelfColorParameter);
-    const auto intensity = vectorOf(file, layout, materialInstance, SelfColorIntensityParameter);
+    const auto& b = layout.blocks;
+    constexpr int MaterialInstances = 4, StrCodes = 22;
+    std::uint16_t name{};
+    std::uint64_t hash{};
+    if (materialInstance >= b[MaterialInstances].count || !file.at(b[MaterialInstances].offset + 16ull * materialInstance, name) || name >= b[StrCodes].count
+        || !file.at(b[StrCodes].offset + 8ull * name, hash))
+        return 0;
+
+    return hash;
+}
+
+// A self-lit mesh's light in the game's units, as `selfLight` leaves it; all zero on any other mesh
+// (LeastEmission, which goes by the file's own values).
+std::array<float, 3> emissionOf(const FileReader& file, const FileLayout& layout, std::uint16_t materialInstance, SelfLightFilter selfLight = nullptr)
+{
+    auto color = vectorOf(file, layout, materialInstance, SelfColorParameter);
+    auto intensity = vectorOf(file, layout, materialInstance, SelfColorIntensityParameter);
     if (!color || !intensity) return {};
 
-    const std::array emission{(*color)[0] * (*intensity)[0], (*color)[1] * (*intensity)[0], (*color)[2] * (*intensity)[0]};
-    return std::max({emission[0], emission[1], emission[2]}) >= LeastEmission ? emission : std::array<float, 3>{};
+    const auto emission = [&] { return std::array{(*color)[0] * (*intensity)[0], (*color)[1] * (*intensity)[0], (*color)[2] * (*intensity)[0]}; };
+    if (const auto light = emission(); std::max({light[0], light[1], light[2]}) < LeastEmission) return {};
+
+    if (selfLight) selfLight(materialNameOf(file, layout, materialInstance), *color, *intensity);
+
+    return emission();
 }
 
 // Diagnostics: the StrCode64 of a mesh's material's technique (as fox3DDF_Blin_NC): its material
@@ -355,7 +374,7 @@ ModelFile fileKindOf(std::span<const std::uint8_t> file)
 // Each mesh the scene takes (roleOf) with its vertices and their texture coordinates, its mesh group,
 // and the indices of its most detailed triangles, as the game keeps them; a skinned model's vertices
 // also with their bones (readSkin).
-std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const std::uint8_t> bytes, Source source)
+std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const std::uint8_t> bytes, Source source, SelfLightFilter selfLight)
 {
     const FileReader file{bytes};
     const auto layout = layoutOf(file);
@@ -475,7 +494,7 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
         part.normalTexture = textureOf(file, *layout, materialInstance, NormalTextureParameter);
         if (const auto index = vectorOf(file, *layout, materialInstance, MaterialIndexParameter))
             part.materialIndex = static_cast<std::uint32_t>(std::clamp((*index)[0], 0.0f, 255.0f));
-        part.emission = emission;
+        part.emission = emissionOf(file, *layout, materialInstance, selfLight);
 
         const bool textured = uvs && uvs->dataType == TwoHalves;
         const bool hasNormals = normals && tangents && normals->dataType == FourHalves && tangents->dataType == FourHalves;
