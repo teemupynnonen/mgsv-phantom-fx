@@ -10,6 +10,7 @@
 #include "features/path_tracing/glass.hpp"
 #include "features/path_tracing/path_tracing.hpp"
 #include "features/path_tracing/sky_capture.hpp"
+#include "features/ray_traced_lights/lamp_shadow_rays.hpp"
 #include "features/ray_traced_lights/local_lights.hpp"
 #include "features/sea/sea.hpp"
 #include "frame_latch.hpp"
@@ -22,6 +23,7 @@
 #include "passes/ray_tracing/gi_textures.hpp"
 #include "passes/ray_tracing/kick_traces.hpp"
 #include "passes/ray_tracing/shaders/gi_shared.h"
+#include "passes/ray_tracing/trace.hpp"
 #include "performance.hpp"
 
 #include <Windows.h>
@@ -377,7 +379,7 @@ std::atomic<std::uint64_t> kicksFromSmallerView{}, expiredNotes{}, expiredCamera
 // whichever thread asks first. Taken after executionMutex when both are.
 std::mutex lightMutex;
 ComPtr<ID3D11Device> lightDevice;
-SharedTexture output, shadowOutput, shadowDebugOutput, localLightOutput, lightDebugOutput, reflectionMapOutput, reflectionOutput, reflectionDistanceOutput, lampDiffuseOutput,
+SharedTexture output, shadowOutput, shadowDebugOutput, lightDebugOutput, reflectionMapOutput, reflectionOutput, reflectionDistanceOutput, lampDiffuseOutput,
     lampSpecularOutput;
 // What the last kick traced, for the threads that read its results.
 std::atomic<kick_traces::KickTraces> lastTraces{};
@@ -386,7 +388,6 @@ static_assert(std::atomic<kick_traces::KickTraces>::is_always_lock_free);
 ComPtr<ID3D11ShaderResourceView> publishedDepth;
 bool shadowWritten{}, shadowDebugWritten{}; // Direct3D 12 has traced into shadowOutput, shadowDebugOutput
 bool lightDebugWritten{}; // And into lightDebugOutput
-bool localLightWritten{};                  // This frame's kick traced the point and spot lights into localLightOutput
 
 SharedTexture makeShared(ID3D11Device* creator, UINT width, UINT height, DXGI_FORMAT format, const char* what)
 {
@@ -782,25 +783,19 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     std::vector<gi_renderer::LocalLight> localLightsToTrace;
     for (const auto& each : tracedLights) localLightsToTrace.push_back(each.light);
 
-    ID3D11Texture2D* localLightShadow{};
     ID3D11Texture2D* lampDiffuse{};
     ID3D11Texture2D* lampSpecular{};
+    if (traces.tracesLampLight)
     {
         std::lock_guard lock(lightMutex);
-        localLightWritten = false;
-        if (traces.tracesLampLight)
-        {
-            resizeShared(lampDiffuseOutput, device.Get(), depthOut.width, depthOut.height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the lamps' diffuse light");
-            resizeShared(lampSpecularOutput, device.Get(), depthOut.width, depthOut.height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the lamps' specular light");
-            lampDiffuse = lampDiffuseOutput.texture.Get();
-            lampSpecular = lampSpecularOutput.texture.Get();
-        }
-        else if (traces.tracesLampShadows)
-        {
-            resizeShared(localLightOutput, device.Get(), depthOut.width, depthOut.height, DXGI_FORMAT_R16_FLOAT, "Creating the lights' shadow");
-            localLightShadow = localLightOutput.texture.Get();
-        }
+        resizeShared(lampDiffuseOutput, device.Get(), depthOut.width, depthOut.height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the lamps' diffuse light");
+        resizeShared(lampSpecularOutput, device.Get(), depthOut.width, depthOut.height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the lamps' specular light");
+        lampDiffuse = lampDiffuseOutput.texture.Get();
+        lampSpecular = lampSpecularOutput.texture.Get();
     }
+
+    const trace::Kick traceKick{device.Get(), depthOut.width, depthOut.height, traces};
+    for (auto* each : trace::inOrder()) each->gather(traceKick);
 
     // The game's models, the textures their meshes use and its terrain, copied before Direct3D 12 may
     // read them.
@@ -845,7 +840,6 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         .shadowDebug = shadowDebug,
         .velocity = velocityCopied ? objectVelocityCopy.Get() : nullptr,
         .velocityFormat = velocityFormat,
-        .localLightShadow = localLightShadow,
         .lightDebug = lightDebug};
     if (traces.isPathTraced)
     {
@@ -946,12 +940,6 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         shadowWritten = shadowOutput.texture.Get() == shadow;
         shadowDebugWritten = shadowDebug && shadowDebugOutput.texture.Get() == shadowDebug;
     }
-    if (traces.tracesLampShadows)
-    {
-        std::lock_guard lock(lightMutex);
-        localLightWritten = localLightOutput.texture.Get() == localLightShadow;
-    }
-
     engine_scene::forget(result.releasedModels);
     gi_textures::release(result.releasedTextures);
     lastKick = GetTickCount64();
@@ -986,6 +974,7 @@ void detach() noexcept
     {
         std::lock_guard lock(executionMutex);
         gi_renderer::stop();
+        for (auto* each : trace::inOrder()) each->detach();
         packShader.Reset();
         packParameters.Reset();
         guideShader.Reset();
@@ -1019,11 +1008,11 @@ void detach() noexcept
 
     {
         std::lock_guard lock(lightMutex);
-        output = shadowOutput = shadowDebugOutput = localLightOutput = lightDebugOutput = reflectionOutput = reflectionDistanceOutput = reflectionMapOutput = lampDiffuseOutput =
+        output = shadowOutput = shadowDebugOutput = lightDebugOutput = reflectionOutput = reflectionDistanceOutput = reflectionMapOutput = lampDiffuseOutput =
             lampSpecularOutput = {};
         lastTraces.store({});
         publishedDepth.Reset();
-        shadowWritten = shadowDebugWritten = localLightWritten = lightDebugWritten = false;
+        shadowWritten = shadowDebugWritten = lightDebugWritten = false;
         lightDevice.Reset();
     }
 
@@ -1235,13 +1224,6 @@ ID3D11ShaderResourceView* light(UINT width, UINT height) noexcept
     }
 }
 
-ID3D11ShaderResourceView* localLightShadow(UINT width, UINT height) noexcept
-{
-    std::lock_guard lock(lightMutex);
-
-    return localLightWritten && localLightOutput.width == width && localLightOutput.height == height ? localLightOutput.view.Get() : nullptr;
-}
-
 ID3D11ShaderResourceView* shadowDebug(UINT width, UINT height) noexcept
 {
     if (!shadowing.load(std::memory_order_relaxed) || failed || sinceKick() > 1000) return nullptr;
@@ -1263,7 +1245,7 @@ ID3D11ShaderResourceView* lightDebug(UINT width, UINT height) noexcept
 std::string shadowProbe()
 {
     auto text = gi_renderer::shadowProbe();
-    const auto lamps = gi_renderer::lightProbe();
+    const auto lamps = lamp_shadow_rays::probe();
     if (!text.empty() && !lamps.empty()) text += "\n";
 
     return text + lamps;

@@ -13,7 +13,7 @@
 
 // The ray-traced scene's frame on Direct3D 11 (docs/DEVELOPMENT.md, "Global illumination"): what the
 // global illumination (gi_light.hpp), the sun's ray-traced shadows (gi_shadow.hpp) and the point and
-// spot lights' (light_shadow_rays.hpp) trace. The scene is the game's own, read from its memory
+// spot lights' (lamp_shadow_rays.hpp) trace. The scene is the game's own, read from its memory
 // (engine_scene.hpp), and traced on a Direct3D 12 device beside the game's (gi_renderer.hpp); the
 // camera and the terrain's inputs come from its draws (gi_inputs.hpp).
 //
@@ -65,9 +65,6 @@ ID3D11ShaderResourceView* light(UINT width, UINT height) noexcept;
 // The sun's ray-traced shadow at the render size for the sun pass: R16_FLOAT, 1 where the sun
 // reaches. Null while off, or until Direct3D 12 has written one at this size.
 ID3D11ShaderResourceView* sunShadow(UINT width, UINT height) noexcept;
-// The point and spot lights' shadows this frame's kick traced, at the render size: R16_FLOAT, the share of
-// the lights local_lights::takeForTrace gave that reaches each pixel. Null when none were traced.
-ID3D11ShaderResourceView* localLightShadow(UINT width, UINT height) noexcept;
 // Diagnostics: the shadow debug view at the render size, R8G8B8A8_UNORM to blend over the image by
 // its alpha (DebugShadows in gi_shadow.hlsl), and the probe at the screen's centre as text.
 // Null and empty while off.

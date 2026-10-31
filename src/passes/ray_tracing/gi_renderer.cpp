@@ -5,7 +5,6 @@
 #include "clock.hpp"
 #include "features/global_illumination/gi_light.hpp"
 #include "features/path_tracing/path_tracing_rays.hpp"
-#include "features/ray_traced_lights/light_shadow_rays.hpp"
 #include "features/ray_traced_shadows/gi_shadow.hpp"
 #include "frame_log.hpp"
 #include "log.hpp"
@@ -13,6 +12,7 @@
 #include "passes/ray_tracing/gi_scene.hpp"
 #include "passes/ray_tracing/scene_contents.hpp"
 #include "passes/ray_tracing/shaders/gi_shared.h"
+#include "passes/ray_tracing/trace.hpp"
 
 #include <Windows.h>
 #include <d3d12.h>
@@ -148,21 +148,12 @@ struct State
 
     std::unique_ptr<gi_light::Light> light;
     std::unique_ptr<gi_shadow::Shadows> shadows;
-    // The point and spot lights' shadows before and between the filter's passes (TraceLocalLightShadows,
-    // FilterLocalLightShadows), R16G16_FLOAT at the render size.
-    ComPtr<ID3D12Resource> localShadowRays, localShadowFirst;
-    UINT localShadowWidth{}, localShadowHeight{};
     // Diagnostics (the shadow debug view and probe): the probe, read back when the frame's slot comes
     // round again, and each frame's instances of the game's models.
     ComPtr<ID3D12Resource> probe;
     std::array<ComPtr<ID3D12Resource>, FramesInFlight> probeReadback;
     std::array<bool, FramesInFlight> probeWritten{};
     std::array<std::vector<InstancedModel>, FramesInFlight> instancedModels; // Each slot's frame's, by instance
-    // And the lamp probe, with each slot's frame's lights, which it lists by index.
-    ComPtr<ID3D12Resource> lightProbe;
-    std::array<ComPtr<ID3D12Resource>, FramesInFlight> lightProbeReadback;
-    std::array<bool, FramesInFlight> lightProbeWritten{};
-    std::array<std::vector<LocalLight>, FramesInFlight> probedLights;
 
     // GPU timestamps between the named phases of each frame's list (Recorder::mark), read when the
     // frame's slot comes round again: into the settings window's costs, by pass. The scene's, the light's
@@ -192,7 +183,7 @@ struct State
     ComPtr<ID3D12Resource> statsReadback, statsCounters;
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT statsFootprint{};
     std::uint64_t statsFence{}, lastStats{};
-    Shared depth, normal, albedo, output, shadow, shadowDebug, velocity, terrainPages, terrainHeights, localLightShadow, lightDebug, materialSpecular, skyCube, guideNormals,
+    Shared depth, normal, albedo, output, shadow, shadowDebug, velocity, terrainPages, terrainHeights, lightDebug, materialSpecular, skyCube, guideNormals,
         guideSpecular, reflection, reflectionDistance, reflectionMap, guideMaterial, guideLobe, specularTable, lampMasks, lampDiffuse, lampSpecular, surfaceDepth,
         surfaceNormal, surfaceReflection;
 
@@ -208,9 +199,6 @@ std::unique_ptr<State> state;
 std::mutex probeMutex;
 std::string probeText, lastProbeKey;
 std::uint64_t lastProbeLog{};
-// The same of the lamp probe, under probeMutex.
-std::string lightProbeText, lastLightProbeKey;
-std::uint64_t lastLightProbeLog{};
 
 ComPtr<ID3D12Resource> openShared(State& s, Shared& shared, ID3D11Texture2D* texture, const char* what)
 {
@@ -307,10 +295,6 @@ void createResources(State& s)
     for (auto& readback : s.probeReadback)
         readback = createBuffer(device, sizeof(GIShadowProbe), D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_NONE,
             "Creating the shadow probe's readback");
-    s.lightProbe = createStorage(device, sizeof(GILightProbe), "Creating the lamp probe");
-    for (auto& readback : s.lightProbeReadback)
-        readback = createBuffer(device, sizeof(GILightProbe), D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_NONE,
-            "Creating the lamp probe's readback");
     s.dispatchArguments = createStorage(device, GI_DISPATCH_SLOTS * 16, "Creating the dispatch arguments");
 
     for (std::uint32_t slot = 0; slot < FramesInFlight; ++slot)
@@ -526,6 +510,8 @@ void stop() noexcept
     {
         log(error.what());
     }
+
+    for (auto* each : trace::inOrder()) each->release();
 
     state.reset();
     log("Global illumination stopped.");
@@ -794,97 +780,6 @@ void readProbe(State& s, std::uint32_t slot)
     }
 }
 
-// The lamp probe as text, and a key that changes when which lights reach the centre pixel, or what
-// blocks them, changes.
-std::pair<std::string, std::string> describeLightProbe(const State& s, std::span<const InstancedModel> instancedModels,
-    std::span<const LocalLight> lights, const GILightProbe& probe)
-{
-    if (probe.receiver.w <= 0) return {"lamps: the centre pixel is the sky", "sky"};
-
-    const auto& p = probe.receiver;
-    std::string text = std::format("lamps at the centre pixel, its surface {:.1f} m away at ({:.1f} {:.1f} {:.1f}): {} of the frame's {} lights light "
-        "it; the rays to their centres let {:.0f}% of their light through, the filtered share they are drawn with {:.2f}\n",
-        p.w, p.x, p.y, p.z, static_cast<int>(probe.share.w), lights.size(), probe.share.x * 100, probe.share.y);
-    const auto& start = probe.start;
-    const float offset = std::sqrt(start.x * start.x + start.y * start.y + start.z * start.z) * 1000.0f;
-    text += start.w > 0.5f ? std::format("the rays leave the scene's own surface, {:.1f} mm from the depth's point: {}\n", offset,
-                                 s.contents->describeHit(instancedModels, probe.startHit))
-                           : std::string("the rays leave the depth's point: the scene has no surface there\n");
-    text += std::format("the camera's ray (the scene view's): {}\n", s.contents->describeHit(instancedModels, probe.view));
-
-    // A character the rays leave, or the strongest light's blocker: every mesh of it.
-    const auto characterOf = [&](const uint4& hit) {
-        return hit.x && (hit.z & GI_INSTANCE_CHARACTER) ? instancedAt(instancedModels, hit.x - 1) : nullptr;
-    };
-    const auto* character = characterOf(probe.startHit);
-    if (!character) character = characterOf(probe.hits[0]);
-    if (character) text += std::format("the character's meshes:{}\n", s.contents->charactersAt(character->position));
-
-    std::string key;
-    for (std::uint32_t i = 0; i < GI_PROBE_LIGHTS; ++i)
-    {
-        const auto& entry = probe.lights[i];
-        if (entry.x < 1) break;
-
-        const auto index = static_cast<std::size_t>(entry.x) - 1;
-        std::string what = "light " + std::to_string(index);
-        if (index < lights.size())
-        {
-            const auto& light = lights[index];
-            const bool spot = light.cosOuter >= -1;
-            what += std::format(" ({} at ({:.1f} {:.1f} {:.1f}){}, reach {:.1f} m{})", spot ? "spot" : "point", light.position[0], light.position[1],
-                light.position[2], spot ? std::format(" towards ({:.2f} {:.2f} {:.2f})", light.axis[0], light.axis[1], light.axis[2]) : "", light.range,
-                light.shadowStart > 0 ? std::format(", the game's shadow map from {:.2f} m", light.shadowStart) : "");
-        }
-
-        // The ray met something (w: how far along) that blocked it, or hair that let some of the light through.
-        const float through = probe.through[i].x;
-        const auto outcome = entry.w < 0 ? std::string("reaches it") : through <= 0 ? std::string("blocked") : std::format("{:.0f}% gets past hair", through * 100);
-        text += std::format("{}: {:.0f}% of their light, {:.1f} m away, {}\n", what, probe.share.z > 0 ? entry.y / probe.share.z * 100 : 0.0f, entry.z, outcome);
-        // Each hit on the way to the light, and how far short of it.
-        for (std::uint32_t h = 0; h < GI_PROBE_LIGHT_HITS; ++h)
-        {
-            const auto& hit = probe.hits[i * GI_PROBE_LIGHT_HITS + h];
-            if (!hit.x) break;
-
-            text += std::format("  {:.2f} m short of the light: {}\n", entry.z - std::bit_cast<float>(hit.w), s.contents->describeHit(instancedModels, hit));
-        }
-
-        key += std::format("{}:{}:{}|", index, outcome, probe.hits[i * GI_PROBE_LIGHT_HITS].x);
-    }
-
-    return {text, key};
-}
-
-// The lamp probe the slot's last frame wrote, as readProbe does the shadow probe's.
-void readLightProbe(State& s, std::uint32_t slot)
-{
-    if (!s.lightProbeWritten[slot]) return;
-
-    s.lightProbeWritten[slot] = false;
-    void* data{};
-    if (FAILED(s.lightProbeReadback[slot]->Map(0, nullptr, &data))) return;
-
-    GILightProbe probe{};
-    std::memcpy(&probe, data, sizeof(probe));
-    const D3D12_RANGE none{};
-    s.lightProbeReadback[slot]->Unmap(0, &none);
-
-    auto [text, key] = describeLightProbe(s, s.instancedModels[slot], s.probedLights[slot], probe);
-    const auto now = GetTickCount64();
-    std::lock_guard lock(probeMutex);
-    lightProbeText = text;
-    if constexpr (DiagnosticLog)
-    {
-        if (key != lastLightProbeKey && now - lastLightProbeLog >= 200)
-        {
-            lastLightProbeKey = key;
-            lastLightProbeLog = now;
-            log("Lamp probe:\n" + text);
-        }
-    }
-}
-
 // Diagnostics: every ten seconds, what a frame cost on average.
 void logTally(State& s)
 {
@@ -968,7 +863,9 @@ Result render(const Frame& frame)
     if constexpr (DiagnosticLog) logStats(s);
     readTimes(s, slot);
     readProbe(s, slot);
-    readLightProbe(s, slot);
+    const std::function<void()> waitForAll = [&] { waitFor(s, *std::max_element(s.submitted.begin(), s.submitted.end())); };
+    const trace::TraceFrame traceFrame{frame, s.device.Get(), waitForAll, *s.contents, s.instancedModels[slot], slot};
+    for (auto* each : trace::inOrder()) each->prepare(traceFrame);
     lap(ProbeStep);
     if constexpr (DiagnosticLog)
     {
@@ -983,7 +880,6 @@ Result render(const Frame& frame)
 
     // A new render size starts the light and the shadows over. Each has memory only once traced;
     // the shadows give theirs back when turned off.
-    const auto waitForAll = [&] { waitFor(s, *std::max_element(s.submitted.begin(), s.submitted.end())); };
     // Ray Reconstruction coming or going changes the light's grid, a sample a render pixel or a 2 x 2.
     if (traces.tracesLight
         && (!s.light || s.light->width() != frame.width || s.light->height() != frame.height || s.light->isPerRenderPixel() != traces.isForReconstruction))
@@ -1008,22 +904,10 @@ Result render(const Frame& frame)
         s.shadows.reset();
     }
 
-    if (traces.tracesLampShadows && (s.localShadowWidth != frame.width || s.localShadowHeight != frame.height))
-    {
-        waitForAll();
-        const auto texture = [&](const char* what) {
-            return createTexture(s.device.Get(), frame.width, frame.height, DXGI_FORMAT_R16G16_FLOAT, 1, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, what);
-        };
-        s.localShadowRays = texture("Creating the lights' shadow rays");
-        s.localShadowFirst = texture("Creating the lights' shadow filter");
-        s.localShadowWidth = frame.width;
-        s.localShadowHeight = frame.height;
-    }
     const bool probeLights = traces.tracesLampShadows && frame.probeLights;
     {
         std::lock_guard lock(probeMutex);
         if (!frame.debugShadows) probeText.clear();
-        if (!probeLights) lightProbeText.clear();
     }
 
     // ---- The scene's contents: the game's models, textures, characters and terrain, then the frame's
@@ -1055,6 +939,8 @@ Result render(const Frame& frame)
     check(s.allocators[slot]->Reset(), "Resetting a command allocator");
     check(s.list->Reset(s.allocators[slot].Get(), nullptr), "Resetting the command list");
     auto& list = *s.list.Get();
+    Descriptors descriptors(s.device.Get(), s.heap.Get(), s.descriptorSize, slot);
+    shared_textures::SharedBindings tracesTextures(s.device.Get(), descriptors);
     try
     {
         auto* depth = openShared(s, s.depth, frame.textures.depth, "Opening the depth").Get();
@@ -1069,9 +955,6 @@ Result render(const Frame& frame)
             : nullptr;
         auto* velocity = (traces.tracesSun || traces.tracesLight) && frame.textures.velocity
             ? openShared(s, s.velocity, frame.textures.velocity, "Opening the velocity").Get()
-            : nullptr;
-        auto* localLightShadow = traces.tracesLampShadows
-            ? openShared(s, s.localLightShadow, frame.textures.localLightShadow, "Opening the lights' shadow").Get()
             : nullptr;
         // Path tracing's: Ray Reconstruction's guides, the reflections' and the lamps' (path_tracing_rays.hpp).
         path_tracing_rays::Textures traced;
@@ -1153,10 +1036,8 @@ Result render(const Frame& frame)
         // A ray a render pixel for Ray Reconstruction, whatever the ray quality: as many rays as High's four a
         // 2 x 2, the most a sample can take apart.
         constants.lightRays = {traces.isForReconstruction ? 1u : frame.lightRays, 0, 0, 0};
-        std::memcpy(uploads.data + constantsOffset, &constants, sizeof(constants));
 
         // ---- Descriptors ----
-        Descriptors descriptors(s.device.Get(), s.heap.Get(), s.descriptorSize, slot);
         descriptors.texture(0, depth, DXGI_FORMAT_R32_FLOAT);
         descriptors.texture(1, normal, DXGI_FORMAT_R10G10B10A2_UNORM);
         descriptors.texture(2, albedo, DXGI_FORMAT_R8G8B8A8_UNORM);
@@ -1188,13 +1069,11 @@ Result render(const Frame& frame)
         if (traces.tracesReflections || traces.tracesLampLight) path_tracing_rays::describe(descriptors, traced);
         if (traces.tracesLight) s.light->describe(descriptors, parity);
         if (traces.tracesSun) s.shadows->describe(descriptors, parity, shadow);
-        if (traces.tracesLampShadows)
-        {
-            descriptors.outputTexture(89, localLightShadow, DXGI_FORMAT_R16_FLOAT);
-            descriptors.outputTexture(90, s.localShadowRays.Get(), DXGI_FORMAT_R16G16_FLOAT);
-            descriptors.outputTexture(91, s.localShadowFirst.Get(), DXGI_FORMAT_R16G16_FLOAT);
-            if (probeLights) descriptors.outputBuffer(92, s.lightProbe.Get(), sizeof(GILightProbe), 1);
-        }
+        trace::TraceBindings bindings{constants, descriptors, tracesTextures};
+        for (auto* each : trace::inOrder())
+            if (each->runsIn(traces)) each->bind(traceFrame, bindings);
+
+        std::memcpy(uploads.data + constantsOffset, &constants, sizeof(constants));
 
         // The game's textures stay in the common state between frames: the shaders' reads promote them.
         auto textureRange = s.heap->GetGPUDescriptorHandleForHeapStart();
@@ -1212,7 +1091,7 @@ Result render(const Frame& frame)
         // back to it after. Those the frame does not use are null.
         constexpr auto Read = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, Write = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
         const std::pair<ID3D12Resource*, D3D12_RESOURCE_STATES> shared[]{{depth, Read}, {normal, Read}, {albedo, Read}, {output, Write},
-            {shadow, Write}, {shadowDebug, Write}, {lightDebug, Write}, {velocity, Read}, {localLightShadow, Write}, {terrainPages, Read},
+            {shadow, Write}, {shadowDebug, Write}, {lightDebug, Write}, {velocity, Read}, {terrainPages, Read},
             {terrainHeights, Read}, {traced.guideNormals, Read}, {traced.guideSpecular, Read}, {traced.reflection, Write}, {traced.reflectionDistance, Write}, {traced.reflectionMap, Write},
             {traced.guideMaterial, Read}, {traced.guideLobe, Read}, {traced.specularTable, Read}, {traced.lampMasks, Read}, {traced.lampDiffuse, Write}, {traced.lampSpecular, Write}};
         const auto transitionShared = [&](bool toCommon) {
@@ -1222,6 +1101,7 @@ Result render(const Frame& frame)
                 if (resource)
                     barriers.push_back(toCommon ? transition(resource, inUse, D3D12_RESOURCE_STATE_COMMON)
                                                 : transition(resource, D3D12_RESOURCE_STATE_COMMON, inUse));
+            tracesTextures.addTransitions(barriers, toCommon);
             list.ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
         };
 
@@ -1247,20 +1127,9 @@ Result render(const Frame& frame)
         scene.recordTopLevel(list);
 
         // ---- The shadows, then the light or the debug view ----
-        if (traces.tracesLampShadows)
-        {
-            light_shadow_rays::record(recorder, frame.width, frame.height, traces.isForReconstruction);
-            if (probeLights)
-            {
-                recorder.dispatch(Kernel::ProbeLocalLights, 1, 1);
-                recorder.barrier();
-                recorder.transition(s.lightProbe.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-                list.CopyBufferRegion(s.lightProbeReadback[slot].Get(), 0, s.lightProbe.Get(), 0, sizeof(GILightProbe));
-                recorder.transition(s.lightProbe.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                s.lightProbeWritten[slot] = true;
-                s.probedLights[slot] = frame.localLights;
-            }
-        }
+        for (auto* each : trace::inOrder())
+            if (each->runsIn(traces)) each->record(traceFrame, recorder);
+
         if (traces.tracesLampLight) path_tracing_rays::recordLamps(recorder, frame.width, frame.height);
         if (traces.tracesSun) s.shadows->record(recorder, traces.isForReconstruction);
         if (frame.debugShadows)
@@ -1308,6 +1177,7 @@ Result render(const Frame& frame)
     s.queue->ExecuteCommandLists(1, lists);
     check(s.queue->Signal(s.fence.Get(), frame.signalValue), "Signalling the global illumination");
     s.submitted[slot] = frame.signalValue;
+    tracesTextures.markWritten();
     lap(RecordStep);
     s.surfaceTrace = surfaceTrace;
 
@@ -1371,12 +1241,6 @@ std::string shadowProbe()
 {
     std::lock_guard lock(probeMutex);
     return probeText;
-}
-
-std::string lightProbe()
-{
-    std::lock_guard lock(probeMutex);
-    return lightProbeText;
 }
 
 std::string status()
