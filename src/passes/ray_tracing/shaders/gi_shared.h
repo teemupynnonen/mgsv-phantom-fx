@@ -156,6 +156,7 @@ struct GIFrameConstants
     GI_ROW_MAJOR float4x4 viewProjection; // World to clip, jittered as the depth was drawn
     GI_ROW_MAJOR float4x4 viewProjectionInverse;
     GI_ROW_MAJOR float4x4 previousViewProjection;
+    GI_ROW_MAJOR float4x4 previousViewProjectionInverse; // The forward surfaces' guides are a frame old
     // The light's motion (CameraMotionOf in gi_common.hlsli): the last frame's clip position from this frame's,
     // both unjittered, built in double from the projections and views apart (camera::previousFromCurrentByParts);
     // and the w row of this frame's unjittered clip to view.

@@ -1,6 +1,7 @@
 #include "modules.hpp"
 
 #include "features/ambient_occlusion/gtvbao.hpp"
+#include "features/forward_shadows/forward_shadows.hpp"
 #include "features/frame_rate/frame_rate.hpp"
 #include "features/global_illumination/light_combine.hpp"
 #include "features/indirect_light/ssilvb.hpp"
@@ -67,6 +68,7 @@ constexpr Module Modules[]{
     {.attach = local_lights::attach, .configure = local_lights::configure, .present = local_lights::present, .detach = local_lights::detach},
     {.attach = atmosphere::attach, .configure = atmosphere::configure, .present = atmosphere::present, .detach = atmosphere::detach},
     {.attach = sea::attach, .configure = sea::configure, .present = sea::present, .detach = sea::detach},
+    {.configure = forward_shadows::configure},
 
     {.attach = withDevice<depth_of_field::attach>, .configure = depth_of_field::configure, .present = depth_of_field::present, .detach = depth_of_field::detach},
     {.configure = motion_blur::configure},

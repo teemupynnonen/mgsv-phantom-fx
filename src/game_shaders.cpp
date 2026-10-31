@@ -8,6 +8,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <cctype>
 
 namespace phantom_fx::game_shaders
 {
@@ -35,6 +36,21 @@ std::size_t indexOf(const GameShader& row)
     return static_cast<std::size_t>(&row - std::begin(GameShaders));
 }
 
+// The forward pass's rivers and other liquids, by their source path since every variant of them is not
+// listed ("...Prim_TppPrimRiver..." and "...Prim_TppRiverModel..."): they sample their shadow map at t14 and
+// reflect with a cube map at t2 (docs/DEVELOPMENT.md, "Forward shadows").
+const GameShader RiverShader{.pass = GamePass::ForwardWater, .name = "Prim_TppPrimRiver", .checksum = "", .shadowSlot = 14, .cubeSlot = 2};
+
+const GameShader* forwardRow(std::string_view code)
+{
+    const auto name = sourceName(code, "_ps.hlsl");
+    std::string lower(name);
+    std::ranges::transform(lower, lower.begin(), [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+    if (lower.find("river") != std::string::npos) return &RiverShader;
+
+    return nullptr;
+}
+
 VertexShader kindOf(std::string_view code)
 {
     if (draw2DSource(code, "_vs.hlsl")) return VertexShader::Draw2D;
@@ -55,14 +71,20 @@ void pixelShaderCreated(const void* code, std::size_t size, IUnknown* shader) no
     try
     {
         const auto* row = rowOf(toHex(*checksum));
+        const bool listed = row != nullptr;
+        if (!row) row = forwardRow(std::string_view(static_cast<const char*>(code), size));
         if (!row) return;
 
         bool isFirst{};
         {
             std::unique_lock lock(mutex);
-            auto& first = firsts[indexOf(*row)];
-            isFirst = !first;
-            if (isFirst) shader->QueryInterface(IID_PPV_ARGS(first.GetAddressOf()));
+            if (listed)
+            {
+                auto& first = firsts[indexOf(*row)];
+                isFirst = !first;
+                if (isFirst) shader->QueryInterface(IID_PPV_ARGS(first.GetAddressOf()));
+            }
+            else isFirst = std::ranges::none_of(rows, [&](const auto& entry) { return entry.second == row; });
 
             rows[shader] = row;
             owners.emplace_back(shader);

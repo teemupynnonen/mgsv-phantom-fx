@@ -20,6 +20,7 @@
 #include "features/depth_of_field/depth_of_field.hpp"
 #include "features/motion_blur/motion_blur.hpp"
 #include "features/path_tracing/glass.hpp"
+#include "features/forward_shadows/forward_shadows.hpp"
 #include "features/path_tracing/path_tracing.hpp"
 #include "features/path_tracing/sky_capture.hpp"
 #include "features/photo_mode/photo_mode.hpp"
@@ -278,7 +279,7 @@ bool onDrawIndexed(command_list* list, uint32_t indices, uint32_t instances, uin
     // The one order among the owners that matters: a point or spot light's draws have two, and the
     // ray-traced lights come first, so the local light pass never draws a light the rays shadow.
     if (hiddenUi(list) || local_lights::draw(context, call, shader) || local_light_pass::draw(context, call, shader) || sea::draw(context, call, shader)
-        || glass::draw(context, call, shader) || upscaler::draw(context, call, shader))
+        || forward_shadows::draw(context, call, shader) || glass::draw(context, call, shader) || upscaler::draw(context, call, shader))
         return true;
 
     // The sky's dome and clouds, then again for the rays.

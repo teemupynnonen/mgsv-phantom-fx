@@ -34,6 +34,7 @@ enum class GamePass : std::uint8_t
     Sky,
     SkyDome,         // The sky's painted dome and its clouds, drawn over it
     Sea,             // The game's sea, drawn over the lit scene after the sky (Primitive_TppFourierOcean*)
+    ForwardWater,    // Rivers and other liquids, drawn forward over the lit scene (glass and mirrors are Glass, Mirror)
     ReflectionMask,  // The screen-space reflections' mask from the depth, normals and roughness; reads the scene's depth at t0
     ReflectionAdd,   // The screen-space reflections blended over the scene
     Glass,           // Glass, drawn forward, some before ReflectionAdd, most among the particles after it
@@ -67,6 +68,11 @@ struct GameShader
     bool hasRainReflection{};
     bool hasSprite{};     // Sky: the sun's or the moon's sprite
     bool isFarSea{};      // Sea: the far sea, a plane 5 m below the near sea (its material constants' c0.z)
+    // ForwardWater: the game's shadow map's texture slot (t14 for the rivers and the liquids) and their
+    // reflection cube map's slot (t2), with the value the rays' guide writes (1 a river or a liquid).
+    std::uint32_t shadowSlot{};
+    std::uint32_t cubeSlot{};
+    float guideValue{1.0f};
     // Glass, Mirror: the texture slot of what it reflects with: a cube map, or a mirror's picture.
     std::uint8_t reflectionSlot{};
     bool hasColorTexture{}; // Glass: its t0 is a colour with its cover in alpha, not a cover in red
