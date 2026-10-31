@@ -92,9 +92,9 @@ std::optional<ReconstructionGuides> reconstructionGuides(UINT width, UINT height
 // Ray Reconstruction denoised a frame. While it does, frame after frame, the kicks leave the light and the
 // shadows noisy for it: the light a sample a render pixel without its denoiser, the shadows unfiltered.
 void reconstructed() noexcept;
-// Path tracing (path_tracing.hpp): the last kick traced the reflections. The passes recorded meanwhile leave
-// them to it: the sun pass's sky reflection, the indoor sky specular, the screen-space reflections' march on the
-// G-buffer's surfaces.
+// Path tracing (path_tracing.hpp): the effect plan runs it for the frame being recorded, and the last kick traced
+// it. The passes recorded meanwhile leave the reflections to it: the sun pass's sky reflection, the indoor sky
+// specular, the screen-space reflections' march on the G-buffer's surfaces.
 bool isPathTracing() noexcept;
 // The reflections the last kick traced, at the render size, for the resolve to add to the specular light:
 // R16G16B16A16_FLOAT, the reflected light times the specular albedo and the exposure, and in alpha how far across

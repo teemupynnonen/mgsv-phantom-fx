@@ -1,6 +1,7 @@
 #pragma once
 
 #include "features/ray_traced_lights/light_choice.hpp"
+#include "passes/ray_tracing/kick_traces.hpp"
 #include "passes/ray_tracing/scene_description.hpp"
 #include "passes/ray_tracing/scene_memory.hpp"
 #include "passes/ray_tracing/shaders/gi_shared.h"
@@ -117,19 +118,13 @@ struct Frame
     std::optional<Terrain> terrain; // Absent until the game's terrain draws give its inputs
     std::optional<float> seaLevel;  // The sea's (sea::level); absent in a frame without the add-on's sea
     std::uint32_t frameIndex{};
+    kick_traces::KickTraces traces; // The one answer to what runs; a texture a trace needs is there when it runs
     bool showScene{}; // The output shows the traced scene instead of the light
     bool logOften{};  // Diagnostics: the light's statistics logged every few frames (as each readback returns), not every ten seconds
-    bool traceLight = true; // A cost measurement leaves the light out: the scene is still built
-    // DLSS Ray Reconstruction denoises: the light takes a sample a render pixel and skips its denoiser, and
-    // the sun's and the lights' shadows go out as their rays found them (GIFrameConstants::reconstruction).
-    bool forReconstruction{};
-    // With it, path tracing: the reflections and the point and spot lights traced (path_tracing_rays.hpp).
-    bool isPathTraced{};
     // Self-lit meshes' light: its scale from the game's units, and the most radiance one lights others with, so scaled.
     float emissionScale{}, emissionCap{};
-    // The sun's ray-traced shadow into textures.shadow; the game's shadow map range (cPSLight c8.x,
-    // c8.y, c6.x, and 1 once known) and the tangent of the sun's angular radius.
-    bool traceShadows{};
+    // The game's shadow map range (cPSLight c8.x, c8.y, c6.x, and 1 once known) and the tangent of the sun's
+    // angular radius.
     std::array<float, 4> shadowRange{};
     float sunTangent{};
     // Diagnostics, with the shadows: the debug view into textures.shadowDebug, and the probe at the

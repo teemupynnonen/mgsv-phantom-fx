@@ -50,11 +50,9 @@ struct MaskParameters
     std::uint32_t tile, padding[3];
 };
 
-// The effect plan runs path tracing (configure), with DLSS Ray Reconstruction asked for, which it waits on;
-// and how strongly the reflections are added.
+// How strongly the reflections are added.
 struct Wanted
 {
-    bool on{};
     float reflections{};
 };
 
@@ -180,7 +178,7 @@ void detach() noexcept
 void configure(const Configuration& configuration) noexcept
 {
     const bool on = configuration.effects.runs(Effect::PathTracing);
-    latch.set({on, configuration.settings.pathTracing.reflections});
+    latch.set({configuration.settings.pathTracing.reflections});
     wanted = on;
     if (!on) return;
 
@@ -195,7 +193,7 @@ void present() noexcept
 
 bool isReflecting() noexcept
 {
-    return wanted.load(std::memory_order_relaxed) && latch.frame().on && ray_tracing::isPathTracing() && !sun_light_pass::failed();
+    return ray_tracing::isPathTracing() && !sun_light_pass::failed();
 }
 
 float reflectionStrength() noexcept

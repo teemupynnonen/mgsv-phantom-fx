@@ -60,7 +60,7 @@ constexpr Module Modules[]{
     {.attach = withDevice<light_combine::attach>, .configure = light_combine::configure, .present = light_combine::present, .detach = light_combine::detach},
     {.attach = withDevice<path_tracing::attach>, .configure = path_tracing::configure, .present = path_tracing::present, .detach = path_tracing::detach},
     {.attach = withDevice<glass::attach>, .present = glass::present, .detach = glass::detach},
-    {.attach = withDevice<sky_capture::attach>, .configure = sky_capture::configure, .present = sky_capture::present, .detach = sky_capture::detach},
+    {.attach = withDevice<sky_capture::attach>, .present = sky_capture::present, .detach = sky_capture::detach},
     {.attach = withDevice<visibility_bitmask::attach>, .configure = visibility_bitmask::configure, .detach = visibility_bitmask::detach},
 
     {.attach = ray_tracing::attach, .configure = ray_tracing::configure, .present = ray_tracing::present, .detach = ray_tracing::detach},

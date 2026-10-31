@@ -958,6 +958,7 @@ Result render(const Frame& frame)
     };
 
     Result result;
+    const auto& traces = frame.traces;
     s.surfaceTrace.reset();
     const auto slot = static_cast<std::uint32_t>(s.frames++ % FramesInFlight);
     waitFor(s, s.submitted[slot]);
@@ -984,40 +985,30 @@ Result render(const Frame& frame)
     // the shadows give theirs back when turned off.
     const auto waitForAll = [&] { waitFor(s, *std::max_element(s.submitted.begin(), s.submitted.end())); };
     // Ray Reconstruction coming or going changes the light's grid, a sample a render pixel or a 2 x 2.
-    if (frame.traceLight
-        && (!s.light || s.light->width() != frame.width || s.light->height() != frame.height || s.light->isPerRenderPixel() != frame.forReconstruction))
+    if (traces.tracesLight
+        && (!s.light || s.light->width() != frame.width || s.light->height() != frame.height || s.light->isPerRenderPixel() != traces.isForReconstruction))
     {
         waitForAll();
         s.light.reset();
-        s.light = std::make_unique<gi_light::Light>(s.device.Get(), frame.width, frame.height, frame.forReconstruction);
+        s.light = std::make_unique<gi_light::Light>(s.device.Get(), frame.width, frame.height, traces.isForReconstruction);
         log("Global illumination's light at " + std::to_string(frame.width) + "x" + std::to_string(frame.height)
-            + (frame.forReconstruction ? ", a sample a render pixel for Ray Reconstruction." : "."));
+            + (traces.isForReconstruction ? ", a sample a render pixel for Ray Reconstruction." : "."));
     }
 
-    if (frame.traceShadows && (!s.shadows || s.shadows->width() != frame.width || s.shadows->height() != frame.height))
+    if (traces.tracesSun && (!s.shadows || s.shadows->width() != frame.width || s.shadows->height() != frame.height))
     {
         waitForAll();
         s.shadows.reset();
         s.shadows = std::make_unique<gi_shadow::Shadows>(s.device.Get(), frame.width, frame.height);
         log("Ray-traced shadows at " + std::to_string(frame.width) + "x" + std::to_string(frame.height) + ".");
     }
-    else if (!frame.traceShadows && s.shadows)
+    else if (!traces.tracesSun && s.shadows)
     {
         waitForAll();
         s.shadows.reset();
     }
 
-    const bool traceLight = frame.traceLight && s.light;
-    const bool traceShadows = frame.traceShadows && s.shadows && frame.textures.shadow;
-    const bool debugShadows = traceShadows && frame.debugShadows && frame.textures.shadowDebug;
-    const bool traceLocalLights = !frame.localLights.empty() && frame.textures.localLightShadow;
-    // Path tracing lights the point and spot lights itself (direct_light.hlsl), with Ray Reconstruction's guides.
-    const bool traceLamps = frame.isPathTraced && !frame.localLights.empty() && frame.textures.lampDiffuse && frame.textures.lampSpecular
-        && frame.textures.guideNormals && frame.textures.guideMaterial && frame.textures.guideLobe;
-    // The reflections read the light's cache.
-    const bool traceReflections = frame.isPathTraced && traceLight && !frame.showScene && frame.textures.reflection
-        && frame.textures.reflectionDistance && frame.textures.reflectionMap && frame.textures.guideNormals && frame.textures.guideSpecular;
-    if (traceLocalLights && (s.localShadowWidth != frame.width || s.localShadowHeight != frame.height))
+    if (traces.tracesLampShadows && (s.localShadowWidth != frame.width || s.localShadowHeight != frame.height))
     {
         waitForAll();
         const auto texture = [&](const char* what) {
@@ -1028,10 +1019,10 @@ Result render(const Frame& frame)
         s.localShadowWidth = frame.width;
         s.localShadowHeight = frame.height;
     }
-    const bool probeLights = traceLocalLights && frame.probeLights;
+    const bool probeLights = traces.tracesLampShadows && frame.probeLights;
     {
         std::lock_guard lock(probeMutex);
-        if (!debugShadows) probeText.clear();
+        if (!frame.debugShadows) probeText.clear();
         if (!probeLights) lightProbeText.clear();
     }
 
@@ -1047,7 +1038,7 @@ Result render(const Frame& frame)
         .newTextures = frame.newTextures,
         .terrainEye = terrain ? std::optional(frame.eye) : std::nullopt,
         .seaCentre = frame.seaLevel ? std::optional(std::array{frame.eye[0], *frame.seaLevel, frame.eye[2]}) : std::nullopt,
-        .shouldListInstances = debugShadows || probeLights};
+        .shouldListInstances = frame.debugShadows || probeLights};
     std::optional<State::SurfaceTrace> surfaceTrace;
     auto update = s.contents->update(game);
     s.instancedModels[slot] = std::move(update.instanced);
@@ -1070,35 +1061,35 @@ Result render(const Frame& frame)
         auto* normal = openShared(s, s.normal, frame.textures.normal, "Opening the normals").Get();
         auto* albedo = openShared(s, s.albedo, frame.textures.albedo, "Opening the albedo").Get();
         auto* output = openShared(s, s.output, frame.textures.output, "Opening the output").Get();
-        auto* shadow = traceShadows ? openShared(s, s.shadow, frame.textures.shadow, "Opening the shadow").Get() : nullptr;
-        auto* shadowDebug = debugShadows ? openShared(s, s.shadowDebug, frame.textures.shadowDebug, "Opening the shadow debug view").Get() : nullptr;
+        auto* shadow = traces.tracesSun ? openShared(s, s.shadow, frame.textures.shadow, "Opening the shadow").Get() : nullptr;
+        auto* shadowDebug = frame.debugShadows ? openShared(s, s.shadowDebug, frame.textures.shadowDebug, "Opening the shadow debug view").Get() : nullptr;
         // The light's debug views are its denoiser's.
-        auto* lightDebug = traceLight && !frame.forReconstruction && frame.textures.lightDebug
+        auto* lightDebug = traces.tracesLight && !traces.isForReconstruction && frame.textures.lightDebug
             ? openShared(s, s.lightDebug, frame.textures.lightDebug, "Opening the light's debug view").Get()
             : nullptr;
-        auto* velocity = (traceShadows || traceLight) && frame.textures.velocity
+        auto* velocity = (traces.tracesSun || traces.tracesLight) && frame.textures.velocity
             ? openShared(s, s.velocity, frame.textures.velocity, "Opening the velocity").Get()
             : nullptr;
-        auto* localLightShadow = traceLocalLights
+        auto* localLightShadow = traces.tracesLampShadows
             ? openShared(s, s.localLightShadow, frame.textures.localLightShadow, "Opening the lights' shadow").Get()
             : nullptr;
         // Path tracing's: Ray Reconstruction's guides, the reflections' and the lamps' (path_tracing_rays.hpp).
         path_tracing_rays::Textures traced;
-        if (traceReflections || traceLamps) traced.guideNormals = openShared(s, s.guideNormals, frame.textures.guideNormals, "Opening the normals guide").Get();
-        if (traceReflections)
+        if (traces.tracesReflections || traces.tracesLampLight) traced.guideNormals = openShared(s, s.guideNormals, frame.textures.guideNormals, "Opening the normals guide").Get();
+        if (traces.tracesReflections)
         {
             traced.guideSpecular = openShared(s, s.guideSpecular, frame.textures.guideSpecular, "Opening the specular albedo guide").Get();
             traced.reflection = openShared(s, s.reflection, frame.textures.reflection, "Opening the reflections").Get();
             traced.reflectionDistance = openShared(s, s.reflectionDistance, frame.textures.reflectionDistance, "Opening the reflections' hit distance").Get();
             traced.reflectionMap = openShared(s, s.reflectionMap, frame.textures.reflectionMap, "Opening the reflection map").Get();
-            if (frame.textures.surfaceDepth)
+            if (traces.tracesGlass)
             {
                 traced.surfaceDepth = openShared(s, s.surfaceDepth, frame.textures.surfaceDepth, "Opening the glass's depth").Get();
                 traced.surfaceNormal = openShared(s, s.surfaceNormal, frame.textures.surfaceNormal, "Opening the glass's normals").Get();
                 traced.surfaceReflection = openShared(s, s.surfaceReflection, frame.textures.surfaceReflection, "Opening the glass's reflections").Get();
             }
         }
-        if (traceLamps)
+        if (traces.tracesLampLight)
         {
             traced.guideMaterial = openShared(s, s.guideMaterial, frame.textures.guideMaterial, "Opening the material guide").Get();
             traced.guideLobe = openShared(s, s.guideLobe, frame.textures.guideLobe, "Opening the lobe guide").Get();
@@ -1107,10 +1098,10 @@ Result render(const Frame& frame)
             traced.lampDiffuse = openShared(s, s.lampDiffuse, frame.textures.lampDiffuse, "Opening the lamps' diffuse light").Get();
             traced.lampSpecular = openShared(s, s.lampSpecular, frame.textures.lampSpecular, "Opening the lamps' specular light").Get();
         }
-        auto* materialSpecular = frame.isPathTraced && frame.textures.materialSpecular
+        auto* materialSpecular = traces.isPathTraced
             ? openShared(s, s.materialSpecular, frame.textures.materialSpecular, "Opening the materials' specular colours").Get()
             : nullptr;
-        auto* skyCube = frame.isPathTraced && frame.textures.skyCube ? openShared(s, s.skyCube, frame.textures.skyCube, "Opening the sky's cube").Get() : nullptr;
+        auto* skyCube = frame.textures.skyCube ? openShared(s, s.skyCube, frame.textures.skyCube, "Opening the sky's cube").Get() : nullptr;
         auto* terrainPages = terrain ? openShared(s, s.terrainPages, frame.terrain->pages, "Opening the terrain's page table").Get() : nullptr;
         auto* terrainHeights = terrain ? openShared(s, s.terrainHeights, frame.terrain->heights, "Opening the terrain's heights").Get() : nullptr;
 
@@ -1145,14 +1136,14 @@ Result render(const Frame& frame)
                 (&constants.terrainRingOffsets.x)[r] = static_cast<std::uint32_t>(ring.poolOffset);
             }
         }
-        if (traceLight) s.light->fill(constants, frame.verticalFov, parity);
-        if (traceShadows) s.shadows->fill(constants);
+        if (traces.tracesLight) s.light->fill(constants, frame.verticalFov, parity);
+        if (traces.tracesSun) s.shadows->fill(constants);
         constants.objectMotion = {velocity ? 1u : 0u, 0, 0, 0};
         constants.shadowDiagnostics = {frame.twoSidedShadows ? 1u : 0u, frame.shadowStarts ? 1u : 0u, 0, 0};
         constants.lightDiagnostics = {0, 0, lightDebug ? static_cast<std::uint32_t>(frame.lightDebugView) : 0u, 0};
-        constants.reconstruction = {frame.forReconstruction ? 1u : 0u, materialSpecular ? 1u : 0u, skyCube ? 1u : 0u, 0};
+        constants.reconstruction = {traces.isForReconstruction ? 1u : 0u, materialSpecular ? 1u : 0u, skyCube ? 1u : 0u, 0};
         constants.emission = {frame.emissionScale, frame.emissionCap, 0, 0};
-        if (frame.isPathTraced)
+        if (traces.isPathTraced)
         {
             const auto emitters = std::min<std::size_t>(update.emitters.size(), GI_MAX_EMITTERS);
             std::copy_n(update.emitters.begin(), emitters, constants.emitters);
@@ -1161,7 +1152,7 @@ Result render(const Frame& frame)
 
         // A ray a render pixel for Ray Reconstruction, whatever the ray quality: as many rays as High's four a
         // 2 x 2, the most a sample can take apart.
-        constants.lightRays = {frame.forReconstruction ? 1u : frame.lightRays, 0, 0, 0};
+        constants.lightRays = {traces.isForReconstruction ? 1u : frame.lightRays, 0, 0, 0};
         std::memcpy(uploads.data + constantsOffset, &constants, sizeof(constants));
 
         // ---- Descriptors ----
@@ -1188,16 +1179,16 @@ Result render(const Frame& frame)
         if (velocity) descriptors.texture(17, velocity, frame.textures.velocityFormat);
         if (materialSpecular) descriptors.texture(23, materialSpecular, DXGI_FORMAT_R16G16B16A16_FLOAT);
         if (skyCube) descriptors.cube(24, skyCube, DXGI_FORMAT_R16G16B16A16_FLOAT);
-        if (debugShadows)
+        if (frame.debugShadows)
         {
             descriptors.outputBuffer(77, s.probe.Get(), sizeof(GIShadowProbe), 1);
             descriptors.outputTexture(78, shadowDebug, DXGI_FORMAT_R8G8B8A8_UNORM);
         }
         if (lightDebug) descriptors.outputTexture(79, lightDebug, DXGI_FORMAT_R8G8B8A8_UNORM);
-        if (traceReflections || traceLamps) path_tracing_rays::describe(descriptors, traced);
-        if (traceLight) s.light->describe(descriptors, parity);
-        if (traceShadows) s.shadows->describe(descriptors, parity, shadow);
-        if (traceLocalLights)
+        if (traces.tracesReflections || traces.tracesLampLight) path_tracing_rays::describe(descriptors, traced);
+        if (traces.tracesLight) s.light->describe(descriptors, parity);
+        if (traces.tracesSun) s.shadows->describe(descriptors, parity, shadow);
+        if (traces.tracesLampShadows)
         {
             descriptors.outputTexture(89, localLightShadow, DXGI_FORMAT_R16_FLOAT);
             descriptors.outputTexture(90, s.localShadowRays.Get(), DXGI_FORMAT_R16G16_FLOAT);
@@ -1256,9 +1247,9 @@ Result render(const Frame& frame)
         scene.recordTopLevel(list);
 
         // ---- The shadows, then the light or the debug view ----
-        if (traceLocalLights)
+        if (traces.tracesLampShadows)
         {
-            light_shadow_rays::record(recorder, frame.width, frame.height, frame.forReconstruction);
+            light_shadow_rays::record(recorder, frame.width, frame.height, traces.isForReconstruction);
             if (probeLights)
             {
                 recorder.dispatch(Kernel::ProbeLocalLights, 1, 1);
@@ -1270,9 +1261,9 @@ Result render(const Frame& frame)
                 s.probedLights[slot] = frame.localLights;
             }
         }
-        if (traceLamps) path_tracing_rays::recordLamps(recorder, frame.width, frame.height);
-        if (traceShadows) s.shadows->record(recorder, frame.forReconstruction);
-        if (debugShadows)
+        if (traces.tracesLampLight) path_tracing_rays::recordLamps(recorder, frame.width, frame.height);
+        if (traces.tracesSun) s.shadows->record(recorder, traces.isForReconstruction);
+        if (frame.debugShadows)
         {
             recorder.mark("debug view and probe");
             recorder.dispatch(Kernel::DebugShadows, groups(frame.width, 8), groups(frame.height, 8));
@@ -1288,15 +1279,15 @@ Result render(const Frame& frame)
             recorder.mark("scene view");
             recorder.dispatch(Kernel::DebugScene, groups(frame.width, 8), groups(frame.height, 8));
         }
-        else if (traceLight) s.light->record(recorder, parity, denoiserCamera(frame), slot, lightDebug && frame.lightDebugView == LightDebugView::Validation);
+        else if (traces.tracesLight) s.light->record(recorder, parity, denoiserCamera(frame), slot, lightDebug && frame.lightDebugView == LightDebugView::Validation);
 
-        if (traceReflections) path_tracing_rays::recordReflections(recorder, frame.width, frame.height);
+        if (traces.tracesReflections) path_tracing_rays::recordReflections(recorder, frame.width, frame.height);
 
-        if (traced.surfaceReflection) surfaceTrace = State::SurfaceTrace{slot, frame.width, frame.height, binding, traced.surfaceReflection};
+        if (traces.tracesGlass) surfaceTrace = State::SurfaceTrace{slot, frame.width, frame.height, binding, traced.surfaceReflection};
 
         if constexpr (DiagnosticLog)
         {
-            if (traceLight && !frame.showScene) copyStats(s, recorder, output, frame);
+            if (traces.tracesLight && !frame.showScene) copyStats(s, recorder, output, frame);
         }
 
         transitionShared(true);

@@ -59,7 +59,7 @@ documentation and licenses are in `PhantomFX/`.
 ctest --test-dir build/release
 ```
 
-This runs seven tests that need neither the game nor a GPU. `tests/upscaler_tests.cpp`: settings
+This runs eight tests that need neither the game nor a GPU. `tests/upscaler_tests.cpp`: settings
 (defaults, round trip, clamping, invalid files and values), the mode maths (render scales, texture LOD
 bias), the render size plan (DLSS's own size or the nominal one, rounded up to even and never above the
 output size, Custom's DLSS quality, the settings that make a new plan), the frames (when one starts,
@@ -93,6 +93,10 @@ patched, and the G-buffer's fade mask kept.
 and are handed over: once, a context starting empty after its finish or at a gone one's address, a list
 run inside a deferred context joining its notes in the order they run, a forgotten list, notes expiring
 at the fourth present, the next frame recorded during a present, and the lists waiting at the kick.
+`tests/kick_traces_tests.cpp`: what a kick traces, from settings through the effect plan and what the kick
+finds: path tracing keeping the rays of what it replaces, waiting for Ray Reconstruction, the lamps waiting
+for the game's tables, a kick without a sun or lights, a cost measurement leaving the light out, the scene
+view and the glass's targets.
 Everything else is checked in the game.
 
 ## Package a release
@@ -183,6 +187,7 @@ what draws it, when that is the feature's own.
 | `src/passes/indirect_light_pass.*` | The game's sky light, upscale and resolve: the G-buffer notes, the resolve's white occlusion and diffuse light, the diagnostics views, the ray-traced scene's notes. `indirect_light_pass_shaders.hpp`: the diagnostics views |
 | `src/passes/visibility_bitmask.*` | The visibility bitmask march GTVBAO and SSILVB share: the depth prefilter, the march, the denoiser. `visibility_bitmask_shaders.hpp`: the march (GTVBAO from three-gtvbao, SSILVB's light as SSRT3 gathers it), XeGTAO's noise and denoiser |
 | `src/passes/ray_tracing/ray_tracing.*` | The ray-traced scene's frame on Direct3D 11: the kick, the waits, the shared textures the global illumination and the ray-traced shadows hand back |
+| `src/passes/ray_tracing/kick_traces.*` | What each kick traces, the one answer for everything that makes, runs or reads a trace (see "What a kick traces") |
 | `src/passes/ray_tracing/gi_renderer.*` | The Direct3D 12 side: the device, the scene's frame (the scene contents' update, then the recording), each feature's passes recorded in turn, the probes |
 | `src/passes/ray_tracing/scene_contents.*` | The scene contents: the game's models, their variants, characters, terrain rings, the sea's plane and textures the ray-traced scene holds, made as the scene memory has room and let go after a while unplaced; each frame's instances of them; their diagnostics (status, the probes' hits, F10's `models.txt`) (see "Ray-traced scene") |
 | `src/passes/ray_tracing/scene_memory.hpp` | The scene memory: the seam the scene contents reach the GPU through (the pool, structures, texture slots, instances) |
@@ -1599,7 +1604,7 @@ otherwise DLSS runs, and the upscaler's status line says why.
   `DOF_ScatterCompositeFinal` drew (noted at its recording, `Recorded::dofFrame`), the upscaler's input
   pass makes it from the scene and the float copy the composite drew over (`hdr::sceneBeforeDof`), both
   decoded to linear light. Preset D cannot take it, so it gets none.
-- **Noisy light for it** (`gi_renderer::Frame::forReconstruction`, `GIFrameConstants::reconstruction`).
+- **Noisy light for it** (`kick_traces::KickTraces::isForReconstruction`, `GIFrameConstants::reconstruction`).
   Ray Reconstruction asks for samples apart at every render pixel, without other denoisers. While it
   denoised the frame before (the upscaler counts its frames, `ray_tracing::reconstructed`), the kick
   leaves the light and the shadows to it: the global illumination takes a sample a render pixel, one ray
@@ -1622,7 +1627,7 @@ Reconstruction") and the global illumination runs. It is a lighting effect of it
 (`Effect::PathTracing`), which builds on the global illumination and Ray Reconstruction
 (`FeatureInfo::needs`, `needsRayReconstruction`: without them the plan has it `Lacking`, and its budget
 line says what it needs) and waits for Ray Reconstruction to denoise: the frames it denoised before take
-it (`gi_renderer::Frame::isPathTraced`, `ray_tracing::isPathTracing`), and the budget line says when it
+it (`kick_traces::KickTraces::isPathTraced`, `ray_tracing::isPathTracing`), and the budget line says when it
 waits. Primary visibility stays the G-buffer, as in Cyberpunk 2077's path tracing.
 
 It does what the ray-traced shadows and lights do, with rays of its own, so it replaces them in the plan
@@ -2267,6 +2272,20 @@ again with the last frame's random numbers (NRD's `IN_DIFF_CONFIDENCE`).
 With DLSS Ray Reconstruction denoising, the light takes a sample a render pixel and goes out without
 NRD (see "Ray Reconstruction").
 
+### What a kick traces
+
+A kick can run six traces on the ray-traced scene: the lamps' shadow rays, the lamps' light, the sun's rays,
+the light, the reflections and, later in the frame, the glass's reflections. An effect's state does not say
+which: under path tracing the sun's rays run while the ray-traced shadows are replaced, and the lamps' shadow
+rays run until the game's tables arrive, while the ray-traced lights are replaced.
+
+`kick_traces.*` holds the one answer, in two pure steps. `askedBy` takes what the effect plan asks of the rays
+for a frame. `tracesOf` adds what the kick finds: whether Ray Reconstruction denoised, a sun, lights, the
+game's tables and the glass's targets. The kick makes the textures of what it traces, `gi_renderer` runs
+`Frame::traces`, and the threads recording the next frame read the last kick's answer
+(`ray_tracing::isPathTracing`). Only the path-traced question comes earlier (`isPathTraced`), because the
+kick takes the lights and sets up the glass for it.
+
 ### Smaller views
 
 The rays trace the main view only, one kick a frame. The intro's mirror is a camera of its own, drawn
@@ -2506,8 +2525,8 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
 With **Ray-traced shadows** on, the sun's shadow comes from rays traced through the ray-traced scene
 (see "Ray-traced scene"), in place of the game's
 shadow map, soft shadows and sun contact shadows. The scene runs for them with the global
-illumination's light on or off; its `Options::shadows` (`src/passes/ray_tracing/ray_tracing.cpp`) turns them on, and the
-light passes run only with `enabled`. Lamp contact shadows stay as they are: lamps are not ray
+illumination's light on or off; `kick_traces::Asked::runsRayTracedShadows` turns them on, and the
+light passes run only with `runsLight`. Lamp contact shadows stay as they are: lamps are not ray
 traced here (see "Ray-traced lights"). With DLSS Ray Reconstruction denoising, the rays go out without the
 denoiser (see "Ray Reconstruction").
 

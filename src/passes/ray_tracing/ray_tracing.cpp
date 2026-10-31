@@ -20,6 +20,7 @@
 #include "passes/ray_tracing/gi_inputs.hpp"
 #include "passes/ray_tracing/gi_renderer.hpp"
 #include "passes/ray_tracing/gi_textures.hpp"
+#include "passes/ray_tracing/kick_traces.hpp"
 #include "passes/ray_tracing/shaders/gi_shared.h"
 #include "performance.hpp"
 
@@ -48,27 +49,20 @@ using game_constants::SceneConstants;
 
 struct Options
 {
-    bool enabled{};   // The light, in place of the game's probe light
-    bool shadows{};   // The sun's ray-traced shadows
+    kick_traces::Asked asked;
     // With the shadows: the game's shadow map adds its shadow near the camera, so the rays leave it cut-out
     // geometry without its texture there. Without, they take that geometry as letting half the sun through.
     bool withShadowMap{};
-    bool localLights{}; // The point and spot lights' ray-traced shadows (local_lights.hpp)
-    int lightRays{4};   // Their shadow rays a pixel
+    int lightRays{4};   // The point and spot lights' shadow rays a pixel
     float sunSize{0.53f}; // The sun's angular diameter for the shadows and the light's hits, in degrees
     int lightPixelRays{2}; // The light's rays a light pixel (a 2 x 2 of render pixels): 1, 2 or 4
-    bool showScene{}; // Diagnostics: the output shows the traced scene
     bool debugShadows{}; // Diagnostics: the shadow debug view and probe (shadowDebug, shadowProbe), with the shadows
     bool shadowStarts{}; // Diagnostics: the debug view shows where the shadow rays leave each pixel
     bool twoSidedShadows{}; // Diagnostics: every surface blocks rays towards lights from both sides, as until 2026-10-26
     gi_renderer::LightDebugView lightDebugView{}; // Diagnostics: over the image (lightDebug)
 
-    bool logOften{};         // Diagnostics: the light's statistics logged every few frames (as each readback returns), not every ten seconds
-    // A cost measurement leaves the light passes out (the output keeps its last light).
-    bool light = true;
-    bool reconstructionGuides{}; // DLSS Ray Reconstruction is asked for: the kick makes its guides (reconstructionGuides)
-    bool isPathTracing{};        // The plan runs path tracing: while Ray Reconstruction denoises, it traces (isPathTracing)
-    float emission{1};           // The menu's strength of self-lit meshes' light
+    bool logOften{};   // Diagnostics: the light's statistics logged every few frames (as each readback returns), not every ten seconds
+    float emission{1}; // The menu's strength of self-lit meshes' light
 };
 
 // MotionBlurCameraVelocity reads the game's velocity for its moving meshes here, right after the
@@ -322,7 +316,7 @@ using SharedTexture = ComputeTexture;
 FrameLatch<Options> latch;
 // The scene runs (for the light, the shadows or the point and spot lights), the light runs, the sun's
 // shadows run, the point and spot lights' shadows run.
-std::atomic<bool> enabled{}, lighting{}, shadowing{}, localShadowing{}, failed{};
+std::atomic<bool> enabled{}, lighting{}, shadowing{}, localShadowing{}, asksPathTracing{}, failed{};
 
 CommandListNotes<Notes> notes;
 
@@ -385,9 +379,9 @@ std::mutex lightMutex;
 ComPtr<ID3D11Device> lightDevice;
 SharedTexture output, shadowOutput, shadowDebugOutput, localLightOutput, lightDebugOutput, reflectionMapOutput, reflectionOutput, reflectionDistanceOutput, lampDiffuseOutput,
     lampSpecularOutput;
-// The last kick traced the reflections into reflectionOutput, reflectionDistanceOutput and reflectionMapOutput, and the lamps into
-// lampDiffuseOutput and lampSpecularOutput.
-std::atomic<bool> wereReflectionsTraced{}, wereLampsTraced{};
+// What the last kick traced, for the threads that read its results.
+std::atomic<kick_traces::KickTraces> lastTraces{};
+static_assert(std::atomic<kick_traces::KickTraces>::is_always_lock_free);
 // depthOut's view, for the recording threads (surfaceDepth).
 ComPtr<ID3D11ShaderResourceView> publishedDepth;
 bool shadowWritten{}, shadowDebugWritten{}; // Direct3D 12 has traced into shadowOutput, shadowDebugOutput
@@ -607,7 +601,7 @@ void logLights(const gi_renderer::Frame& frame, float cameraExposure)
 {
     static std::uint64_t lastLightLog{};
     const std::uint64_t now = lastKick;
-    if (!frame.traceLight || now - lastLightLog <= 10'000) return;
+    if (!frame.traces.tracesLight || now - lastLightLog <= 10'000) return;
 
     lastLightLog = now;
     const auto text = [](const std::array<float, 3>& v) { return std::to_string(v[0]) + " " + std::to_string(v[1]) + " " + std::to_string(v[2]); };
@@ -684,6 +678,12 @@ std::uint64_t sinceKick()
     return last ? GetTickCount64() - last : UINT64_MAX;
 }
 
+// The last kick's path tracing, while its results are fresh.
+bool wasPathTraced() noexcept
+{
+    return lastTraces.load(std::memory_order_relaxed).isPathTraced && !failed && sinceKick() < 1000;
+}
+
 // The frame's kick, before the list with the probe upscale runs; call with executionMutex held.
 void kick(ID3D11ShaderResourceView* depth, const Options& options)
 {
@@ -717,12 +717,24 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     }
 
     pack(depth, *sceneCamera);
-    if (options.reconstructionGuides) makeGuides(depth, *sceneCamera, sun ? sun->skyReflectionFloor : 0);
-    // Path tracing while Ray Reconstruction denoises (reconstructed()), with the light's cache. Its sun is
-    // lit by the rays' shadow (sun_light_pass.cpp), whether or not the ray-traced shadows are on.
+    const auto& asked = options.asked;
+    if (asked.asksRayReconstruction) makeGuides(depth, *sceneCamera, sun ? sun->skyReflectionFloor : 0);
     const auto reconstructedFrames = reconstructions.load(std::memory_order_relaxed);
-    const bool denoisedByReconstruction = reconstructedFrames != reconstructionsAtKick;
-    const bool isPathTraced = options.isPathTracing && options.reconstructionGuides && denoisedByReconstruction && options.enabled && options.light;
+    const bool isDenoisedByReconstruction = reconstructedFrames != reconstructionsAtKick;
+
+    // The point and spot lights recorded for this frame, a bit each in their shadow mask. Path tracing lights
+    // them itself, with their masks.
+    std::vector<local_lights::TracedLight> tracedLights;
+    if (kick_traces::takesLights(asked, isDenoisedByReconstruction)) tracedLights = local_lights::takeForTrace(*sceneCamera);
+    glass::SurfaceTextures surfaces;
+    if (kick_traces::isPathTraced(asked, isDenoisedByReconstruction)) surfaces = glass::beginFrame(immediate.Get(), depthOut.width, depthOut.height);
+    const auto traces = kick_traces::tracesOf(asked,
+        {.isDenoisedByReconstruction = isDenoisedByReconstruction,
+            .hasSun = sun.has_value(),
+            .hasLights = !tracedLights.empty(),
+            .hasMaterialTables = indirect_light_pass::materialTables().lobe != nullptr,
+            .hasGlassTargets = surfaces.reflection != nullptr});
+
     ID3D11Texture2D* light{};
     ID3D11Texture2D* shadow{};
     ID3D11Texture2D* shadowDebug{};
@@ -731,14 +743,14 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         std::lock_guard lock(lightMutex);
         resizeShared(output, device.Get(), depthOut.width, depthOut.height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the light");
         light = output.texture.Get();
-        if (options.enabled && options.lightDebugView != gi_renderer::LightDebugView::None)
+        if (asked.runsGlobalIllumination && options.lightDebugView != gi_renderer::LightDebugView::None)
         {
             if (resizeShared(lightDebugOutput, device.Get(), depthOut.width, depthOut.height, DXGI_FORMAT_R8G8B8A8_UNORM, "Creating the light's debug view"))
                 lightDebugWritten = false;
 
             lightDebug = lightDebugOutput.texture.Get();
         }
-        if (options.shadows || isPathTraced)
+        if (traces.tracesSun)
         {
             if (resizeShared(shadowOutput, device.Get(), depthOut.width, depthOut.height, DXGI_FORMAT_R16_FLOAT, "Creating the shadow")) shadowWritten = false;
             shadow = shadowOutput.texture.Get();
@@ -755,7 +767,7 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     ID3D11Texture2D* reflection{};
     ID3D11Texture2D* reflectionDistance{};
     ID3D11Texture2D* reflectionMap{};
-    if (isPathTraced)
+    if (traces.isPathTraced)
     {
         std::lock_guard lock(lightMutex);
         resizeShared(reflectionOutput, device.Get(), depthOut.width, depthOut.height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the reflections");
@@ -766,30 +778,24 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         reflectionMap = reflectionMapOutput.texture.Get();
     }
 
-    // The point and spot lights recorded for this frame, a bit each in their shadow mask. Path tracing lights
-    // them itself, with their masks.
-    std::vector<local_lights::TracedLight> traced;
-    if (options.localLights || isPathTraced) traced = local_lights::takeForTrace(*sceneCamera);
-    auto* lampMasks = isPathTraced ? path_tracing::packMasks(immediate.Get(), traced) : nullptr;
+    auto* lampMasks = traces.isPathTraced ? path_tracing::packMasks(immediate.Get(), tracedLights) : nullptr;
     std::vector<gi_renderer::LocalLight> localLightsToTrace;
-    for (const auto& each : traced) localLightsToTrace.push_back(each.light);
+    for (const auto& each : tracedLights) localLightsToTrace.push_back(each.light);
 
     ID3D11Texture2D* localLightShadow{};
     ID3D11Texture2D* lampDiffuse{};
     ID3D11Texture2D* lampSpecular{};
-    // The lamps' specular reads the game's tables, which the first sun pass gives; until then its shaders draw them.
-    const bool tracesLamps = isPathTraced && indirect_light_pass::materialTables().lobe;
     {
         std::lock_guard lock(lightMutex);
         localLightWritten = false;
-        if (!localLightsToTrace.empty() && tracesLamps)
+        if (traces.tracesLampLight)
         {
             resizeShared(lampDiffuseOutput, device.Get(), depthOut.width, depthOut.height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the lamps' diffuse light");
             resizeShared(lampSpecularOutput, device.Get(), depthOut.width, depthOut.height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the lamps' specular light");
             lampDiffuse = lampDiffuseOutput.texture.Get();
             lampSpecular = lampSpecularOutput.texture.Get();
         }
-        else if (!localLightsToTrace.empty())
+        else if (traces.tracesLampShadows)
         {
             resizeShared(localLightOutput, device.Get(), depthOut.width, depthOut.height, DXGI_FORMAT_R16_FLOAT, "Creating the lights' shadow");
             localLightShadow = localLightOutput.texture.Get();
@@ -815,12 +821,12 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     endStep(TexturesStep);
     if (const auto terrain = engine_scene::takeTerrain()) copyTerrain(*terrain, frame);
     frame.seaLevel = sea::level();
-    auto* skyCube = isPathTraced ? sky_capture::update(immediate.Get(), LightScale) : nullptr;
+    auto* skyCube = traces.isPathTraced ? sky_capture::update(immediate.Get(), LightScale) : nullptr;
 
     // The game's velocity for its moving meshes, for the shadows' and the light's denoisers: only this
     // frame's, drawn before this list, at the render size.
     DXGI_FORMAT velocityFormat{};
-    const bool wantsVelocity = shadow || (options.enabled && options.light);
+    const bool wantsVelocity = traces.tracesSun || traces.tracesLight;
     const bool velocityCopied = wantsVelocity && objectVelocityDrawn && objectVelocity && sizeOf(objectVelocity.Get()) == sizeOf(depth)
         && copyShared(objectVelocity.Get(), objectVelocityCopy, velocityFormat);
     if (wantsVelocity) ++(velocityCopied ? kicksWithObjectVelocity : kicksWithoutObjectVelocity);
@@ -841,7 +847,7 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         .velocityFormat = velocityFormat,
         .localLightShadow = localLightShadow,
         .lightDebug = lightDebug};
-    if (isPathTraced)
+    if (traces.isPathTraced)
     {
         auto& textures = frame.textures;
         textures.guideNormals = guideNormals.texture.Get();
@@ -857,7 +863,6 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         textures.lampSpecular = lampSpecular;
         textures.materialSpecular = materialSpecular.texture.Get();
         textures.skyCube = skyCube;
-        const auto surfaces = glass::beginFrame(immediate.Get(), depthOut.width, depthOut.height);
         textures.surfaceDepth = surfaces.depth;
         textures.surfaceNormal = surfaces.normal;
         textures.surfaceReflection = surfaces.reflection;
@@ -903,24 +908,17 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     frame.characters = std::move(engineScene.characters);
     frame.modelInstancesUpdated = engineScene.instancesUpdated;
     frame.frameIndex = ++kicks;
-    if (options.reconstructionGuides) guidesKick = kicks;
-    // Noisy for Ray Reconstruction only while it denoised the frame before: a frame it left to DLSS, or none,
-    // turns the denoisers back on.
-    frame.forReconstruction = options.reconstructionGuides && denoisedByReconstruction;
-    frame.isPathTraced = isPathTraced;
-    frame.emissionScale = isPathTraced ? options.emission * LightScale : 0;
+    if (asked.asksRayReconstruction) guidesKick = kicks;
+    frame.traces = traces;
+    frame.emissionScale = traces.isPathTraced ? options.emission * LightScale : 0;
     frame.emissionCap = MostEmission * LightScale;
     reconstructionsAtKick = reconstructedFrames;
-    wereReflectionsTraced = isPathTraced;
-    wereLampsTraced = lampDiffuse != nullptr;
-    frame.showScene = options.showScene;
+    lastTraces = traces;
+    frame.showScene = asked.showsScene;
     frame.logOften = options.logOften;
-    frame.traceLight = options.enabled && options.light;
-    // The rays need the sun's direction, which the first sun pass gives.
-    frame.traceShadows = shadow && sun;
     // Without the shadow map's shadow the rays have no range to leave anything to (BeyondShadowMap).
     // Path tracing's sun reads the rays' shadow alone (sun_light_pass.cpp): nothing is left to the shadow map.
-    frame.shadowRange = options.withShadowMap && !isPathTraced ? shadowRange : std::array<float, 4>{};
+    frame.shadowRange = options.withShadowMap && !traces.isPathTraced ? shadowRange : std::array<float, 4>{};
     frame.sunTangent = std::tan(options.sunSize * 0.5f * 3.14159265f / 180);
     frame.debugShadows = shadowDebug != nullptr;
     frame.shadowStarts = options.shadowStarts;
@@ -940,15 +938,15 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     lightSignalled = frame.signalValue;
     {
         std::lock_guard lock(lightMutex);
-        lightDebugWritten = lightDebug && frame.traceLight && lightDebugOutput.texture.Get() == lightDebug;
+        lightDebugWritten = lightDebug && traces.tracesLight && lightDebugOutput.texture.Get() == lightDebug;
     }
-    if (frame.traceShadows)
+    if (traces.tracesSun)
     {
         std::lock_guard lock(lightMutex);
         shadowWritten = shadowOutput.texture.Get() == shadow;
         shadowDebugWritten = shadowDebug && shadowDebugOutput.texture.Get() == shadowDebug;
     }
-    if (localLightShadow)
+    if (traces.tracesLampShadows)
     {
         std::lock_guard lock(lightMutex);
         localLightWritten = localLightOutput.texture.Get() == localLightShadow;
@@ -1023,7 +1021,7 @@ void detach() noexcept
         std::lock_guard lock(lightMutex);
         output = shadowOutput = shadowDebugOutput = localLightOutput = lightDebugOutput = reflectionOutput = reflectionDistanceOutput = reflectionMapOutput = lampDiffuseOutput =
             lampSpecularOutput = {};
-        wereReflectionsTraced = wereLampsTraced = false;
+        lastTraces.store({});
         publishedDepth.Reset();
         shadowWritten = shadowDebugWritten = localLightWritten = lightDebugWritten = false;
         lightDevice.Reset();
@@ -1037,14 +1035,11 @@ void configure(const Configuration& configuration) noexcept
     const auto& settings = configuration.settings;
     const auto& diagnostics = configuration.diagnostics;
     const Options options{
-        .enabled = configuration.effects.runs(Effect::GlobalIllumination),
-        .shadows = configuration.effects.runs(Effect::RayTracedShadows),
+        .asked = kick_traces::askedBy(configuration),
         .withShadowMap = settings.rayTracedShadows.withGameShadows,
-        .localLights = configuration.effects.runs(Effect::RayTracedLights),
         .lightRays = settings.rayTracedLights.shadowRaysPerPixel,
         .sunSize = settings.sun.diameterDegrees,
         .lightPixelRays = settings.globalIllumination.raysPerLightPixel,
-        .showScene = diagnostics.showTracedScene,
         .debugShadows = diagnostics.debugView == DebugView::ShadowRays || diagnostics.debugView == DebugView::ShadowStarts,
         .shadowStarts = diagnostics.debugView == DebugView::ShadowStarts,
         .twoSidedShadows = diagnostics.twoSidedShadows,
@@ -1052,9 +1047,6 @@ void configure(const Configuration& configuration) noexcept
                           : diagnostics.debugView == DebugView::LightValidation ? gi_renderer::LightDebugView::Validation
                                                                                 : gi_renderer::LightDebugView::None,
         .logOften = diagnostics.logGlobalIlluminationOften,
-        .light = !configuration.leftOut.globalLight,
-        .reconstructionGuides = settings.upscaling.isRayReconstructionAsked(),
-        .isPathTracing = configuration.effects.runs(Effect::PathTracing),
         .emission = settings.pathTracing.emission,
     };
 
@@ -1063,8 +1055,7 @@ void configure(const Configuration& configuration) noexcept
 
 Health health()
 {
-    const auto wanted = latch.latest();
-    if (!wanted.enabled && !wanted.shadows && !wanted.localLights) return {};
+    if (!latch.latest().asked.needsScene()) return {};
 
     std::lock_guard lock(executionMutex);
     if (failed) return Health::unavailable("Ray tracing is unavailable: " + failure);
@@ -1314,7 +1305,7 @@ void reconstructed() noexcept
 
 bool isPathTracing() noexcept
 {
-    return wereReflectionsTraced.load(std::memory_order_relaxed) && !failed && sinceKick() < 1000;
+    return asksPathTracing.load(std::memory_order_relaxed) && wasPathTraced();
 }
 
 bool traceSurfaces() noexcept
@@ -1350,7 +1341,7 @@ bool traceSurfaces() noexcept
 
 ID3D11ShaderResourceView* reflection(UINT width, UINT height) noexcept
 {
-    if (!isPathTracing()) return nullptr;
+    if (!wasPathTraced()) return nullptr;
 
     std::lock_guard lock(lightMutex);
     return reflectionOutput.width == width && reflectionOutput.height == height ? reflectionOutput.view.Get() : nullptr;
@@ -1358,7 +1349,7 @@ ID3D11ShaderResourceView* reflection(UINT width, UINT height) noexcept
 
 ID3D11ShaderResourceView* reflectionMap(UINT width, UINT height) noexcept
 {
-    if (!isPathTracing()) return nullptr;
+    if (!wasPathTraced()) return nullptr;
 
     std::lock_guard lock(lightMutex);
     return reflectionMapOutput.width == width && reflectionMapOutput.height == height ? reflectionMapOutput.view.Get() : nullptr;
@@ -1366,7 +1357,7 @@ ID3D11ShaderResourceView* reflectionMap(UINT width, UINT height) noexcept
 
 std::optional<LampLight> lampLight(UINT width, UINT height) noexcept
 {
-    if (!wereLampsTraced.load(std::memory_order_relaxed) || !isPathTracing()) return std::nullopt;
+    if (!lastTraces.load(std::memory_order_relaxed).tracesLampLight || !wasPathTraced()) return std::nullopt;
 
     std::lock_guard lock(lightMutex);
     if (lampDiffuseOutput.width != width || lampDiffuseOutput.height != height) return std::nullopt;
@@ -1387,7 +1378,7 @@ ID3D11UnorderedAccessView* reflectionDistanceAccess(UINT width, UINT height) noe
 
 ID3D11Texture2D* reflectionDistance(UINT width, UINT height) noexcept
 {
-    if (!isPathTracing()) return nullptr;
+    if (!wasPathTraced()) return nullptr;
 
     std::lock_guard lock(lightMutex);
     return reflectionDistanceOutput.width == width && reflectionDistanceOutput.height == height ? reflectionDistanceOutput.texture.Get() : nullptr;
@@ -1482,13 +1473,13 @@ void present() noexcept
         if (!std::exchange(sunSincePresent, false)) sun.reset();
     }
 
-    const auto options = latch.present();
+    const auto asked = latch.present().asked;
 
-    const bool on = (options.enabled || options.shadows || options.localLights) && !failed;
-    lighting = on && options.enabled;
-    // Path tracing's sun and lamps read the rays as the ray-traced shadows and lights do, in their place.
-    shadowing = on && (options.shadows || options.isPathTracing);
-    localShadowing = on && (options.localLights || options.isPathTracing);
+    const bool on = asked.needsScene() && !failed;
+    lighting = on && asked.runsGlobalIllumination;
+    shadowing = on && asked.needsSunRays();
+    localShadowing = on && asked.needsLampRays();
+    asksPathTracing = asked.runsPathTracing;
     if (enabled.exchange(on) && !on)
     {
         // Off gives the GPU memory back.
