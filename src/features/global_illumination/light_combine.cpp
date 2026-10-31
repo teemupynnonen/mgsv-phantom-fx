@@ -22,15 +22,6 @@ namespace
 {
 using Microsoft::WRL::ComPtr;
 
-// A texture one of the game's pixel shaders draws into.
-struct DrawTarget
-{
-    ComPtr<ID3D11Texture2D> texture;
-    ComPtr<ID3D11ShaderResourceView> view;
-    ComPtr<ID3D11RenderTargetView> target;
-    UINT width{}, height{};
-};
-
 // The light's strength, and whether the resolve shows it alone (the diagnostics).
 struct Wanted
 {
@@ -72,25 +63,6 @@ bool ensurePipeline()
     }
 }
 
-// Call with resourceMutex held.
-void ensureDrawTarget(DrawTarget& target, UINT width, UINT height, DXGI_FORMAT format, const char* what)
-{
-    if (target.texture && target.width == width && target.height == height) return;
-
-    D3D11_TEXTURE2D_DESC desc{};
-    desc.Width = width;
-    desc.Height = height;
-    desc.MipLevels = desc.ArraySize = 1;
-    desc.Format = format;
-    desc.SampleDesc.Count = 1;
-    desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-    DrawTarget made{.width = width, .height = height};
-    check(device->CreateTexture2D(&desc, nullptr, made.texture.GetAddressOf()), what);
-    check(device->CreateShaderResourceView(made.texture.Get(), nullptr, made.view.GetAddressOf()), what);
-    check(device->CreateRenderTargetView(made.texture.Get(), nullptr, made.target.GetAddressOf()), what);
-    target = std::move(made);
-}
 }
 
 void attach(ID3D11Device* gameDevice) noexcept
@@ -140,7 +112,7 @@ void drawProbeLightAside(ID3D11DeviceContext* context, const ui_redirect::DrawCa
 
     // The game draws it with blending off, into the light targets.
     const auto size = sizeOf(gameTargets[0]);
-    ensureDrawTarget(gameProbeLight, size.first, size.second, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the game's probe light");
+    ensureDrawTarget(device.Get(), gameProbeLight, size.first, size.second, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the game's probe light");
     const performance::Timed timed(context, performance::Pass::GiProbeLight);
     context->OMSetRenderTargets(1, gameProbeLight.target.GetAddressOf(), gameDepth.Get());
     context->DrawInstanced(call.count, call.instances, call.first, call.firstInstance);

@@ -170,6 +170,7 @@ what draws it, when that is the feature's own.
 | `hdr/` | `hdr.*`: the float scene, in SDR too, and HDR10 output: the swap chain, the float scene targets and their sRGB views, the shader patches, the grading and output passes (see "HDR"). `hdr_shaders.hpp`: the encode and decode of the float scene, bloom's reduction, the grading, the output to PQ or, in SDR, to the game's 8 bits with a dither |
 | `frame_rate/` | `frame_rate.*`: hook on the frame wait setter, the optional 60 fps unlock |
 | `motion_blur/` | `motion_blur.*`: hooks on the motion blur plugin, velocity passes every frame |
+| `depth_of_field/` | `depth_of_field.*`: the game's depth of field with its focus edges at the render size: each pixel's own cover from its depth, the far layer kept apart, the composite, and the lens's far blur (see "Depth of field"). `depth_of_field_shaders.hpp`: the cover, the lens's passes and the composites |
 
 ### Passes
 
@@ -3265,18 +3266,66 @@ with the game's Depth of Field option on runs the `DOF_Scatter*` passes; `DOF_0_
   pixel through an sRGB decode, raises bright pixels to the HDR luminance in alpha (`a^2 x 32`,
   capped at `cPSObject` c11.y), and takes each pixel's blur radius from depth as
   `c12.z x (z - c12.w) / z` (`ReconstructViewZ`), clamped to c11.w in front and c11.z behind. Near
-  and far split at device depth c11.x.
+  and far split at device depth c11.x. It gathers the four depths under each half-size pixel: the near
+  layer's radius comes from the nearest, the far layer's from the farthest, and the far colour from
+  the four behind c11.x alone. One background pixel of four makes all four blurred.
 - **Scatter.** `DOF_ScatterBakeSecond` makes 1/4, 1/8 and 1/16 size levels. `DOF_ScatterSprite`
   (indexed, 2048 quads a draw) draws a quad per pixel of a level, sized by its blur, shaped by a
   64x64 bokeh texture and divided by its area, with additive blending; big blurs go to the small
   levels. Near, then far. Small blurs are gathered with a few taps (`DOF_ScatterGather1`,
-  `CompositeNear`, `CompositeFar`).
+  `CompositeNear`, `CompositeFar`). `CompositeNear` draws into the half-size result and `CompositeFar`
+  blends under it (one minus the target's alpha, plus the target). The far layer's cover is at least
+  `saturate(2 (r - c12.x) / (c12.y - c12.x))`, `r` the half-size pixel's radius.
 - **`DOF_ScatterCompositeFinal`** writes `blur + (1 - coverage) x scene` from the half-size result
   and a copy of the scene (`CopyRenderBuffer`) into the scene target, sRGB-encoded, alpha kept.
 - Weak points: everything is half size or less, so slight blur turns blocky and shimmers at focus
   edges; one depth splits near from far; the HDR lights are not tonemapped back, so they clip.
 
-The add-on draws the game's depth of field as it is, before DLSS (see "What the add-on changes").
+The add-on keeps the game's depth of field before DLSS (see "What the add-on changes"), with its
+focus edges at the render size (`features/depth_of_field`).
+
+- **Why.** The farthest of four depths lays the blur over the rim of whatever is in focus, in steps
+  of a half-size pixel. Those steps stay where they are as the jitter moves the image, so DLSS and Ray
+  Reconstruction keep them, and they widen as the render size falls: 2 output pixels at native 4K, 3.4
+  at Balanced. In frame 32570 (Balanced, 4K), the steps along a photo's edge fell every 48 render
+  columns, on the columns the block rule gives from that frame's depth (29, 76, 123), not on the
+  geometry's (every 24).
+- **The pass.** At `DOF_ScatterBakeFirst`, while the game's constants are bound, a draw at the render
+  size works out each pixel's own far cover by the formulas above. `DOF_ScatterCompositeFar` draws
+  into a layer of its own, unblended, which leaves the near layer alone in the game's target. The
+  composite is then `near + (1 - near.a) x lerp(scene, far.rgb / far.a, own cover)`. The half-size far
+  layer gives the blur's colour, and each render pixel's depth says how much shows. That edge is the
+  geometry's, which moves with the jitter and which DLSS resolves as any other. Where the two covers
+  agree this is the game's blend; the game's shaders and these on WARP agree to under an 8-bit step
+  over four lenses, and to the last digit in the composite. The near layer stays as the game drew it,
+  because near blur rightly spreads over what is in focus behind it.
+- **What it leaves.** A far blur's bokeh no longer spreads over what is in focus in front of it, which
+  a lens would not do either. Far cover under 5% fades out, as a colour from so little of a pixel
+  stands for nothing.
+- **The background's blur** (Camera, **Depth of field**, `depth_of_field_far_blur`). **MGSV** keeps the
+  game's far layer in the composite above. It is a soft smear, not a lens's disc: built from layers
+  down to 1/16 size, it falls off like a Gaussian. **Lens**, the default, skips the game's
+  `CompositeFar` draw and makes its own layer at half the render size, at the composite:
+  - The prefilter leaves out what is in focus and weighs each pixel down by how bright it is (Karis),
+    so one noisy ray cannot turn into a disc. Its colour is multiplied by the radius, so a bilinear tap
+    beside an in-focus texel keeps its colour.
+  - A disc gather of up to 96 taps on a golden-angle spiral, where a tap counts if its own blur reaches
+    this far (Jimenez 2014, "scatter as you gather"), then two 8-tap fills between the taps. Past 96
+    taps, from about 11 render pixels of radius, the taps spread out and a small lamp's disc breaks
+    into them. One fill as wide as the taps are apart lands on the neighbouring taps, so the first ring
+    is 0.105 of the radius and the second 0.05. Offline, the gather's maths at 60 render pixels: a lamp's
+    ripple 0.65 with one fill, 0.42 with 192 taps, 0.12 with two fills; frame 32570's scene against a
+    true disc, rms 1.12, 0.98, 0.61 of 255. Mips the width of the gap were worse than either, at 1.97.
+  - The composite stretches the layer with a cubic B-spline in four bilinear taps (Sigg and Hadwiger
+    2005). A pixel's cover is its own radius: sharp under half a render pixel, all blur over one and a
+    half. The radius follows the game's formula, starting at its smallest size (c12.x), and comes from
+    a second channel of the cover draw.
+  - Measured on the copy (4K, Quality, Ray Reconstruction, f/1.4), against a true disc blur of the
+    no-blur frame: detail, rms 8.80 (game) to 7.75; a flat wall, 2.05 to 1.78. Lamps at strong blurs
+    were checked offline alone, and the cost is unmeasured.
+
+  The near layer stays the game's with either.
+
 Photo mode blurs with it: it sets the active camera's focus distance (`+0x38`), f-number (`+0x44`,
 the overlay's **f-stop**, or f/64 with the blur off) and the byte that allows any aperture
 (`+0xEA`) for the selector's update, which copies them into `GrCamera` (see "Photo mode").

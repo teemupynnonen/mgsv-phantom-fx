@@ -312,7 +312,7 @@ void drawAtmosphere(Settings& wanted)
 
 void drawCamera(Settings& wanted)
 {
-    const fxui::Page page(Section::Camera, "The lens of photo mode.");
+    const fxui::Page page(Section::Camera, "Depth of field, motion blur and the lens of photo mode.");
     if (!page) return;
 
     drawFeatures(Section::Camera, wanted);

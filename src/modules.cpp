@@ -6,6 +6,7 @@
 #include "features/indirect_light/ssilvb.hpp"
 #include "features/lamp_contact_shadows/lamp_contact_shadows.hpp"
 #include "features/lamp_soft_shadows/lamp_soft_shadows.hpp"
+#include "features/depth_of_field/depth_of_field.hpp"
 #include "features/motion_blur/motion_blur.hpp"
 #include "features/path_tracing/glass.hpp"
 #include "features/path_tracing/path_tracing.hpp"
@@ -67,6 +68,7 @@ constexpr Module Modules[]{
     {.attach = atmosphere::attach, .configure = atmosphere::configure, .present = atmosphere::present, .detach = atmosphere::detach},
     {.attach = sea::attach, .configure = sea::configure, .present = sea::present, .detach = sea::detach},
 
+    {.attach = withDevice<depth_of_field::attach>, .configure = depth_of_field::configure, .present = depth_of_field::present, .detach = depth_of_field::detach},
     {.configure = motion_blur::configure},
     {.configure = frame_rate::configure},
     {.configure = photo_mode::configure},
