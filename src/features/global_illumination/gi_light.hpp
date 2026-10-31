@@ -29,7 +29,7 @@ public:
 
     // The light's and the hash grid's constants; `verticalFov` in radians.
     void fill(gi::GIFrameConstants& constants, float verticalFov, std::uint32_t parity) const;
-    // Its views in the frame's tables, by the slots gi_light.hlsl gives them.
+    // Its views in the frame's tables.
     void describe(gi_d3d12::Descriptors& descriptors, std::uint32_t parity) const;
     // The passes, from the rays to the light in the output (u0), on the frame slot's room (`frameSlot`), with
     // NRD's validation layer when `isValidationShown`. The denoiser binds its own root signature and descriptor

@@ -6,8 +6,8 @@
 
 #include <d3d11.h>
 #include <d3d12.h>
-#include <cstdint>
 #include <mutex>
+#include <variant>
 #include <vector>
 
 // Shared textures, which the game's Direct3D 11 side and the rays' Direct3D 12 side both use (docs/DEVELOPMENT.md,
@@ -39,15 +39,11 @@ private:
     bool isWritten{};
 };
 
-enum class Access : std::uint8_t { Read, Write };
-
-// One shared texture a trace uses: how, and at which slot of the frame's tables, the shaders' or the outputs'
-// by its access.
+// One shared texture a trace uses, read or written by its slot's kind.
 struct SharedRow
 {
     DXGI_FORMAT format{};
-    Access access{};
-    UINT slot{};
+    std::variant<binding::TextureSlot, binding::OutputTextureSlot> slot;
     const char* opening{};
 };
 

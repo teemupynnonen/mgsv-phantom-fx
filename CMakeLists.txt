@@ -172,18 +172,23 @@ set(GI_SHADER_INCLUDES "${GI_SHADER_SHARED}/gi_shared.h" "${GI_SHADER_SHARED}/gi
     "${CMAKE_SOURCE_DIR}/third_party/ffx_denoiser_shadows/ffx_denoiser_shadows_tileclassification.h"
     "${CMAKE_SOURCE_DIR}/third_party/ffx_denoiser_shadows/ffx_denoiser_shadows_util.h" "${nrd_SOURCE_DIR}/Shaders/NRD.hlsli")
 set(GI_SHADER_HEADERS)
+set(GI_KERNELS)
+# Each kernel's one home: the Kernel enum and the table of their DXIL come from this list, in this order, and C++ takes their
+# slots from what they were compiled with (tools/kernel_bindings).
 function(add_gi_kernels source)
     foreach(entry IN LISTS ARGN)
         set(output "${GI_SHADER_DIR}/${entry}.h")
-        add_custom_command(OUTPUT "${output}"
+        add_custom_command(OUTPUT "${output}" "${GI_SHADER_DIR}/${entry}.dxil"
             COMMAND "${DXC_EXECUTABLE}" -nologo -T cs_6_5 -E ${entry} -HV 2021 -O3 -WX -I "${GI_SHADER_SHARED}" -I "${CMAKE_SOURCE_DIR}/third_party" -I "${nrd_SOURCE_DIR}/Shaders"
-                -Fh "${output}" -Vn GI_${entry}
+                -Fh "${output}" -Vn GI_${entry} -Fo "${GI_SHADER_DIR}/${entry}.dxil"
                 "${CMAKE_SOURCE_DIR}/src/${source}"
             DEPENDS "${CMAKE_SOURCE_DIR}/src/${source}" ${GI_SHADER_INCLUDES}
             COMMENT "DXC ${source}: ${entry}")
         list(APPEND GI_SHADER_HEADERS "${output}")
+        list(APPEND GI_KERNELS ${entry})
     endforeach()
     set(GI_SHADER_HEADERS ${GI_SHADER_HEADERS} PARENT_SCOPE)
+    set(GI_KERNELS ${GI_KERNELS} PARENT_SCOPE)
 endfunction()
 file(MAKE_DIRECTORY "${GI_SHADER_DIR}")
 add_gi_kernels(passes/ray_tracing/shaders/gi_scene.hlsl ClearNewGeometries DebugScene TerrainGrid Skin)
@@ -194,7 +199,18 @@ add_gi_kernels(features/ray_traced_shadows/gi_shadow_filter.hlsl FilterShadows)
 add_gi_kernels(features/ray_traced_lights/light_shadows.hlsl TraceLocalLightShadows FilterLocalLightShadows ProbeLocalLights)
 add_gi_kernels(features/path_tracing/reflections.hlsl TraceReflections TraceSurfaceReflections)
 add_gi_kernels(features/path_tracing/direct_light.hlsl TraceLampLight)
-add_custom_target(gi_kernels DEPENDS ${GI_SHADER_HEADERS})
+
+add_executable(kernel_bindings tools/kernel_bindings/main.cpp tools/kernel_bindings/kernel_table.cpp)
+target_compile_features(kernel_bindings PRIVATE cxx_std_20)
+target_compile_definitions(kernel_bindings PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(kernel_bindings PRIVATE /W4 /WX /permissive- /utf-8)
+get_filename_component(DXC_FOLDER "${DXC_EXECUTABLE}" DIRECTORY)
+set(GI_GENERATED_HEADERS "${GI_SHADER_DIR}/gi_bindings.h" "${GI_SHADER_DIR}/gi_kernel_list.h" "${GI_SHADER_DIR}/gi_kernel_bytecode.h")
+add_custom_command(OUTPUT ${GI_GENERATED_HEADERS}
+    COMMAND kernel_bindings "${DXC_FOLDER}/dxcompiler.dll" "${GI_SHADER_DIR}" ${GI_KERNELS}
+    DEPENDS kernel_bindings ${GI_SHADER_HEADERS}
+    COMMENT "The kernels' slots and list")
+add_custom_target(gi_kernels DEPENDS ${GI_SHADER_HEADERS} ${GI_GENERATED_HEADERS})
 
 # Each feature's settings and their description (src/features/).
 set(PHANTOM_FX_FEATURES src/features/upscaling/settings.cpp src/features/frame_generation/settings.cpp src/features/sun/settings.cpp src/features/ray_traced_shadows/settings.cpp src/features/soft_shadows/settings.cpp src/features/sun_contact_shadows/settings.cpp
@@ -284,12 +300,20 @@ if(BUILD_TESTING)
     add_test(NAME kick_traces COMMAND kick_traces_tests)
 
     add_executable(shared_textures_tests tests/shared_textures_tests.cpp src/passes/ray_tracing/shared_textures.cpp src/log.cpp)
-    target_include_directories(shared_textures_tests PRIVATE src)
+    add_dependencies(shared_textures_tests gi_kernels)
+    target_include_directories(shared_textures_tests PRIVATE src "${GI_SHADER_DIR}")
     target_link_libraries(shared_textures_tests PRIVATE d3d11)
     target_compile_features(shared_textures_tests PRIVATE cxx_std_20)
     target_compile_definitions(shared_textures_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(shared_textures_tests PRIVATE /W4 /WX /permissive- /utf-8)
     add_test(NAME shared_textures COMMAND shared_textures_tests)
+
+    add_executable(kernel_table_tests tests/kernel_table_tests.cpp tools/kernel_bindings/kernel_table.cpp)
+    target_include_directories(kernel_table_tests PRIVATE tools/kernel_bindings)
+    target_compile_features(kernel_table_tests PRIVATE cxx_std_20)
+    target_compile_definitions(kernel_table_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(kernel_table_tests PRIVATE /W4 /WX /permissive- /utf-8)
+    add_test(NAME kernel_table COMMAND kernel_table_tests)
 
     add_executable(light_choice_tests tests/light_choice_tests.cpp src/features/ray_traced_lights/light_choice.cpp)
     target_include_directories(light_choice_tests PRIVATE src)
