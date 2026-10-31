@@ -37,8 +37,9 @@ ComPtr<ID3D11PixelShader> coverageShader, compositeShader, prefilterShader, gath
 DrawTarget coverage, farLayer, prefiltered, gathered, filled;
 
 // How far this thread has come through the depth of field's draws, which it records together. Each step
-// needs the one before, so a frame that misses one is the game's own.
-enum class Stage : std::uint8_t { None, Baked, FarDrawn };
+// needs the one before, so a frame that misses one is the game's own. The far draw settles the frame's
+// blur: FarDrawn the game's, LensReady the lens's.
+enum class Stage : std::uint8_t { None, Baked, FarDrawn, LensReady };
 thread_local Stage stage{};
 
 FrameLatch<FarBlur> latch;
@@ -107,22 +108,40 @@ void drawCoverage(ID3D11DeviceContext* context, const ui_redirect::DrawCall& cal
     stage = Stage::Baked;
 }
 
+// Call with resourceMutex held.
+void ensureLensTargets()
+{
+    const UINT width = coverage.width / 2, height = coverage.height / 2;
+    constexpr DXGI_FORMAT Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    ensureDrawTarget(device.Get(), prefiltered, width, height, Format, "Creating the depth of field's prefiltered light");
+    ensureDrawTarget(device.Get(), gathered, width, height, Format, "Creating the depth of field's gather");
+    ensureDrawTarget(device.Get(), filled, width, height, Format, "Creating the depth of field's fill");
+    ensureDrawTarget(device.Get(), farLayer, width, height, Format, "Creating the depth of field's far layer");
+}
+
 // The game blends the far layer under the near one it drew; apart, its target keeps the near layer alone.
+// A target that cannot be made throws while the stage is still Baked, so the game draws this and the rest.
 bool drawFarLayer(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call)
 {
     if (stage != Stage::Baked) return false;
 
-    stage = Stage::FarDrawn;
+    std::lock_guard lock(resourceMutex);
 
     // The lens makes its own far blur, so all it wants of this draw is the near layer left without it.
-    if (latch.frame() == FarBlur::Lens) return true;
+    if (latch.frame() == FarBlur::Lens)
+    {
+        ensureLensTargets();
+        stage = Stage::LensReady;
+
+        return true;
+    }
 
     ComPtr<ID3D11RenderTargetView> gameTarget;
     context->OMGetRenderTargets(1, gameTarget.GetAddressOf(), nullptr);
     const auto [width, height] = sizeOf(gameTarget.Get());
-    std::lock_guard lock(resourceMutex);
     ensureDrawTarget(device.Get(), farLayer, width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the depth of field's far layer");
     drawInto(context, call, farLayer);
+    stage = Stage::FarDrawn;
 
     return true;
 }
@@ -141,15 +160,8 @@ void drawLayer(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, 
 // Call with resourceMutex held. The composite's t0, t1 and constants stay bound throughout.
 void drawLens(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call)
 {
-    const UINT width = coverage.width / 2, height = coverage.height / 2;
-    constexpr DXGI_FORMAT Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-    ensureDrawTarget(device.Get(), prefiltered, width, height, Format, "Creating the depth of field's prefiltered light");
-    ensureDrawTarget(device.Get(), gathered, width, height, Format, "Creating the depth of field's gather");
-    ensureDrawTarget(device.Get(), filled, width, height, Format, "Creating the depth of field's fill");
-    ensureDrawTarget(device.Get(), farLayer, width, height, Format, "Creating the depth of field's far layer");
-
     const SavedOutput saved(context);
-    const WholeTargetViewport viewport(context, width, height);
+    const WholeTargetViewport viewport(context, prefiltered.width, prefiltered.height);
     context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
     drawLayer(context, call, prefiltered, prefilterShader.Get(), {.coverage = coverage.view.Get()});
     drawLayer(context, call, gathered, gatherShader.Get(), {.light = prefiltered.view.Get()});
@@ -160,8 +172,9 @@ void drawLens(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call)
 
 bool composite(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, ID3D11PixelShader* gameShader)
 {
-    if (stage != Stage::FarDrawn) return false;
+    if (stage != Stage::FarDrawn && stage != Stage::LensReady) return false;
 
+    const bool isLens = stage == Stage::LensReady;
     stage = Stage::None;
 
     ComPtr<ID3D11ShaderResourceView> gameViews[LayerSlotCount];
@@ -170,7 +183,6 @@ bool composite(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, 
     for (UINT i = 0; i < LayerSlotCount; ++i) gameViews[i].Attach(bound[i]);
 
     std::lock_guard lock(resourceMutex);
-    const bool isLens = latch.frame() == FarBlur::Lens;
     if (isLens) drawLens(context, call);
 
     context->PSSetShader(isLens ? lensCompositeShader.Get() : compositeShader.Get(), nullptr, 0);
