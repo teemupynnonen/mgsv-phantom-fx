@@ -170,7 +170,7 @@ what draws it, when that is the feature's own.
 | `hdr/` | `hdr.*`: the float scene, in SDR too, and HDR10 output: the swap chain, the float scene targets and their sRGB views, the shader patches, the grading and output passes (see "HDR"). `hdr_shaders.hpp`: the encode and decode of the float scene, bloom's reduction, the grading, the output to PQ or, in SDR, to the game's 8 bits with a dither |
 | `frame_rate/` | `frame_rate.*`: hook on the frame wait setter, the optional 60 fps unlock |
 | `motion_blur/` | `motion_blur.*`: hooks on the motion blur plugin, velocity passes every frame |
-| `depth_of_field/` | Settings only: what blurs the background (`passes/depth_of_field_pass.*`) |
+| `depth_of_field/` | `depth_of_field.*`: the game's depth of field with its focus edges at the render size: each pixel's own cover from its depth, the far layer kept apart, the composite, and the lens's far blur (see "Depth of field"). `depth_of_field_shaders.hpp`: the cover, the lens's passes and the composites |
 
 ### Passes
 
@@ -178,7 +178,6 @@ what draws it, when that is the feature's own.
 | --- | --- |
 | `src/passes/sun_light_pass.*` | The game's sun light pass drawn with replacement shaders, with soft shadows, the sun's contact shadows and the ray-traced shadow composed in. `sun_light_pass_shaders.hpp`: the game's sun light shaders rebuilt with them |
 | `src/passes/local_light_pass.*` | The game's point and spot light draws, with the lamps' contact shadows and soft shadows composed in: the marking and lighting draws |
-| `src/passes/depth_of_field_pass.*` | The game's depth of field with its focus edges at the render size: each pixel's own cover from its depth, the far layer kept apart, the composite, and the lens's far blur (see "Depth of field"). `depth_of_field_pass_shaders.hpp`: the cover, the lens's passes and the composites |
 | `src/passes/contact_shadow_trace.*` | Bend Studio's screen-space shadow trace, for the sun's and the lamps' contact shadows. `contact_shadow_trace_shaders.hpp`: Bend's trace ported to FXC |
 | `third_party/bend_sss/bend_sss_cpu.h` | Bend Studio's dispatch layout, unchanged (Apache License 2.0) |
 | `src/passes/indirect_light_pass.*` | The game's sky light, upscale and resolve: the G-buffer notes, the resolve's white occlusion and diffuse light, the diagnostics views, the ray-traced scene's notes. `indirect_light_pass_shaders.hpp`: the diagnostics views |
@@ -3280,7 +3279,7 @@ with the game's Depth of Field option on runs the `DOF_Scatter*` passes; `DOF_0_
   edges; one depth splits near from far; the HDR lights are not tonemapped back, so they clip.
 
 The add-on keeps the game's depth of field before DLSS (see "What the add-on changes"), with its
-focus edges at the render size (`depth_of_field_pass`).
+focus edges at the render size (`features/depth_of_field`).
 
 - **Why.** The farthest of four depths lays the blur over the rim of whatever is in focus, in steps
   of a half-size pixel. Those steps stay where they are as the jitter moves the image, so DLSS and Ray

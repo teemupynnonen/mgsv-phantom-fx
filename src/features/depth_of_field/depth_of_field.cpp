@@ -1,51 +1,47 @@
-#include "passes/depth_of_field_pass.hpp"
+#include "features/depth_of_field/depth_of_field.hpp"
 
 #include "d3d11_helpers.hpp"
+#include "features/depth_of_field/depth_of_field_shaders.hpp"
+#include "frame_latch.hpp"
 #include "log.hpp"
-#include "passes/depth_of_field_pass_shaders.hpp"
 
 #include <wrl/client.h>
-#include <atomic>
 #include <cstdint>
 #include <exception>
 #include <mutex>
 #include <string>
-#include <utility>
 
-namespace phantom_fx::depth_of_field_pass
+namespace phantom_fx::depth_of_field
 {
 namespace
 {
 using game_shaders::GamePass;
 using Microsoft::WRL::ComPtr;
 
-constexpr UINT DepthSlot = 1;                 // DOF_ScatterBakeFirst's inDepth
-constexpr UINT CoverageSlot = 2, FarSlot = 3; // What shaders::Composite reads beside the game's t0 and t1
-static_assert(FarSlot == CoverageSlot + 1, "the composite binds them together");
-constexpr UINT LayerSlotCount = 3; // t2 to t4, which the lens's passes use
+constexpr UINT DepthSlot = 1;      // DOF_ScatterBakeFirst's inDepth
+constexpr UINT CoverageSlot = 2;   // The first of Layers' slots, after the game's t0 and t1
+constexpr UINT LayerSlotCount = 3; // t2 to t4
 
-struct Target
+// What these shaders read beside the game's t0 and t1, in their slots.
+struct Layers
 {
-    ComPtr<ID3D11Texture2D> texture;
-    ComPtr<ID3D11RenderTargetView> target;
-    ComPtr<ID3D11ShaderResourceView> view;
-    UINT width{}, height{};
+    ID3D11ShaderResourceView* coverage{};
+    ID3D11ShaderResourceView* light{};
+    ID3D11ShaderResourceView* radii{}; // The prefiltered layer's alpha, for the fill
 };
 
 // ---- Direct3D, guarded by resourceMutex ----
 std::mutex resourceMutex;
 ComPtr<ID3D11Device> device;
 ComPtr<ID3D11PixelShader> coverageShader, compositeShader, prefilterShader, gatherShader, fillShader, lensCompositeShader;
-Target coverage, farLayer, prefiltered, gathered;
+DrawTarget coverage, farLayer, prefiltered, gathered;
 
 // How far this thread has come through the depth of field's draws, which it records together. Each step
 // needs the one before, so a frame that misses one is the game's own.
 enum class Stage : std::uint8_t { None, Baked, FarDrawn };
 thread_local Stage stage{};
 
-// Read at the first draw alone, so a change in the menu cannot split a frame.
-std::atomic<FarBlur> wantedFarBlur{FarBlur::Lens};
-thread_local FarBlur farBlur{};
+FrameLatch<FarBlur> latch;
 
 // The game's targets and blend, put back when this goes out of scope.
 class SavedOutput
@@ -60,6 +56,7 @@ public:
     {
         context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, targets, depth.Get());
         context->OMSetBlendState(blend.state.Get(), blend.factor, blend.sampleMask);
+
         for (auto* target : targets)
             if (target) target->Release();
     }
@@ -75,29 +72,14 @@ private:
     ID3D11RenderTargetView* targets[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
 };
 
-// Call with resourceMutex held.
-void ensureTarget(Target& target, UINT width, UINT height, DXGI_FORMAT format, const char* what)
+void bindLayers(ID3D11DeviceContext* context, const Layers& layers)
 {
-    if (target.texture && target.width == width && target.height == height) return;
-
-    D3D11_TEXTURE2D_DESC desc{};
-    desc.Width = width;
-    desc.Height = height;
-    desc.MipLevels = 1;
-    desc.ArraySize = 1;
-    desc.Format = format;
-    desc.SampleDesc.Count = 1;
-    desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-    Target made{.width = width, .height = height};
-    check(device->CreateTexture2D(&desc, nullptr, made.texture.GetAddressOf()), what);
-    check(device->CreateRenderTargetView(made.texture.Get(), nullptr, made.target.GetAddressOf()), what);
-    check(device->CreateShaderResourceView(made.texture.Get(), nullptr, made.view.GetAddressOf()), what);
-    target = std::move(made);
+    ID3D11ShaderResourceView* const views[LayerSlotCount]{layers.coverage, layers.light, layers.radii};
+    context->PSSetShaderResources(CoverageSlot, LayerSlotCount, views);
 }
 
 // The draw alone in `into`, unblended.
-void drawInto(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, const Target& into)
+void drawInto(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, const DrawTarget& into)
 {
     const SavedOutput saved(context);
     const WholeTargetViewport viewport(context, into.width, into.height);
@@ -107,18 +89,18 @@ void drawInto(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, c
 }
 
 // The game's constants and depth are bound for its own bake, which draws after.
-void noteCoverage(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, ID3D11PixelShader* gameShader)
+void drawCoverage(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, ID3D11PixelShader* gameShader)
 {
     stage = Stage::None;
-    farBlur = wantedFarBlur;
 
     ComPtr<ID3D11ShaderResourceView> depth;
     context->PSGetShaderResources(DepthSlot, 1, depth.GetAddressOf());
     const auto [width, height] = sizeOf(depth.Get());
     std::lock_guard lock(resourceMutex);
+
     if (!width || !lensCompositeShader) return;
 
-    ensureTarget(coverage, width, height, DXGI_FORMAT_R16G16_FLOAT, "Creating the depth of field's cover");
+    ensureDrawTarget(device.Get(), coverage, width, height, DXGI_FORMAT_R16G16_FLOAT, "Creating the depth of field's cover");
     context->PSSetShader(coverageShader.Get(), nullptr, 0);
     drawInto(context, call, coverage);
     context->PSSetShader(gameShader, nullptr, 0);
@@ -131,14 +113,15 @@ bool drawFarLayer(ID3D11DeviceContext* context, const ui_redirect::DrawCall& cal
     if (stage != Stage::Baked) return false;
 
     stage = Stage::FarDrawn;
+
     // The lens makes its own far blur, so all it wants of this draw is the near layer left without it.
-    if (farBlur == FarBlur::Lens) return true;
+    if (latch.frame() == FarBlur::Lens) return true;
 
     ComPtr<ID3D11RenderTargetView> gameTarget;
     context->OMGetRenderTargets(1, gameTarget.GetAddressOf(), nullptr);
     const auto [width, height] = sizeOf(gameTarget.Get());
     std::lock_guard lock(resourceMutex);
-    ensureTarget(farLayer, width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the depth of field's far layer");
+    ensureDrawTarget(device.Get(), farLayer, width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the depth of field's far layer");
     drawInto(context, call, farLayer);
 
     return true;
@@ -146,14 +129,11 @@ bool drawFarLayer(ID3D11DeviceContext* context, const ui_redirect::DrawCall& cal
 
 // One half-size pass into `into`. The slots are emptied first, as the last pass's input may be this one's
 // target, and the inputs go in after the target, as a view of a bound target reads as nothing.
-void drawLayer(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, const Target& into, ID3D11PixelShader* shader,
-    ID3D11ShaderResourceView* slot2, ID3D11ShaderResourceView* slot3, ID3D11ShaderResourceView* slot4)
+void drawLayer(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, const DrawTarget& into, ID3D11PixelShader* shader, const Layers& inputs)
 {
-    ID3D11ShaderResourceView* const none[LayerSlotCount]{};
-    ID3D11ShaderResourceView* const views[LayerSlotCount]{slot2, slot3, slot4};
-    context->PSSetShaderResources(CoverageSlot, LayerSlotCount, none);
+    bindLayers(context, {});
     context->OMSetRenderTargets(1, into.target.GetAddressOf(), nullptr);
-    context->PSSetShaderResources(CoverageSlot, LayerSlotCount, views);
+    bindLayers(context, inputs);
     context->PSSetShader(shader, nullptr, 0);
     context->DrawInstanced(call.count, call.instances, call.first, call.firstInstance);
 }
@@ -163,19 +143,17 @@ void drawLens(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call)
 {
     const UINT width = coverage.width / 2, height = coverage.height / 2;
     constexpr DXGI_FORMAT Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-    ensureTarget(prefiltered, width, height, Format, "Creating the depth of field's prefiltered light");
-    ensureTarget(gathered, width, height, Format, "Creating the depth of field's gather");
-    ensureTarget(farLayer, width, height, Format, "Creating the depth of field's far layer");
+    ensureDrawTarget(device.Get(), prefiltered, width, height, Format, "Creating the depth of field's prefiltered light");
+    ensureDrawTarget(device.Get(), gathered, width, height, Format, "Creating the depth of field's gather");
+    ensureDrawTarget(device.Get(), farLayer, width, height, Format, "Creating the depth of field's far layer");
 
     const SavedOutput saved(context);
     const WholeTargetViewport viewport(context, width, height);
     context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
-    drawLayer(context, call, prefiltered, prefilterShader.Get(), coverage.view.Get(), nullptr, nullptr);
-    drawLayer(context, call, gathered, gatherShader.Get(), nullptr, prefiltered.view.Get(), nullptr);
-    drawLayer(context, call, farLayer, fillShader.Get(), nullptr, gathered.view.Get(), prefiltered.view.Get());
-
-    ID3D11ShaderResourceView* const none[LayerSlotCount]{};
-    context->PSSetShaderResources(CoverageSlot, LayerSlotCount, none);
+    drawLayer(context, call, prefiltered, prefilterShader.Get(), {.coverage = coverage.view.Get()});
+    drawLayer(context, call, gathered, gatherShader.Get(), {.light = prefiltered.view.Get()});
+    drawLayer(context, call, farLayer, fillShader.Get(), {.light = gathered.view.Get(), .radii = prefiltered.view.Get()});
+    bindLayers(context, {});
 }
 
 bool composite(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, ID3D11PixelShader* gameShader)
@@ -190,16 +168,14 @@ bool composite(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, 
     for (UINT i = 0; i < LayerSlotCount; ++i) gameViews[i].Attach(bound[i]);
 
     std::lock_guard lock(resourceMutex);
-    const bool isLens = farBlur == FarBlur::Lens;
+    const bool isLens = latch.frame() == FarBlur::Lens;
     if (isLens) drawLens(context, call);
 
-    ID3D11ShaderResourceView* const views[]{coverage.view.Get(), farLayer.view.Get()};
     context->PSSetShader(isLens ? lensCompositeShader.Get() : compositeShader.Get(), nullptr, 0);
-    context->PSSetShaderResources(CoverageSlot, 2, views);
+    bindLayers(context, {.coverage = coverage.view.Get(), .light = farLayer.view.Get()});
     context->DrawInstanced(call.count, call.instances, call.first, call.firstInstance);
     context->PSSetShader(gameShader, nullptr, 0);
-    ID3D11ShaderResourceView* const restored[LayerSlotCount]{gameViews[0].Get(), gameViews[1].Get(), gameViews[2].Get()};
-    context->PSSetShaderResources(CoverageSlot, LayerSlotCount, restored);
+    bindLayers(context, {gameViews[0].Get(), gameViews[1].Get(), gameViews[2].Get()});
 
     return true;
 }
@@ -243,7 +219,12 @@ void detach() noexcept
 
 void configure(const Configuration& configuration) noexcept
 {
-    wantedFarBlur = configuration.settings.depthOfField.farBlur;
+    latch.set(configuration.settings.depthOfField.farBlur);
+}
+
+void present() noexcept
+{
+    latch.present();
 }
 
 bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_shaders::DrawnShader& shader) noexcept
@@ -256,7 +237,7 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         switch (row->pass)
         {
         case GamePass::DofBake:
-            noteCoverage(context, call, shader.object());
+            drawCoverage(context, call, shader.object());
             return false;
         case GamePass::DofFar:
             return drawFarLayer(context, call);

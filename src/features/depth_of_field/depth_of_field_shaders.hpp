@@ -2,9 +2,12 @@
 
 #include "features/hdr/hdr_shaders.hpp"
 
-// HLSL for the depth of field's focus edges (depth_of_field_pass.hpp), compiled at runtime with
-// d3dcompiler_47.
-namespace phantom_fx::depth_of_field_pass::shaders
+// Under this radius, in render pixels, a pixel is in focus: the lens's layer leaves it out, and its
+// composite leaves it sharp.
+#define PHANTOM_FX_DOF_COMMON PHANTOM_FX_HDR_COMMON "static const float SharpRadius = 0.5;\n"
+
+// HLSL for the depth of field (depth_of_field.hpp), compiled at runtime with d3dcompiler_47.
+namespace phantom_fx::depth_of_field::shaders
 {
 // Each render pixel's own cover by the far layer, as DOF_ScatterCompositeFar works a half-size pixel's
 // out: its blur radius from its depth (DOF_ScatterBakeFirst), then a ramp over the lower half of the
@@ -35,9 +38,9 @@ float2 main(float4 position : SV_Position) : SV_Target
     const float cover = saturate((radius - CocSizes.x) * 2 / max(CocSizes.y - CocSizes.x, 1e-4));
 
     // The game's blur starts at its smallest size; from there the radius is the lens's own.
-    const float start = saturate((radius - CocSizes.x) / max(CocSizes.x * 0.5, 1e-4));
+    const float fadeIn = saturate((radius - CocSizes.x) / max(CocSizes.x * 0.5, 1e-4));
 
-    return float2(cover, max(radius, 0) * start * width / 1920);
+    return float2(cover, max(radius, 0) * fadeIn * width / 1920);
 }
 )";
 
@@ -45,11 +48,9 @@ float2 main(float4 position : SV_Position) : SV_Target
 // spread into the blur around it, and each pixel counts less the brighter it is (Karis's weight), so one
 // noisy ray cannot turn into a disc. a = the radius in half-size texels; rgb is multiplied by it, which
 // lets a bilinear tap beside an in-focus texel keep its colour: rgb / a.
-inline constexpr char FarPrefilter[] = PHANTOM_FX_HDR_COMMON R"(
+inline constexpr char FarPrefilter[] = PHANTOM_FX_DOF_COMMON R"(
 Texture2D<float4> Scene : register(t1);
-Texture2D<float2> Blur : register(t2);
-
-static const float SharpRadius = 0.5; // Render pixels
+Texture2D<float2> Coverage : register(t2);
 
 float4 main(float4 position : SV_Position) : SV_Target
 {
@@ -60,15 +61,16 @@ float4 main(float4 position : SV_Position) : SV_Target
     for (int i = 0; i < 4; ++i)
     {
         const int3 texel = int3(corner + int2(i & 1, i >> 1), 0);
-        const float own = Blur.Load(texel).y;
-        if (own <= SharpRadius) continue;
+        const float pixelRadius = Coverage.Load(texel).y;
+        if (pixelRadius <= SharpRadius) continue;
 
         const float3 color = SrgbToLinear(Scene.Load(texel).rgb);
         const float weight = 1 / (1 + max(color.r, max(color.g, color.b)));
         light += color * weight;
-        radius += own * weight;
+        radius += pixelRadius * weight;
         total += weight;
     }
+
     if (total == 0) return 0;
 
     const float halfSize = radius / total / 2;
@@ -123,6 +125,8 @@ SamplerState Linear : register(s11);
 
 static const float2 Ring[8] = {float2(0.92, 0.38), float2(0.38, 0.92), float2(-0.38, 0.92), float2(-0.92, 0.38),
                                float2(-0.92, -0.38), float2(-0.38, -0.92), float2(0.38, -0.92), float2(0.92, -0.38)};
+static const float TapSpacing = 0.18;   // How far apart the gather's most taps are, of the radius: sqrt(pi / 96)
+static const float LeastSpacing = 0.75; // Texels; bilinear taps closer than this leave nothing to even out
 
 float4 main(float4 position : SV_Position) : SV_Target
 {
@@ -131,9 +135,9 @@ float4 main(float4 position : SV_Position) : SV_Target
     const float2 texelSize = 1 / float2(width, height);
     const float2 uv = position.xy * texelSize;
 
-    const float spacing = Prefiltered.Load(int3(position.xy, 0)).a * 0.18;
+    const float spacing = Prefiltered.Load(int3(position.xy, 0)).a * TapSpacing;
     float4 sum = Gathered.Load(int3(position.xy, 0));
-    if (spacing < 0.75) return sum;
+    if (spacing < LeastSpacing) return sum;
 
     for (int i = 0; i < 8; ++i)
         sum += Gathered.SampleLevel(Linear, uv + Ring[i] * spacing * texelSize, 0);
@@ -147,10 +151,10 @@ float4 main(float4 position : SV_Position) : SV_Target
 // shows is the render pixel's own cover. Where a half-size pixel counted as blurred for one background
 // pixel of its four, the in-focus pixels beside it stay sharp, and the background beside an in-focus
 // half-size pixel takes all of the blur.
-#define PHANTOM_FX_DOF_COMPOSITE PHANTOM_FX_HDR_COMMON R"(
+#define PHANTOM_FX_DOF_COMPOSITE PHANTOM_FX_DOF_COMMON R"(
 Texture2D<float4> Near : register(t0);
 Texture2D<float4> Scene : register(t1);
-Texture2D<float2> Blur : register(t2);
+Texture2D<float2> Coverage : register(t2);
 Texture2D<float4> Far : register(t3);
 SamplerState Linear : register(s11);
 
@@ -161,7 +165,6 @@ float2 UvOf(float4 position)
 {
     uint width, height;
     Scene.GetDimensions(width, height);
-
     return position.xy / float2(width, height);
 }
 
@@ -181,15 +184,15 @@ float4 Composited(float4 position, float4 far, float cover)
 inline constexpr char Composite[] = PHANTOM_FX_DOF_COMPOSITE R"(
 float4 main(float4 position : SV_Position) : SV_Target
 {
-    return Composited(position, Far.Sample(Linear, UvOf(position)), Blur.Load(int3(position.xy, 0)).x);
+    return Composited(position, Far.Sample(Linear, UvOf(position)), Coverage.Load(int3(position.xy, 0)).x);
 }
 )";
 
 // With the lens's far blur. Its half-size layer is stretched by a cubic B-spline in four bilinear taps
 // (Sigg and Hadwiger 2005), as a bilinear stretch shows its texels. The cover is the pixel's own radius:
-// sharp under half a render pixel, all blur over one and a half.
+// sharp at SharpRadius, all blur a render pixel over it.
 inline constexpr char LensComposite[] = PHANTOM_FX_DOF_COMPOSITE R"(
-float4 Smooth(Texture2D<float4> layer, float2 uv)
+float4 SampleBSpline(Texture2D<float4> layer, float2 uv)
 {
     uint width, height;
     layer.GetDimensions(width, height);
@@ -215,7 +218,7 @@ float4 Smooth(Texture2D<float4> layer, float2 uv)
 
 float4 main(float4 position : SV_Position) : SV_Target
 {
-    return Composited(position, Smooth(Far, UvOf(position)), saturate(Blur.Load(int3(position.xy, 0)).y - 0.5));
+    return Composited(position, SampleBSpline(Far, UvOf(position)), saturate(Coverage.Load(int3(position.xy, 0)).y - SharpRadius));
 }
 )";
 }

@@ -16,6 +16,15 @@
 // Direct3D 11 helpers shared by the add-on's effects: their shaders, constants and working textures.
 namespace phantom_fx
 {
+// A 2D texture pixel shaders draw into and read, with its views.
+struct DrawTarget
+{
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> view;
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> target;
+    UINT width{}, height{};
+};
+
 // Flags for a texture Direct3D 12 opens through an NT handle.
 constexpr UINT SharedWithD3D12 = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
@@ -109,6 +118,26 @@ inline ComputeTexture makeComputeTexture(ID3D11Device* device, UINT width, UINT 
     check(device->CreateUnorderedAccessView(made.texture.Get(), nullptr, made.access.GetAddressOf()), what);
 
     return made;
+}
+
+// Makes `target` at this size, if it is not already.
+inline void ensureDrawTarget(ID3D11Device* device, DrawTarget& target, UINT width, UINT height, DXGI_FORMAT format, const char* what)
+{
+    if (target.texture && target.width == width && target.height == height) return;
+
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = width;
+    desc.Height = height;
+    desc.MipLevels = desc.ArraySize = 1;
+    desc.Format = format;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+    DrawTarget made{.width = width, .height = height};
+    check(device->CreateTexture2D(&desc, nullptr, made.texture.GetAddressOf()), what);
+    check(device->CreateShaderResourceView(made.texture.Get(), nullptr, made.view.GetAddressOf()), what);
+    check(device->CreateRenderTargetView(made.texture.Get(), nullptr, made.target.GetAddressOf()), what);
+    target = std::move(made);
 }
 
 inline Microsoft::WRL::ComPtr<ID3D11Resource> resourceOf(ID3D11View* view)
