@@ -665,8 +665,22 @@ float3 SampledEmitterLight(float3 world, float3 normal, float3 origin, float tol
 // light it lets through is scattered, which its glow here carries to what is around it.
 static const float LeafTransmittance = 0.5f;
 
+// Below this much light after the exposure, a sun or moon ray from a hit is traced only some of the time. Most hits at night
+// spend a ray on moonlight too faint to show. Past 0.5 the light fades under Ray Reconstruction, though the estimate stays
+// unbiased: 2 took 2% off the jungle at night, where the moon is all the light there is (2026-11-02).
+static const float DimSunRayLight = 0.5f;
+
+// The chance a hit traces its ray to the sun, whose cosine there is `cosine`: 1 but for dim light under Ray Reconstruction, the only
+// denoiser that has been tried with the noise this adds.
+float SunRayChance(float cosine)
+{
+    if (g_Frame.reconstruction.x == 0u) return 1.0f;
+
+    return saturate(luminance(g_Frame.sunColor.rgb) * cosine * g_Frame.nearFar.w / DimSunRayLight);
+}
+
 // The sun as a disc of its angular size at a hit: a shadow ray to a point on it from the side it lights,
-// a leaf's far side too. Its light before the cosine and the albedo.
+// a leaf's far side too, counted for the hits that left it out (SunRayChance). Its light before the cosine and the albedo.
 float3 SunReaching(float3 world, float3 normal, float3 origin, float tolerance, bool leaf, inout Random random, out float3 direction)
 {
     direction = g_Frame.sunDirection.xyz;
@@ -675,12 +689,15 @@ float3 SunReaching(float3 world, float3 normal, float3 origin, float tolerance, 
     float3 sunSide = sunFar ? -normal : normal;
     if (!(dot(sunSide, towardsSun) > 0.0f) || dot(g_Frame.sunColor.rgb, 1.0f) <= 0.0f) return 0.0f;
 
+    float chance = SunRayChance(dot(sunSide, towardsSun));
+    if (chance < 1.0f && random.rand() >= chance) return 0.0f;
+
     direction = SunSample(random.rand2());
     float3 sunOrigin = sunFar ? OffsetFromTriangle(world, sunSide) : origin;
     float visibility = VisibilityFromSurface(sunOrigin, sunSide, tolerance, direction, 1e4f, ShadowRayTowards(RayTowardsSun));
     if (visibility <= 0.0f) return 0.0f;
 
-    return g_Frame.sunColor.rgb * (visibility * (sunFar ? LeafTransmittance : 1.0f));
+    return g_Frame.sunColor.rgb * (visibility * (sunFar ? LeafTransmittance : 1.0f) / chance);
 }
 
 // With the cosine, its light before the albedo.
