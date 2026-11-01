@@ -580,6 +580,8 @@ Known limits:
 - The five cutscenes of `f30010` do not load: four are in a side op's pack and `Demo_RecoverVolgin`
   needs the `recoverVolginDemo` label. Their labels say so, and the 60 s limit ends them in the ACC,
   with a toast.
+- The 60 s limit starts in our sequence. A hang before that, in `Seq_Mission_Prepare`, stays on the
+  black screen until the game is killed.
 
 ## How Fox Engine renders
 
