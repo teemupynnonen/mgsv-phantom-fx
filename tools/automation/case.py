@@ -1,4 +1,4 @@
-"""Says what is wrong in a debug case (src/automation.hpp, docs/DEVELOPMENT.md "Debug cases").
+"""Says what is wrong in a debug case (src/dev/automation.hpp, docs/DEVELOPMENT.md "Debug cases").
 
   case.py [--copy] [<case>]     report.md, numbers.json and pictures in the case's folder; the latest case by default
 

@@ -48,8 +48,9 @@ Its log's first line says "with the diagnostic log". Builds for in-game checks u
 It also sets `PHANTOM_FX_DEV_TOOLS` (`DevTools` in `src/dev_tools.hpp`), which adds the overlay's
 **Developer** page, below Diagnostics: **Travel** (see "Travel"), **Cutscenes** (see "Cutscenes"),
 the **Lua console** (see "Game Lua") and the log switch above, and the debug cases (see "Debug
-cases"). All of it is left out of a release build altogether, not just switched off: CMake drops
-their files and the `InspectPixels` kernel, and what they need elsewhere stands in
+cases"). All of it lives in `src/dev/`, whose README says how the core reaches it and how to detach it.
+It is left out of a release build altogether, not just switched off: CMake drops the folder's files
+and the `InspectPixels` kernel, and the little the core keeps for it stands behind `DevTools` or
 `#if PHANTOM_FX_DEV_TOOLS`. Those files hook the system's file calls, patch Steam's interfaces and
 run what they are told, which security software rightly flags.
 `tools/automation/check_release.py` looks through a built add-on for the tools' known markers.
@@ -237,12 +238,16 @@ what draws it, when that is the feature's own.
 | `src/sun_movement.cpp`, `src/sun_movement.hpp` | The sun and moon move every frame instead of in the game's steps (see "Sun movement") |
 | `src/game_dither.cpp`, `src/game_dither.hpp` | The game's colour dither taken out of its shaders as they are made (see "Dither") |
 | `src/dev_tools.hpp` | Whether the build has the Developer page (the dev preset) |
-| `src/game_lua.cpp`, `src/game_lua.hpp` | Lua in the game's script state, and the Developer page's console (see "Game Lua") |
-| `src/travel.cpp`, `src/travel.hpp` | The Developer page's travel: free roam in another map, and the way the page's tools leave a mission (see "Travel") |
-| `src/cutscenes.cpp`, `src/cutscenes.hpp`, `src/cutscene_list.hpp` | The Developer page's cutscene player and its list (see "Cutscenes") |
+| `src/dev/` | The development tools, in a dev build alone; its README says how to detach them. `dev.*`: the core's one door to them, and the Developer page |
+| `src/dev/game_lua.cpp`, `src/dev/game_lua.hpp` | Lua in the game's script state, and the Developer page's console (see "Game Lua") |
+| `src/dev/travel.cpp`, `src/dev/travel.hpp` | The Developer page's travel: free roam in another map, and the way the page's tools leave a mission (see "Travel") |
+| `src/dev/cutscenes.cpp`, `src/dev/cutscenes.hpp`, `src/dev/cutscene_list.hpp` | The Developer page's cutscene player and its list (see "Cutscenes") |
 | `src/frame_log.cpp`, `src/frame_log.hpp` | Development diagnostics, off by default: shader log, F10 frame record, constant and texture dumps |
-| `src/automation.cpp`, `src/automation.hpp` | Dev builds: commands from files into the running game, F9's debug cases (see "Debug cases") |
-| `src/save_redirect.cpp`, `src/save_redirect.hpp` | The automation copy of the game: its saves, backups and display settings kept apart from the player's |
+| `src/dev/automation.cpp`, `src/dev/automation.hpp` | Dev builds: commands from files into the running game, F9's debug cases (see "Debug cases") |
+| `src/dev/inspect_trace.cpp`, `src/dev/inspect_trace.hpp`, `src/dev/inspect.hlsl`, `src/dev/inspect_shared.h` | A debug case's record of every pixel, a trace of its own |
+| `src/dev/game_shadow.cpp`, `src/dev/game_shadow.hpp` | A debug case's reference: the game's shadow per pixel, drawn at the sun pass |
+| `src/dev/held_camera.cpp`, `src/dev/held_camera.hpp` | A debug case's camera, which photo mode's camera update takes |
+| `src/dev/save_redirect.cpp`, `src/dev/save_redirect.hpp` | The automation copy of the game: its saves, backups and display settings kept apart from the player's |
 | `tools/automation/` | Dev builds: `fx.py` talks to the running game, `case.py` reports a debug case, `install.ps1` and `launch.ps1` run the automation copy; `check_release.py` fails if any of it reached a release build |
 | `src/resource_dump.cpp`, `src/resource_dump.hpp` | Format names, constant rows, DDS saving for the dumps |
 | `src/shader_bytecode.cpp`, `src/shader_bytecode.hpp` | DXBC checksum (bytes 4 to 20 of the container), the instruction walk, the output saturation patch, the dither patch |
@@ -418,7 +423,7 @@ more can be asked of the same frame. Aim the screen's centre at the fault first 
   alone says of each pixel (`game-shadow.dds`, 1 lit, 0 blocked, -1 no answer: `SHADOW_MAP` with `GAME_SHADOW` in
   `sun_light_pass_shaders.hpp`, drawn after the sun pass with its inputs as bound); what the scene is at
   (`state.txt`), the settings; and two records of every pixel.
-- **A record** (`scene.bin`, `revealed.bin`: `GIInspectPixel`, `InspectPixels` in `gi_shadow.hlsl`) has what the
+- **A record** (`scene.bin`, `revealed.bin`: `GIInspectPixel`, `InspectPixels` in `src/dev/inspect.hlsl`) has what the
   camera's ray meets first, what the scene has within a tolerance of the game's surface, what blocks the ray to the
   sun, and the game's distance. The `.tsv` beside it names every hit as the probes do.
 - **The revealed scene** answers what the scene lacks. The record is taken again with everything the scene leaves
@@ -433,7 +438,7 @@ more can be asked of the same frame. Aim the screen's centre at the fault first 
   with a pixel to probe and, from the revealed scene, what is there and why it was left out. Run it with
   `uv run --with numpy --with pillow --with scipy python tools/automation/case.py`.
 
-The running game takes commands from files (`src/automation.hpp` lists them, `tools/automation/fx.py` sends them):
+The running game takes commands from files (`src/dev/automation.hpp` lists them, `tools/automation/fx.py` sends them):
 the probes at any pixel (`probe <x> <y>`), the camera anywhere while frozen, settings and debug views, the Lua
 console, and `reveal <hash>`, which tries the scene with a model in it: a fix for a left-out model can be seen
 working before it is written. `fx.py case` records a case without the key.
@@ -443,7 +448,7 @@ working before it is written. `fx.py case` records a case without the key.
 `fx.py --copy acc` goes on into the helicopter's cabin (`TppMission.ReserveMissionClear` for mission 40050). The title
 screen shows the same cabin but moves on by itself: a freeze there lands in a loading screen, which stalls under the pause
 and renders nothing. It reads
-and writes its own saves (`PhantomFX-automation/saves`, `src/save_redirect.hpp`), and `launch.ps1` checks the player's
+and writes its own saves (`PhantomFX-automation/saves`, `src/dev/save_redirect.hpp`), and `launch.ps1` checks the player's
 files are unchanged afterwards. Never run it beside the player's game: `launch.ps1` would put back saves the
 player's game wrote meanwhile.
 
@@ -537,7 +542,7 @@ the state back there for the overlay. Nothing is saved.
 
 ### Game Lua
 
-`src/game_lua.cpp` runs Lua in the game's own script state, on the game thread at the main loop's
+`src/dev/game_lua.cpp` runs Lua in the game's own script state, on the game thread at the main loop's
 frame start, the way the game's own calls into it run. The dev build's Developer page has a **Lua
 console** on it: Ctrl+Enter or Run runs the box's code at the next frame start, and the output box
 shows what it printed and returned, or its error with the stack.
@@ -562,7 +567,7 @@ shows what it printed and returned, or its error with the stack.
 
 ### Travel
 
-The dev build's Developer page has **Travel** (`src/travel.cpp`): Afghanistan, Africa or Mother
+The dev build's Developer page has **Travel** (`src/dev/travel.cpp`): Afghanistan, Africa or Mother
 Base free roam from any free roam, after one loading screen, without the helicopter and the sortie
 screens. It runs a chunk through Game Lua, and a toast says whether the game left or why not.
 
@@ -583,16 +588,16 @@ screens. It runs a chunk through Game Lua, and a toast says whether the game lef
   Base (9.12, 8.75, -42.43), the Command platform's first helipad (landing point
   `cl00pl0_mb_fndt_plnt_heli_30050` in `mbdvc_map_mbstage_parameter.lua`, the same in every
   layout).
-- **Shared.** The leaving and the arrival on foot are Lua helpers in `src/travel.cpp`, which
+- **Shared.** The leaving and the arrival on foot are Lua helpers in `src/dev/travel.cpp`, which
   `travel::depart` puts ahead of a chunk. The cutscene player leaves the same way.
 
 ### Cutscenes
 
-The dev build's Developer page has **Cutscenes** (`src/cutscenes.cpp`): a searchable list of the
+The dev build's Developer page has **Cutscenes** (`src/dev/cutscenes.cpp`): a searchable list of the
 game's cutscenes and a Play button, for free roam and the ACC. The game calls a cutscene a demo.
 Search takes the mission's code or title, the name in its script or the demo id.
 
-- **List.** `src/cutscene_list.hpp` holds 198 cutscenes: each mission's `demoList` (157, without the
+- **List.** `src/dev/cutscene_list.hpp` holds 198 cutscenes: each mission's `demoList` (157, without the
   names that repeat a demo id and the placeholders that are not cutscenes) and 41 of the 47 in
   `TppDefine.MB_FREEPLAY_DEMO_PRIORITY_LIST`. Only the running mission's list is in memory, so the
   file is written out from the game's `s*_demo.lua` scripts.
@@ -2457,12 +2462,12 @@ in Direct3D 12, puts it in the frame's tables, moves it out of the common state 
 and marks a `SharedOutput` written once the frame is submitted. A `SharedOutput` keeps its own lock, since the kick
 and the threads recording the next frame use it at the same time.
 
-So far the lamps' shadow rays are a trace (`lamp_shadow_rays.*`); the others are recorded by `gi_renderer` itself.
+So far the lamps' shadow rays are a trace (`lamp_shadow_rays.*`), and so is a dev build's record of a debug case (`src/dev/inspect_trace.*`); the others are recorded by `gi_renderer` itself.
 
 ### Kernels and their slots
 
 A kernel's HLSL is the one home of its slots: the `register()` lines, each in the file of the trace that owns it. A
-kernel's one home is its `add_gi_kernels` line in `CMakeLists.txt`. The build reads the rest from the compiled kernels,
+kernel's one home is its `add_gi_kernels` line in `CMakeLists.txt` (`src/dev/dev.cmake` for a dev build's). The build reads the rest from the compiled kernels,
 so nothing is typed twice.
 
 `tools/kernel_bindings` reflects each kernel's DXIL with DXC's own reflection (`dxcompiler.dll`, beside `dxc.exe`) and

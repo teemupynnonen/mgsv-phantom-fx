@@ -4,7 +4,7 @@ param(
     [string]$Build = (Join-Path $PSScriptRoot '..\..\build\dev'),
     [string]$Game = (Join-Path $env:USERPROFILE 'Documents\Development\mgsv-automation\game'),
     [string]$Steam = 'C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP',
-    # The saves every run starts from; the game reads and writes a copy (src/save_redirect.hpp).
+    # The saves every run starts from; the game reads and writes a copy (src/dev/save_redirect.hpp).
     [string]$SeedSaves = (Join-Path $env:USERPROFILE 'Documents\Development\mgsv-automation\seed-saves'),
     [int]$Width = 1920,
     [int]$Height = 1080,
