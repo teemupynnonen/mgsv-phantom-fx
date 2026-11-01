@@ -807,11 +807,12 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         for (const auto& part : model->parts)
         {
             const bool isGlass = part.role == scene_description::MeshRole::Glass;
-            gi_textures::want(part.baseTexture, isGlass ? gi_textures::Use::Data : scene_description::isCutOut(part.role) ? gi_textures::Use::CutOut : gi_textures::Use::Colour);
-            gi_textures::want(part.specularTexture, gi_textures::Use::Data);
-            gi_textures::want(part.normalTexture, gi_textures::Use::Data);
-            gi_textures::want(part.layerTexture, gi_textures::Use::Colour);
-            gi_textures::want(part.layerMaskTexture, gi_textures::Use::Data);
+            const auto [base, specular, normal, layer, layerMask] = scene_description::texturePathsOf(part);
+            gi_textures::want(base, isGlass ? gi_textures::Use::Data : scene_description::isCutOut(part.role) ? gi_textures::Use::CutOut : gi_textures::Use::Colour);
+            gi_textures::want(specular, gi_textures::Use::Data);
+            gi_textures::want(normal, gi_textures::Use::Data);
+            gi_textures::want(layer, gi_textures::Use::Colour);
+            gi_textures::want(layerMask, gi_textures::Use::Data);
         }
     endStep(ModelsStep);
     gi_textures::update(device.Get(), immediate.Get(), frame.newTextures);

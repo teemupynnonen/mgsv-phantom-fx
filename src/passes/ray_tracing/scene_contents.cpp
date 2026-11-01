@@ -49,7 +49,8 @@ template<class Record> auto findVariant(Record& record, std::uint64_t hiddenGrou
 // A mesh's bytes in the pool, in this order and each from a 16-byte boundary: its vertices (16 bytes:
 // the position, then the texture coordinates), its indices, a skinned model's skin (GISkinRecord:
 // 16 bytes a vertex), its vertices' normals and tangents (GIGeometry::normalOffset: 16 bytes a vertex) and
-// a layered mesh's second texture coordinates (GIGeometry::layerUvOffset: 4 bytes a vertex).
+// a layered mesh's second texture coordinates then any of its mask's (GIGeometry::layerUvOffset, layerMaskUvOffset:
+// 4 bytes a vertex each).
 struct PoolLayout
 {
     std::uint64_t vertices{}, indices{}, skin{}, normals{}, layerUvs{};
@@ -69,8 +70,9 @@ std::uint64_t aligned(std::uint64_t value, std::uint64_t alignment)
 
 PoolLayout poolLayoutOf(const Model& model, const ModelPart& part)
 {
+    const auto layerUvs = part.layer ? part.layer->uvs.size() + part.layer->maskUvs.size() : 0;
     return {part.vertices.size() * 16, aligned(part.indices.size() * 2, 16), model.bones ? part.vertices.size() * 16 : 0, part.normals.size() * 16,
-        aligned(part.layerUvs.size() * 4, 16)};
+        aligned(layerUvs * 4, 16)};
 }
 
 // The bytes of a model's meshes in the pool.
@@ -141,8 +143,8 @@ scene_description::Material SceneContents::materialOf(const ModelPart& part) con
         return texture != textures.end() ? texture->second.slot : std::nullopt;
     };
 
-    return scene_description::materialOf(
-        part, {slotOf(part.baseTexture), slotOf(part.specularTexture), slotOf(part.normalTexture), slotOf(part.layerTexture), slotOf(part.layerMaskTexture)});
+    const auto [base, specular, normal, layer, layerMask] = texturePathsOf(part);
+    return scene_description::materialOf(part, {slotOf(base), slotOf(specular), slotOf(normal), slotOf(layer), slotOf(layerMask)});
 }
 
 // The model's meshes laid out from `poolOffset` into `bytes`, and their geometries; a skinned model's
@@ -158,17 +160,7 @@ std::vector<Geometry> SceneContents::stageModel(const Model& model, std::uint64_
     {
         const auto& part = model.parts[i];
         const auto layout = poolLayoutOf(model, part);
-        const auto material = materialOf(part);
-        Geometry geometry{.flags = material.flags,
-            .texture = material.texture,
-            .alphaThreshold = material.alphaThreshold,
-            .specularTexture = material.specularTexture,
-            .normalTexture = material.normalTexture,
-            .materialIndex = material.materialIndex,
-            .emission = material.emission,
-            .layerTexture = material.layerTexture,
-            .layerMaskTexture = material.layerMaskTexture,
-            .layerMapping = part.layerMapping};
+        Geometry geometry{.material = materialOf(part)};
         geometry.vertexOffset = poolOffset + at;
         geometry.vertexCount = static_cast<std::uint32_t>(part.vertices.size());
         for (std::size_t v = 0; v < part.vertices.size(); ++v)
@@ -184,10 +176,19 @@ std::vector<Geometry> SceneContents::stageModel(const Model& model, std::uint64_
         std::memcpy(bytes.data() + at, part.indices.data(), part.indices.size() * 2);
         at += layout.indices;
         if (!part.normals.empty()) geometry.normalOffset = poolOffset + at + layout.skin;
-        if (!part.layerUvs.empty())
+
+        if (part.layer)
         {
-            geometry.layerUvOffset = poolOffset + at + layout.skin + layout.normals;
-            std::memcpy(bytes.data() + at + layout.skin + layout.normals, part.layerUvs.data(), part.layerUvs.size() * 4);
+            const auto& layer = *part.layer;
+            const auto uvsAt = at + layout.skin + layout.normals, maskUvsAt = uvsAt + layer.uvs.size() * 4;
+            geometry.layerMapping = layer.mapping;
+            geometry.layerUvOffset = poolOffset + uvsAt;
+            std::memcpy(bytes.data() + uvsAt, layer.uvs.data(), layer.uvs.size() * 4);
+            if (!layer.maskUvs.empty())
+            {
+                geometry.layerMaskUvOffset = poolOffset + maskUvsAt;
+                std::memcpy(bytes.data() + maskUvsAt, layer.maskUvs.data(), layer.maskUvs.size() * 4);
+            }
         }
 
         geometries.push_back(geometry);
@@ -246,8 +247,8 @@ void SceneContents::updateTextures(const GameScene& frame)
             const auto& parts = modelRecord.geometry->parts;
             for (std::uint32_t i = 0; i < parts.size() && i < MaxModelParts; ++i)
             {
-                const std::array used{parts[i].baseTexture, parts[i].specularTexture, parts[i].normalTexture, parts[i].layerTexture, parts[i].layerMaskTexture};
-                if (std::ranges::find(used, made.path) == used.end()) continue;
+                const auto paths = texturePathsOf(parts[i]);
+                if (std::ranges::find(paths, made.path) == paths.end()) continue;
 
                 const auto material = materialOf(parts[i]);
                 if (modelRecord.blas) memory.setMaterial(*modelRecord.blas, i, material);
@@ -255,13 +256,7 @@ void SceneContents::updateTextures(const GameScene& frame)
 
                 // Its variants' structures, and a skinned model's characters' structures, that have it among
                 // the meshes they show.
-                modelRecord.parts[i].flags = material.flags;
-                modelRecord.parts[i].texture = material.texture;
-                modelRecord.parts[i].alphaThreshold = material.alphaThreshold;
-                modelRecord.parts[i].specularTexture = material.specularTexture;
-                modelRecord.parts[i].normalTexture = material.normalTexture;
-                modelRecord.parts[i].layerTexture = material.layerTexture;
-                modelRecord.parts[i].layerMaskTexture = material.layerMaskTexture;
+                modelRecord.parts[i].material = material;
                 for (const auto& variant : modelRecord.variants)
                 {
                     const auto shown = std::find(variant.parts.begin(), variant.parts.end(), i);
@@ -285,7 +280,7 @@ void SceneContents::updateTextures(const GameScene& frame)
 void SceneContents::useTextures(const Model& model, bool isUsed, Update& update)
 {
     for (const auto& part : model.parts)
-        for (const auto path : {part.baseTexture, part.specularTexture, part.normalTexture, part.layerTexture, part.layerMaskTexture})
+        for (const auto path : texturePathsOf(part))
         {
             if (!path) continue;
 
@@ -680,7 +675,7 @@ void SceneContents::addEmitters(const ModelRecord& record, const ModelInstance& 
 
         const auto& [x, y, z] = emitter.centre;
         const std::array centre{t[0] * x + t[1] * y + t[2] * z + t[3], t[4] * x + t[5] * y + t[6] * z + t[7], t[8] * x + t[9] * y + t[10] * z + t[11]};
-        const auto& emission = record.parts[emitter.part].emission;
+        const auto& emission = record.parts[emitter.part].material.emission;
         const float spread = emitter.area * scale * scale / std::numbers::pi_v<float>;
         const float strongest = std::max({emission[0], emission[1], emission[2]}) * spread;
         const float reach = std::sqrt(strongest / LeastEmitterLight) + emitter.radius * scale;
@@ -1016,9 +1011,8 @@ void SceneContents::dumpModels(const std::filesystem::path& folder) const
 
         file << '\n';
         for (const auto& part : record.geometry->parts)
-            file << std::format("  mesh {} group {} first {} count {} technique {:x} alpha {:#04x} shadow {:#04x}{}{}\n", part.mesh, part.group, part.firstIndex,
-                part.indexCount, part.technique, part.alphaBits, part.shadowBits, isCutOut(part.role) ? " cut-out" : "",
-                !part.layerTexture ? "" : part.layerBlend == scene_description::LayerBlend::Multiply ? " layer multiplies" : " layer blends");
+            file << std::format("  mesh {} group {} first {} count {} technique {:x} alpha {:#04x} shadow {:#04x}{}\n", part.mesh, part.group, part.firstIndex,
+                part.indexCount, part.technique, part.alphaBits, part.shadowBits, isCutOut(part.role) ? " cut-out" : "");
         for (const auto& mesh : record.geometry->dropped)
             file << std::format("  mesh {} left out, technique {:x} alpha {:#04x} shadow {:#04x}\n", mesh.mesh, mesh.technique, mesh.alphaBits, mesh.shadowBits);
     }

@@ -309,13 +309,19 @@ float HitLevel(Texture2D<float4> texture, SceneTriangle t, float footprint)
     return HitLevel(texture, t, VertexUV(t.geometry, t.indices.x), VertexUV(t.geometry, t.indices.y), VertexUV(t.geometry, t.indices.z), footprint);
 }
 
-// A linear colour as its sRGB encoded values, and back.
-float3 SrgbEncoded(float3 value)
+// A texture at a hit, from the coordinates at its triangle's corners.
+float4 SampleHit(Texture2D<float4> texture, SceneTriangle t, float2 uv0, float2 uv1, float2 uv2, float2 barycentrics, float footprint)
+{
+    return texture.SampleLevel(g_WrapSampler, InterpolatedUV(uv0, uv1, uv2, barycentrics), HitLevel(texture, t, uv0, uv1, uv2, footprint));
+}
+
+// A linear colour as its sRGB encoded values, and back. As HDR's (hdr_shaders.hpp), whose shaders are built apart from these.
+float3 LinearToSrgb(float3 value)
 {
     return lerp(value * 12.92f, 1.055f * pow(max(value, 1e-6f), 1.0f / 2.4f) - 0.055f, step(0.0031308f, value));
 }
 
-float3 SrgbDecoded(float3 value)
+float3 SrgbToLinear(float3 value)
 {
     return lerp(value / 12.92f, pow((value + 0.055f) / 1.055f, 2.4f), step(0.04045f, value));
 }
@@ -325,22 +331,26 @@ float3 SrgbDecoded(float3 value)
 // is what those shaders read, but GI_GEOMETRY_LAYER_LINEAR's. The shaders' sheen and dirt are left out.
 float3 LayeredAlbedo(float3 base, SceneTriangle t, float2 barycentrics, float footprint)
 {
-    float2 uv0 = VertexLayerUV(t.geometry, t.indices.x), uv1 = VertexLayerUV(t.geometry, t.indices.y), uv2 = VertexLayerUV(t.geometry, t.indices.z);
-    float2 uv = (1.0f - barycentrics.x - barycentrics.y) * uv0 + barycentrics.x * uv1 + barycentrics.y * uv2;
-    Texture2D<float4> layer = g_SceneTextures[NonUniformResourceIndex(t.geometry.layerTexture - 1)];
-    float4 texel = layer.SampleLevel(g_WrapSampler, uv, HitLevel(layer, t, uv0, uv1, uv2, footprint));
-    float lying = texel.a;
-    if (t.geometry.layerMaskTexture)
+    GIGeometry geometry = t.geometry;
+    uint3 corners = t.indices;
+    Texture2D<float4> layerTexture = g_SceneTextures[NonUniformResourceIndex(geometry.layerTexture - 1)];
+    float4 layer = SampleHit(layerTexture, t, VertexLayerUV(geometry, corners.x), VertexLayerUV(geometry, corners.y), VertexLayerUV(geometry, corners.z),
+        barycentrics, footprint);
+    float coverage = layer.a;
+    if (geometry.layerMaskTexture)
     {
-        Texture2D<float4> mask = g_SceneTextures[NonUniformResourceIndex(t.geometry.layerMaskTexture - 1)];
-        lying *= mask.SampleLevel(g_WrapSampler, TriangleUV(t.geometry, t.indices, barycentrics), HitLevel(mask, t, footprint)).r;
+        Texture2D<float4> maskTexture = g_SceneTextures[NonUniformResourceIndex(geometry.layerMaskTexture - 1)];
+        float4 mask = SampleHit(maskTexture, t, VertexLayerMaskUV(geometry, corners.x), VertexLayerMaskUV(geometry, corners.y),
+            VertexLayerMaskUV(geometry, corners.z), barycentrics, footprint);
+        coverage *= (geometry.flags & GI_GEOMETRY_LAYER_MASK_BLUE) != 0 ? mask.b : mask.r;
     }
 
-    if (t.geometry.flags & GI_GEOMETRY_LAYER_LINEAR) return lerp(base, texel.rgb, lying);
+    if (geometry.flags & GI_GEOMETRY_LAYER_LINEAR) return lerp(base, layer.rgb, coverage);
 
-    float3 encodedBase = SrgbEncoded(base), encodedLayer = SrgbEncoded(texel.rgb);
-    float3 laid = (t.geometry.flags & GI_GEOMETRY_LAYER_BLEND) != 0 ? encodedLayer : encodedBase * encodedLayer;
-    return SrgbDecoded(lerp(encodedBase, laid, lying));
+    float3 encodedBase = LinearToSrgb(base), encodedLayer = LinearToSrgb(layer.rgb);
+    float3 laid = (geometry.flags & GI_GEOMETRY_LAYER_BLEND) != 0 ? encodedLayer : encodedBase * encodedLayer;
+
+    return SrgbToLinear(lerp(encodedBase, laid, coverage));
 }
 
 // A hit's albedo: the sea's water; none on a self-lit mesh, whose texture is its light; the G-buffer's where the

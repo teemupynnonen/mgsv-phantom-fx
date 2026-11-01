@@ -24,15 +24,9 @@ struct Geometry
     std::uint32_t vertexCount{};
     std::uint64_t indexOffset{};  // Bytes into the pool, 16-bit indices
     std::uint32_t indexCount{};   // 0: three vertices a triangle
-    std::uint32_t flags{};        // GI_GEOMETRY_*; GI_GEOMETRY_CUT_OUT makes it non-opaque
-    std::uint32_t texture{};      // As GIGeometry
-    float alphaThreshold{};
-    std::uint32_t specularTexture{}, normalTexture{}, materialIndex{}; // As GIGeometry
-    std::array<float, 3> emission{};
-    std::uint64_t normalOffset{}; // As GIGeometry
-    std::uint64_t layerUvOffset{};
-    std::uint32_t layerTexture{}, layerMaskTexture{};
-    std::array<float, 4> layerMapping{1, 1, 0, 0};
+    scene_description::Material material; // Its flags' GI_GEOMETRY_CUT_OUT makes it non-opaque
+    std::uint64_t normalOffset{}, layerUvOffset{}, layerMaskUvOffset{}; // As GIGeometry
+    std::array<float, 4> layerMapping{};                                // As GIGeometry
 };
 
 // How a bottom-level structure is built: once, then compacted (Static); or in place, again or refitted,

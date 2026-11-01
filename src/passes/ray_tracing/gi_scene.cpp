@@ -21,6 +21,20 @@ constexpr std::uint64_t UploadBytes = GeometryUploadBytes + std::uint64_t{MaxIns
 // costs a few frames a little rather than one frame a lot.
 constexpr std::uint32_t BuildsPerFrame = 128;
 constexpr std::uint64_t BuildTrianglesPerFrame = 300'000;
+
+// What a mesh's material says of its row of the table. Its structure keeps GI_GEOMETRY_CUT_OUT.
+void applyMaterial(GIGeometry& row, const scene_description::Material& material)
+{
+    row.flags = (row.flags & GI_GEOMETRY_CUT_OUT) | (material.flags & ~GI_GEOMETRY_CUT_OUT);
+    row.texture = material.texture;
+    row.alphaThreshold = material.alphaThreshold;
+    row.specularTexture = material.specularTexture;
+    row.normalTexture = material.normalTexture;
+    row.materialIndex = material.materialIndex;
+    row.emission = {material.emission[0], material.emission[1], material.emission[2]};
+    row.layerTexture = material.layerTexture;
+    row.layerMaskTexture = material.layerMaskTexture;
+}
 }
 
 Scene::Scene(ID3D12Device5* device, D3D12_CPU_DESCRIPTOR_HANDLE textures, UINT descriptorSize)
@@ -332,8 +346,8 @@ std::optional<BlasId> Scene::createBlas(Use use, const std::vector<Geometry>& ge
         D3D12_RAYTRACING_GEOMETRY_DESC desc{};
         desc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
         // Hair dims a ray once for each layer it crosses (PassHair), so a ray must meet each of its triangles once.
-        if (!(geometry.flags & GI_GEOMETRY_CUT_OUT)) desc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
-        else if (geometry.flags & GI_GEOMETRY_HAIR) desc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NO_DUPLICATE_ANYHIT_INVOCATION;
+        if (!(geometry.material.flags & GI_GEOMETRY_CUT_OUT)) desc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+        else if (geometry.material.flags & GI_GEOMETRY_HAIR) desc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NO_DUPLICATE_ANYHIT_INVOCATION;
         desc.Triangles.VertexBuffer = {poolAddress + geometry.vertexOffset, 16};
         desc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
         desc.Triangles.VertexCount = geometry.vertexCount;
@@ -372,11 +386,14 @@ std::optional<BlasId> Scene::createBlas(Use use, const std::vector<Geometry>& ge
     for (std::uint32_t i = 0; i < geometries.size(); ++i)
     {
         const auto& geometry = geometries[i];
-        GIGeometry row{static_cast<std::uint32_t>(geometry.vertexOffset), geometry.indexCount ? static_cast<std::uint32_t>(geometry.indexOffset) : GI_NO_INDICES,
-            geometry.flags, geometry.texture, geometry.alphaThreshold, geometry.specularTexture, geometry.normalTexture, geometry.materialIndex,
-            {geometry.emission[0], geometry.emission[1], geometry.emission[2], 0}, static_cast<std::uint32_t>(geometry.normalOffset),
-            static_cast<std::uint32_t>(geometry.layerUvOffset), geometry.layerTexture, geometry.layerMaskTexture,
-            {geometry.layerMapping[0], geometry.layerMapping[1], geometry.layerMapping[2], geometry.layerMapping[3]}};
+        GIGeometry row{.vertexOffset = static_cast<std::uint32_t>(geometry.vertexOffset),
+            .indexOffset = geometry.indexCount ? static_cast<std::uint32_t>(geometry.indexOffset) : GI_NO_INDICES,
+            .flags = geometry.material.flags & GI_GEOMETRY_CUT_OUT,
+            .layerMaskUvOffset = static_cast<std::uint32_t>(geometry.layerMaskUvOffset),
+            .normalOffset = static_cast<std::uint32_t>(geometry.normalOffset),
+            .layerUvOffset = static_cast<std::uint32_t>(geometry.layerUvOffset),
+            .layerMapping = {geometry.layerMapping[0], geometry.layerMapping[1], geometry.layerMapping[2], geometry.layerMapping[3]}};
+        applyMaterial(row, geometry.material);
         writeRow(blas.firstGeometry + i, row);
         newRows.push_back(blas.firstGeometry + i);
     }
@@ -450,13 +467,7 @@ void Scene::setMaterial(BlasId id, std::uint32_t geometry, const scene_descripti
     if (!blas.live || geometry >= blas.geometries.size()) return;
 
     auto row = rows[blas.firstGeometry + geometry];
-    row.flags = (row.flags & GI_GEOMETRY_CUT_OUT) | (material.flags & ~GI_GEOMETRY_CUT_OUT);
-    row.texture = material.texture;
-    row.alphaThreshold = material.alphaThreshold;
-    row.specularTexture = material.specularTexture;
-    row.normalTexture = material.normalTexture;
-    row.layerTexture = material.layerTexture;
-    row.layerMaskTexture = material.layerMaskTexture;
+    applyMaterial(row, material);
     writeRow(blas.firstGeometry + geometry, row);
 }
 

@@ -404,34 +404,41 @@ void textureArrival()
         "The model's meshes with the texture take it, in its variant and its character too.");
 }
 
-// A layered mesh's second coordinates reach the pool, where its row says, and it takes its layer and the layer's mask as their
-// copies come.
+// A layered mesh's coordinates reach the pool, where its row says, on a rigid model and a character's skin between them and
+// its vertices alike, and it takes its layer and the layer's mask as their copies come.
 void layeredMesh()
 {
     constexpr std::uint64_t Weave = 0x300, WeaveMask = 0x400;
     auto coat = mesh(0, 0, Paint);
-    coat.layerTexture = Weave;
-    coat.layerMaskTexture = WeaveMask;
-    coat.layerMapping = {5, 5, 0, 0};
-    coat.layerUvs = {7, 8, 9};
+    coat.normals = {{}, {}, {}};
+    coat.layer = {.texture = Weave, .maskTexture = WeaveMask, .mapping = {5, 5, 0, 0}, .uvs = {7, 8, 9}, .maskUvs = {4, 5, 6}};
 
+    const auto bytesAt = [](const TestScene& scene, std::uint64_t offset) { return scene.memory.lastUpload.data() + (offset - scene.memory.lastUploadOffset); };
+    for (const std::uint32_t bones : {0u, 1u})
+    {
+        TestScene scene;
+        GameFrame frame{.newModels = {model(Soldier, {coat}, bones)}};
+        if (bones) frame.characters = {listed(7, Soldier)};
+        else frame.placements = {placed(Soldier)};
+
+        scene.run(frame);
+        const auto& geometry = scene.memory.structures[scene.structureWith(bones ? Use::Refit : Use::Static, 1)].geometries[0];
+        expect(geometry.layerMapping == coat.layer->mapping && geometry.material.layerTexture == 0, "Its row has its layer's mapping, and no layer before its copy.");
+        expect(std::memcmp(bytesAt(scene, geometry.layerUvOffset), coat.layer->uvs.data(), 12) == 0, "Its second coordinates are where its row says.");
+        expect(std::memcmp(bytesAt(scene, geometry.layerMaskUvOffset), coat.layer->maskUvs.data(), 12) == 0, "So are its mask's.");
+
+        frame.newModels.clear();
+        frame.textures = {{Paint}, {Weave}, {WeaveMask}};
+        scene.run(frame);
+        const auto& change = scene.memory.materialChanges.back();
+        expect(change.material.texture == 1 && change.material.layerTexture == 2 && change.material.layerMaskTexture == 3, "It takes its textures' slots.");
+    }
+
+    auto uniform = coat;
+    uniform.layer->maskUvs.clear();
     TestScene scene;
-    GameFrame lists{.placements = {placed(Building)}};
-    auto first = lists;
-    first.newModels = {model(Building, {coat})};
-    scene.run(first);
-
-    const auto& geometry = scene.memory.structures[scene.structureWith(Use::Static, 1)].geometries[0];
-    expect(geometry.layerMapping == coat.layerMapping && geometry.layerTexture == 0, "Its row has its layer's mapping, and no layer before its copy.");
-
-    const auto at = geometry.layerUvOffset - scene.memory.lastUploadOffset;
-    expect(geometry.layerUvOffset > geometry.indexOffset && at + 12 <= scene.memory.lastUpload.size(), "Its second coordinates lie after its other bytes.");
-    expect(std::memcmp(scene.memory.lastUpload.data() + at, coat.layerUvs.data(), 12) == 0, "They are where its row says.");
-
-    lists.textures = {{Paint}, {Weave}, {WeaveMask}};
-    scene.run(lists);
-    const auto& change = scene.memory.materialChanges.back();
-    expect(change.material.texture == 1 && change.material.layerTexture == 2 && change.material.layerMaskTexture == 3, "It takes its textures' slots.");
+    scene.run({.newModels = {model(Building, {uniform})}, .placements = {placed(Building)}});
+    expect(scene.memory.structures[scene.structureWith(Use::Static, 1)].geometries[0].layerMaskUvOffset == 0, "A mask on the base's coordinates has none of its own.");
 }
 
 // A finer copy of a texture opens a new slot before the old one closes. Without a free slot the copy is

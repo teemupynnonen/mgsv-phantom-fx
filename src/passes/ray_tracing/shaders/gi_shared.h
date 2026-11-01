@@ -12,6 +12,7 @@ namespace phantom_fx::gi
 using uint = std::uint32_t;
 struct uint2 { uint x, y; };
 struct uint4 { uint x, y, z, w; };
+struct float3 { float x, y, z; };
 struct float4 { float x, y, z, w; };
 struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine's matrices are
 #define GI_ROW_MAJOR
@@ -45,6 +46,7 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_GEOMETRY_MIRROR        2048u // With GI_GEOMETRY_GLASS: it reflects all of a reflection's rays
 #define GI_GEOMETRY_LAYER_BLEND   4096u // Its layer takes the base texture's place where it lies, not multiplying it (LayeredAlbedo)
 #define GI_GEOMETRY_LAYER_LINEAR  8192u // With GI_GEOMETRY_LAYER_BLEND: in linear light, not on the encoded values
+#define GI_GEOMETRY_LAYER_MASK_BLUE 16384u // Its layer's mask is in the texture's blue channel, not the red
 
 // The game's textures the scene holds at most (g_SceneTextures, gi_textures.hpp).
 #define GI_MAX_TEXTURES 4096u
@@ -246,11 +248,12 @@ struct GIGeometry
     uint specularTexture; // 1 + its SRM texture's index (r the specular rate, g the roughness), 0 without
     uint normalTexture;   // 1 + its normal map's index (a x, g y), 0 without
     uint materialIndex;   // Its row of the game's material table (g_MaterialSpecular)
-    float4 emission;      // rgb: a self-lit mesh's light (SelfColor x SelfColorIntensity), in the game's units
+    float3 emission;      // A self-lit mesh's light (SelfColor x SelfColorIntensity), in the game's units
+    uint layerMaskUvOffset; // Bytes into the pool: 4 a vertex, its layer's mask's coordinates, two halves; 0 on its first coordinates
     uint normalOffset;    // Bytes into the pool: 16 a vertex, the normal then the tangent, four halves each; 0 without
     uint layerUvOffset;   // Bytes into the pool: 4 a vertex, its second texture coordinates, two halves; 0 without
     uint layerTexture;    // 1 + its layer's index (rgb its colour, a how much of it lies), 0 without
-    uint layerMaskTexture; // 1 + its layer's mask's index (r how much of it lies, on the first coordinates), 0 without
+    uint layerMaskTexture; // 1 + its layer's mask's index (how much of it lies), 0 without
     float4 layerMapping;  // The layer's coordinates: (second coordinates + zw) x xy
 };
 

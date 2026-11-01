@@ -72,11 +72,12 @@ writes and only at their size, and each effect keeps only what it reads.
 `tests/scene_description_tests.cpp`: what the ray-traced scene takes of a model file, from small FMDL
 files it writes: the mesh roles of each case measured in the game (a tarp's stand-in, a pylon's
 lattice, glass, sky domes, inner walls, decals, hair, bushes), what each role gives its rays, a
-cut-out mesh's texture, unreadable files and skins. `tests/scene_contents_tests.cpp`: the scene
-contents over a fake scene memory with room limits: when models, variants, characters and textures are
-let go, waiting for room, a variant without room (never traced, as today), texture copies arriving and
-replacing one another, characters built, refitted and made again, the palette budget, frames without a
-newer list, the instance cap's order and the terrain rings' remaking. `tests/light_choice_tests.cpp`:
+cut-out mesh's texture, a mesh's layer and how its technique reads the mask, unreadable files and skins.
+`tests/scene_contents_tests.cpp`: the scene contents over a fake scene memory with room limits: when
+models, variants, characters and textures are let go, waiting for room, a variant without room (never
+traced, as today), texture copies arriving and replacing one another, a layered mesh's coordinates in the
+pool, characters built, refitted and made again, the palette budget, frames without a newer list, the
+instance cap's order and the terrain rings' remaking. `tests/light_choice_tests.cpp`:
 which lights a kick gives the rays: the most pixels first, then the nearest, the light cap's edge, the
 same choice whatever order the lights come in, a
 light drawn from another eye left and counted, one reaching no pixel left out; a light's reach (around
@@ -2400,26 +2401,45 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   wrote it: in game the shadow probe showed one pixel's sun ray blocked by the terrain, then by nothing,
   flipping every two seconds or so with the camera still, the rings' refresh.
 - **Layers** (2026-11-01). The base texture is not always a mesh's colour: 52 of the game's pixel shaders lay a second
-  texture over it, cloth (`fox3ddf_cloth*`) among them. `HitAlbedo` read the
-  base alone, so Kaz Miller's beige coat was white in a pane's reflection, where the rays see his front and no G-buffer pixel:
-  its base (`156862373e7f0bd0`) averages 251, 251, 251, and all its beige is its layer's, whose 134, 117, 97 is the G-buffer's
-  134, 116, 97. Read from the frame and the textures (F10 frame-116245, the textures from the game's archives): the reflection's
-  blue-white is the blue lamp before him at 1:1.3:2, on a surface that took nothing from it; every mesh of his model was
-  drawn, so no hidden mesh is at work, and his row's F0 of 0.016 rules out a highlight. From the shaders' disassembly, with
-  `Layer_Tex_SRGB` (`t3`), `LayerMask_Tex_LIN` (`t4`, red, on the base's coordinates), the layer's coordinates
-  (second coordinates + (`UShift_UV`, `VShift_UV`)) x (`URepeat_UV`, `VRepeat_UV`) and `lying` = mask x the layer's alpha:
-  `MulLayerTexture` gives lerp(base, base x layer, lying), `BlendLayerTexture` lerp(base, layer, lying) in linear light, and
-  `SRGBBlendLayerTexture` the same on the encoded values; the multiply is on the encoded values too, as these shaders read the
-  textures unconverted. `LayeredAlbedo` does each as its shader does: the scene's copies are viewed as sRGB, so it encodes them
-  first. Done in linear light the multiply was up to 1.82 times too bright, a material's mean on a dark layer under a soft
-  mask; the encoded blend's worst was 1.1%. No parameter says what a technique does with its layer: its `LayerBlend`
-  comes from 58 F10 records, each mesh's technique by its pixel shader in the frame's G-buffer draws (15 multiply, 6 blend on the
-  encoded values, 8 in linear light). Any other technique keeps its base
-  texture, though its material may name a layer: of 104 layered meshes loaded in one session 29 had one of two techniques
-  in no record, one of them with a white base under a black layer, which multiplied would turn black in the rays.
-  Their real files have the second coordinates as `HitAlbedo` needs them: 104 of 104, two halves each. The shaders' sheen (`Incidence_Color`, a tenth of the colour at most on the coat, at grazing angles) and dirt
-  (by the vertices' colours, which the scene does not keep) are left out. The second coordinates are in the pool after the mesh's other bytes (`GIGeometry::layerUvOffset`),
-  and a character keeps them there as its posed vertices move: they do not change.
+  texture over it, cloth (`fox3ddf_cloth*`) among them. `HitAlbedo` read the base alone, so Kaz Miller's beige coat was
+  white in a pane's reflection, where the rays see his front and no G-buffer pixel: its base (`156862373e7f0bd0`)
+  averages 251, 251, 251, and all its beige is its layer's, whose 134, 117, 97 is the G-buffer's 134, 116, 97. Read from
+  the frame and the textures (F10 frame-116245, the textures from the game's archives): the reflection's blue-white is
+  the blue lamp before him at 1:1.3:2, on a surface that took nothing from it; every mesh of his model was drawn, so no
+  hidden mesh is at work, and his row's F0 of 0.016 rules out a highlight.
+
+  From the shaders' disassembly, `coverage` being the mask x the layer's alpha: `MulLayerTexture` gives lerp(base,
+  base x layer, coverage), `BlendLayerTexture` lerp(base, layer, coverage) in linear light, and `SRGBBlendLayerTexture`
+  the same on the encoded values; the multiply is on the encoded values too, as these shaders read the textures
+  unconverted. `LayeredAlbedo` does each as its shader does: the scene's copies are viewed as sRGB, so it encodes them
+  first. Done in linear light the multiply was up to 1.82 times too bright, a material's mean on a dark layer under a
+  soft mask; the encoded blend's worst was 1.1%. The layer's coordinates are (second coordinates + (`UShift_UV`,
+  `VShift_UV`)) x (`URepeat_UV`, `VRepeat_UV`) in every one of them (cloth's vertex shaders have no shift, and no cloth
+  material names one). The mask (`LayerMask_Tex_LIN`) is not read alike:
+
+  | Shaders | Channel | Coordinates |
+  |---|---|---|
+  | Most | Red | The first, the base's |
+  | `ly_mul_2subnorm`, `layer_bl_2snm` | Blue | The first |
+  | `*_mu` | Red | The third |
+  | `*_2snm_nu` | Blue | The third |
+  | `layer_bl_mu_nu` | Red | The fourth |
+  | `layersb_snm_nlmu` | Red | The second, unmapped |
+
+  No parameter says what a technique does with its layer: `LayerTechniques` has a row for each of 32, from 59 F10
+  records, each mesh's technique by its pixel shader in the frame's G-buffer draws, each row from that shader's
+  disassembly. The game's files agree: the meshes of the techniques needing third coordinates have them (but one of 92
+  on `layer_bl_mu`, which keeps its base texture), and only `layer_bl_mu_nu`'s have fourth ones. Any other technique
+  keeps its base texture, though its material may name a layer: 86 of the 1,468 layered meshes in the game's packs,
+  of 16 techniques in no record. Of 104 layered meshes loaded in one session 29 had one of two such techniques, one
+  of them with a white base under a black layer, which multiplied would turn black in the rays.
+
+  A mesh waits for its layer's mask as for its layer: until the copy comes the layer would lie on all of it. The second
+  coordinates are in the file as `HitAlbedo` needs them (104 of 104 meshes read from the game, two halves each). The
+  shaders' sheen (`Incidence_Color`, a tenth of the colour at most on the coat, at grazing angles) and dirt (by the
+  vertices' colours, which the scene does not keep) are left out. The second coordinates, and a mask's where they are
+  its own, are in the pool after the mesh's other bytes (`GIGeometry::layerUvOffset`, `layerMaskUvOffset`), and a
+  character keeps them there as its posed vertices move: they do not change.
 - **Alpha test.** The game's shadow pass (`ModelForward_Shadow`) discards where the base texture's alpha is
   below `m_param.w x 0.5`, `m_param` being the pixel shaders' per-draw system constants (`cPSSystem`, `b0`,
   mapped per draw); the G-buffer below `m_param.w` times a dither averaging a half. Measured at the draws
