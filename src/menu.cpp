@@ -520,17 +520,25 @@ void drawDiagnostics(const upscaler::Status& state)
 }
 }
 
+// A tool that runs Lua has nothing to run on a game version without it.
+fxui::ItemSpec luaTool(fxui::ItemSpec spec)
+{
+    if (game_lua::isSupported()) return spec;
+
+    spec.state = State::Unavailable;
+    spec.message = "Unavailable for this game version.";
+
+    return spec;
+}
+
 // Free roam in another of the game's maps.
 void drawTravel()
 {
-    const bool supported = game_lua::isSupported();
-    const fxui::Item item({.id = "travel",
+    const fxui::Item item(luaTool({.id = "travel",
         .name = "Travel",
         .summary = "Free roam in another map, after one loading screen.",
-        .keywords = "teleport map location Afghanistan Africa Mother Base free roam",
-        .state = supported ? std::nullopt : std::optional(State::Unavailable),
-        .message = supported ? "" : "Unavailable for this game version."});
-    if (!item || !supported) return;
+        .keywords = "teleport map location Afghanistan Africa Mother Base free roam"}));
+    if (!item || !game_lua::isSupported()) return;
 
     std::array<fxui::Option, static_cast<std::size_t>(travel::Map::Count)> maps{};
     for (std::size_t i = 0; i < maps.size(); ++i) maps[i].label = travel::name(static_cast<travel::Map>(i));
@@ -543,19 +551,17 @@ void drawTravel()
 // Any of the game's cutscenes, in its own mission.
 void drawCutscenes()
 {
-    const bool supported = game_lua::isSupported();
-    const fxui::Item item({.id = "cutscenes",
+    const fxui::Item item(luaTool({.id = "cutscenes",
         .name = "Cutscenes",
         .summary = "Plays any cutscene the game's scripts name, after one loading screen.",
-        .keywords = "demo movie story mission play watch scene",
-        .state = supported ? std::nullopt : std::optional(State::Unavailable),
-        .message = supported ? "" : "Unavailable for this game version."});
-    if (!item || !supported) return;
+        .keywords = "demo movie story mission play watch scene"}));
+    if (!item || !game_lua::isSupported()) return;
 
     static std::optional<std::size_t> selected;
     const auto labels = cutscenes::labels();
     const char* const preview = selected ? labels[*selected].data() : "Pick a cutscene";
     if (const auto picked = fxui::searchCombo("Cutscene", preview, labels, selected)) selected = picked;
+
     if (fxui::button("Play",
             "From free roam or the ACC. A story cutscene loads its mission and ends in the ACC, with no mission clear; a Mother Base one ends in free "
             "roam there. The game saves on the way, as it does when leaving free roam. The story stays where it is. Cutscenes start in the mission's "
@@ -567,14 +573,11 @@ void drawCutscenes()
 // Lua typed here runs in the game's own script state.
 void drawLuaConsole()
 {
-    const bool supported = game_lua::isSupported();
-    const fxui::Item item({.id = "luaConsole",
+    const fxui::Item item(luaTool({.id = "luaConsole",
         .name = "Lua console",
         .summary = "Runs Lua in the game's own scripts at the next frame: an expression shows its value, print() its lines.",
-        .keywords = "script execute run code vars gvars mvars svars TppMission",
-        .state = supported ? std::nullopt : std::optional(State::Unavailable),
-        .message = supported ? "" : "Unavailable for this game version."});
-    if (!item || !supported) return;
+        .keywords = "script execute run code vars gvars mvars svars TppMission"}));
+    if (!item || !game_lua::isSupported()) return;
 
     static std::array<char, 16 * 1024> code{};
     const bool submitted = fxui::textBox("##luaCode", code, 8);

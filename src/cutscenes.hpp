@@ -6,8 +6,9 @@
 
 // The Developer page's cutscene player: any cutscene the game's scripts name, from free roam or the
 // ACC, after one loading screen. At the main loop's frame start it runs Lua in the game's script
-// state (game_lua.hpp): the cutscene's mission starts in a sequence of ours that plays it, and the
-// game leaves for the ACC without a mission clear. docs/DEVELOPMENT.md, "Cutscenes".
+// state (game_lua.hpp). A story cutscene's mission starts in a sequence of ours that plays it, and the
+// game leaves for the ACC without a mission clear; a Mother Base one goes through the game's queue and
+// ends in free roam there. docs/DEVELOPMENT.md, "Cutscenes".
 namespace phantom_fx::cutscenes
 {
 // One label for each cutscene; play takes the index of one.
