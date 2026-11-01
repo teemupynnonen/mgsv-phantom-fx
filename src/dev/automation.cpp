@@ -46,23 +46,10 @@ constexpr std::uint64_t InspectionFrames = 3600, SceneFrames = 3600;
 // Presents the scene's work to do stays the same before it counts as made: a model that never gets room
 // would otherwise hold a case up for SceneFrames.
 constexpr std::uint64_t SettledFrames = 60;
-// Presents a `perf` line takes without saying.
+// The GPU's frames a `perf` line times without saying.
 constexpr std::uint32_t DefaultCaptureFrames = 120;
 // Presents after a probe's pixel changes before its text has that pixel: a readback's frames in flight.
 constexpr std::string_view ProbeWait = "wait 8";
-
-// What the game is at, for a case to be found again (tools/automation/fx.py replay). Each value alone, as
-// any may fail in a loading screen. A story mission or a cutscene is found again only as a place on its map.
-constexpr std::string_view StateScript = R"(
-local function value(read)
-  local ok, result = pcall(read)
-  return ok and tostring(result) or "?"
-end
-return "mission=" .. value(function() return vars.missionCode end)
-  .. "\nplayer=" .. value(function() return vars.playerPosX end) .. " " .. value(function() return vars.playerPosY end) .. " " .. value(function() return vars.playerPosZ end)
-  .. "\nlocation=" .. value(function() return TppLocation.GetLocationName() end)
-  .. "\ncutscene=" .. value(function() return DemoDaemon.IsDemoPlaying() end)
-)";
 
 std::filesystem::path folder; // Empty while off
 std::atomic<std::uint64_t> presents{};
@@ -161,14 +148,6 @@ std::optional<held_camera::Pose> readPose(std::istream& numbers)
     return std::nullopt;
 }
 
-std::string timeNow()
-{
-    SYSTEMTIME now{};
-    GetLocalTime(&now);
-
-    return std::format("{:04}-{:02}-{:02}_{:02}-{:02}-{:02}", now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond);
-}
-
 std::string status()
 {
     const auto camera = held_camera::lastCamera();
@@ -198,7 +177,7 @@ void writeState(const std::string& name)
     std::ofstream state(caseFolder / "state.txt", std::ios::trunc);
     const auto camera = held_camera::lastCamera();
     state << "name=" << name << "\nframe=" << game_loop::currentFrame() << "\ncamera=" << (camera ? text(*camera) : std::string("?")) << "\n";
-    if (const auto outcome = game_lua::run(StateScript, "=automation")) state << outcome->text << "\n";
+    if (const auto outcome = game_lua::run(game_lua::StateScript, "=automation")) state << outcome->text << "\n";
 
     const auto sky = weather::state();
     state << "clock=" << sky.clock << "\nweather=" << (sky.requested ? static_cast<int>(*sky.requested) : -1) << " " << sky.fogDensity << "\n";
@@ -337,13 +316,13 @@ void run(Script& running, const std::string& line)
     else if (command == "perf" && !rest.empty())
     {
         // The frame count comes last, if at all: a case's name can have spaces.
-        std::string_view file = rest;
+        auto file = trimmed(rest);
         std::uint32_t frames = DefaultCaptureFrames;
-        if (const auto space = rest.rfind(' '); space != rest.npos)
+        if (const auto space = file.rfind(' '); space != file.npos)
         {
-            const auto* const end = rest.data() + rest.size();
+            const auto* const end = file.data() + file.size();
             std::uint32_t asked{};
-            if (const auto [stop, error] = std::from_chars(rest.data() + space + 1, end, asked); error == std::errc{} && stop == end)
+            if (const auto [stop, error] = std::from_chars(file.data() + space + 1, end, asked); error == std::errc{} && stop == end)
             {
                 file = trimmed(file.substr(0, space));
                 frames = asked;
@@ -354,7 +333,12 @@ void run(Script& running, const std::string& line)
         running.captureDeadline = presents + frames + InspectionFrames;
         perf_record::capture(folder / file, frames);
     }
-    else if (command == "record_costs") perf_record::setRecording(invert("0"));
+    else if (command == "record_costs")
+    {
+        const bool isOn = invert("0");
+        perf_record::setRecording(isOn);
+        if (perf_record::isRecording() != isOn) running.output += "error: the recording switch could not be kept: PhantomFX.log says why\n";
+    }
     else if (command == "image" && !rest.empty())
     {
         askJob(running, [file = folder / (rest + ".dds"), rest](ID3D11DeviceContext* context, ID3D11Resource* backBuffer) {
@@ -476,7 +460,7 @@ bool isWaiting(Script& running)
         else if (presents < running.captureDeadline) return true;
         else
         {
-            running.output += "error: no capture came: is the recorder on?\n";
+            running.output += "error: no capture came: the GPU's frames were not timed\n";
             running.capturesBefore.reset();
         }
     }
@@ -541,6 +525,14 @@ void onCaseKey()
 
     script = std::move(lines);
 }
+}
+
+std::string timeNow()
+{
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+
+    return std::format("{:04}-{:02}-{:02}_{:02}-{:02}-{:02}", now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond);
 }
 
 void install(const std::filesystem::path& addonDirectory) noexcept

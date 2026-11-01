@@ -7,7 +7,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <utility>
 
 // What frames cost, on file (docs/DEVELOPMENT.md, "Costs on file"), so a play session needs no one watching it.
 // While recording, `perf/<time>.jsonl` beside the automation's commands takes one JSON object a second: the frames' times,
@@ -28,6 +27,8 @@ void install(const std::filesystem::path& folder) noexcept;
 // The Developer page's switch, which lasts across starts.
 bool isRecording() noexcept;
 void setRecording(bool isOn) noexcept;
+// Whether anything is being kept, by that switch or a capture: with neither the recorder asks nothing of the game.
+bool isKeepingCosts() noexcept;
 // The game thread, at the main loop's frame start.
 void onFrameStart() noexcept;
 
@@ -36,12 +37,12 @@ void onPresent(const std::optional<performance::FrameCost>& cost) noexcept;
 // The frame's lights: those the kick traces and those past the rays' cap.
 void onLights(std::size_t traced, std::size_t overCap) noexcept;
 void onKick(const Kick& kick) noexcept;
-// A frame's traced phases in milliseconds, once the GPU is past them. The names are literals.
-void onPhases(std::span<const std::pair<const char*, double>> phases) noexcept;
+// A frame's traced phases, once the GPU is past them.
+void onPhases(const performance::PhaseTimes& phases) noexcept;
 // A frame's GI_COUNTER_ values, once the GPU is past them.
 void onCounters(std::span<const std::uint32_t> counters) noexcept;
 
-// The next `frames` presents' costs into `file`.json. A capture asked for during another replaces it.
+// The costs of the GPU's next `frames` frames into `file`.json. A capture asked for during another replaces it.
 void capture(const std::filesystem::path& file, std::uint32_t frames) noexcept;
 // Captures finished so far, and the line that says how the last went.
 std::uint64_t capturesFinished() noexcept;

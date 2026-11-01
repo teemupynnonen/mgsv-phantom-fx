@@ -10,6 +10,7 @@
 #include <locale>
 #include <map>
 #include <ostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -337,6 +338,15 @@ Settings withLine(Settings settings, std::string_view key, std::string_view valu
     describe(settings, reader);
 
     return settings;
+}
+
+std::string iniText(const Settings& settings)
+{
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    writeDescribed(output, settings);
+
+    return output.str();
 }
 #endif
 

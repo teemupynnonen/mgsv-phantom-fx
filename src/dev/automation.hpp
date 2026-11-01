@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 
 struct ID3D11DeviceContext;
 struct ID3D11Resource;
@@ -26,7 +27,7 @@ struct ID3D11Resource;
 //   wait <frames>                 lets that many frames present
 //   wait_scene                    until the scene's work to do has stopped changing
 //   probe <x> <y>                 the shadow and lamp probes' text at that render pixel
-//   perf <file> [<frames>]        what those frames cost, into `<file>.json` (perf_record.hpp), 120 without saying
+//   perf <file> [<frames>]        what the GPU's next frames cost, into `<file>.json` (perf_record.hpp), 120 without saying
 //   record_costs 0|1              the Developer page's Record the costs
 //   inspect <file>                a record of every pixel, into `<file>.bin` and `<file>.tsv` (inspect_trace.hpp)
 //   image <file>                  the next presented frame as `<file>.dds`
@@ -43,6 +44,8 @@ struct ID3D11Resource;
 //   status                        frame counts, the camera, the scene
 namespace phantom_fx::automation
 {
+// The local time as the tools' files are named by it: 2026-11-01_21-05-09.
+std::string timeNow();
 void install(const std::filesystem::path& addonDirectory) noexcept;
 // F9: on the render thread.
 void caseKey() noexcept;

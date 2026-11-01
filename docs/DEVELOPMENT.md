@@ -427,7 +427,7 @@ more can be asked of the same frame. Aim the screen's centre at the fault first 
   albedo, the light, the sun's and lamps' shadows, reflections, the lamps' light); what the game's shadow map
   alone says of each pixel (`game-shadow.dds`, 1 lit, 0 blocked, -1 no answer: `SHADOW_MAP` with `GAME_SHADOW` in
   `sun_light_pass_shaders.hpp`, drawn after the sun pass with its inputs as bound); what the scene is at
-  (`state.txt`), the settings; and two records of every pixel.
+  (`state.txt`), the settings; what the frozen frame costs (`perf.json`, "Costs on file"); and two records of every pixel.
 - **A record** (`scene.bin`, `revealed.bin`: `GIInspectPixel`, `InspectPixels` in `src/dev/inspect.hlsl`) has what the
   camera's ray meets first, what the scene has within a tolerance of the game's surface, what blocks the ray to the
   sun, and the game's distance. The `.tsv` beside it names every hit as the probes do.
@@ -479,8 +479,8 @@ Diagnostics ends with what the add-on's passes cost on the GPU (`src/performance
 per effect with a bar, its milliseconds and its share of the GPU frame, each opening to its passes,
 averaged over about half a second. The GPU frame runs from a timestamp at the frame's first
 command list to one at its present. Frames are timed only while the costs are on screen (the
-Diagnostics section open, or **Show the costs over the game**) or measured; otherwise no query is
-made.
+Diagnostics section open, or **Show the costs over the game**), measured, or in a dev build kept on
+file ("Costs on file"); otherwise no query is made.
 
 - **Timestamps.** Each pass ends a timestamp query before and after its work (`performance::Timed`),
   on the context it records on, inside one disjoint query per frame on the immediate context. The
@@ -521,17 +521,18 @@ made.
 
 So a play session needs no one watching it. With **Record the costs** on the Developer page ticked, a dev build keeps the
 costs running and writes what each second cost to `PhantomFX-automation/perf/<time>.jsonl` (`src/dev/perf_record.cpp`): the
-frames' times with their spread, the GPU frame, each pass, each traced phase, the lights, the scene and the rays' counters,
-with the map, the game's clock, the camera and whether the game is frozen. A line with PhantomFX.ini's values comes first
-and whenever they change. It is off by default and stays as set across starts, by a `recording` file in that folder: a setting
-would put a tool's line in every player's PhantomFX.ini.
+frames' times with their spread, the GPU frame, each pass, each traced phase, the lights, the scene as the second's last
+kick had it with what the second built, and the rays' counters, with the map, the game's clock, the camera and whether the
+game is frozen. A line with the settings in force, as PhantomFX.ini's lines, comes first and whenever they change. It is
+off by default and stays as set across starts, by a `recording` file in that folder: a setting would put a tool's line in
+every player's PhantomFX.ini. With it off and no capture running, the recorder asks nothing of the game.
 
 - `perf.py log` reads a session by stretch of the same place, then its worst seconds.
-- The `perf <file> [<frames>]` line takes the same over a set number of frames into a file of its own, recording or not. A
-  debug case takes one before anything else, as `perf.json`.
+- The `perf <file> [<frames>]` line takes the same over a set number of the GPU's frames into a file of its own, recording
+  or not. A debug case takes one before anything else, as `perf.json`.
 - `perf.py ab <test> ...` compares changes on the frame as it stands: base, test, base, test, base, each after settling,
-  so a GPU that drifts as it warms shows up. Judge a difference only against the drift it reports. `--images` also
-  saves each frame and says how far it moved from the base.
+  so a GPU that drifts as it warms shows up. Judge a difference only against the drift it reports. If a line fails it stops
+  without a table. `--images` also saves each frame and says how far it moved from the base.
 
 Compare GPU times, not frame rates: the automation copy's frame rate says little when its window is out of sight.
 

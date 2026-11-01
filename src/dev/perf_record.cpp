@@ -2,6 +2,7 @@
 
 #include "clock.hpp"
 #include "core.hpp"
+#include "dev/automation.hpp"
 #include "dev/game_lua.hpp"
 #include "dev/held_camera.hpp"
 #include "log.hpp"
@@ -13,12 +14,12 @@
 #include <array>
 #include <atomic>
 #include <cmath>
-#include <cstring>
 #include <exception>
 #include <format>
 #include <fstream>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <sstream>
 #include <string_view>
 #include <vector>
 
@@ -45,6 +46,7 @@ constexpr std::array<const char*, static_cast<std::size_t>(Pass::Count)> PassNam
     "GiInputs", "GiProbeLight", "GiCombine", "GiWait", "LocalLights", "PathTracedLight",
     "RayTracedScene", "SunShadowRays", "SunShadowDenoiser", "LightShadowRays", "LightShadowFilter", "GiRays", "GiDenoiser", "Reflections", "LampLight",
     "HdrEncode", "HdrDecode", "HdrGrade"};
+static_assert(PassNames.back() != nullptr, "A pass has no name");
 
 constexpr std::pair<std::uint32_t, const char*> CounterNames[]{{GI_COUNTER_HITS, "hits"}, {GI_COUNTER_NEAR_HITS, "nearHits"}, {GI_COUNTER_BOUNCE_HITS, "bounceHits"},
     {GI_COUNTER_VISIBILITY0, "intoCache"}, {GI_COUNTER_VISIBILITY1, "multibounce"}, {GI_COUNTER_MULTIBOUNCE_AWAY, "multibounceAway"}, {GI_COUNTER_LIGHTS, "cacheHitsLit"},
@@ -55,24 +57,14 @@ struct Tally
 {
     std::vector<float> frameTimes, gpuFrames;
     performance::Milliseconds passes{};
-    std::vector<std::pair<const char*, double>> phases;
+    performance::PhaseTimes phases;
     std::uint32_t phaseFrames{};
     std::array<std::uint64_t, GI_COUNTER_COUNT> counters{};
     std::uint32_t counterFrames{};
     std::uint64_t tracedLights{}, lightsOverCap{};
     std::uint32_t lightFrames{};
-    Kick kick;
-
-    void addPhases(std::span<const std::pair<const char*, double>> frame)
-    {
-        ++phaseFrames;
-        for (const auto& [name, milliseconds] : frame)
-        {
-            const auto found = std::ranges::find_if(phases, [name](const auto& phase) { return std::strcmp(phase.first, name) == 0; });
-            if (found != phases.end()) found->second += milliseconds;
-            else phases.emplace_back(name, milliseconds);
-        }
-    }
+    Kick lastKick;
+    std::uint64_t builds{}, builtTriangles{}; // Of all its kicks: most build nothing
 };
 
 struct Capture
@@ -93,7 +85,7 @@ struct Place
 };
 
 std::filesystem::path folder; // Empty while off
-std::atomic<bool> recording{};
+std::atomic<bool> isRecordingOn{};
 
 std::mutex recordMutex;
 Tally row;
@@ -109,13 +101,25 @@ std::atomic<std::uint64_t> finished{};
 std::mutex lastMutex;
 std::string lastLine;
 
-constexpr std::string_view PlaceScript = R"(
-local function value(read)
-  local ok, result = pcall(read)
-  return ok and tostring(result) or "?"
-end
-return value(function() return vars.missionCode end) .. " " .. value(function() return TppLocation.GetLocationName() end)
-)";
+// Call with recordMutex held. Each tally that costs go into now.
+template<class Add> void addToTallies(Add&& add)
+{
+    if (isRecordingOn) add(row);
+    if (running) add(running->tally);
+}
+
+// The game's threads call in here, and nothing may get back to them.
+template<class Work> void guarded(Work&& work) noexcept
+{
+    try
+    {
+        work();
+    }
+    catch (const std::exception& error)
+    {
+        log(std::string("Costs on file: ") + error.what());
+    }
+}
 
 double rounded(double value)
 {
@@ -157,6 +161,7 @@ Json placeJson(const Place& where)
     result["clock"] = rounded(where.clock);
     result["weather"] = where.weather;
     result["frozen"] = where.isFrozen;
+
     if (where.camera)
         result["camera"] = {rounded(where.camera->position[0]), rounded(where.camera->position[1]), rounded(where.camera->position[2]), rounded(where.camera->yaw),
             rounded(where.camera->pitch)};
@@ -169,7 +174,7 @@ Json toJson(Tally& tally, const Place& where)
 {
     Json result = placeJson(where);
     result["frames"] = tally.frameTimes.size();
-    result["render"] = {tally.kick.width, tally.kick.height};
+    result["render"] = {tally.lastKick.width, tally.lastKick.height};
     result["frame"] = spread(tally.frameTimes);
     result["gpu"] = spread(tally.gpuFrames);
 
@@ -177,6 +182,7 @@ Json toJson(Tally& tally, const Place& where)
     Json passes = Json::object();
     for (std::size_t i = 0; i < tally.passes.size(); ++i)
         if (tally.passes[i] > 0.0f) passes[PassNames[i]] = rounded(tally.passes[i] / static_cast<double>(gpuFrames));
+
     result["passes"] = std::move(passes);
 
     Json phases = Json::object();
@@ -186,8 +192,8 @@ Json toJson(Tally& tally, const Place& where)
 
     const double lightFrames = std::max(tally.lightFrames, 1u);
     result["lights"] = {{"traced", rounded(static_cast<double>(tally.tracedLights) / lightFrames)}, {"overCap", rounded(static_cast<double>(tally.lightsOverCap) / lightFrames)}};
-    result["scene"] = {{"instances", tally.kick.instances}, {"triangles", tally.kick.triangles}, {"skins", tally.kick.skins}, {"builds", tally.kick.builds},
-        {"builtTriangles", tally.kick.builtTriangles}};
+    result["scene"] = {{"instances", tally.lastKick.instances}, {"triangles", tally.lastKick.triangles}, {"skins", tally.lastKick.skins}, {"builds", tally.builds},
+        {"builtTriangles", tally.builtTriangles}};
 
     Json counters = Json::object();
     const auto counterFrames = std::max<std::uint64_t>(tally.counterFrames, 1);
@@ -197,47 +203,43 @@ Json toJson(Tally& tally, const Place& where)
     return result;
 }
 
-std::string timeNow(const char* separator)
+std::string timeOfDay()
 {
     SYSTEMTIME now{};
     GetLocalTime(&now);
 
-    return std::format("{:02}{}{:02}{}{:02}", now.wHour, separator, now.wMinute, separator, now.wSecond);
+    return std::format("{:02}:{:02}:{:02}", now.wHour, now.wMinute, now.wSecond);
 }
 
 // The file is opened once: opening one while presenting can hitch the game.
 void writeLine(const Json& line)
 {
-    if (!file.is_open())
-    {
-        SYSTEMTIME now{};
-        GetLocalTime(&now);
-        file.open(folder / std::format("{:04}-{:02}-{:02}_{}.jsonl", now.wYear, now.wMonth, now.wDay, timeNow("-")), std::ios::app);
-    }
+    if (!file.is_open()) file.open(folder / (automation::timeNow() + ".jsonl"), std::ios::app);
 
     file << line.dump() << '\n';
     file.flush();
 }
 
-// PhantomFX.ini's lines, when they change: what a stretch of rows ran with.
+// The settings in force, as PhantomFX.ini's lines, when they change: what a stretch of rows ran with. Not from
+// that file, which is half a second behind a change.
 void writeSettings()
 {
     const auto settings = core::currentSettings();
     if (writtenSettings == settings) return;
 
     writtenSettings = settings;
-    std::ifstream ini(folder.parent_path().parent_path() / "PhantomFX.ini");
+    std::istringstream ini(iniText(settings));
     Json lines = Json::object();
     for (std::string line; std::getline(ini, line);)
         if (const auto separator = line.find('='); separator != line.npos) lines[line.substr(0, separator)] = line.substr(separator + 1);
 
-    writeLine({{"time", timeNow(":")}, {"settings", std::move(lines)}});
+    writeLine({{"time", timeOfDay()}, {"settings", std::move(lines)}});
 }
 
 void finishRow(Tally&& finishedRow, const Place& where, double seconds)
 {
     writeSettings();
-    Json line = {{"time", timeNow(":")}, {"seconds", std::floor(seconds)}};
+    Json line = {{"time", timeOfDay()}, {"seconds", std::floor(seconds)}};
     line.update(toJson(finishedRow, where));
     writeLine(line);
 }
@@ -281,20 +283,19 @@ void install(const std::filesystem::path& into) noexcept
     if (error) return;
 
     folder = into;
-    recording = std::filesystem::exists(folder / RecordingMarker, error);
+    isRecordingOn = std::filesystem::exists(folder / RecordingMarker, error);
 }
 
 bool isRecording() noexcept
 {
-    return recording;
+    return isRecordingOn;
 }
 
 void setRecording(bool isOn) noexcept
 {
     if (folder.empty()) return;
 
-    try
-    {
+    guarded([&] {
         // Left as it was if the marker cannot follow: the switch would come back otherwise at the next start.
         std::error_code error;
         const bool isKept = isOn ? static_cast<bool>(std::ofstream(folder / RecordingMarker)) : std::filesystem::remove(folder / RecordingMarker, error) || !error;
@@ -307,31 +308,38 @@ void setRecording(bool isOn) noexcept
         std::lock_guard lock(recordMutex);
         row = {};
         rowStart = 0;
-        recording = isOn;
-    }
-    catch (const std::exception& failure)
-    {
-        log(std::string("Costs on file: ") + failure.what());
-    }
+        isRecordingOn = isOn;
+    });
+}
+
+bool isKeepingCosts() noexcept
+{
+    std::lock_guard lock(recordMutex);
+    return isRecordingOn || running;
 }
 
 void onFrameStart() noexcept
 {
     if (folder.empty()) return;
 
-    try
-    {
+    guarded([] {
+        // Not while nothing keeps it: this runs Lua in the game's script state.
         static std::uint64_t readAt{};
         const auto now = GetTickCount64();
-        if (now - readAt < PlaceMilliseconds) return;
+        if (now - readAt < PlaceMilliseconds || !isKeepingCosts()) return;
 
         readAt = now;
         Place read;
-        if (const auto outcome = game_lua::run(PlaceScript, "=perf"); outcome && outcome->ran)
+        if (const auto outcome = game_lua::run(game_lua::StateScript, "=perf"); outcome && outcome->ran)
         {
-            const auto space = outcome->text.find(' ');
-            read.mission = outcome->text.substr(0, space);
-            if (space != std::string::npos) read.location = outcome->text.substr(space + 1);
+            std::istringstream lines(outcome->text);
+            for (std::string line; std::getline(lines, line);)
+            {
+                const auto separator = line.find('=');
+                const auto name = line.substr(0, separator);
+                if (name == "mission") read.mission = line.substr(separator + 1);
+                else if (name == "location") read.location = line.substr(separator + 1);
+            }
         }
 
         const auto sky = weather::state();
@@ -342,19 +350,14 @@ void onFrameStart() noexcept
 
         std::lock_guard lock(recordMutex);
         place = std::move(read);
-    }
-    catch (const std::exception& error)
-    {
-        log(std::string("Costs on file: ") + error.what());
-    }
+    });
 }
 
 void onPresent(const std::optional<performance::FrameCost>& cost) noexcept
 {
     if (folder.empty()) return;
 
-    try
-    {
+    guarded([&] {
         const auto now = clock::ticksNow();
         std::optional<Tally> finishedRow;
         std::optional<Capture> finishedCapture;
@@ -362,30 +365,24 @@ void onPresent(const std::optional<performance::FrameCost>& cost) noexcept
         double seconds{};
         {
             std::lock_guard lock(recordMutex);
-            const bool isOn = recording;
+            const bool isOn = isRecordingOn;
 
             // Timed for as long as anything is kept, as while someone looks at the costs.
             if (isOn || running) performance::watch();
 
-            const auto add = [&](Tally& tally) {
+            addToTallies([&](Tally& tally) {
                 if (lastPresent) tally.frameTimes.push_back(static_cast<float>(clock::millisecondsOf(now - lastPresent)));
                 if (!cost || cost->gpuFrame <= 0.0f) return;
 
                 tally.gpuFrames.push_back(cost->gpuFrame);
                 for (std::size_t i = 0; i < tally.passes.size(); ++i) tally.passes[i] += cost->passes[i];
-            };
+            });
 
-            if (isOn) add(row);
-            if (running)
+            // By the GPU's frames: with no one looking, its timing starts with the capture and comes a few frames late.
+            if (running && running->tally.gpuFrames.size() >= running->frames)
             {
-                add(running->tally);
-
-                // By the GPU's frames: with no one looking, its timing starts with the capture and comes a few frames late.
-                if (running->tally.gpuFrames.size() >= running->frames)
-                {
-                    finishedCapture = std::move(running);
-                    running.reset();
-                }
+                finishedCapture = std::move(running);
+                running.reset();
             }
 
             lastPresent = now;
@@ -404,11 +401,7 @@ void onPresent(const std::optional<performance::FrameCost>& cost) noexcept
 
         if (finishedCapture) finishCapture(std::move(*finishedCapture), where);
         if (finishedRow && !finishedRow->frameTimes.empty()) finishRow(std::move(*finishedRow), where, seconds);
-    }
-    catch (const std::exception& error)
-    {
-        log(std::string("Costs on file: ") + error.what());
-    }
+    });
 }
 
 void onLights(std::size_t traced, std::size_t overCap) noexcept
@@ -416,14 +409,11 @@ void onLights(std::size_t traced, std::size_t overCap) noexcept
     if (folder.empty()) return;
 
     std::lock_guard lock(recordMutex);
-    const auto add = [&](Tally& tally) {
+    addToTallies([&](Tally& tally) {
         tally.tracedLights += traced;
         tally.lightsOverCap += overCap;
         ++tally.lightFrames;
-    };
-
-    if (recording) add(row);
-    if (running) add(running->tally);
+    });
 }
 
 void onKick(const Kick& kick) noexcept
@@ -431,24 +421,24 @@ void onKick(const Kick& kick) noexcept
     if (folder.empty()) return;
 
     std::lock_guard lock(recordMutex);
-    if (recording) row.kick = kick;
-    if (running) running->tally.kick = kick;
+    addToTallies([&](Tally& tally) {
+        tally.lastKick = kick;
+        tally.builds += kick.builds;
+        tally.builtTriangles += kick.builtTriangles;
+    });
 }
 
-void onPhases(std::span<const std::pair<const char*, double>> phases) noexcept
+void onPhases(const performance::PhaseTimes& phases) noexcept
 {
     if (folder.empty()) return;
 
-    try
-    {
+    guarded([&] {
         std::lock_guard lock(recordMutex);
-        if (recording) row.addPhases(phases);
-        if (running) running->tally.addPhases(phases);
-    }
-    catch (const std::exception& error)
-    {
-        log(std::string("Costs on file: ") + error.what());
-    }
+        addToTallies([&](Tally& tally) {
+            ++tally.phaseFrames;
+            for (const auto& [name, milliseconds] : phases) performance::addPhase(tally.phases, name, milliseconds);
+        });
+    });
 }
 
 void onCounters(std::span<const std::uint32_t> counters) noexcept
@@ -456,28 +446,20 @@ void onCounters(std::span<const std::uint32_t> counters) noexcept
     if (folder.empty() || counters.size() < GI_COUNTER_COUNT) return;
 
     std::lock_guard lock(recordMutex);
-    const auto add = [&](Tally& tally) {
+    addToTallies([&](Tally& tally) {
         for (std::size_t i = 0; i < tally.counters.size(); ++i) tally.counters[i] += counters[i];
         ++tally.counterFrames;
-    };
-
-    if (recording) add(row);
-    if (running) add(running->tally);
+    });
 }
 
 void capture(const std::filesystem::path& into, std::uint32_t frames) noexcept
 {
     if (folder.empty()) return;
 
-    try
-    {
+    guarded([&] {
         std::lock_guard lock(recordMutex);
         running = Capture{.file = into, .frames = std::max(frames, 1u), .tally = {}};
-    }
-    catch (const std::exception& error)
-    {
-        log(std::string("Costs on file: ") + error.what());
-    }
+    });
 }
 
 std::uint64_t capturesFinished() noexcept

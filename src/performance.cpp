@@ -8,8 +8,10 @@
 #include "log.hpp"
 
 #include <Windows.h>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <format>
 #include <fstream>
 #include <iterator>
@@ -503,6 +505,13 @@ void timedOnDirect3D12(const Milliseconds& passes) noexcept
     catch (...)
     {
     }
+}
+
+void addPhase(PhaseTimes& phases, const char* name, double milliseconds)
+{
+    const auto found = std::ranges::find_if(phases, [&](const auto& phase) { return std::strcmp(phase.first, name) == 0; });
+    if (found != phases.end()) found->second += milliseconds;
+    else phases.emplace_back(name, milliseconds);
 }
 
 void executing(std::uint64_t list) noexcept
