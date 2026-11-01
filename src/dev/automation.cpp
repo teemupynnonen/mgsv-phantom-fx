@@ -135,6 +135,28 @@ std::size_t sceneWork()
     return engine_scene::waitingFiles() + gi_renderer::waitingWork();
 }
 
+// PhantomFX.ini's value for `key`, if it has that line.
+std::optional<std::string> iniValue(const Settings& settings, std::string_view key)
+{
+    std::istringstream lines(iniText(settings));
+    for (std::string line; std::getline(lines, line);)
+        if (line.starts_with(key) && line.size() > key.size() && line[key.size()] == '=') return line.substr(key.size() + 1);
+
+    return std::nullopt;
+}
+
+// Whether two of a setting's values say the same: 1 and 1.000000 do.
+bool isSameValue(std::string_view a, std::string_view b)
+{
+    if (a == b) return true;
+
+    float first{}, second{};
+    const auto [firstEnd, firstError] = std::from_chars(a.data(), a.data() + a.size(), first);
+    const auto [secondEnd, secondError] = std::from_chars(b.data(), b.data() + b.size(), second);
+
+    return firstError == std::errc{} && secondError == std::errc{} && firstEnd == a.data() + a.size() && secondEnd == b.data() + b.size() && first == second;
+}
+
 std::string text(const held_camera::Pose& pose)
 {
     return std::format("{} {} {} {} {}", pose.position[0], pose.position[1], pose.position[2], pose.yaw, pose.pitch);
@@ -365,15 +387,25 @@ void run(Script& running, const std::string& line)
     else if (command == "setting")
     {
         const auto separator = rest.find('=');
-        const auto settings = core::currentSettings();
         const auto key = trimmed(std::string_view(rest).substr(0, separator));
-        const auto changed = separator == rest.npos ? settings : withLine(settings, key, trimmed(std::string_view(rest).substr(separator + 1)));
+        const auto value = separator == rest.npos ? std::string_view{} : trimmed(std::string_view(rest).substr(separator + 1));
+        const auto settings = core::currentSettings();
+        const auto current = iniValue(settings, key);
+        if (!current)
+        {
+            running.output += "error: no setting " + std::string(key) + "\n";
+            return;
+        }
+
+        const auto changed = withLine(settings, key, value);
         core::applySettings(changed);
 
-        // A test that changed nothing would read as costing nothing. An unknown key is an error; a line that leaves the
-        // value as it was may mean to.
-        if (("\n" + iniText(settings)).find("\n" + std::string(key) + "=") == std::string::npos) running.output += "error: no setting " + std::string(key) + "\n";
-        else if (changed == settings) running.output += "the setting stays as it was\n";
+        // A test that changed nothing would read as costing nothing: asking for the value it has may be meant, a value
+        // withLine turned down is not.
+        if (changed != settings) return;
+
+        if (isSameValue(*current, value)) running.output += "the setting stays as it was\n";
+        else running.output += "error: " + std::string(key) + " does not take " + std::string(value) + "\n";
     }
     else if (command == "diagnostic") setDiagnostic(running, rest);
     else if (command == "lua")

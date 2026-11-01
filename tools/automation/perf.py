@@ -162,24 +162,33 @@ def ab(arguments):
 
     folder = "perf/ab-" + time.strftime("%Y-%m-%d_%H-%M-%S")
     is_frozen = ", frozen, " in fx.run(["status"])
-    script = [] if is_frozen else ["freeze", "wait 30"]
-    script += [f"wait {settle}", f"perf {folder}/base-0 {frames}"]
+    start = [] if is_frozen else ["freeze", "wait 30"]
+    start += [f"wait {settle}", f"perf {folder}/base-0 {frames}"]
     if images:
-        script.append(f"image {folder}/base-0")
+        start.append(f"image {folder}/base-0")
+
+    # Each step with what puts the game back if it fails: a command file runs on past a failed line, so the steps
+    # go one at a time and nothing after a failure runs.
+    steps = [(start, [])]
     for i, test in enumerate(tests):
         apply, undo = parsed(test)
         name = safe_name(i, test)
-        script += [*apply, f"wait {settle}", f"perf {folder}/{name} {frames}"]
+        tried_lines = [*apply, f"wait {settle}", f"perf {folder}/{name} {frames}"]
         if images:
-            script.append(f"image {folder}/{name}")
-        script += [*undo, f"wait {settle}", f"perf {folder}/base-{i + 1} {frames}"]
-    if not is_frozen:
-        script.append("release")
+            tried_lines.append(f"image {folder}/{name}")
+        steps += [(tried_lines, undo), ([*undo, f"wait {settle}", f"perf {folder}/base-{i + 1} {frames}"], [])]
 
-    output = fx.run(script, timeout=60 + 6.0 * len(tests) * (frames + settle))
-    print(output, end="", flush=True)
-    if any(line.startswith("error:") for line in output.splitlines()):
-        sys.exit("A line above failed, so a table would say the change did nothing.")
+    letting_go = [] if is_frozen else ["release"]
+    for lines, cleanup in steps:
+        output = fx.run(lines, timeout=60 + 6.0 * (frames + settle))
+        print(output, end="", flush=True)
+        if any(line.startswith("error:") for line in output.splitlines()):
+            if cleanup or letting_go:
+                print(fx.run(cleanup + letting_go), end="")
+            sys.exit("A line above failed, so a table would say the change did nothing.")
+
+    if letting_go:
+        print(fx.run(letting_go), end="")
 
     bases = [read_capture(folder, f"base-{i}") for i in range(len(tests) + 1)]
     tried = [read_capture(folder, safe_name(i, test)) for i, test in enumerate(tests)]
