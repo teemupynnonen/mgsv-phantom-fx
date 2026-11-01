@@ -467,6 +467,7 @@ bool isWaiting(Script& running)
         {
             running.output += "error: no capture came: the GPU's frames were not timed\n";
             running.capturesBefore.reset();
+            perf_record::cancelCapture();
         }
     }
 

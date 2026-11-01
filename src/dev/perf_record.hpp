@@ -44,6 +44,8 @@ void onCounters(std::span<const std::uint32_t> counters) noexcept;
 
 // The costs of the GPU's next `frames` frames into `file`.json. A capture asked for during another replaces it.
 void capture(const std::filesystem::path& file, std::uint32_t frames) noexcept;
+// Gives up on the capture running, if any: nothing else would end one whose GPU frames never come.
+void cancelCapture() noexcept;
 // Captures finished so far, and the line that says how the last went.
 std::uint64_t capturesFinished() noexcept;
 std::string lastCapture();

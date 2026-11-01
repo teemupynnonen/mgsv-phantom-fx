@@ -475,6 +475,12 @@ void capture(const std::filesystem::path& into, std::uint32_t frames) noexcept
     });
 }
 
+void cancelCapture() noexcept
+{
+    std::lock_guard lock(recordMutex);
+    running.reset();
+}
+
 std::uint64_t capturesFinished() noexcept
 {
     return finished;
