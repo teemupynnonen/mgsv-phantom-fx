@@ -1,17 +1,17 @@
-#include "automation.hpp"
+#include "dev/automation.hpp"
 
 #include "core.hpp"
 #include "features/photo_mode/photo_mode.hpp"
 #include "fxui/fxui.hpp"
 #include "game_loop.hpp"
-#include "game_lua.hpp"
+#include "dev/game_lua.hpp"
 #include "log.hpp"
 #include "passes/ray_tracing/engine_scene.hpp"
 #include "passes/ray_tracing/ray_tracing.hpp"
 #include "passes/sun_light_pass.hpp"
 #include "resource_dump.hpp"
-#include "save_redirect.hpp"
-#include "travel.hpp"
+#include "dev/save_redirect.hpp"
+#include "dev/travel.hpp"
 #include "weather.hpp"
 
 #include <Windows.h>

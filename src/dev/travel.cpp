@@ -1,7 +1,7 @@
-#include "travel.hpp"
+#include "dev/travel.hpp"
 
 #include "fxui/fxui.hpp"
-#include "game_lua.hpp"
+#include "dev/game_lua.hpp"
 #include "log.hpp"
 
 #include <format>
