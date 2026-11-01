@@ -79,11 +79,6 @@ std::string shadowProbe();
 // Diagnostics (automation.hpp): the pixel the probes read in place of the screen's centre, and back to it.
 void probeAt(std::uint32_t x, std::uint32_t y) noexcept;
 void clearProbe() noexcept;
-// A debug case's record of every pixel at the next kick, into `file` with the extensions .bin and .tsv
-// (gi_renderer::Frame::inspectTo); how many have been written; what the scene has yet to make.
-void inspect(const std::filesystem::path& file) noexcept;
-std::uint64_t inspections() noexcept;
-std::size_t waitingWork() noexcept;
 // The frame's textures, each as a DDS file named for it in `folder`, on the immediate context.
 void saveTextures(ID3D11DeviceContext* context, const std::filesystem::path& folder) noexcept;
 // What DLSS Ray Reconstruction reads beside the colour, made from the G-buffer at the kick while it is

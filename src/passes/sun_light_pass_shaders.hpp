@@ -327,7 +327,7 @@ void main(float4 position : SV_Position, float4 clipPosition : TEXCOORD0, float4
 #if PHANTOM_FX_DEV_TOOLS
 R"(
 #if GAME_SHADOW
-    // Diagnostics (sun_light_pass::keepGameShadow): what the shadow map alone says of this pixel.
+    // Diagnostics (game_shadow.hpp): what the shadow map alone says of this pixel.
     SunShadow(viewPosition, position.xy - 0.5, 0, 0, 1);
     outDiffuse = float4(g_ShadowMapAlone, 0, 0, 1);
     outSpecular = 0;

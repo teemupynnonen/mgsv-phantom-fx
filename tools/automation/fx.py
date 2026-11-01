@@ -1,4 +1,4 @@
-"""Talks to the add-on's automation (src/automation.hpp) in a running dev build.
+"""Talks to the add-on's automation (src/dev/automation.hpp) in a running dev build.
 
   fx.py [--copy] run <line> [<line> ...]   runs the lines as one command file and prints the result
   fx.py [--copy] status                    what the game is doing

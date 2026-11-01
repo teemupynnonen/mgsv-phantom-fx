@@ -1,4 +1,4 @@
-#include "game_lua.hpp"
+#include "dev/game_lua.hpp"
 
 #include "device_check.hpp"
 #include "game_code.hpp"

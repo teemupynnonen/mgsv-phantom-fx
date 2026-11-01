@@ -363,10 +363,8 @@ SharedTexture depthOut, normalOut, albedoOut;
 std::string failure;
 std::atomic<std::uint64_t> lastKick{}; // GetTickCount64 of the last frame lit
 #if PHANTOM_FX_DEV_TOOLS
-// Diagnostics: a debug case's pixel for the probes, as x << 32 | y + 1 (0 for the screen's centre), and the
-// record the next kick makes.
+// Diagnostics: a debug case's pixel for the probes, as x << 32 | y + 1 (0 for the screen's centre).
 std::atomic<std::uint64_t> probePixel{};
-std::filesystem::path inspectNext;
 #endif
 // Diagnostics: the kicks' CPU time in performance counter ticks, and the kicks, since the last log.
 std::atomic<std::int64_t> kickTicks{};
@@ -940,8 +938,6 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
 #if PHANTOM_FX_DEV_TOOLS
     if (const auto pixel = probePixel.load(std::memory_order_relaxed))
         frame.probePixel = std::array{static_cast<std::uint32_t>(pixel >> 32), static_cast<std::uint32_t>(pixel) - 1};
-
-    frame.inspectTo = std::exchange(inspectNext, {});
 #endif
     frame.waitValue = inputsReady;
     frame.signalValue = ++fenceValue;
@@ -1269,22 +1265,6 @@ void probeAt(std::uint32_t x, std::uint32_t y) noexcept
 void clearProbe() noexcept
 {
     probePixel = 0;
-}
-
-void inspect(const std::filesystem::path& file) noexcept
-{
-    std::lock_guard lock(executionMutex);
-    inspectNext = file;
-}
-
-std::uint64_t inspections() noexcept
-{
-    return gi_renderer::inspections();
-}
-
-std::size_t waitingWork() noexcept
-{
-    return engine_scene::waitingFiles() + gi_renderer::waitingWork();
 }
 
 void saveTextures(ID3D11DeviceContext* context, const std::filesystem::path& folder) noexcept

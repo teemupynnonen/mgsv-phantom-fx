@@ -21,16 +21,15 @@ struct ID3D11Resource;
 //   case [<name>]                 records a case (caseLines in automation.cpp)
 //   freeze                        photo mode frozen at the camera now
 //   release                       leaves the frozen camera, `probe`'s pixel and the debug view it turned on
-//   camera <x> <y> <z> <yaw> <pitch>  photo mode frozen at that pose (photo_mode.hpp), radians
+//   camera <x> <y> <z> <yaw> <pitch>  photo mode frozen at that pose (held_camera.hpp), radians
 //   move <x> <y> <z> <yaw> <pitch> <frames>  from the frozen camera there, one step each camera update
 //   wait <frames>                 lets that many frames present
 //   wait_scene                    until the scene's work to do has stopped changing
 //   probe <x> <y>                 the shadow and lamp probes' text at that render pixel
-//   inspect <file>                a record of every pixel, into `<file>.bin` and `<file>.tsv`
-//                                 (gi_renderer::Frame::inspectTo)
+//   inspect <file>                a record of every pixel, into `<file>.bin` and `<file>.tsv` (inspect_trace.hpp)
 //   image <file>                  the next presented frame as `<file>.dds`
 //   textures <folder>             the ray tracing's textures and the game's shadow, as DDS files
-//   game_shadow 0|1               keeps the game's shadow per pixel (sun_light_pass::keepGameShadow)
+//   game_shadow 0|1               keeps the game's shadow per pixel (game_shadow.hpp)
 //   reveal off|all|<hash> ...     restarts the scene, taking what it leaves out: all of it or those models
 //   enhancements 0|1              the F1 switch
 //   setting <key>=<value>         a PhantomFX.ini line, applied at once (and saved, as the overlay does)

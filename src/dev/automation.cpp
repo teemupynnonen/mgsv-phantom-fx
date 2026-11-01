@@ -1,17 +1,19 @@
-#include "automation.hpp"
+#include "dev/automation.hpp"
 
 #include "core.hpp"
-#include "features/photo_mode/photo_mode.hpp"
+#include "dev/game_shadow.hpp"
+#include "dev/held_camera.hpp"
+#include "dev/inspect_trace.hpp"
 #include "fxui/fxui.hpp"
 #include "game_loop.hpp"
-#include "game_lua.hpp"
+#include "dev/game_lua.hpp"
 #include "log.hpp"
 #include "passes/ray_tracing/engine_scene.hpp"
+#include "passes/ray_tracing/gi_renderer.hpp"
 #include "passes/ray_tracing/ray_tracing.hpp"
-#include "passes/sun_light_pass.hpp"
 #include "resource_dump.hpp"
-#include "save_redirect.hpp"
-#include "travel.hpp"
+#include "dev/save_redirect.hpp"
+#include "dev/travel.hpp"
 #include "weather.hpp"
 
 #include <Windows.h>
@@ -134,14 +136,20 @@ std::string_view trimmed(std::string_view text)
     return text.substr(first, text.find_last_not_of(" \t") - first + 1);
 }
 
-std::string text(const photo_mode::Pose& pose)
+// What the scene has yet to make.
+std::size_t sceneWork()
+{
+    return engine_scene::waitingFiles() + gi_renderer::waitingWork();
+}
+
+std::string text(const held_camera::Pose& pose)
 {
     return std::format("{} {} {} {} {}", pose.position[0], pose.position[1], pose.position[2], pose.yaw, pose.pitch);
 }
 
-std::optional<photo_mode::Pose> readPose(std::istream& numbers)
+std::optional<held_camera::Pose> readPose(std::istream& numbers)
 {
-    photo_mode::Pose pose;
+    held_camera::Pose pose;
     if (numbers >> pose.position[0] >> pose.position[1] >> pose.position[2] >> pose.yaw >> pose.pitch) return pose;
 
     return std::nullopt;
@@ -157,8 +165,8 @@ std::string timeNow()
 
 std::string status()
 {
-    const auto camera = photo_mode::lastCamera();
-    auto line = std::format("frame {}, presented {}, {}, ", game_loop::currentFrame(), presents.load(), photo_mode::isHeld() ? "frozen" : "running");
+    const auto camera = held_camera::lastCamera();
+    auto line = std::format("frame {}, presented {}, {}, ", game_loop::currentFrame(), presents.load(), held_camera::isHeld() ? "frozen" : "running");
     line += camera ? "camera " + text(*camera) : std::string("no camera yet");
 
     return line + "\n" + ray_tracing::status();
@@ -182,7 +190,7 @@ void writeState(const std::string& name)
     std::filesystem::create_directories(caseFolder, error);
 
     std::ofstream state(caseFolder / "state.txt", std::ios::trunc);
-    const auto camera = photo_mode::lastCamera();
+    const auto camera = held_camera::lastCamera();
     state << "name=" << name << "\nframe=" << game_loop::currentFrame() << "\ncamera=" << (camera ? text(*camera) : std::string("?")) << "\n";
     if (const auto outcome = game_lua::run(StateScript, "=automation")) state << outcome->text << "\n";
 
@@ -259,19 +267,19 @@ void run(Script& running, const std::string& line)
     }
     else if (command == "freeze")
     {
-        if (const auto camera = photo_mode::lastCamera()) photo_mode::hold(*camera);
+        if (const auto camera = held_camera::lastCamera()) held_camera::hold(*camera);
         else running.output += "error: no camera yet\n";
     }
     else if (command == "release")
     {
-        photo_mode::release();
+        held_camera::release();
         ray_tracing::clearProbe();
         if (std::exchange(probeTurnedOnView, false)) showDebugView(DebugView::FinalImage);
     }
     else if (command == "camera")
     {
         std::istringstream numbers(rest);
-        if (const auto pose = readPose(numbers)) photo_mode::hold(*pose);
+        if (const auto pose = readPose(numbers)) held_camera::hold(*pose);
         else running.output += "error: camera <x> <y> <z> <yaw> <pitch>\n";
     }
     else if (command == "move")
@@ -279,7 +287,7 @@ void run(Script& running, const std::string& line)
         std::istringstream numbers(rest);
         const auto pose = readPose(numbers);
         int frames{};
-        if (pose && numbers >> frames) photo_mode::move(*pose, frames);
+        if (pose && numbers >> frames) held_camera::move(*pose, frames);
         else running.output += "error: move <x> <y> <z> <yaw> <pitch> <frames>\n";
     }
     else if (command == "wait")
@@ -291,7 +299,7 @@ void run(Script& running, const std::string& line)
     else if (command == "wait_scene")
     {
         running.sceneDeadline = presents + SceneFrames;
-        running.sceneWork = ray_tracing::waitingWork();
+        running.sceneWork = sceneWork();
         running.sceneBusyAt = presents;
     }
     else if (command == "probe")
@@ -316,9 +324,9 @@ void run(Script& running, const std::string& line)
     else if (command == "probe_text") running.output += ray_tracing::shadowProbe() + "\n";
     else if (command == "inspect" && !rest.empty())
     {
-        running.inspectionsBefore = ray_tracing::inspections();
+        running.inspectionsBefore = inspect_trace::finished();
         running.inspectionDeadline = presents + InspectionFrames;
-        ray_tracing::inspect(folder / rest);
+        inspect_trace::request(folder / rest);
     }
     else if (command == "image" && !rest.empty())
     {
@@ -330,11 +338,11 @@ void run(Script& running, const std::string& line)
     {
         askJob(running, [path = folder / rest, rest](ID3D11DeviceContext* context, ID3D11Resource*) {
             ray_tracing::saveTextures(context, path);
-            sun_light_pass::saveGameShadow(context, path / "game-shadow.dds");
+            game_shadow::save(context, path / "game-shadow.dds");
             return "saved the textures into " + rest + "\n";
         });
     }
-    else if (command == "game_shadow") sun_light_pass::keepGameShadow(invert("0"));
+    else if (command == "game_shadow") game_shadow::keep(invert("0"));
     else if (command == "enhancements") setEnhancements(invert("0"));
     else if (command == "reveal")
     {
@@ -422,7 +430,7 @@ bool isWaiting(Script& running)
 
     if (running.inspectionsBefore)
     {
-        if (ray_tracing::inspections() != *running.inspectionsBefore) running.inspectionsBefore.reset();
+        if (inspect_trace::finished() != *running.inspectionsBefore) running.inspectionsBefore.reset();
         else if (presents < running.inspectionDeadline) return true;
         else
         {
@@ -433,7 +441,7 @@ bool isWaiting(Script& running)
 
     if (running.sceneDeadline)
     {
-        if (const auto work = ray_tracing::waitingWork(); work != running.sceneWork)
+        if (const auto work = sceneWork(); work != running.sceneWork)
         {
             running.sceneWork = work;
             running.sceneBusyAt = presents;
@@ -478,7 +486,7 @@ void onCaseKey()
     }
 
     Script lines;
-    if (photo_mode::isHeld())
+    if (held_camera::isHeld())
     {
         lines.lines = {"release"};
         fxui::toast(fxui::Tone::Ok, "The game is let go");

@@ -7,11 +7,11 @@
 // weather and time control (weather.hpp) for development.
 // NGX receives ReShade's wrapped context, so other add-ons that follow DLSS evaluations see it like
 // a game's own DLSS.
-#include "automation.hpp"
 #include "character.hpp"
 #include "constant_capture.hpp"
 #include "core.hpp"
 #include "d3d12_helpers.hpp"
+#include "dev/dev.hpp"
 #include "dev_tools.hpp"
 #include "device_check.hpp"
 #include "features/frame_generation/fsr_frame_generation.hpp"
@@ -549,7 +549,7 @@ void onPresent(command_queue* queue, swapchain* swapChain, const rect*, const re
     if (queue->get_immediate_command_list() != immediateList) return;
 
     if constexpr (DevTools)
-        automation::onPresent(native(queue->get_immediate_command_list()), reinterpret_cast<ID3D11Resource*>(swapChain->get_current_back_buffer().handle));
+        dev::onPresent(native(queue->get_immediate_command_list()), reinterpret_cast<ID3D11Resource*>(swapChain->get_current_back_buffer().handle));
 
     const bool generating = presenter::active();
     upscaler::setFrameGeneration(generating);
@@ -597,7 +597,7 @@ void onReshadePresent(effect_runtime* runtime)
     if (runtime->is_key_pressed(VK_F4)) photo_mode::toggleBlur();
     if constexpr (DevTools)
     {
-        if (runtime->is_key_pressed(VK_F9)) automation::caseKey();
+        if (runtime->is_key_pressed(VK_F9)) dev::onCaseKey();
     }
 
     const auto down = [runtime](uint32_t key) { return !overlayOpen && runtime->is_key_down(key); };
@@ -630,7 +630,7 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshadeMo
     if (isSupportedGameBuild() && !weather::supported()) log("The weather manager has unexpected code; the weather menu is unavailable.");
 
     frame_log::install(directory);
-    if constexpr (DevTools) automation::install(directory);
+    if constexpr (DevTools) dev::install(directory);
     upscaler::initialize(directory);
     core::initialize(directory, isSupportedGameBuild());
     // The game makes its swap chain and targets next, so the float scene and HDR are decided now.

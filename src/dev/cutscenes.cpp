@@ -1,10 +1,10 @@
-#include "cutscenes.hpp"
+#include "dev/cutscenes.hpp"
 
-#include "cutscene_list.hpp"
+#include "dev/cutscene_list.hpp"
 #include "fxui/fxui.hpp"
-#include "game_lua.hpp"
+#include "dev/game_lua.hpp"
 #include "log.hpp"
-#include "travel.hpp"
+#include "dev/travel.hpp"
 
 #include <algorithm>
 #include <array>
