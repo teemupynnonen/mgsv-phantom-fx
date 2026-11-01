@@ -804,6 +804,7 @@ void readInspection(State& s, std::uint32_t slot)
         record.write(reinterpret_cast<const char*>(&header), sizeof(header));
         record.write(static_cast<const char*>(data), static_cast<std::streamsize>(bytes));
         record.close();
+        if (!record) log("Writing " + file.string() + " failed.");
 
         std::map<std::pair<std::uint32_t, std::uint32_t>, std::string> names;
         const auto note = [&](std::uint32_t hit, std::uint32_t kind) {
@@ -826,7 +827,10 @@ void readInspection(State& s, std::uint32_t slot)
 
         std::ofstream table(file.replace_extension(".tsv"), std::ios::trunc);
         for (const auto& [key, name] : names) table << key.first << '\t' << key.second << '\t' << name << '\n';
+        table.close();
+        if (!table) log("Writing " + file.string() + " failed.");
     }
+    else log("A debug case's record could not be read back.");
 
     s.inspect.Reset();
     s.inspectReadback.Reset();

@@ -48,7 +48,7 @@ FindFirstFile originalFindFirstFile{};
 std::filesystem::path cloudFolder, userDataFolder;
 // Steam's own answer, set once before `playerUserDataKnown`.
 std::wstring playerUserData;
-std::atomic<bool> playerUserDataKnown{};
+std::atomic<bool> playerUserDataKnown{}, isStorageRedirected{};
 std::once_flag storagePatched, userPatched;
 
 using Replacement = std::pair<std::size_t, void*>;
@@ -169,8 +169,7 @@ HANDLE WINAPI findFirstFile(LPCWSTR pattern, LPWIN32_FIND_DATAW found)
     return originalFindFirstFile(either(redirect, pattern), found);
 }
 
-// Each interface is one object for the process, so its vtable is changed once, the first time the game
-// asks for it.
+// Each interface is one object for the process, so its vtable is changed once.
 bool patch(void* object, std::span<const Replacement> replacements, const char* what)
 {
     auto** const table = *static_cast<void***>(object);
@@ -189,14 +188,19 @@ bool patch(void* object, std::span<const Replacement> replacements, const char* 
     return true;
 }
 
-void* getStorage()
+void redirectStorage(void* storage)
 {
     static const Replacement Replacements[]{{FileWriteSlot, reinterpret_cast<void*>(&fileWrite)}, {FileReadSlot, reinterpret_cast<void*>(&fileRead)},
         {FileDeleteSlot, reinterpret_cast<void*>(&fileDelete)}, {FileExistsSlot, reinterpret_cast<void*>(&fileExists)},
         {GetFileSizeSlot, reinterpret_cast<void*>(&getFileSize)}};
 
+    if (patch(storage, Replacements, "Steam Cloud calls")) isStorageRedirected.store(true, std::memory_order_release);
+}
+
+void* getStorage()
+{
     void* const storage = originalGetStorage();
-    if (storage) std::call_once(storagePatched, patch, storage, Replacements, "Steam Cloud calls");
+    if (storage) std::call_once(storagePatched, redirectStorage, storage);
 
     return storage;
 }
@@ -246,9 +250,11 @@ bool install(const std::filesystem::path& cloud, const std::filesystem::path& us
     if (!hook(L"steam_api64.dll", "SteamRemoteStorage", &getStorage, originalGetStorage) || !hook(L"steam_api64.dll", "SteamUser", &getUser, originalGetUser))
         return false;
 
-    // The game has already started Steam, so the player's folder is known before any file opens.
+    // The game has already started Steam, so the player's folder is known before any file opens, and Steam Cloud is
+    // redirected even if the game keeps the interface it already asked for.
     getUser();
-    if (!playerUserDataKnown.load(std::memory_order_acquire)) return false;
+    getStorage();
+    if (!playerUserDataKnown.load(std::memory_order_acquire) || !isStorageRedirected.load(std::memory_order_acquire)) return false;
 
     if (!hook(L"kernel32.dll", "CreateFileW", &createFile, originalCreateFile) || !hook(L"kernel32.dll", "DeleteFileW", &deleteFileWide, originalDeleteFileWide)
         || !hook(L"kernel32.dll", "DeleteFileA", &deleteFileNarrow, originalDeleteFileNarrow)

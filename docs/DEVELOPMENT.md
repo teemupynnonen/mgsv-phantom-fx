@@ -52,7 +52,7 @@ cases"). All of it is left out of a release build altogether, not just switched 
 their files and the `InspectPixels` kernel, and what they need elsewhere stands in
 `#if PHANTOM_FX_DEV_TOOLS`. Those files hook the system's file calls, patch Steam's interfaces and
 run what they are told, which security software rightly flags.
-`tools/automation/check_release.py` looks at a built add-on to prove it.
+`tools/automation/check_release.py` looks through a built add-on for the tools' known markers.
 
 `cmake --install build/release --component addon --prefix <dir>` collects the add-on, its DLLs,
 player documentation and licenses for distribution. The DLLs are at the install root;
