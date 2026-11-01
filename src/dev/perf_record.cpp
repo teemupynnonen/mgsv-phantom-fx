@@ -20,6 +20,7 @@
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <sstream>
+#include <utility>
 #include <string_view>
 #include <vector>
 
@@ -212,12 +213,25 @@ std::string timeOfDay()
 }
 
 // The file is opened once: opening one while presenting can hitch the game.
-void writeLine(const Json& line)
+bool writeLine(const Json& line)
 {
+    static bool wasFailing{};
     if (!file.is_open()) file.open(folder / (automation::timeNow() + ".jsonl"), std::ios::app);
 
     file << line.dump() << '\n';
     file.flush();
+    if (file)
+    {
+        wasFailing = false;
+        return true;
+    }
+
+    // Once for a stretch of failures, and the next row tries again.
+    if (!std::exchange(wasFailing, true)) log("Costs on file: a row could not be written to " + folder.string() + ".");
+
+    file.clear();
+
+    return false;
 }
 
 // The settings in force, as PhantomFX.ini's lines, when they change: what a stretch of rows ran with. Not from
@@ -227,13 +241,12 @@ void writeSettings()
     const auto settings = core::currentSettings();
     if (writtenSettings == settings) return;
 
-    writtenSettings = settings;
     std::istringstream ini(iniText(settings));
     Json lines = Json::object();
     for (std::string line; std::getline(ini, line);)
         if (const auto separator = line.find('='); separator != line.npos) lines[line.substr(0, separator)] = line.substr(separator + 1);
 
-    writeLine({{"time", timeOfDay()}, {"settings", std::move(lines)}});
+    if (writeLine({{"time", timeOfDay()}, {"settings", std::move(lines)}})) writtenSettings = settings;
 }
 
 void finishRow(Tally&& finishedRow, const Place& where, double seconds)

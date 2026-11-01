@@ -318,7 +318,7 @@ void run(Script& running, const std::string& line)
         // The frame count comes last, if at all: a case's name can have spaces.
         auto file = trimmed(rest);
         std::uint32_t frames = DefaultCaptureFrames;
-        if (const auto space = file.rfind(' '); space != file.npos)
+        if (const auto space = file.find_last_of(" \t"); space != file.npos)
         {
             const auto* const end = file.data() + file.size();
             std::uint32_t asked{};
@@ -366,9 +366,14 @@ void run(Script& running, const std::string& line)
     {
         const auto separator = rest.find('=');
         const auto settings = core::currentSettings();
-        const auto changed = separator == rest.npos ? settings : withLine(settings, trimmed(std::string_view(rest).substr(0, separator)),
-                                                                     trimmed(std::string_view(rest).substr(separator + 1)));
+        const auto key = trimmed(std::string_view(rest).substr(0, separator));
+        const auto changed = separator == rest.npos ? settings : withLine(settings, key, trimmed(std::string_view(rest).substr(separator + 1)));
         core::applySettings(changed);
+
+        // A test that changed nothing would read as costing nothing. An unknown key is an error; a line that leaves the
+        // value as it was may mean to.
+        if (("\n" + iniText(settings)).find("\n" + std::string(key) + "=") == std::string::npos) running.output += "error: no setting " + std::string(key) + "\n";
+        else if (changed == settings) running.output += "the setting stays as it was\n";
     }
     else if (command == "diagnostic") setDiagnostic(running, rest);
     else if (command == "lua")
