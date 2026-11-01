@@ -50,6 +50,16 @@ HALF_TEXTURES = {R16G16B16A16_FLOAT: 4, R16G16_FLOAT: 2, R16_FLOAT: 1}
 game_folder = PLAYER_GAME
 
 
+def take_copy_flag(arguments):
+    """`arguments` without a leading --copy, which turns these tools to the automation copy."""
+    global game_folder
+    if arguments[:1] != ["--copy"]:
+        return arguments
+
+    game_folder = AUTOMATION_GAME
+    return arguments[1:]
+
+
 def link():
     return game_folder / LINK
 
@@ -437,12 +447,7 @@ def run_scenarios(names, accept):
 
 
 def main():
-    arguments = sys.argv[1:]
-    global game_folder
-    if arguments[:1] == ["--copy"]:
-        game_folder = AUTOMATION_GAME
-        arguments = arguments[1:]
-
+    arguments = take_copy_flag(sys.argv[1:])
     if not arguments:
         sys.exit(__doc__)
 

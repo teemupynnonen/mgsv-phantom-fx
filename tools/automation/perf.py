@@ -12,7 +12,6 @@
 import json
 import sys
 import time
-from pathlib import Path
 
 import fx
 
@@ -116,12 +115,13 @@ def values_of(capture):
 def report(tests, folder, bases, tried):
     lines = []
     base_values = [values_of(base) for base in bases]
-    names = list(dict.fromkeys(name for values in base_values for name in values))
+    tried_values = [values_of(capture) for capture in tried]
+    # The tests' names too: what a test turns on is in no base.
+    names = list(dict.fromkeys(name for values in base_values + tried_values for name in values))
     names.sort(key=lambda name: (name not in ("frame", "GPU frame"), -mean(values.get(name, 0.0) for values in base_values)))
     width = max(len(name) for name in names)
     short = [test.split("|")[0].strip()[:14] for test in tests]
     lines.append(f"{'':{width}} {'base':>7} " + " ".join(f"{label:>14}" for label in short))
-    tried_values = [values_of(capture) for capture in tried]
     for name in names:
         base = mean(values.get(name, 0.0) for values in base_values)
         cells = []
@@ -176,7 +176,11 @@ def ab(arguments):
     if not is_frozen:
         script.append("release")
 
-    print(fx.run(script, timeout=60 + 6.0 * len(tests) * (frames + settle)), end="", flush=True)
+    output = fx.run(script, timeout=60 + 6.0 * len(tests) * (frames + settle))
+    print(output, end="", flush=True)
+    if any(line.startswith("error:") for line in output.splitlines()):
+        sys.exit("A line above failed, so a table would say the change did nothing.")
+
     bases = [read_capture(folder, f"base-{i}") for i in range(len(tests) + 1)]
     tried = [read_capture(folder, safe_name(i, test)) for i, test in enumerate(tests)]
     print(report(tests, folder, bases, tried))
@@ -188,11 +192,7 @@ def ab(arguments):
 
 
 def main():
-    arguments = sys.argv[1:]
-    if arguments[:1] == ["--copy"]:
-        fx.game_folder = fx.AUTOMATION_GAME
-        arguments = arguments[1:]
-
+    arguments = fx.take_copy_flag(sys.argv[1:])
     if not arguments:
         sys.exit(__doc__)
 

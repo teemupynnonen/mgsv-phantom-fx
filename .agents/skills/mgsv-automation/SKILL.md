@@ -25,6 +25,7 @@ Run from `tools/automation`, as `case.py` imports `fx.py` from there:
 ```
 uv run -q --with numpy --with pillow --with scipy python fx.py <command>
 uv run -q --with numpy --with pillow --with scipy python case.py [--copy] [<case>]
+uv run -q --with numpy --with pillow python perf.py [--copy] <command>
 ```
 
 Cases are in `PhantomFX-automation/cases` beside each game:
@@ -110,6 +111,7 @@ Everything here is left out of a release build altogether, because hooking syste
 | What you see | Cause |
 |---|---|
 | "no record came" | Nothing rendered: a freeze during loading stalls the game, or the scene is off |
+| "no capture came" | The GPU's frames were not timed: nothing rendered, as above |
 | `fx.py` times out | No dev build running there, or the copy failed to start: read `PhantomFX-automation/launch.log` |
 | Report says "No record of the frame" | The case's `log.txt` has the error |
 | Title screen shows the cabin but a case fails | The title moves on by itself into a load. Use `fx.py --copy acc` |
