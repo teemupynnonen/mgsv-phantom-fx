@@ -13,6 +13,7 @@
 #include "features/path_tracing/path_tracing.hpp"
 #include "features/ray_traced_lights/local_lights.hpp"
 #include "features/sea/sea.hpp"
+#include "features/water_caustics/water_caustics.hpp"
 #include "features/sun_contact_shadows/sun_contact_shadows.hpp"
 #include "features/upscaling/upscaler.hpp"
 #include "features/volumetric_fog/atmosphere.hpp"
@@ -88,6 +89,7 @@ const EffectLine EffectLines[]{
         .health = atmosphere::health},
     {.effect = Effect::Sea, .passes = {{Pass::SeaWaves, "Waves: spectrum, FFT and maps"}, {Pass::SeaSurface, "Surface into the G-buffer"}},
         .health = sea::health},
+    {.effect = Effect::WaterCaustics, .passes = {{Pass::WaterCaustics, "Webs over the rivers"}}, .health = water_caustics::health},
 };
 static_assert(std::size(EffectLines) == static_cast<std::size_t>(Effect::Count));
 

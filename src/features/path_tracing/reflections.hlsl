@@ -16,10 +16,26 @@ Texture2D<float4> g_Guide_SpecularAlbedo : register(t19);  // The share of light
 RWTexture2D<float4> g_Reflection : register(u93);          // The reflected light times the specular albedo and the exposure; a: how far across the screen its hit is
 RWTexture2D<float> g_ReflectionDistance : register(u94);   // The ray's hit distance; FP16's largest where it got away
 RWTexture2D<float4> g_ReflectionMap : register(u98);       // The hit as the game's reflection map holds it (ReflectionBlend): rgb its light, a how much it blends
-Texture2D<float> g_SurfaceDepth : register(t26);           // The nearest glass or mirror the game drew at each pixel (glass.hpp); 0 without
-Texture2D<float4> g_SurfaceNormal : register(t27);         // Its world-space normal, its roughness in w
+Texture2D<float> g_SurfaceDepth : register(t26);           // The nearest glass, mirror or water the game drew at each pixel (forward_surfaces.hpp); 0 without
+Texture2D<float4> g_SurfaceNormal : register(t27);         // Its world-space normal, its roughness in w; water's w is negative
 RWTexture2D<float4> g_SurfaceReflection : register(u99);   // What it reflects, times the exposure; a: the ray's hit distance
 
+// Water's reflectance (F0 0.02) at the eye's angle over GGX's lobe: Karis' fit of the split sum ("Physically
+// Based Shading on Mobile", 2014), as the sea's guides use it. A water surface with its ripples' roughness,
+// not a perfect mirror's.
+float WaterReflectance(float toEyeN, float roughness)
+{
+    const float4 c0 = float4(-1, -0.0275, -0.572, 0.022);
+    const float4 c1 = float4(1, 0.0425, 1.04, -0.04);
+    float4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * toEyeN)) * r.x + r.y;
+    float2 ab = float2(-1.04, 1.04) * a004 + r.zw;
+    return 0.02 * ab.x + ab.y;
+}
+
+// A river's or a liquid's, near a mirror as the game's shader samples its cube map: the ripples' normal does the rest.
+// The guides take the same (surface_shaders.hpp, ReconstructionGuides).
+static const float WaterRoughness = 0.05f;
 // FP16's largest, which Ray Reconstruction takes as the sky.
 static const float SkyHitDistance = 65504.0f;
 
@@ -264,7 +280,7 @@ void TraceReflections(uint2 did : SV_DispatchThreadID)
     g_ReflectionDistance[did] = hitDistance;
 }
 
-// What glass and mirrors reflect, from the surfaces the game drew in front of the rest (glass.hpp): as a mirror does, spread
+// What glass, mirrors and water reflect, from the surfaces the game drew in front of the rest (forward_surfaces.hpp): as a mirror does, spread
 // by the material's roughness, a ray a pixel. Nothing to the game's blend or to the resolve: their weights are the game's
 // own, in the surface's draw, and this frame's scene is built.
 [numthreads(8, 8, 1)]
@@ -276,6 +292,9 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
     if (depth <= 0.0f) return;
 
     float4 normalRoughness = g_SurfaceNormal.Load(int3(did, 0));
+    // A river or a liquid (WaterSurface, surface_shaders.hpp) marks itself with a negative w.
+    const bool isWater = normalRoughness.w < 0.0f;
+    if (isWater) normalRoughness.w = WaterRoughness;
     float3 normal = normalize(normalRoughness.xyz);
     float alpha = max(normalRoughness.w * normalRoughness.w, 1e-3f);
     float3 world = DepthPosition(did, depth);
@@ -289,5 +308,7 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
     float hitDistance;
     bool isRough = normalRoughness.w >= RoughSurface;
     float3 light = ReflectedLight(origin, normal, CopyTolerance(world), direction, PixelCone(world, g_Frame.rayCone.x + alpha), isRough, random, hitDistance);
+    // Water reflects as water does: its reflectance at the eye's angle. Glass's is in its weights, from the game's own shader.
+    if (isWater) light *= WaterReflectance(saturate(dot(normal, toEye)), normalRoughness.w);
     g_SurfaceReflection[did] = float4(min(RemoveNaNs(light) * g_Frame.nearFar.w, BrightestHit), hitDistance);
 }

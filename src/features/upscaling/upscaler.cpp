@@ -8,7 +8,7 @@
 #include "features/motion_blur/motion_blur.hpp"
 #include "features/photo_mode/focus.hpp"
 #include "features/upscaling/frames.hpp"
-#include "features/path_tracing/glass.hpp"
+#include "features/path_tracing/forward_surfaces.hpp"
 #include "features/upscaling/fsr_upscaler.hpp"
 #include "features/upscaling/fxaa.hpp"
 #include "features/upscaling/ray_reconstruction.hpp"
@@ -1304,7 +1304,7 @@ bool upscale(const FxaaPass& pass, const Frame& current)
     {
         performance::Timed timed(immediate.Get(), performance::Pass::UpscalerInputs);
         ComPtr<ID3D11ShaderResourceView> glassDepth;
-        if (guides) glassDepth = glass::guideReconstruction(immediate.Get(), guides->normalAccess.Get(), ray_tracing::reflectionDistanceAccess(width, height));
+        if (guides) glassDepth = forward_surfaces::guideReconstruction(immediate.Get(), guides->normalAccess.Get(), ray_tracing::reflectionDistanceAccess(width, height));
 
         runInputs(current, reprojection, objectVelocity, linear, sceneBeforeDof.Get(), glassDepth.Get());
         timed.next(performance::Pass::Upscaler);

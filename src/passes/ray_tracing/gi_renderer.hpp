@@ -63,7 +63,7 @@ struct Textures
     // R16G16B16A16_FLOAT), and the sky from every side (sky_capture.hpp), null until captured.
     ID3D11Texture2D* materialSpecular{};
     ID3D11Texture2D* skyCube{};
-    // And glass and mirrors (glass.hpp), which traceSurfaces traces: the nearest one's depth (R32_FLOAT) and normal with its
+    // And glass and mirrors (forward_surfaces.hpp), which traceSurfaces traces: the nearest one's depth (R32_FLOAT) and normal with its
     // roughness (R16G16B16A16_FLOAT) at each pixel, what it reflects (R16G16B16A16_FLOAT); null while off.
     ID3D11Texture2D* surfaceDepth{};
     ID3D11Texture2D* surfaceNormal{};

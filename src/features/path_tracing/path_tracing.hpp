@@ -18,7 +18,7 @@
 // - the sun pass is lit by the rays' shadow alone and leaves the sky's reflection out, and indoors the sky's
 //   specular pass is skipped (sun_light_pass.cpp);
 // - the game's blend of its screen-space reflections takes the rays' hits in their place, but where a surface was
-//   drawn in front of the G-buffer's: water, which the rays do not see, keeps them, and glass has its own (glass.hpp) (draw);
+//   drawn in front of the G-buffer's: water, which the rays do not see, keeps them, and glass has its own (forward_surfaces.hpp) (draw);
 // - the lamps' light is added once at the draw point, in place of each traced light drawn again
 //   (addLampLight, local_lights.cpp).
 namespace phantom_fx::path_tracing

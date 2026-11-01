@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Rivers and liquids take the rays' reflections, and a river's bed takes the caustics.** Under path tracing the water
+  reflects what is around it, from where it is now and not where it was a frame ago, with the game's own ripples and the
+  rain's rings on it. It fades at the shore and behind the fog as the water itself does. It no longer takes the shadow map's
+  shadow where the rays replaced it on the ground: the bed's shadow stays in the light under it. **Caustics** put the
+  sunlight the waves focus on the bed, strongest just under the surface, fading with the depth, gone where the water meets
+  the shore or anything standing in it, in the shade, and as the sun leaves. They need no ray tracing.
+  **Atmosphere > Water caustics** has the switch and the **Intensity**.
+
 - **Depth of field: no more jagged edges around what is in focus.** The game decided what is blurred in blocks of
   four pixels, so the blur bit into the rim of anything in focus in steps, and the lower the render size the wider
   the steps: DLSS and Ray Reconstruction kept them as detail. Each pixel's own depth now decides, so in-focus edges

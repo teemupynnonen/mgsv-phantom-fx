@@ -76,7 +76,7 @@ void main(uint2 id : SV_DispatchThreadID)
 // game's Fresnel and its blend, and here it fades as LocalReflectionTPP fades its own (by the ray's way across the
 // screen, against the march's reach, and the fog), but for the screen's edges, as a ray needs none. Only where a
 // surface was drawn in front of the G-buffer's (the scene's depth nearer than the G-buffer's), water, which the rays
-// do not see, does it stay the screen-space map. Glass there has reflections of its own (glass.hpp): the map, the
+// do not see, does it stay the screen-space map. Glass there has reflections of its own (forward_surfaces.hpp): the map, the
 // surface's behind it, leaves it.
 inline constexpr char ReflectionBlend[] = R"(
 cbuffer cPSSystem : register(b0)
@@ -117,7 +117,7 @@ Texture2D<float> SceneDepth : register(t3);      // The depth the reflections' m
 Texture2D<float> SurfaceDepth : register(t4);    // The G-buffer's depth, as the ray-traced scene's kick packed it
 Texture2D<float4> ReflectionMap : register(t5);  // The rays' hits (ray_tracing::reflectionMap)
 Texture2D<float4> Reflection : register(t6);     // Its alpha: how far across the screen a ray's hit is (ray_tracing::reflection)
-Texture2D<float4> SurfaceWeights : register(t7); // Its alpha: how much of a pixel glass covers (glass::surfaceWeights)
+Texture2D<float4> SurfaceWeights : register(t7); // Its alpha: how much of a pixel glass covers (forward_surfaces::surfaceWeights)
 Texture2D<float4> g_tex_fog : register(t12);     // The game's, still bound from its screen-space reflections
 SamplerState g_samplerPoint_Wrap : register(s8);
 SamplerState g_samplerLinear_Wrap : register(s10);
