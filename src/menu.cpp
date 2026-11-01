@@ -564,8 +564,9 @@ void drawCutscenes()
 
     if (fxui::button("Play",
             "From free roam or the ACC. A story cutscene loads its mission and ends in the ACC, with no mission clear; a Mother Base one ends in free "
-            "roam there. The game saves on the way, as it does when leaving free roam. The story stays where it is. Cutscenes start in the mission's "
-            "own time and weather, not always the ones they have in the story.",
+            "roam there. The game saves on the way, as it does when leaving free roam. The story stays where it is, unless the game plays another "
+            "Mother Base cutscene in its place, which a toast says. Cutscenes start in the mission's own time and weather, not always the ones they "
+            "have in the story.",
             selected.has_value()))
         cutscenes::play(*selected);
 }
