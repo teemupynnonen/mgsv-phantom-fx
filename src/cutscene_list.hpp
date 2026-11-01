@@ -232,11 +232,11 @@ inline constexpr Cutscene List[]{
     {10260, "Demo_LetterFromQuiet", "10260 A Quiet Exit: Demo_LetterFromQuiet (p31_070050_000_final)"},
     {10260, "Demo_QuietDrifted", "10260 A Quiet Exit: Demo_QuietDrifted (p31_070050_001_final)"},
 
-    {30010, "Demo_RecoverReptilePod", "30010 Afghanistan free roam: Demo_RecoverReptilePod (p31_060010)"},
-    {30010, "Demo_AttackedByQuiet_1", "30010 Afghanistan free roam: Demo_AttackedByQuiet_1 (p31_030100_000)"},
-    {30010, "Demo_AttackedByQuiet_2", "30010 Afghanistan free roam: Demo_AttackedByQuiet_2 (p31_030100_001)"},
-    {30010, "Demo_RescueSpecial", "30010 Afghanistan free roam: Demo_RescueSpecial (p31_080010_000_final)"},
-    {30010, "Demo_RecoverVolgin", "30010 Afghanistan free roam: Demo_RecoverVolgin (p31_080100_000_final)"},
+    {30010, "Demo_RecoverReptilePod", "30010 Afghanistan free roam (will not load): Demo_RecoverReptilePod (p31_060010)"},
+    {30010, "Demo_AttackedByQuiet_1", "30010 Afghanistan free roam (will not load): Demo_AttackedByQuiet_1 (p31_030100_000)"},
+    {30010, "Demo_AttackedByQuiet_2", "30010 Afghanistan free roam (will not load): Demo_AttackedByQuiet_2 (p31_030100_001)"},
+    {30010, "Demo_RescueSpecial", "30010 Afghanistan free roam (will not load): Demo_RescueSpecial (p31_080010_000_final)"},
+    {30010, "Demo_RecoverVolgin", "30010 Afghanistan free roam (will not load): Demo_RecoverVolgin (p31_080100_000_final)"},
 
     {30250, "Demo_RecoverVolgin", "30250 Mother Base ward: Demo_RecoverVolgin (p31_080110_000_final)", SameStage, CentreOfQuarantine},
 

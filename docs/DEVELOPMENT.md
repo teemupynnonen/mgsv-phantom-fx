@@ -578,7 +578,8 @@ Known limits:
   Mother Base by helicopter (`TppDefine.MB_FREEPLAY_RIDEONHELI_DEMO`, `Seq_Demo_Play_Sortie`), and
   their `OnEnd` is what ends the mission, so they cannot run without it.
 - The five cutscenes of `f30010` do not load: four are in a side op's pack and `Demo_RecoverVolgin`
-  needs the `recoverVolginDemo` label. The 60 s limit ends them in the ACC, with a toast.
+  needs the `recoverVolginDemo` label. Their labels say so, and the 60 s limit ends them in the ACC,
+  with a toast.
 
 ## How Fox Engine renders
 
