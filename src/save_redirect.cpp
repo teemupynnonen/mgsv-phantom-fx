@@ -245,6 +245,11 @@ bool hook(const wchar_t* module, const char* name, Function detour, Function& or
 
 bool install(const std::filesystem::path& cloud, const std::filesystem::path& userData) noexcept
 {
+    // Steam's vtables point here until the process ends, past ReShade unloading the add-on with its last device. A load
+    // after that finds them still redirected, and hooks again.
+    HMODULE pinned{};
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN, reinterpret_cast<LPCWSTR>(&install), &pinned)) return false;
+
     cloudFolder = cloud;
     userDataFolder = userData;
     if (!hook(L"steam_api64.dll", "SteamRemoteStorage", &getStorage, originalGetStorage) || !hook(L"steam_api64.dll", "SteamUser", &getUser, originalGetUser))
