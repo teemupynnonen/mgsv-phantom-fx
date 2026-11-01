@@ -32,7 +32,7 @@ Delete this folder, `tools/automation/` and `.agents/skills/mgsv-automation/`, t
 | File | Lines |
 | --- | --- |
 | `CMakeLists.txt` | The `include(src/dev/dev.cmake)` block and `${PHANTOM_FX_DEV_SOURCES}` |
-| `src/addon.cpp` | The three `dev::` calls and the include |
+| `src/addon.cpp` | The three `dev::` calls, the include, and the name of `onPresent`'s `swapChain` parameter |
 | `src/game_loop.cpp` | `dev::onFrameStart()` and the include |
 | `src/menu.cpp` | `dev::drawPage()` and the include |
 | `src/menu_budget.cpp`, `src/features/setting_visitor.hpp` | The Developer section |
@@ -45,7 +45,7 @@ Delete this folder, `tools/automation/` and `.agents/skills/mgsv-automation/`, t
 | `src/phantom_fx_settings.cpp`, `.hpp` | `withLine` |
 | `docs/DEVELOPMENT.md` | The `src/dev/` rows, "Debug cases", "Travel", "Cutscenes", "Game Lua", and the mentions under "Build" |
 
-That leaves the add-on working. One thing goes deeper: `reveal`, which puts what the scene leaves out back in, is
+That is 176 lines, and the add-on builds and passes its tests without them (tried 2026-11-01). One thing goes deeper: `reveal`, which puts what the scene leaves out back in, is
 threaded through the scene's own filters. In a release build it is always empty, so it can stay. To remove it as well for
-a clean tree, take out `Reveal` in `engine_scene`, `keepsDropped` and `Rejection` in `scene_description`, and the
+a clean tree, take out `Reveal` and `waitingFiles` in `engine_scene`, `keepsDropped` and `Rejection` in `scene_description`, and the
 `PHANTOM_FX_DEV_TOOLS` blocks in `scene_contents.cpp`.
