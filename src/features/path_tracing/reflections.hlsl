@@ -312,7 +312,9 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
         const uint2 downPixel = min(did + uint2(0, 1), last);
         const float rightDepth = g_SurfaceDepth.Load(int3(rightPixel, 0));
         const float downDepth = g_SurfaceDepth.Load(int3(downPixel, 0));
-        float3 slope = float3(0, 0, 1);
+        // The engine's world is Y-up (gi_common.hlsli, TerrainPoint): the neighbours' depths can be missing at the
+        // surface's edges, and a horizontal fallback there would reflect at a grazing angle.
+        float3 slope = float3(0, 1, 0);
         if (rightDepth > 0.0f && downDepth > 0.0f)
             slope = cross(DepthPosition(rightPixel, rightDepth) - world, DepthPosition(downPixel, downDepth) - world);
         if (!all(slope == 0.0f)) slope = normalize(slope);
