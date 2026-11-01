@@ -1937,6 +1937,9 @@ the game's lights) is left alone until it runs.
     its vertex shader gives none). The last drawn is the nearest, as the game sorts what blends; the weights blend as the
     game blends, so a pane drawn twice, as many are, weighs as it shows. A mirror with the live picture stays the game's
     (its texture is a render target), and so does whatever a smaller camera's view draws.
+    Its shadow map leaves the draw too (`t8`, `s15`), replaced by a 1x1 lit one and the sampler that always compares
+    (`forward_surfaces::tracedShadow`): the map's shadow no longer matches a scene the rays shaded, and the composite
+    dims the pane by the rays' shadow at its own pixels instead.
   - **The trace** (`ray_tracing::traceSurfaces`). Before the exposure's list, a frame that drew a surface signals the fence,
     and Direct3D 12 traces the marked pixels on the scene the kick built, in a list of their own (`gi_renderer::traceSurfaces`), up to
     `SpecularRays` as any glossy surface; Direct3D 11 waits. The rays' hits come from the same `ReflectedLight`. So
@@ -1946,7 +1949,9 @@ the game's lights) is left alone until it runs.
     encoded and added by the surface's alpha, in the scene's encoded values, as the game blends its glass, over a copy of the
     scene, before the exposure, the depth of field and the upscaler read it. So a particle in front of a pane has the
     reflection over it. A traced reflection is added to what the draw left, as encoding the sum of the two would need
-    each pane's own colour.
+    each pane's own colour. The rays' shadow on the pane itself (`TraceSurfaceReflections`, `g_ForwardShadow`: a ray from
+    the surface towards the sun's disc, one sample) dims it as the sun's absence does, to 0.85: a pane is mostly what it
+    reflects and the sky behind it, so blocking the sun barely changes it.
   - **The rays.** Glass used to be left out for its alpha and shadow bytes. It is now `MeshRole::Glass`, taken by its material: any
     with a `GlassColor` vector, which four techniques have and no other (`fox3DFW_Glass_CommonRef`, `_CommonRef_LNM`,
     `_LNM` and two unnamed); mirrors are `MeshRole::Mirror`, by their technique, `fox3DFW_ParallaxReflection`. They are non-opaque

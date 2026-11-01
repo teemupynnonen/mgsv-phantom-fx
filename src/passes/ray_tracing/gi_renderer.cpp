@@ -95,6 +95,7 @@ struct State
         std::uint32_t slot{}, width{}, height{};
         FrameBinding binding;
         ID3D12Resource* reflection{};
+        ID3D12Resource* shadow{}; // The sun's visibility at the surface, written beside the reflection
     };
     std::optional<SurfaceTrace> surfaceTrace;
     HANDLE event{};
@@ -157,7 +158,7 @@ struct State
     std::uint64_t statsFence{}, lastStats{};
     Shared depth, normal, albedo, output, shadow, shadowDebug, velocity, terrainPages, terrainHeights, lightDebug, materialSpecular, skyCube, guideNormals,
         guideSpecular, reflection, reflectionDistance, reflectionMap, guideMaterial, guideLobe, specularTable, lampMasks, lampDiffuse, lampSpecular, surfaceDepth,
-        surfaceNormal, surfaceReflection;
+        surfaceNormal, surfaceReflection, forwardShadow;
 
     ~State()
     {
@@ -970,6 +971,7 @@ Result render(const Frame& frame)
                 traced.surfaceDepth = openShared(s, s.surfaceDepth, frame.textures.surfaceDepth, "Opening the glass's depth").Get();
                 traced.surfaceNormal = openShared(s, s.surfaceNormal, frame.textures.surfaceNormal, "Opening the glass's normals").Get();
                 traced.surfaceReflection = openShared(s, s.surfaceReflection, frame.textures.surfaceReflection, "Opening the glass's reflections").Get();
+                traced.forwardShadow = openShared(s, s.forwardShadow, frame.textures.forwardShadow, "Opening the surfaces' shadow").Get();
             }
         }
         if (traces.tracesLampLight)
@@ -1155,7 +1157,7 @@ Result render(const Frame& frame)
 
         if (traces.tracesReflections) path_tracing_rays::recordReflections(recorder, frame.width, frame.height);
 
-        if (traces.tracesGlass) surfaceTrace = State::SurfaceTrace{slot, frame.width, frame.height, frameBinding, traced.surfaceReflection};
+        if (traces.tracesGlass) surfaceTrace = State::SurfaceTrace{slot, frame.width, frame.height, frameBinding, traced.surfaceReflection, traced.forwardShadow};
 
         if constexpr (DiagnosticLog)
         {
@@ -1237,7 +1239,9 @@ bool traceSurfaces(std::uint64_t waitValue, std::uint64_t signalValue)
         const auto firstMark = static_cast<UINT>(marks.size());
         recorder.marker = timestampMarker(s, list, trace.slot);
         recorder.transition(trace.reflection, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        recorder.transition(trace.shadow, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         path_tracing_rays::recordSurfaceReflections(recorder, trace.width, trace.height);
+        recorder.transition(trace.shadow, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
         recorder.transition(trace.reflection, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
         recorder.mark(nullptr);
         const auto marked = static_cast<UINT>(marks.size()) - firstMark;
