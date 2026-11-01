@@ -19,22 +19,47 @@ void expect(bool condition, const char* message)
     if (!condition) throw std::runtime_error(message);
 }
 
-// The StrCode64s of the texture parameters a material names its textures by (Base_Tex_SRGB, Mask_Tex_LIN),
+// The StrCode64s of the texture parameters a material names its textures by (Base_Tex_SRGB, Mask_Tex_LIN, Base_Tex_LIN),
 // and the path hash of mesh i's texture, TexturePath + i.
-constexpr std::uint64_t BaseTexture = 0x41EA7BE81B61, MaskTexture = 0x3ED9B75CD480, TexturePath = 0x5000;
-// And of the vectors a material gives (SelfColor, SelfColorIntensity, MatParamIndex_0).
-constexpr std::uint64_t SelfColor = 0x557B9224571E, SelfColorIntensity = 0xE40A3A2518CF, MaterialIndex = 0xCAB8E38487FF;
+constexpr std::uint64_t BaseTexture = 0x41EA7BE81B61, MaskTexture = 0x3ED9B75CD480, LinearBaseTexture = 0x679A3387A4DF, TexturePath = 0x5000;
+// And of the vectors a material gives (SelfColor, SelfColorIntensity, MatParamIndex_0, GlassColor), and a mirror's technique
+// (fox3DFW_ParallaxReflection).
+constexpr std::uint64_t SelfColor = 0x557B9224571E, SelfColorIntensity = 0xE40A3A2518CF, MaterialIndex = 0xCAB8E38487FF, GlassColor = 0xBE61C83A81D,
+                        ParallaxReflection = 0x2EB4D1D33DF8;
+// And a layer's (Layer_Tex_SRGB, LayerMask_Tex_LIN, URepeat_UV, VRepeat_UV, UShift_UV, VShift_UV), and the path hashes of mesh i's
+// layer and mask, LayerPath + i and LayerMaskPath + i.
+constexpr std::uint64_t LayerTexture = 0xFB6E9826DBE6, LayerMaskTexture = 0xD5C6F91A8B72, URepeat = 0xE544FE2CA129, VRepeat = 0xE7C7FA3697B2, UShift = 0x7B8B5E0E16EB,
+                        VShift = 0x38DA962E408E, LayerPath = 0x6000, LayerMaskPath = 0x7000;
+// Techniques by how they lay their layer and read its mask, in red on the base's coordinates unless named so: multiplying
+// (fox3ddf_cloth_dirty), blending on the encoded values (fox3ddf_blin_layer_sbl_mu, the mask on the third coordinates), in linear
+// light (fox3ddf_blin_layer_bl), with the mask in blue (fox3ddf_blin_ly_mul_2subnorm), in blue on the third coordinates
+// (fox3ddf_blin_ly_sbl_2snm_nu), on the fourth (fox3ddf_blin_layer_bl_mu_nu), on the second, unmapped
+// (fox3ddf_blin_layersb_snm_nlmu), and one not known to read its layer (in no record).
+constexpr std::uint64_t Multiplying = 0xE2C9B71532D1, BlendingOnThirdUvs = 0x3FBC9A12FB36, BlendingLinearly = 0x54214F48645B, MaskInBlue = 0xAA02EC2A2C1D,
+                        MaskInBlueOnThirdUvs = 0xCDDF56CB51E3, MaskOnFourthUvs = 0xECC9C23CA8E4, MaskOnSecondUvs = 0xD8DE23B18660, UnknownToReadItsLayer = 0xC0CE81F00048;
 
 // A mesh of a test model file: its alpha and shadow bytes, whether its vertices have texture coordinates,
-// its material's one texture parameter (BaseTexture, MaskTexture, or 0 for none), and with an intensity its
-// vectors: that SelfColorIntensity, a SelfColor of (1, 0.5, 0.25) and a MatParamIndex_0 of `materialRow`.
+// its material's one texture parameter (BaseTexture, MaskTexture, LinearBaseTexture, or 0 for none), and with an intensity its
+// vectors: that SelfColorIntensity, a SelfColor of (1, 0.5, 0.25) and a MatParamIndex_0 of `materialRow`; a GlassColor
+// vector, or the mirror's technique. With a `layerRepeat`, a layer and its mask too, repeating so often across and twice that
+// up, shifted by (0.25, 0.5), of its `layerTechnique`, on second coordinates of its vertices with `hasSecondUvs`. `hasThirdUvs` and
+// `hasFourthUvs` give it those coordinates too.
 struct TestMesh
 {
     std::uint8_t alpha{}, shadow{};
     bool hasUvs{};
     std::uint64_t textureParameter{};
     float selfIntensity{}, materialRow{};
+    bool isGlass{}, isMirror{};
+    float layerRepeat{};
+    std::uint64_t layerTechnique{};
+    bool hasSecondUvs = true;
+    bool hasThirdUvs{}, hasFourthUvs{};
 };
+
+// A test file's vertices' coordinates: the first, (1, 1) as halves, and the bytes a rigid mesh's further ones share with the
+// skin it has no use for. Its fourth share the first's.
+constexpr std::uint32_t FirstUvs = 0x3C003C00, SecondUvs = 0xFF, ThirdUvs = 0;
 
 template<class T> void put(std::vector<std::uint8_t>& bytes, T value)
 {
@@ -77,20 +102,21 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
     const auto streamAt = static_cast<std::uint32_t>(data.size());
     for (std::uint16_t v = 0; v < vertices; ++v)
     {
-        put<std::uint32_t>(data, 0x3C003C00); // (1, 1) as halves
-        put<std::uint32_t>(data, 0);          // Each bone number the bone group's first
-        put<std::uint32_t>(data, 0xFF);       // All the weight on the first
+        put<std::uint32_t>(data, FirstUvs);
+        put<std::uint32_t>(data, ThirdUvs);  // Each bone number the bone group's first
+        put<std::uint32_t>(data, SecondUvs); // All the weight on the first
     }
 
     auto& meshBlock = block(3, meshes.size(), 48);
     auto& materialInstances = block(4, meshes.size(), 16);
-    auto& textures = block(6, meshes.size(), 4);
-    auto& parameters = block(7, 4 * meshes.size(), 4);
+    auto& textures = block(6, 3 * meshes.size(), 4);
+    auto& parameters = block(7, 12 * meshes.size(), 4);
+    auto& materials = block(8, 2 + meshes.size(), 4);
     auto& assignments = block(9, meshes.size(), 8);
     auto& meshFormats = block(10, 2 * meshes.size(), 8);
     auto& faceInfos = block(17, meshes.size(), 8);
-    auto& paths = block(21, meshes.size(), 8);
-    auto& names = block(22, meshes.size() + 3, 8);
+    auto& paths = block(21, 3 * meshes.size(), 8);
+    auto& names = block(22, 2 * meshes.size() + 11, 8);
     std::vector<std::uint8_t> vertexFormats;
     const auto format = [&](std::uint8_t usage, std::uint8_t dataType, std::uint16_t element) {
         put(vertexFormats, usage);
@@ -106,16 +132,52 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
         putAt<std::uint16_t>(meshBlock, 48 * i + 10, 3); // Vertices
         putAt<std::uint32_t>(meshBlock, 48 * i + 16, 3u * i);
         putAt<std::uint64_t>(meshBlock, 48 * i + 24, i); // Face info
+        // The material after the first has the mirror's technique, and each mesh has its own after that for its layer's.
+        putAt<std::uint16_t>(materialInstances, 16 * i + 4, static_cast<std::uint16_t>(mesh.isMirror ? 1 : mesh.layerTechnique ? 2 + i : 0));
         materialInstances[16 * i + 6] = mesh.textureParameter != 0;
         putAt<std::uint16_t>(materialInstances, 16 * i + 8, i);
-        // Its three vectors' parameters, after every mesh's texture parameter.
-        const auto firstVector = static_cast<std::uint16_t>(meshes.size() + 3 * i);
-        materialInstances[16 * i + 7] = mesh.selfIntensity > 0 ? 3 : 0;
+        // Its four vectors' parameters, after every mesh's texture parameter.
+        const auto firstVector = static_cast<std::uint16_t>(meshes.size() + 4 * i);
+        materialInstances[16 * i + 7] = mesh.isGlass ? 4 : mesh.selfIntensity > 0 ? 3 : 0;
         putAt<std::uint16_t>(materialInstances, 16 * i + 10, firstVector);
-        for (std::uint16_t k = 0; k < 3; ++k)
+        for (std::uint16_t k = 0; k < 4; ++k)
         {
             putAt<std::uint16_t>(parameters, 4 * (firstVector + k), static_cast<std::uint16_t>(meshes.size() + k));
-            putAt<std::uint16_t>(parameters, 4 * (firstVector + k) + 2, static_cast<std::uint16_t>(3 * i + k));
+            putAt<std::uint16_t>(parameters, 4 * (firstVector + k) + 2, static_cast<std::uint16_t>(4 * i + k));
+        }
+
+        // A layered mesh's own parameters, after the others': its three textures, then its layer's four vectors.
+        const auto firstOwn = static_cast<std::uint16_t>(5 * meshes.size() + 7 * i);
+        const auto layerName = static_cast<std::uint16_t>(meshes.size() + 5);
+        if (mesh.layerRepeat > 0)
+        {
+            materialInstances[16 * i + 6] = 3;
+            putAt<std::uint16_t>(materialInstances, 16 * i + 8, firstOwn);
+
+            // Glass keeps its GlassColor, which makes it glass.
+            if (!mesh.isGlass)
+            {
+                materialInstances[16 * i + 7] = 4;
+                putAt<std::uint16_t>(materialInstances, 16 * i + 10, static_cast<std::uint16_t>(firstOwn + 3));
+            }
+
+            putAt<std::uint16_t>(parameters, 4 * firstOwn, i);
+            putAt<std::uint16_t>(parameters, 4 * firstOwn + 2, i);
+
+            for (std::uint16_t k = 0; k < 2; ++k)
+            {
+                const auto texture = static_cast<std::uint16_t>(meshes.size() + 2 * i + k);
+                putAt<std::uint16_t>(parameters, 4 * (firstOwn + 1 + k), static_cast<std::uint16_t>(layerName + k));
+                putAt<std::uint16_t>(parameters, 4 * (firstOwn + 1 + k) + 2, texture);
+                putAt<std::uint16_t>(textures, 4 * texture + 2, texture);
+                putAt<std::uint64_t>(paths, 8 * texture, (k ? LayerMaskPath : LayerPath) + i);
+            }
+
+            for (std::uint16_t k = 0; k < 4; ++k)
+            {
+                putAt<std::uint16_t>(parameters, 4 * (firstOwn + 3 + k), static_cast<std::uint16_t>(layerName + 2 + k));
+                putAt<std::uint16_t>(parameters, 4 * (firstOwn + 3 + k) + 2, static_cast<std::uint16_t>(4 * meshes.size() + 4 * i + k));
+            }
         }
 
         putAt<std::uint16_t>(textures, 4 * i + 2, i);
@@ -124,11 +186,16 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
         putAt<std::uint32_t>(faceInfos, 8 * i + 4, 3);
         putAt<std::uint64_t>(paths, 8 * i, TexturePath + i);
         putAt<std::uint64_t>(names, 8 * i, mesh.textureParameter);
+        putAt<std::uint64_t>(names, 8 * (meshes.size() + 11 + i), mesh.layerTechnique);
+        putAt<std::uint16_t>(materials, 4 * (2 + i) + 2, static_cast<std::uint16_t>(meshes.size() + 11 + i));
 
         // Its streams: the positions, then the rest.
         const auto firstFormat = static_cast<std::uint16_t>(vertexFormats.size() / 4);
         format(0, 1, 0);                  // Positions, three floats
         if (mesh.hasUvs) format(8, 7, 0); // Texture coordinates, two halves
+        if (mesh.layerRepeat > 0 && mesh.hasSecondUvs) format(9, 7, 8);
+        if (mesh.hasThirdUvs) format(10, 7, 4);
+        if (mesh.hasFourthUvs) format(11, 7, 0);
         if (isSkinned) format(7, 9, 4);   // Bone numbers, four bytes
         if (isSkinned) format(1, 8, 8);   // Weights, four unorms
 
@@ -146,6 +213,15 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
     putAt<std::uint64_t>(names, 8 * meshes.size(), SelfColor);
     putAt<std::uint64_t>(names, 8 * (meshes.size() + 1), SelfColorIntensity);
     putAt<std::uint64_t>(names, 8 * (meshes.size() + 2), MaterialIndex);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 3), GlassColor);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 4), ParallaxReflection);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 5), LayerTexture);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 6), LayerMaskTexture);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 7), URepeat);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 8), VRepeat);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 9), UShift);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 10), VShift);
+    putAt<std::uint16_t>(materials, 4 * 1 + 2, static_cast<std::uint16_t>(meshes.size() + 4));
     blocks[11] = {static_cast<std::uint16_t>(vertexFormats.size() / 4), vertexFormats};
     block(14, 1, 16); // One buffer, from the buffer data's start
 
@@ -182,7 +258,11 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
     putAt<std::uint32_t>(file, info + 12, 0);
     putAt<std::uint32_t>(file, info + 16, static_cast<std::uint32_t>(data.size()));
     for (const auto& mesh : meshes)
-        for (const float value : {1.0f, 0.5f, 0.25f, 1.0f, mesh.selfIntensity, 0.0f, 0.0f, 0.0f, mesh.materialRow, 0.0f, 0.0f, 0.0f}) put(data, value);
+        for (const float value : {1.0f, 0.5f, 0.25f, 1.0f, mesh.selfIntensity, 0.0f, 0.0f, 0.0f, mesh.materialRow, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f})
+            put(data, value);
+
+    for (const auto& mesh : meshes)
+        for (const float value : {mesh.layerRepeat, 0.0f, 0.0f, 0.0f, 2 * mesh.layerRepeat, 0.0f, 0.0f, 0.0f, 0.25f, 0.0f, 0.0f, 0.0f, 0.5f, 0.0f, 0.0f, 0.0f}) put(data, value);
 
     putAt<std::uint32_t>(file, 48, static_cast<std::uint32_t>(file.size()));
     file.insert(file.end(), data.begin(), data.end());
@@ -260,11 +340,43 @@ void pylonLattice()
     expect(rigid({{32, 1}, {128, 66}}) == Roles{Dropped, MeshRole::CutOut}, "A pylon's lattice casts through its cut-out stand-in.");
 }
 
-// A helicopter's windows kept the sun out of its cabin (2026-10-25); glass drawn into the shadow maps casts
-// solid, untested.
-void mainViewGlassDropped()
+// Alpha bit 4 is no glass: it marks a mesh drawn forward, after the G-buffer, most of them fox3DFW_ConstantSRGB (the game's
+// files, 2026-10-31). Those the main view alone shows are dropped; those cast are solid.
+void forwardMeshesWithoutGlassMaterial()
 {
-    expect(rigid({{16, 5}, {16, 4}}) == Roles{Dropped, MeshRole::Solid}, "Glass the main view alone shows is dropped; cast glass is solid.");
+    expect(rigid({{16, 5}, {16, 4}}) == Roles{Dropped, MeshRole::Solid}, "A forward mesh without a glass material is no glass.");
+}
+
+// Windows, visors and lenses, whatever their bytes (the game's files, 2026-10-31): glass is the material with a GlassColor.
+void glassIsItsMaterial()
+{
+    const auto pane = [](std::uint8_t alpha, std::uint8_t shadow) { return TestMesh{.alpha = alpha, .shadow = shadow, .isGlass = true}; };
+    expect(rigid({pane(16, 5), pane(80, 133), pane(16, 4), pane(80, 132), pane(49, 5), pane(17, 5)}) == Roles(6, MeshRole::Glass),
+        "A rigid model's glass is glass, seen or cast.");
+    expect(character({pane(16, 5), pane(80, 133)}) == Roles(2, MeshRole::Glass), "A character's glasses and visors are glass.");
+    expect(rigid({{.alpha = 16, .shadow = 5, .hasUvs = true, .textureParameter = BaseTexture, .selfIntensity = 80, .isGlass = true}}) == Roles{MeshRole::Emissive},
+        "A self-lit mesh is taken for its light first.");
+}
+
+// The hospital's mirrors (2026-10-31): fox3DFW_ParallaxReflection, a painted picture of the room, not a reflection.
+void mirrorsAreGlass()
+{
+    expect(rigid({{.alpha = 16, .shadow = 36, .isMirror = true}, {.alpha = 80, .shadow = 133, .isMirror = true}}) == Roles(2, MeshRole::Mirror),
+        "A mirror is taken for what it is, whatever its bytes.");
+}
+
+void glassKeepsItsMask()
+{
+    const auto model = modelOf({{.alpha = 16, .shadow = 5, .hasUvs = true, .textureParameter = LinearBaseTexture, .isGlass = true},
+                                   {.alpha = 16, .shadow = 36, .hasUvs = true, .textureParameter = MaskTexture, .isMirror = true}},
+        Source::VisibilityManager);
+    expect(partOf(*model, 0).baseTexture == TexturePath, "Glass's mask is its Base_Tex_LIN.");
+    expect(partOf(*model, 1).baseTexture == 0, "A mirror has none: neither its painted picture nor a mask on coordinates the scene keeps.");
+
+    const auto material = materialOf(partOf(*model, 0), {.base = 6});
+    expect(material.flags == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_GLASS | GI_GEOMETRY_UV) && material.texture == 7 && material.alphaThreshold == 0.0f,
+        "Glass is non-opaque for the rays to choose, and tests no alpha.");
+    expect(materialOf(partOf(*model, 1), {}).flags == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_GLASS | GI_GEOMETRY_MIRROR | GI_GEOMETRY_UV), "A mirror is glass that reflects all.");
 }
 
 // Sky domes kilometres wide around the camera blocked the sky for the global illumination.
@@ -316,12 +428,6 @@ void characterStandInDropped()
 void characterMainViewSolid()
 {
     expect(character({{0, 1}}) == Roles{MeshRole::Solid}, "A character's solid meshes cast, even those the game never casts with.");
-}
-
-// The helicopter's windows (2026-10-25).
-void characterGlassDropped()
-{
-    expect(character({{16, 5}}) == Roles{Dropped}, "A character's glass the main view alone shows is dropped.");
 }
 
 void bushesAreLeaves()
@@ -382,8 +488,8 @@ void cutOutWaitsForTexture()
     expect(solid.flags == GI_GEOMETRY_UV && solid.texture == 7 && solid.alphaThreshold == 0.0f, "A solid mesh takes its texture's colour, not its alpha.");
 }
 
-// Fox Engine's self-lit meshes carry the glass bit and the main view's alone (alpha 0x10, shadow 0x25, a lamp's bulb):
-// taken for their light where the glass they look like is dropped. A glow card, additive (alpha 0x11), is no surface; the sky's
+// Fox Engine's self-lit meshes carry the forward bit and the main view's alone (alpha 0x10, shadow 0x25, a lamp's bulb):
+// taken for their light where other such meshes are dropped. A glow card, additive (alpha 0x11), is no surface; the sky's
 // dome and the moon have an intensity of 1, and a mesh painted black less: they stay what they were.
 void selfLitMeshes()
 {
@@ -401,6 +507,71 @@ void selfLitMeshes()
         "Glow cards and what barely glows stay dropped.");
     expect(rigid({{0, 0, true, BaseTexture, 1, 7}}) == Roles{MeshRole::Solid} && partOf(*modelOf({{0, 0, true, BaseTexture, 1, 7}}, Source::VisibilityManager), 0).materialIndex == 7,
         "An ordinary mesh keeps its role, with its row of the material table.");
+}
+
+// A mesh's layer (the white base of Kaz's beige coat, whose colour is all in its layer): what a hit needs of it, once its
+// textures are copied. Without second coordinates there is no knowing where it lies, glass reflects by its mask alone, and a
+// technique not known to read its layer keeps its base: a layer it may not read must not paint the mesh.
+void layers()
+{
+    const auto layered = [](std::uint64_t technique) {
+        return TestMesh{.hasUvs = true, .textureParameter = BaseTexture, .layerRepeat = 5, .layerTechnique = technique, .hasThirdUvs = true};
+    };
+
+    auto withoutSecondUvs = layered(Multiplying), withoutThirdUvs = layered(BlendingOnThirdUvs), glass = layered(Multiplying), unnamed = layered(Multiplying);
+    withoutSecondUvs.hasSecondUvs = false;
+    withoutThirdUvs.hasThirdUvs = false;
+    glass.alpha = 16;
+    glass.shadow = 5;
+    glass.textureParameter = LinearBaseTexture;
+    glass.isGlass = true;
+    unnamed.layerRepeat = 0;
+    auto onFourthUvs = layered(MaskOnFourthUvs);
+    onFourthUvs.hasFourthUvs = true;
+
+    const auto model = modelOf({layered(Multiplying), layered(BlendingOnThirdUvs), withoutSecondUvs, glass, unnamed, layered(UnknownToReadItsLayer), layered(BlendingLinearly),
+                                   withoutThirdUvs, layered(MaskInBlue), layered(MaskInBlueOnThirdUvs), onFourthUvs, layered(MaskOnSecondUvs)},
+        Source::VisibilityManager);
+
+    const auto layerOf = [&](std::uint32_t mesh) -> const Layer& { return *partOf(*model, mesh).layer; };
+    const auto& multiplied = partOf(*model, 0);
+    expect(layerOf(0).texture == LayerPath && layerOf(0).maskTexture == LayerMaskPath, "A layered mesh names its layer and the layer's mask.");
+    expect(layerOf(0).mapping == std::array{5.0f, 10.0f, 0.25f, 0.5f}, "Its layer's repeat and shift are its material's.");
+    expect(layerOf(0).uvs == std::vector<std::uint32_t>(3, SecondUvs), "It keeps its vertices' second coordinates.");
+    expect(layerOf(0).blend == LayerBlend::Multiply && layerOf(1).blend == LayerBlend::BlendEncoded && layerOf(6).blend == LayerBlend::BlendLinear,
+        "Its technique says how the layer lies.");
+
+    expect(!partOf(*model, 2).layer, "Without second coordinates a mesh has no layer.");
+    expect(!partOf(*model, 3).layer, "Glass has none.");
+    expect(!partOf(*model, 4).layer, "Nor has a mesh without one.");
+    expect(!partOf(*model, 5).layer, "A technique not known to read its layer keeps its base texture.");
+
+    // Most of the shaders read the mask on the base's coordinates, in red.
+    expect(layerOf(0).maskUvs.empty() && !layerOf(0).isMaskInBlue, "A mask on the base's coordinates needs none of its own.");
+    expect(layerOf(1).maskUvs == std::vector<std::uint32_t>(3, ThirdUvs) && !layerOf(1).isMaskInBlue, "A technique's mask can lie on the third coordinates.");
+    expect(!partOf(*model, 7).layer, "Without them there is no knowing where the layer lies.");
+    expect(layerOf(8).maskUvs.empty() && layerOf(8).isMaskInBlue, "It can be in blue.");
+    expect(layerOf(9).maskUvs == std::vector<std::uint32_t>(3, ThirdUvs) && layerOf(9).isMaskInBlue, "Or both.");
+    expect(layerOf(10).maskUvs == std::vector<std::uint32_t>(3, FirstUvs), "It can lie on the fourth coordinates.");
+    expect(layerOf(11).maskUvs == std::vector<std::uint32_t>(3, SecondUvs), "Or on the second, unmapped.");
+
+    constexpr MaterialTextures Copied{.base = 6, .layer = 7, .layerMask = 8};
+    const auto material = materialOf(partOf(*model, 1), Copied);
+    expect(material.layerTexture == 8 && material.layerMaskTexture == 9, "Its copies are its material's.");
+    expect((material.flags & GI_GEOMETRY_LAYER_BLEND) && !(material.flags & GI_GEOMETRY_LAYER_LINEAR), "A blend on the encoded values is one flag.");
+    const auto linearFlags = materialOf(partOf(*model, 6), Copied).flags;
+    expect((linearFlags & GI_GEOMETRY_LAYER_BLEND) && (linearFlags & GI_GEOMETRY_LAYER_LINEAR), "One in linear light is both.");
+    expect(!(materialOf(multiplied, Copied).flags & (GI_GEOMETRY_LAYER_BLEND | GI_GEOMETRY_LAYER_LINEAR)), "A layer that multiplies needs neither.");
+    expect((materialOf(partOf(*model, 8), Copied).flags & GI_GEOMETRY_LAYER_MASK_BLUE) && !(material.flags & GI_GEOMETRY_LAYER_MASK_BLUE), "A mask in blue has its flag.");
+
+    const auto beforeLayer = materialOf(partOf(*model, 1), {.base = 6, .layerMask = 8});
+    expect(beforeLayer.layerTexture == 0 && !(beforeLayer.flags & GI_GEOMETRY_LAYER_BLEND), "Before its copy comes a mesh is its base texture.");
+    const auto beforeMask = materialOf(partOf(*model, 1), {.base = 6, .layer = 7});
+    expect(beforeMask.layerTexture == 0 && !(beforeMask.flags & GI_GEOMETRY_LAYER_BLEND), "So it is before its mask's: the layer would lie on all of it.");
+
+    auto maskless = multiplied;
+    maskless.layer->maskTexture = 0;
+    expect(materialOf(maskless, {.base = 6, .layer = 7}).layerTexture == 8, "A layer naming no mask waits for none.");
 }
 
 void unreadableFiles()
@@ -449,7 +620,10 @@ int main()
         tarpSheetsCastThroughStandIn();
         solidStandInsCastTheSunAlone();
         pylonLattice();
-        mainViewGlassDropped();
+        forwardMeshesWithoutGlassMaterial();
+        glassIsItsMaterial();
+        mirrorsAreGlass();
+        glassKeepsItsMask();
         skyDomeDropped();
         innerWallsMainViewOnly();
         crossedCardsDropped();
@@ -458,12 +632,12 @@ int main()
         hairTaken();
         characterStandInDropped();
         characterMainViewSolid();
-        characterGlassDropped();
         bushesAreLeaves();
         sameFileDependsOnSource();
         materialPerRole();
         cutOutWaitsForTexture();
         selfLitMeshes();
+        layers();
         unreadableFiles();
         skinThroughBoneGroup();
         std::cout << "Scene description tests passed.\n";

@@ -2,6 +2,7 @@
 #include "features/path_tracing/path_tracing.hpp"
 
 #include "d3d11_helpers.hpp"
+#include "features/path_tracing/glass.hpp"
 #include "features/path_tracing/path_tracing_shaders.hpp"
 #include "frame_latch.hpp"
 #include "log.hpp"
@@ -27,8 +28,10 @@ namespace
 using Microsoft::WRL::ComPtr;
 using game_shaders::GamePass;
 
-constexpr UINT MaskDepthSlot = 0;                     // The reflections' mask's inDepthImage
-constexpr UINT SceneDepthSlot = 3, SurfaceDepthSlot = 4; // The blend's additions (shaders::ReflectionBlend)
+constexpr UINT MaskDepthSlot = 0; // The reflections' mask's inDepthImage
+// The blend's additions (shaders::ReflectionBlend): the depths, the reflection map, the reflections and glass's weights; its
+// constants.
+constexpr UINT BlendViewSlot = 3, BlendViews = 5, BlendParameterSlot = 1;
 constexpr ComputeSlots PassSlots{.buffers = 1, .views = 2, .accesses = 1};
 
 struct Parameters
@@ -37,16 +40,19 @@ struct Parameters
     float reflections, padding;
 };
 
+struct BlendParameters
+{
+    float reflections, padding[3];
+};
+
 struct MaskParameters
 {
     std::uint32_t tile, padding[3];
 };
 
-// The effect plan runs path tracing (configure), with DLSS Ray Reconstruction asked for, which it waits on;
-// and how strongly the reflections are added.
+// How strongly the reflections are added.
 struct Wanted
 {
-    bool on{};
     float reflections{};
 };
 
@@ -63,7 +69,7 @@ ComPtr<ID3D11Device> device;
 ComPtr<ID3D11ComputeShader> addShader, maskShader;
 ComPtr<ID3D11VertexShader> fullScreenShader;
 ComPtr<ID3D11PixelShader> blendShader, lampShader;
-ComPtr<ID3D11Buffer> parameterBuffer, maskParameters;
+ComPtr<ID3D11Buffer> parameterBuffer, blendParameters, maskParameters;
 ComPtr<ID3D11SamplerState> maskSampler;
 ComPtr<ID3D11BlendState> added;
 ComputeTexture specularWithReflections;
@@ -80,6 +86,7 @@ bool ensurePipeline()
     {
         parameterBuffer = makeConstantBuffer(device.Get(), sizeof(Parameters), "Creating the reflections' constants");
         addShader = computeShader(device.Get(), shaders::AddReflections, "pt-add-reflections");
+        blendParameters = makeConstantBuffer(device.Get(), sizeof(BlendParameters), "Creating the reflections' blend constants");
 
         const auto tiles = std::to_string(GI_LAMP_MASK_TILES), size = std::to_string(GI_LAMP_MASK_SIZE);
         const D3D_SHADER_MACRO maskDefines[]{{"GI_LAMP_MASK_TILES", tiles.c_str()}, {"GI_LAMP_MASK_SIZE", size.c_str()}, {}};
@@ -115,13 +122,6 @@ bool ensurePipeline()
         log(std::string("Path tracing is unavailable: ") + error.what());
         return false;
     }
-}
-
-// The reflections take the place of the game's: the last kick traced them, and the sun pass can leave its
-// sky reflection out.
-bool isReflecting()
-{
-    return wanted.load(std::memory_order_relaxed) && latch.frame().on && ray_tracing::isPathTracing() && !sun_light_pass::failed();
 }
 
 // The masks' tiles into the atlas; call with resourceMutex held.
@@ -166,6 +166,7 @@ void detach() noexcept
     blendShader.Reset();
     lampShader.Reset();
     parameterBuffer.Reset();
+    blendParameters.Reset();
     maskParameters.Reset();
     maskSampler.Reset();
     added.Reset();
@@ -177,7 +178,7 @@ void detach() noexcept
 void configure(const Configuration& configuration) noexcept
 {
     const bool on = configuration.effects.runs(Effect::PathTracing);
-    latch.set({on, configuration.settings.pathTracing.reflections});
+    latch.set({configuration.settings.pathTracing.reflections});
     wanted = on;
     if (!on) return;
 
@@ -188,6 +189,16 @@ void configure(const Configuration& configuration) noexcept
 void present() noexcept
 {
     latch.present();
+}
+
+bool isReflecting() noexcept
+{
+    return ray_tracing::isPathTracing() && !sun_light_pass::failed();
+}
+
+float reflectionStrength() noexcept
+{
+    return latch.frame().reflections;
 }
 
 Health health()
@@ -269,9 +280,13 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         context->OMGetRenderTargets(1, target.GetAddressOf(), nullptr);
         const auto [width, height] = sizeOf(target.Get());
         const auto surfaceDepth = ray_tracing::surfaceDepth(width, height);
-        if (!surfaceDepth) return false;
+        auto* reflectionMap = ray_tracing::reflectionMap(width, height);
+        auto* reflection = ray_tracing::reflection(width, height);
+        if (!surfaceDepth || !reflectionMap || !reflection) return false;
 
-        // Without the mask's depth, the traced reflections take every surface.
+        const auto surfaceWeights = glass::surfaceWeights(width, height);
+
+        // Without the mask's depth, the rays take every surface.
         ComPtr<ID3D11ShaderResourceView> sceneDepth;
         {
             std::lock_guard lock(depthMutex);
@@ -281,19 +296,26 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         std::lock_guard lock(resourceMutex);
         if (!ensurePipeline()) return false;
 
+        check(write(context, blendParameters.Get(), BlendParameters{latch.frame().reflections}), "Writing the reflections' blend constants");
         ComPtr<ID3D11PixelShader> gameShader;
-        ComPtr<ID3D11ShaderResourceView> gameViews[2];
+        ComPtr<ID3D11ShaderResourceView> gameViews[BlendViews];
+        ComPtr<ID3D11Buffer> gameParameters;
         context->PSGetShader(gameShader.GetAddressOf(), nullptr, nullptr);
-        context->PSGetShaderResources(SceneDepthSlot, 1, gameViews[0].GetAddressOf());
-        context->PSGetShaderResources(SurfaceDepthSlot, 1, gameViews[1].GetAddressOf());
-        ID3D11ShaderResourceView* depths[]{sceneDepth.Get(), surfaceDepth.Get()};
+        context->PSGetConstantBuffers(BlendParameterSlot, 1, gameParameters.GetAddressOf());
+        for (UINT i = 0; i < BlendViews; ++i) context->PSGetShaderResources(BlendViewSlot + i, 1, gameViews[i].GetAddressOf());
+
+        ID3D11ShaderResourceView* views[BlendViews]{sceneDepth.Get(), surfaceDepth.Get(), reflectionMap, reflection, surfaceWeights.Get()};
         context->PSSetShader(blendShader.Get(), nullptr, 0);
-        context->PSSetShaderResources(SceneDepthSlot, 2, depths);
+        context->PSSetConstantBuffers(BlendParameterSlot, 1, blendParameters.GetAddressOf());
+        context->PSSetShaderResources(BlendViewSlot, BlendViews, views);
         context->DrawInstanced(call.count, call.instances, call.first, call.firstInstance);
-        ID3D11ShaderResourceView* restored[]{gameViews[0].Get(), gameViews[1].Get()};
-        context->PSSetShaderResources(SceneDepthSlot, 2, restored);
+
+        for (UINT i = 0; i < BlendViews; ++i) views[i] = gameViews[i].Get();
+        context->PSSetShaderResources(BlendViewSlot, BlendViews, views);
+        context->PSSetConstantBuffers(BlendParameterSlot, 1, gameParameters.GetAddressOf());
         context->PSSetShader(gameShader.Get(), nullptr, 0);
-        logOnce(sceneDepth ? "Path tracing: the screen-space reflections stay on water and glass." : "Path tracing: the screen-space reflections are left out.");
+        logOnce(sceneDepth ? "Path tracing: the game's reflection blend takes the rays' hits, and the screen-space reflections on water."
+                           : "Path tracing: the game's reflection blend takes the rays' hits.");
 
         return true;
     }

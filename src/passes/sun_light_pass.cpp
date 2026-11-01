@@ -6,7 +6,6 @@
 #include "features/upscaling/upscaler.hpp"
 #include "features/sun_contact_shadows/sun_contact_shadows.hpp"
 #include "frame_latch.hpp"
-#include "ggx_specular.hpp"
 #include "log.hpp"
 #include "passes/contact_shadow_trace.hpp"
 #include "passes/ray_tracing/ray_tracing.hpp"
@@ -112,12 +111,10 @@ bool ensurePipeline()
                 replacements[replacementOf(isShadowMapped, reflectsSky)] = pixelShader(device.Get(), shaders::SunLight, "sun-light", defines);
             }
 
-        // Path tracing's call GGX's specular, which goes before the source.
-        const std::string pathTracedSource = std::string(ggx_specular::Source) + shaders::SunLight;
         for (const bool isInShadowRange : {true, false})
         {
             const D3D_SHADER_MACRO defines[]{{"SHADOW_MAP", "0"}, {"SKY_REFLECTION", "0"}, {"PATH_TRACED", "1"}, {"CLOUD_SHADOW", isInShadowRange ? "1" : "0"}, {}};
-            replacements[pathTracedOf(isInShadowRange)] = pixelShader(device.Get(), pathTracedSource.c_str(), "sun-light-path-traced", defines);
+            replacements[pathTracedOf(isInShadowRange)] = pixelShader(device.Get(), shaders::SunLight, "sun-light-path-traced", defines);
         }
 
         // Last, so it marks a complete pipeline.
@@ -226,9 +223,9 @@ void drawGameShadow(ID3D11DeviceContext* context, const ui_redirect::DrawCall& c
 #endif
 
 // Path tracing lights this sun pass and traces its reflections: the main view's, while the rays run.
-bool isPathTraced(ID3D11DeviceContext* context, const Composition& composition)
+bool isPathTraced(ID3D11DeviceContext* context)
 {
-    return composition.isPathTracing && ray_tracing::isPathTracing() && viewportFillsTarget(context);
+    return ray_tracing::isPathTracing() && viewportFillsTarget(context);
 }
 
 // The sun pass, drawn with the replacement shaders.
@@ -241,7 +238,7 @@ bool drawSun(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, co
     // The ray-traced shadow at the depth's size, once Direct3D 12 has traced one; until then the
     // game's shadows stay. The rays trace the main view only, not a smaller camera's (a mirror's).
     // Path tracing shades the sun with the rays' shadow alone (path_tracing.hpp).
-    const bool isPathTracedPass = isPathTraced(context, composition);
+    const bool isPathTracedPass = isPathTraced(context);
     ID3D11ShaderResourceView* rayTraced{};
     if ((composition.rayTracedShadows || isPathTracedPass) && depth && viewportFillsTarget(context))
     {
@@ -431,7 +428,7 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
 
         const auto composition = latch.frame();
         // Indoors, the sky's specular alone: path tracing's reflections take its place.
-        if (sun->pass == GamePass::SkySpecular) return isPathTraced(context, composition);
+        if (sun->pass == GamePass::SkySpecular) return isPathTraced(context);
 
         return drawSun(context, call, *sun, shader.object(), composition);
     }

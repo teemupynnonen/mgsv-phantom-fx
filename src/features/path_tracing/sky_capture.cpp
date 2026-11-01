@@ -11,7 +11,6 @@
 #include <Windows.h>
 #include <wrl/client.h>
 #include <array>
-#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -105,8 +104,6 @@ struct Parameters
     std::uint32_t face, size;
     float scale, most;
 };
-
-std::atomic<bool> wanted{};
 
 // Everything below with resourceMutex held.
 std::mutex resourceMutex;
@@ -320,7 +317,6 @@ void attach(ID3D11Device* gameDevice) noexcept
 
 void detach() noexcept
 {
-    wanted = false;
     std::lock_guard lock(resourceMutex);
     drawn.Reset();
     drawnView.Reset();
@@ -341,11 +337,6 @@ void detach() noexcept
     drawnFace.reset();
 }
 
-void configure(const Configuration& configuration) noexcept
-{
-    wanted = configuration.effects.runs(Effect::PathTracing);
-}
-
 void present() noexcept
 {
     std::lock_guard lock(resourceMutex);
@@ -360,7 +351,7 @@ void present() noexcept
 
 bool isWanted() noexcept
 {
-    return wanted.load(std::memory_order_relaxed) && ray_tracing::isPathTracing();
+    return ray_tracing::isPathTracing();
 }
 
 void capture(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call) noexcept

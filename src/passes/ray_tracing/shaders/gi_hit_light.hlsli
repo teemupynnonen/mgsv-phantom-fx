@@ -295,18 +295,66 @@ void HitSurface(HashGridCache_Visibility visibility, out float3 world, out float
 
 // The level of detail a hit reads a texture at: the ray cone's, `footprint` metres across there; or without one,
 // a few texels' mean: the global illumination's light varies over centimetres to metres.
-float HitLevel(Texture2D<float4> texture, SceneTriangle t, float footprint)
+float HitLevel(Texture2D<float4> texture, SceneTriangle t, float2 uv0, float2 uv1, float2 uv2, float footprint)
 {
     uint width, height, levels;
     texture.GetDimensions(0, width, height, levels);
     if (footprint <= 0.0f) return max(float(levels) - 6.0f, 0.0f);
 
-    float2 uv0 = VertexUV(t.geometry, t.indices.x), uv1 = VertexUV(t.geometry, t.indices.y), uv2 = VertexUV(t.geometry, t.indices.z);
     return clamp(TextureLod(t.v0, t.v1, t.v2, uv0, uv1, uv2, float2(width, height), footprint), 0.0f, float(levels) - 1.0f);
 }
 
+float HitLevel(Texture2D<float4> texture, SceneTriangle t, float footprint)
+{
+    return HitLevel(texture, t, VertexUV(t.geometry, t.indices.x), VertexUV(t.geometry, t.indices.y), VertexUV(t.geometry, t.indices.z), footprint);
+}
+
+// A texture at a hit, from the coordinates at its triangle's corners.
+float4 SampleHit(Texture2D<float4> texture, SceneTriangle t, float2 uv0, float2 uv1, float2 uv2, float2 barycentrics, float footprint)
+{
+    return texture.SampleLevel(g_WrapSampler, InterpolatedUV(uv0, uv1, uv2, barycentrics), HitLevel(texture, t, uv0, uv1, uv2, footprint));
+}
+
+// A linear colour as its sRGB encoded values, and back. As HDR's (hdr_shaders.hpp), whose shaders are built apart from these.
+float3 LinearToSrgb(float3 value)
+{
+    return lerp(value * 12.92f, 1.055f * pow(max(value, 1e-6f), 1.0f / 2.4f) - 0.055f, step(0.0031308f, value));
+}
+
+float3 SrgbToLinear(float3 value)
+{
+    return lerp(value / 12.92f, pow((value + 0.055f) / 1.055f, 2.4f), step(0.04045f, value));
+}
+
+// A layered mesh's colour, as its G-buffer shader lays the layer over the base texture's `base`: where the layer's mask
+// and alpha say, it multiplies the base, or with GI_GEOMETRY_LAYER_BLEND takes its place. All on the textures' encoded values, which
+// is what those shaders read, but GI_GEOMETRY_LAYER_LINEAR's. The shaders' sheen and dirt are left out.
+float3 LayeredAlbedo(float3 base, SceneTriangle t, float2 barycentrics, float footprint)
+{
+    GIGeometry geometry = t.geometry;
+    uint3 corners = t.indices;
+    Texture2D<float4> layerTexture = g_SceneTextures[NonUniformResourceIndex(geometry.layerTexture - 1)];
+    float4 layer = SampleHit(layerTexture, t, VertexLayerUV(geometry, corners.x), VertexLayerUV(geometry, corners.y), VertexLayerUV(geometry, corners.z),
+        barycentrics, footprint);
+    float coverage = layer.a;
+    if (geometry.layerMaskTexture)
+    {
+        Texture2D<float4> maskTexture = g_SceneTextures[NonUniformResourceIndex(geometry.layerMaskTexture - 1)];
+        float4 mask = SampleHit(maskTexture, t, VertexLayerMaskUV(geometry, corners.x), VertexLayerMaskUV(geometry, corners.y),
+            VertexLayerMaskUV(geometry, corners.z), barycentrics, footprint);
+        coverage *= (geometry.flags & GI_GEOMETRY_LAYER_MASK_BLUE) != 0 ? mask.b : mask.r;
+    }
+
+    if (geometry.flags & GI_GEOMETRY_LAYER_LINEAR) return lerp(base, layer.rgb, coverage);
+
+    float3 encodedBase = LinearToSrgb(base), encodedLayer = LinearToSrgb(layer.rgb);
+    float3 laid = (geometry.flags & GI_GEOMETRY_LAYER_BLEND) != 0 ? encodedLayer : encodedBase * encodedLayer;
+
+    return SrgbToLinear(lerp(encodedBase, laid, coverage));
+}
+
 // A hit's albedo: the sea's water; none on a self-lit mesh, whose texture is its light; the G-buffer's where the
-// camera sees the hit; otherwise its mesh's albedo texture, or its mesh's mean.
+// camera sees the hit; otherwise its mesh's albedo texture under its layer, or its mesh's mean.
 float3 HitAlbedo(float3 world, HashGridCache_Visibility visibility, float footprint)
 {
     GIInstanceDesc instance = g_Instances[visibility.instanceIndex];
@@ -329,7 +377,8 @@ float3 HitAlbedo(float3 world, HashGridCache_Visibility visibility, float footpr
     if (t.geometry.texture && (t.geometry.flags & GI_GEOMETRY_MASK) == 0)
     {
         Texture2D<float4> texture = g_SceneTextures[NonUniformResourceIndex(t.geometry.texture - 1)];
-        return texture.SampleLevel(g_WrapSampler, TriangleUV(t.geometry, t.indices, visibility.barycentrics), HitLevel(texture, t, footprint)).rgb;
+        float3 base = texture.SampleLevel(g_WrapSampler, TriangleUV(t.geometry, t.indices, visibility.barycentrics), HitLevel(texture, t, footprint)).rgb;
+        return t.geometry.layerTexture ? LayeredAlbedo(base, t, visibility.barycentrics, footprint) : base;
     }
 
     uint4 learnt = g_GeometryAlbedo[t.row];
@@ -435,6 +484,27 @@ HitMaterial HitMaterialOf(HashGridCache_Visibility visibility, float footprint, 
     }
 
     material.normal = ShadingNormal(t, visibility, material.geometric, footprint);
+    if (t.geometry.flags & GI_GEOMETRY_GLASS)
+    {
+        // What reflects of glass, and the rest of a ray goes through (TraceReflectionRay): all of a mirror; of a pane, its
+        // cover by its row of the game's material table (fox3dfw_glass*'s alpha, whose F0 of 0.58 to 0.95 leaves the angle out).
+        // A colour texture holds its cover in alpha, a plain one, whose alpha is 1, in red.
+        material.roughness = 0.0f;
+        material.specularColor = 1.0f;
+        if (t.geometry.flags & GI_GEOMETRY_MIRROR) return material;
+
+        float cover = 1.0f;
+        if (t.geometry.texture && (t.geometry.flags & GI_GEOMETRY_UV))
+        {
+            Texture2D<float4> texture = g_SceneTextures[NonUniformResourceIndex(t.geometry.texture - 1)];
+            float4 texel = texture.SampleLevel(g_WrapSampler, TriangleUV(t.geometry, t.indices, visibility.barycentrics), HitLevel(texture, t, footprint));
+            cover = texel.a < 1.0f ? texel.a : texel.r;
+        }
+
+        material.specularColor = cover * g_MaterialSpecular.Load(int3(t.geometry.materialIndex, 0, 0)).rgb;
+        return material;
+    }
+
     if (t.geometry.specularTexture && (t.geometry.flags & GI_GEOMETRY_UV))
     {
         // fox3ddf_blin's G-buffer: r the specular rate, g the roughness.
@@ -486,15 +556,15 @@ float3 SampledLocalLightReaching(float3 world, float3 normal, float3 origin, flo
         GILocalLight candidate = g_Frame.localLights[i];
         float3 toLight;
         float lightDistance;
-        float3 candidateLight = LocalLightAt(candidate, world, normal, toLight, lightDistance);
-        float weight = luminance(candidateLight);
+        float3 reaching = LocalLightReaching(candidate, world, toLight, lightDistance);
+        float weight = luminance(reaching) * dot(normal, toLight);
         if (!(weight > 0.0f)) continue;
 
         total += weight;
         if (random.rand() * total < weight)
         {
             chosenWeight = weight;
-            chosenLight = candidateLight;
+            chosenLight = reaching;
             chosenDirection = toLight;
             chosenDistance = lightDistance;
             chosenClearance = ClearanceTowards(candidate, toLight);
@@ -506,7 +576,7 @@ float3 SampledLocalLightReaching(float3 world, float3 normal, float3 origin, flo
     towardsLight = chosenDirection;
     float rayLength = chosenDistance - chosenClearance;
     float visibility = rayLength > 0.0f ? VisibilityFromSurface(origin, normal, tolerance, chosenDirection, rayLength, ShadowRayTowards(RayTowardsLamp)) : 1.0f;
-    return chosenLight * (total / (chosenWeight * dot(normal, chosenDirection)) * visibility);
+    return chosenLight * (total / chosenWeight * visibility);
 }
 
 // The same with the cosine: the diffuse light at the hit.

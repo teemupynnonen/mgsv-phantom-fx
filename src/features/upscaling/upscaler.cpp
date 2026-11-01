@@ -8,6 +8,7 @@
 #include "features/motion_blur/motion_blur.hpp"
 #include "features/photo_mode/focus.hpp"
 #include "features/upscaling/frames.hpp"
+#include "features/path_tracing/glass.hpp"
 #include "features/upscaling/fsr_upscaler.hpp"
 #include "features/upscaling/fxaa.hpp"
 #include "features/upscaling/ray_reconstruction.hpp"
@@ -1123,7 +1124,7 @@ template<class Work> void inOwnState(Work&& work)
 
 // `sceneBeforeDof`, when given, also makes Ray Reconstruction's depth of field guide (dofGuideTarget).
 void runInputs(const Frame& current, const camera::Matrix& previousFromCurrent, ID3D11ShaderResourceView* objectVelocity, bool linear,
-    ID3D11ShaderResourceView* sceneBeforeDof)
+    ID3D11ShaderResourceView* sceneBeforeDof, ID3D11ShaderResourceView* glassDepth)
 {
     InputConstants constants{};
     for (int i = 0; i < 16; ++i) constants.previousFromCurrent[i / 4][i % 4] = static_cast<float>(previousFromCurrent[i]);
@@ -1137,7 +1138,7 @@ void runInputs(const Frame& current, const camera::Matrix& previousFromCurrent, 
     constants.dofGuide = sceneBeforeDof != nullptr;
     immediate->UpdateSubresource(inputConstants.Get(), 0, nullptr, &constants, 0, 0);
 
-    ID3D11ShaderResourceView* inputs[]{sceneView.Get(), depthView.Get(), objectVelocity, sceneBeforeDof};
+    ID3D11ShaderResourceView* inputs[]{sceneView.Get(), depthView.Get(), objectVelocity, sceneBeforeDof, glassDepth};
     ID3D11UnorderedAccessView* outputs[]{colorTarget.access.Get(), depthTarget.access.Get(), motionTarget.access.Get(),
         sceneBeforeDof ? dofGuideTarget.access.Get() : nullptr};
     immediate->CSSetShader(inputShader.Get(), nullptr, 0);
@@ -1302,7 +1303,10 @@ bool upscale(const FxaaPass& pass, const Frame& current)
     inOwnState([&]
     {
         performance::Timed timed(immediate.Get(), performance::Pass::UpscalerInputs);
-        runInputs(current, reprojection, objectVelocity, linear, sceneBeforeDof.Get());
+        ComPtr<ID3D11ShaderResourceView> glassDepth;
+        if (guides) glassDepth = glass::guideReconstruction(immediate.Get(), guides->normalAccess.Get(), ray_tracing::reflectionDistanceAccess(width, height));
+
+        runInputs(current, reprojection, objectVelocity, linear, sceneBeforeDof.Get(), glassDepth.Get());
         timed.next(performance::Pass::Upscaler);
         if (guides)
         {

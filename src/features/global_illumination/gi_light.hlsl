@@ -729,7 +729,7 @@ void CompositeLight(uint2 did : SV_DispatchThreadID)
     {
         float3 traced = g_Light_Noisy[0][did].rgb;
         MaxDiagnostic(GI_COUNTER_MAX_OUTPUT, traced);
-        g_Output[did] = float4(traced * g_Frame.nearFar.w, 1.0f);
+        g_Output[did] = float4(RemoveNaNs(traced) * g_Frame.nearFar.w, 1.0f); // Ray Reconstruction spreads one infinite pixel into a white blob
         return;
     }
 

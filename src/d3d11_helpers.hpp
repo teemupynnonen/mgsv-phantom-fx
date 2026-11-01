@@ -16,6 +16,15 @@
 // Direct3D 11 helpers shared by the add-on's effects: their shaders, constants and working textures.
 namespace phantom_fx
 {
+// A 2D texture pixel shaders draw into and read, with its views.
+struct DrawTarget
+{
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> view;
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> target;
+    UINT width{}, height{};
+};
+
 // Flags for a texture Direct3D 12 opens through an NT handle.
 constexpr UINT SharedWithD3D12 = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
@@ -90,8 +99,9 @@ template<class Data> [[nodiscard]] HRESULT write(ID3D11DeviceContext* context, I
     return result;
 }
 
-// `miscFlags` is SharedWithD3D12 for a texture Direct3D 12 reads or writes too.
-inline ComputeTexture makeComputeTexture(ID3D11Device* device, UINT width, UINT height, DXGI_FORMAT format, const char* what, UINT miscFlags = 0)
+// `miscFlags` is SharedWithD3D12 for a texture Direct3D 12 reads or writes too; `moreBindFlags` for one drawn into as well.
+inline ComputeTexture makeComputeTexture(ID3D11Device* device, UINT width, UINT height, DXGI_FORMAT format, const char* what, UINT miscFlags = 0,
+    UINT moreBindFlags = 0)
 {
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width = width;
@@ -100,7 +110,7 @@ inline ComputeTexture makeComputeTexture(ID3D11Device* device, UINT width, UINT 
     desc.Format = format;
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS | moreBindFlags;
     desc.MiscFlags = miscFlags;
     ComputeTexture made{.width = width, .height = height};
     check(device->CreateTexture2D(&desc, nullptr, made.texture.GetAddressOf()), what);
@@ -108,6 +118,26 @@ inline ComputeTexture makeComputeTexture(ID3D11Device* device, UINT width, UINT 
     check(device->CreateUnorderedAccessView(made.texture.Get(), nullptr, made.access.GetAddressOf()), what);
 
     return made;
+}
+
+// Makes `target` at this size, if it is not already.
+inline void ensureDrawTarget(ID3D11Device* device, DrawTarget& target, UINT width, UINT height, DXGI_FORMAT format, const char* what)
+{
+    if (target.texture && target.width == width && target.height == height) return;
+
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = width;
+    desc.Height = height;
+    desc.MipLevels = desc.ArraySize = 1;
+    desc.Format = format;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+    DrawTarget made{.width = width, .height = height};
+    check(device->CreateTexture2D(&desc, nullptr, made.texture.GetAddressOf()), what);
+    check(device->CreateShaderResourceView(made.texture.Get(), nullptr, made.view.GetAddressOf()), what);
+    check(device->CreateRenderTargetView(made.texture.Get(), nullptr, made.target.GetAddressOf()), what);
+    target = std::move(made);
 }
 
 inline Microsoft::WRL::ComPtr<ID3D11Resource> resourceOf(ID3D11View* view)
@@ -155,6 +185,32 @@ inline bool viewportFillsTarget(ID3D11DeviceContext* context)
     context->RSGetViewports(&count, &viewport);
 
     return count && viewport.Width >= static_cast<float>(width) && viewport.Height >= static_cast<float>(height);
+}
+
+// The render targets bound before the first empty slot.
+inline UINT targetCount(UINT count, ID3D11RenderTargetView* const* targets)
+{
+    UINT found = 0;
+    while (found < count && targets[found]) ++found;
+
+    return found;
+}
+
+// Whether the bound targets are the G-buffer's: three of the same size, 8 bits a channel, with depth. In order the
+// albedo, the normals and the specular target.
+inline bool isGBuffer(UINT count, ID3D11RenderTargetView* const* targets, ID3D11DepthStencilView* depth)
+{
+    if (!depth || targetCount(count, targets) != 3) return false;
+
+    const auto size = sizeOf(targets[0]);
+    for (UINT i = 0; i < 3; ++i)
+    {
+        const auto desc = textureDesc(targets[i]);
+        if (std::pair{desc.Width, desc.Height} != size || (desc.Format != DXGI_FORMAT_B8G8R8A8_TYPELESS && desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM))
+            return false;
+    }
+
+    return true;
 }
 
 // Thread groups for the 8 x 8 kernels to cover `texels` along an axis.
