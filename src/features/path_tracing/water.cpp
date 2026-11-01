@@ -1,14 +1,16 @@
-// Rivers and other liquids on Direct3D 11; water.hpp describes them. What their draws share with glass and mirrors - the
-// surface targets, the trace and the composite - is forward_surfaces'.
+// Rivers and other liquids on Direct3D 11; water.hpp describes them. What they share with glass and mirrors - the surface
+// targets, the trace and the composite - is forward_surfaces'.
 #include "features/path_tracing/water.hpp"
 
 #include "d3d11_helpers.hpp"
 #include "features/path_tracing/forward_surfaces.hpp"
-#include "features/path_tracing/surface_shaders.hpp"
+#include "features/path_tracing/path_tracing.hpp"
+#include "hresult.hpp"
 #include "log.hpp"
+#include "passes/ray_tracing/ray_tracing.hpp"
 
+#include <cstdint>
 #include <exception>
-#include <mutex>
 #include <string>
 
 namespace phantom_fx::water
@@ -17,72 +19,98 @@ namespace
 {
 using Microsoft::WRL::ComPtr;
 
-std::mutex stateMutex;
-ComPtr<ID3D11Device> device;
-// WaterSurface, by how the river builds its normal: [isLayeredRiver][hasTwoChannelNormal] (game_shaders.hpp).
-ComPtr<ID3D11PixelShader> waterShaders[2][2];
-bool hasPipelineFailed{};
+// Where all twelve river shaders read their reflection and their shadow.
+constexpr UINT CubeSlot = 2, ShadowSlot = 14, ShadowSamplerSlot = 15;
 
-// Compiles the shaders once; call with stateMutex held. Returns false when they are unavailable.
-bool ensurePipeline()
+// Made at attach and only read until detach. Together, a shadow map whose comparison always passes: no map shadow.
+ComPtr<ID3D11ShaderResourceView> unshadowedMap;
+ComPtr<ID3D11SamplerState> alwaysPasses;
+}
+
+void attach(ID3D11Device* device) noexcept
 {
-    if (waterShaders[1][1]) return true;
-    if (!device || hasPipelineFailed) return false;
-
     try
     {
-        const auto source = std::string(surface_shaders::SurfaceCommon) + surface_shaders::WaterSurface;
-        for (int layered = 0; layered < 2; ++layered)
-            for (int twoChannel = 0; twoChannel < 2; ++twoChannel)
-            {
-                const D3D_SHADER_MACRO defines[]{{"LAYERED", layered ? "1" : "0"}, {"TWO_CHANNEL", twoChannel ? "1" : "0"}, {}};
-                // Last, [1][1], so it marks a complete pipeline.
-                waterShaders[layered][twoChannel] = pixelShader(device.Get(), source.c_str(), "water-surface", defines);
-            }
-        return true;
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width = desc.Height = desc.MipLevels = desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_R8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_IMMUTABLE;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        const std::uint8_t white = 0xFF;
+        const D3D11_SUBRESOURCE_DATA data{&white, 1, 0};
+        ComPtr<ID3D11Texture2D> texture;
+        check(device->CreateTexture2D(&desc, &data, texture.GetAddressOf()), "Creating the rivers' empty shadow map");
+        check(device->CreateShaderResourceView(texture.Get(), nullptr, unshadowedMap.ReleaseAndGetAddressOf()), "Creating the rivers' empty shadow map");
+
+        D3D11_SAMPLER_DESC sampler{};
+        sampler.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR;
+        sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sampler.ComparisonFunc = D3D11_COMPARISON_ALWAYS;
+        sampler.MaxLOD = D3D11_FLOAT32_MAX;
+        check(device->CreateSamplerState(&sampler, alwaysPasses.ReleaseAndGetAddressOf()), "Creating the rivers' empty shadow map");
     }
     catch (const std::exception& error)
     {
-        hasPipelineFailed = true;
-        log(std::string("Water keeps the game's reflections: ") + error.what());
-        return false;
+        log(std::string("The rivers keep the game's shadow: ") + error.what());
+        unshadowedMap.Reset();
+        alwaysPasses.Reset();
     }
-}
-}
-
-void attach(ID3D11Device* gameDevice) noexcept
-{
-    std::lock_guard lock(stateMutex);
-    device = gameDevice;
 }
 
 void detach() noexcept
 {
-    std::lock_guard lock(stateMutex);
-    for (auto& shaders : waterShaders)
-        for (auto& shader : shaders) shader.Reset();
-    device.Reset();
-    hasPipelineFailed = false;
+    unshadowedMap.Reset();
+    alwaysPasses.Reset();
 }
 
-void recordWater(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, const game_shaders::GameShader& row) noexcept
+bool drawRiver(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call) noexcept
 {
+    const auto drawGame = [&] { context->DrawIndexedInstanced(call.count, call.instances, call.first, call.vertexOffset, call.firstInstance); };
+
     try
     {
-        ComPtr<ID3D11PixelShader> surface;
-        {
-            std::lock_guard lock(stateMutex);
-            if (!ensurePipeline()) return;
+        ComPtr<ID3D11RenderTargetView> target;
+        context->OMGetRenderTargets(1, target.GetAddressOf(), nullptr);
+        const auto [width, height] = sizeOf(target.Get());
 
-            surface = waterShaders[row.isLayeredRiver ? 1 : 0][row.hasTwoChannelNormal ? 1 : 0];
+        const bool isReflecting = path_tracing::isReflecting() && forward_surfaces::accepts(context);
+        const bool leavesShadowMap = unshadowedMap && (isReflecting || ray_tracing::sunShadow(width, height));
+        if (!isReflecting && !leavesShadowMap)
+        {
+            drawGame();
+            return false;
         }
 
-        if (!viewportFillsTarget(context)) return;
+        logOnce(isReflecting ? "The rivers: the rays take their shadow and their reflection." : "The rivers: the rays take their shadow.");
 
-        forward_surfaces::record(context, call, surface.Get());
+        ComPtr<ID3D11ShaderResourceView> gameCube, gameShadow;
+        ComPtr<ID3D11SamplerState> gameSampler;
+        context->PSGetShaderResources(CubeSlot, 1, gameCube.GetAddressOf());
+        context->PSGetShaderResources(ShadowSlot, 1, gameShadow.GetAddressOf());
+        context->PSGetSamplers(ShadowSamplerSlot, 1, gameSampler.GetAddressOf());
+
+        // A view of nothing reads black: the traced reflection takes the cube map's place, at the composite.
+        ID3D11ShaderResourceView* none{};
+        if (isReflecting) context->PSSetShaderResources(CubeSlot, 1, &none);
+        if (leavesShadowMap)
+        {
+            context->PSSetShaderResources(ShadowSlot, 1, unshadowedMap.GetAddressOf());
+            context->PSSetSamplers(ShadowSamplerSlot, 1, alwaysPasses.GetAddressOf());
+        }
+        drawGame();
+
+        context->PSSetShaderResources(CubeSlot, 1, gameCube.GetAddressOf());
+        context->PSSetShaderResources(ShadowSlot, 1, gameShadow.GetAddressOf());
+        context->PSSetSamplers(ShadowSamplerSlot, 1, gameSampler.GetAddressOf());
+
+        return isReflecting;
     }
-    catch (...)
+    catch (const std::exception& error)
     {
+        logOnce(std::string("The rivers keep the game's light: ") + error.what());
+        drawGame();
+        return false;
     }
 }
 }

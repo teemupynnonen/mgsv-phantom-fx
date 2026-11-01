@@ -108,9 +108,6 @@ ID3D11ShaderResourceView* reflection(UINT width, UINT height) noexcept;
 ID3D11ShaderResourceView* reflectionMap(UINT width, UINT height) noexcept;
 // Their hit distance, R16_FLOAT, for Ray Reconstruction (ray_reconstruction.hpp). Null while off.
 ID3D11Texture2D* reflectionDistance(UINT width, UINT height) noexcept;
-// The sun's shadow on the rivers and liquids themselves (reflections.hlsl, g_ForwardShadow): R16_FLOAT, 1
-// where the sun reaches the water. Null while off.
-ID3D11ShaderResourceView* forwardShadow(UINT width, UINT height) noexcept;
 ID3D11UnorderedAccessView* reflectionDistanceAccess(UINT width, UINT height) noexcept;
 // On the immediate context, once the game drew this frame's glass and mirrors (forward_surfaces.hpp): their reflections, on the scene the
 // kick built, waited for before anything after runs. False when the kick traced no reflections.

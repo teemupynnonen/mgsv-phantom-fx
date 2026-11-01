@@ -1,12 +1,13 @@
 #pragma once
 
-// HLSL for the forward surfaces on Direct3D 11 (forward_surfaces.hpp, glass.hpp, water.hpp), compiled at runtime with
-// d3dcompiler_47.
+// HLSL for the forward surfaces on Direct3D 11 (forward_surfaces.hpp), compiled at run time with d3dcompiler_47. The surfaces' own
+// shaders go after forward_scene::Common and SurfaceOutput.
 namespace phantom_fx::surface_shaders
 {
-// Where glass dominates, tells Ray Reconstruction of it, as its guide asks of a window: depth, normal and hit distance
+// Where a surface dominates, tells Ray Reconstruction of it, as its guide asks of a window: depth, normal and hit distance
 // from the one surface. The normal and the hit distance go into its guides; `SurfaceDepth` is left with the depth of those
-// pixels alone, for the upscaler's motion (upscaler_shaders.hpp, Inputs). Below this cover what is behind the pane dominates.
+// pixels alone, for the upscaler's motion (upscaler_shaders.hpp, Inputs). Below this cover what is behind a pane dominates;
+// water always does, as it hides or colours what is under it.
 inline constexpr char ReconstructionGuides[] = R"(
 Texture2D<float4> SurfaceNormal : register(t0);
 Texture2D<float4> SurfaceWeight : register(t1);
@@ -16,60 +17,32 @@ RWTexture2D<float4> Normals : register(u1);
 RWTexture2D<float> HitDistance : register(u2);
 
 static const float DominantCover = 0.1;
+static const float WaterRoughness = 0.05; // As the trace's (reflections.hlsl)
 
 [numthreads(8, 8, 1)]
 void main(uint2 pixel : SV_DispatchThreadID)
 {
-    if (SurfaceWeight[pixel].a < DominantCover)
+    const float4 normal = SurfaceNormal[pixel];
+    const bool isWater = normal.w < 0;
+    if (!isWater && SurfaceWeight[pixel].a < DominantCover)
     {
         SurfaceDepth[pixel] = 0;
         return;
     }
 
-    // Water marks itself with a negative roughness (WaterSurface): the guide reads the roughness itself.
-    const float4 normal = SurfaceNormal[pixel];
-    Normals[pixel] = float4(normal.xyz, abs(normal.w));
+    Normals[pixel] = float4(normal.xyz, isWater ? WaterRoughness : normal.w);
     HitDistance[pixel] = SurfaceReflection[pixel].a;
 }
 )";
 
-// What the surfaces' shaders share: the game's constants, and what they write into the surface targets.
-inline constexpr char SurfaceCommon[] = R"(
-cbuffer cPSScene : register(b2)
-{
-    float4 m_sceneRows[8];
-    float4 m_view[3];          // World to view, rows
-    float4 m_sceneRows2[9];
-    float4 m_eyepos;
-    float4 m_projectionParam;  // 1 / P00, 1 / P11, B, A
-    float4 m_viewportSize;
-    float4 m_exposure;
-    float4 m_fogParam[2];      // [1].x: 1 / log2 of the fog's far distance
-};
-
-Texture2D<float4> g_tex_fog : register(t12);
-SamplerState g_samplerLinear_Clamp : register(s11);
-
+// What the surfaces' shaders write into the surface targets.
+inline constexpr char SurfaceOutput[] = R"(
 struct Surface
 {
     float depth : SV_Target0;
     float4 normal : SV_Target1; // World space, the roughness in w
     float4 weight : SV_Target2; // rgb: how much of what it reflects reaches the eye; a: how much it covers what is behind
 };
-
-// How much of a surface's light gets through the fog, as GetVolumetricFog reads it: alpha, between two of the 128 tiles
-// a slice.
-float FogTransmittance(float2 position, float viewZ)
-{
-    const float layer = saturate(log2(viewZ) * m_fogParam[1].x) * 127;
-    const float2 clip = (position - 0.5) / m_viewportSize.xy * float2(2, -2) + float2(-1, 1);
-    const float2 uv = clip * float2(0.014648, 0.123047) + float2(0.015625, 0.125);
-    const float2 slices = float2(floor(layer), floor(min(layer + 1, 127))) / 32;
-    const float2 column = frac(slices) * 32 * 0.03125, row = floor(slices) * 0.25;
-    const float near = g_tex_fog.Sample(g_samplerLinear_Clamp, uv + float2(column.x, row.x)).a;
-    const float far = g_tex_fog.Sample(g_samplerLinear_Clamp, uv + float2(column.y, row.y)).a;
-    return lerp(near, far, frac(layer));
-}
 )";
 
 // Drawn with fox3dfw_glass*'s own vertex shader, after each of its draws. From their disassembly: the normal from the
@@ -153,26 +126,39 @@ Surface main(float4 position : SV_Position, float4 uv : TEXCOORD0, float3 unused
 }
 )";
 
-// A river or another liquid, drawn with the game's own vertex shader after its draw: its depth, its ripples' normal as
-// the game's shader builds it, and 0.3 of what it reflects, which the trace scales by the water's reflectance at the
-// eye's angle. The roughness is written negative: that marks water.
+// A river or another liquid, drawn with the game's own vertex shader after its draw: its depth, its ripples' normal as the game's
+// shader builds it, and how much of what it reflects shows. That share goes in the normal's w, negative, which marks water: the
+// weights blend as glass does, and a pane drawn over a river must stand alone there, not on top of the water's share.
+//
+// The share follows what the game's shader gives its own reflection, but for the cube map's weight: the water's cover (the base
+// texture's alpha, the vertex's, the fade at its shore, NComputeDepthBlendFactor) and the fog in front of it.
 //
 // The normal, from the disassembly of all twelve Prim_TppPrimRiver*/Prim_TppRiverModel* pixel shaders: the normal map
 // (t1, s10) twice, at the mesh's UV times a material scale plus the material's scrolling offset (cPSMaterial[0]), the
 // second at 0.97 of its scale; each 2 x texel - 1, summed and normalized, then out of the vertex shader's tangent frame.
 // LAYERED (Tl, Ol): the scales at cPSMaterial[6] and the frame at TEXCOORD6-8; else [3] and TEXCOORD5-7. TWO_CHANNEL
-// (Hnm): the texel's w and y, z rebuilt. Every input is declared in the vertex shader's order, so each lands in its
-// register.
+// (Hnm): the texel's w and y, z rebuilt. RIPPLES (Rpl): the rain's rings over it, as NAddRippleNormal adds them. Every input
+// is declared in the vertex shader's order, so each lands in its register.
 inline constexpr char WaterSurface[] = R"(
-// Near a mirror, as the game's own shader samples its cube map: the ripples' normal does the rest.
-static const float Roughness = 0.05f;
+// What the water shows of its reflectance: the composite adds it in the scene's encoded values, where the whole of it reads as a
+// mirror.
+static const float ReflectionShare = 0.3f;
 
 cbuffer cPSMaterial : register(b4)
 {
-    float4 m_materials[7]; // [0]: the two layers' UV offsets; [3].xy or [6].xy: their scales
+    float4 m_materials[7]; // [0]: the two layers' UV offsets; [2]: y the ripples' strength, zw a texel; [3].xy or [6].xy: their scales
 };
 
+cbuffer cPSObject : register(b5)
+{
+    float4 m_objectRows[11];
+    float4 m_shoreFade;    // x: 1 / the depth of water it takes to cover the bed
+};
+
+Texture2D<float4> inBaseTexture : register(t0);
 Texture2D<float4> inNormalTexture : register(t1);
+Texture2D<float4> inRippleTexture : register(t6);
+Texture2D<float> g_depth : register(t13);
 SamplerState g_samplerLinear_Wrap : register(s10);
 
 #if LAYERED
@@ -199,27 +185,53 @@ float3 LayerNormal(float2 uv)
 #endif
 }
 
+#if RIPPLES
+float3 WithRipples(float3 normal, float2 position)
+{
+    const float2 uv = position / m_viewportSize.xy;
+    const float here = inRippleTexture.Sample(g_samplerLinear_Wrap, uv).x;
+    const float right = inRippleTexture.Sample(g_samplerLinear_Wrap, uv + float2(m_materials[2].z, 0)).x;
+    const float below = inRippleTexture.Sample(g_samplerLinear_Wrap, uv + float2(0, m_materials[2].w)).x;
+    float3 ripple = float3(here - right, 0, here - below);
+    ripple.y = 2 - max(abs(ripple.x), abs(ripple.z));
+    ripple = normalize(ripple);
+
+    const float3 up = float3(0, 1, 0);
+    const float3 forward = normalize(cross(up, m_view[0].xyz));
+    const float3 side = cross(forward, up);
+    normal.xz += m_materials[2].y * float2(dot(side, ripple), dot(forward, ripple));
+    return normalize(normal);
+}
+#endif
+
 Surface main(float4 color : COLOR0, float4 position : SV_Position, float2 uv : TEXCOORD0, float3 basePosition : TEXCOORD1,
     float4 shadowPosition : TEXCOORD2, float4 viewPosition : TEXCOORD3, float3 worldPosition : TEXCOORD4,
     float3 tangent : FRAME_TANGENT, float3 binormal : FRAME_BINORMAL, float3 vertexNormal : FRAME_NORMAL)
 {
+    const float uncovered = 1 - saturate((SceneViewZ(g_depth, position.xy) - basePosition.z) * m_shoreFade.x);
+    const float cover = (1 - uncovered * uncovered * uncovered) * color.a * inBaseTexture.Sample(g_samplerLinear_Wrap, uv).a;
+    if (cover <= 1.0f / 512) discard;
+
     const float4 offsets = m_materials[0];
     const float2 scales = m_materials[ScaleRow].xy;
     const float3 local = normalize(LayerNormal(offsets.xy + scales.x * uv) + LayerNormal(offsets.zw + scales.y * 0.97f * uv));
     float3 normal = local.x * tangent + local.y * binormal + local.z * vertexNormal;
-    // No frame: xyz 0, and the trace takes the slope from the depth's neighbours instead.
-    normal = all(isfinite(normal)) && dot(normal, normal) > 1e-8f ? normalize(normal) : 0.0f;
+    // A degenerate frame: the water lies flat.
+    normal = all(isfinite(normal)) && dot(normal, normal) > 1e-8f ? normalize(normal) : float3(0, 1, 0);
+#if RIPPLES
+    normal = WithRipples(normal, position.xy);
+#endif
 
     Surface surface;
     surface.depth = position.z;
-    surface.normal = float4(normal, -Roughness);
-    surface.weight = float4(0.3f, 0.3f, 0.3f, 1.0f);
+    surface.normal = float4(normal, -ReflectionShare * cover * FogTransmittance(position.xy, basePosition.z));
+    surface.weight = 0;
     return surface;
 }
 )";
 
-// What glass and mirrors reflect added over the scene, once the game drew them all, as they would have blended it: the
-// scene holds sRGB-encoded values here, past 1 too, and the game's glass adds its encoded colour by its alpha.
+// What the surfaces reflect added over the scene, once the game drew them all, as they would have blended it: the scene holds
+// sRGB-encoded values here, past 1 too, and the game's glass adds its encoded colour by its alpha.
 inline constexpr char Composite[] = R"(
 cbuffer Parameters : register(b0)
 {
@@ -228,25 +240,20 @@ cbuffer Parameters : register(b0)
 };
 
 Texture2D<float4> Scene : register(t0);
-Texture2D<float4> Weight : register(t1);     // The surfaces' weights
-Texture2D<float4> Reflection : register(t2); // What they reflect, in the scene's units
-Texture2D<float> Shadow : register(t3);     // The sun's traced shadow on the surface itself (ray_tracing::forwardShadow)
-Texture2D<float4> SurfaceNormal : register(t4); // The surfaces' normal: a negative roughness (w) marks water
+Texture2D<float4> Weight : register(t1);        // The surfaces' weights
+Texture2D<float4> Reflection : register(t2);    // What they reflect, in the scene's units
+Texture2D<float4> SurfaceNormal : register(t3); // Water's w is minus its share
 
 float4 main(float4 position : SV_Position) : SV_Target
 {
     const int3 pixel = int3(position.xy, 0);
-    const float4 weight = Weight.Load(pixel);
+    const float waterShare = -SurfaceNormal.Load(pixel).w;
+    const float4 weight = waterShare > 0 ? float4(waterShare.xxx, 1) : Weight.Load(pixel);
     if (!(weight.a > 0)) discard;
 
     const float3 reflected = Reflection.Load(pixel).rgb * Strength * weight.rgb / weight.a;
     const float3 encoded = reflected <= 0.003131 ? reflected * 12.92 : 1.055 * pow(max(reflected, 0.00001), 1 / 2.4) - 0.055;
-    // The surface dims in the sun's shade, as the water does: a pane is mostly what it reflects and the sky behind
-    // it, so blocking the sun barely changes it. Water takes no shadow here: the caustics and its light are the bed's,
-    // drawn under it before it blends (forward_shadows' caustics), and what it reflects is added untouched.
-    const bool water = SurfaceNormal.Load(pixel).w < 0.0f;
-    const float shade = water ? 1.0f : lerp(0.85f, 1.0f, Shadow.Load(pixel));
-    return float4(Scene.Load(pixel).rgb * lerp(1.0f, shade, weight.a) + weight.a * encoded, 1);
+    return float4(Scene.Load(pixel).rgb + weight.a * encoded, 1);
 }
 )";
 }

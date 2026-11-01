@@ -26,8 +26,6 @@ struct Textures
     ID3D12Resource* surfaceDepth{}; // Glass and mirrors (forward_surfaces.hpp); null while not traced
     ID3D12Resource* surfaceNormal{};
     ID3D12Resource* surfaceReflection{};
-    // The rivers' and liquids' guides (forward_shadows) and their own sun shadow, a frame old; null without.
-    ID3D12Resource* forwardShadow{};  // R16_FLOAT, the sun's shadow on the surface itself (u100)
 };
 
 // Their views in the frame's tables.

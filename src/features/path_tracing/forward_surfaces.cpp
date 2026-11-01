@@ -7,6 +7,7 @@
 #include "features/path_tracing/path_tracing_shaders.hpp"
 #include "features/path_tracing/surface_shaders.hpp"
 #include "log.hpp"
+#include "passes/forward_scene.hpp"
 #include "passes/ray_tracing/ray_tracing.hpp"
 #include "performance.hpp"
 
@@ -59,6 +60,8 @@ ComPtr<ID3D11Device> device;
 ComPtr<ID3D11PixelShader> compositeShader;
 ComPtr<ID3D11VertexShader> fullScreenShader;
 ComPtr<ID3D11ComputeShader> guidesShader;
+ComPtr<ID3D11PixelShader> glassShader, colorGlassShader, mirrorShader;
+ComPtr<ID3D11PixelShader> waterShaders[2][2][2]; // [isLayeredRiver][hasTwoChannelNormal][hasRipples] (game_shaders.hpp)
 ComPtr<ID3D11BlendState> surfaceBlend, colorOnly;
 ComPtr<ID3D11DepthStencilState> behindGameDepth;
 ComPtr<ID3D11Buffer> compositeParameters;
@@ -73,7 +76,12 @@ bool hasPipelineFailed{};
 bool hasSurfaces{}, areTargetsDrawn{}, hasReflected{};
 ComPtr<ID3D11RenderTargetView> scene;
 
-// Compiles the shared shaders and states once; call with resourceMutex held. Returns false when they are unavailable.
+ComPtr<ID3D11PixelShader> surfaceShader(const char* source, const char* name, const D3D_SHADER_MACRO* defines = nullptr)
+{
+    return pixelShader(device.Get(), (std::string(forward_scene::Common) + surface_shaders::SurfaceOutput + source).c_str(), name, defines);
+}
+
+// Compiles the surfaces' shaders and makes the states once; call with resourceMutex held. Returns false when they are unavailable.
 bool ensurePipeline()
 {
     if (compositeShader) return true;
@@ -112,6 +120,18 @@ bool ensurePipeline()
         depth.DepthFunc = D3D11_COMPARISON_GREATER_EQUAL;
         check(device->CreateDepthStencilState(&depth, behindGameDepth.ReleaseAndGetAddressOf()), "Creating the surfaces' depth test");
 
+        const D3D_SHADER_MACRO color[]{{"COLOR_TEXTURE", "1"}, {}};
+        glassShader = surfaceShader(surface_shaders::GlassSurface, "glass-surface");
+        colorGlassShader = surfaceShader(surface_shaders::GlassSurface, "glass-surface-color", color);
+        mirrorShader = surfaceShader(surface_shaders::MirrorSurface, "mirror-surface");
+        for (int layered = 0; layered < 2; ++layered)
+            for (int twoChannel = 0; twoChannel < 2; ++twoChannel)
+                for (int ripples = 0; ripples < 2; ++ripples)
+                {
+                    const D3D_SHADER_MACRO defines[]{{"LAYERED", layered ? "1" : "0"}, {"TWO_CHANNEL", twoChannel ? "1" : "0"}, {"RIPPLES", ripples ? "1" : "0"}, {}};
+                    waterShaders[layered][twoChannel][ripples] = surfaceShader(surface_shaders::WaterSurface, "water-surface", defines);
+                }
+
         // Last, so it marks a complete pipeline.
         compositeShader = pixelShader(device.Get(), surface_shaders::Composite, "surfaces-composite");
         return true;
@@ -122,6 +142,21 @@ bool ensurePipeline()
         log(std::string("The forward surfaces keep the game's reflections: ") + error.what());
         return false;
     }
+}
+
+// Which shader draws a game's surface into the targets.
+ID3D11PixelShader* shaderOf(const game_shaders::GameShader& row)
+{
+    if (row.pass == game_shaders::GamePass::Mirror) return mirrorShader.Get();
+    if (row.pass == game_shaders::GamePass::Glass) return row.hasColorTexture ? colorGlassShader.Get() : glassShader.Get();
+
+    return waterShaders[row.isLayeredRiver][row.hasTwoChannelNormal][row.hasRipples].Get();
+}
+
+// Whether the module has its pipeline and targets of this size; call with resourceMutex held.
+bool canRecord(UINT width, UINT height)
+{
+    return compositeShader && weightTarget.texture.width == width && weightTarget.texture.height == height;
 }
 
 Target makeTarget(UINT width, UINT height, DXGI_FORMAT format, const char* what)
@@ -181,8 +216,8 @@ void composite(ID3D11DeviceContext* immediate, ID3D11RenderTargetView* target, f
     check(write(immediate, compositeParameters.Get(), CompositeParameters{strength}), "Writing the surfaces' constants");
     immediate->CopyResource(sceneCopy.Get(), sceneTexture.Get());
 
-    ID3D11ShaderResourceView* inputs[]{sceneCopyView.Get(), weightTarget.texture.view.Get(), reflection.view.Get(),
-        ray_tracing::forwardShadow(desc.Width, desc.Height), normalTarget.texture.view.Get()};
+    ID3D11ShaderResourceView* const inputs[]{sceneCopyView.Get(), weightTarget.texture.view.Get(), reflection.view.Get(),
+        normalTarget.texture.view.Get()};
     const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(desc.Width), static_cast<float>(desc.Height), 0, 1};
     immediate->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     immediate->IASetInputLayout(nullptr);
@@ -190,7 +225,7 @@ void composite(ID3D11DeviceContext* immediate, ID3D11RenderTargetView* target, f
     immediate->GSSetShader(nullptr, nullptr, 0);
     immediate->PSSetShader(compositeShader.Get(), nullptr, 0);
     immediate->PSSetConstantBuffers(0, 1, compositeParameters.GetAddressOf());
-    immediate->PSSetShaderResources(0, 5, inputs);
+    immediate->PSSetShaderResources(0, 4, inputs);
     immediate->OMSetRenderTargets(1, &target, nullptr);
     immediate->OMSetBlendState(colorOnly.Get(), nullptr, 0xFFFFFFFF);
     immediate->OMSetDepthStencilState(nullptr, 0);
@@ -198,8 +233,8 @@ void composite(ID3D11DeviceContext* immediate, ID3D11RenderTargetView* target, f
     immediate->RSSetViewports(1, &viewport);
     immediate->Draw(3, 0);
 
-    ID3D11ShaderResourceView* unbound[5]{};
-    immediate->PSSetShaderResources(0, 5, unbound);
+    ID3D11ShaderResourceView* unbound[4]{};
+    immediate->PSSetShaderResources(0, 4, unbound);
     immediate->OMSetRenderTargets(0, nullptr, nullptr);
 }
 }
@@ -218,6 +253,12 @@ void detach() noexcept
     compositeShader.Reset();
     fullScreenShader.Reset();
     guidesShader.Reset();
+    glassShader.Reset();
+    colorGlassShader.Reset();
+    mirrorShader.Reset();
+    for (auto& layered : waterShaders)
+        for (auto& channels : layered)
+            for (auto& shader : channels) shader.Reset();
     surfaceBlend.Reset();
     colorOnly.Reset();
     behindGameDepth.Reset();
@@ -260,7 +301,7 @@ bool accepts(ID3D11DeviceContext* context) noexcept
         const auto [width, height] = sizeOf(gameTarget.Get());
 
         std::lock_guard lock(resourceMutex);
-        return compositeShader && weightTarget.texture.width == width && weightTarget.texture.height == height;
+        return canRecord(width, height);
     }
     catch (...)
     {
@@ -268,21 +309,24 @@ bool accepts(ID3D11DeviceContext* context) noexcept
     }
 }
 
-bool record(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, ID3D11PixelShader* shader) noexcept
-{    try
+bool record(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, const game_shaders::GameShader& row) noexcept
+{
+    try
     {
         ComPtr<ID3D11RenderTargetView> gameTarget;
         ComPtr<ID3D11DepthStencilView> gameDepth;
         context->OMGetRenderTargets(1, gameTarget.GetAddressOf(), gameDepth.GetAddressOf());
         const auto [width, height] = sizeOf(gameTarget.Get());
 
+        ComPtr<ID3D11PixelShader> shader;
         ComPtr<ID3D11BlendState> blend;
         ComPtr<ID3D11DepthStencilState> depthTest;
         ComPtr<ID3D11RenderTargetView> depth, normal, weight;
         {
             std::lock_guard lock(resourceMutex);
-            if (!shader || !compositeShader || weightTarget.texture.width != width || weightTarget.texture.height != height) return false;
+            if (!canRecord(width, height)) return false;
 
+            shader = shaderOf(row);
             blend = surfaceBlend;
             depthTest = behindGameDepth;
             depth = depthTarget.renderTarget;
@@ -291,7 +335,7 @@ bool record(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, ID3
         }
 
         ID3D11RenderTargetView* const targets[3]{depth.Get(), normal.Get(), weight.Get()};
-        drawSurface(context, call, shader, targets, blend.Get(), depthTest.Get(), gameTarget.Get(), gameDepth.Get());
+        drawSurface(context, call, shader.Get(), targets, blend.Get(), depthTest.Get(), gameTarget.Get(), gameDepth.Get());
         notes.note(reinterpret_cast<std::uint64_t>(context), [&](Notes& contextNotes) {
             contextNotes.hasSurfaces = true;
             contextNotes.scene = gameTarget;

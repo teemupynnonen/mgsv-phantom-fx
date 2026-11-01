@@ -68,15 +68,11 @@ struct GameShader
     bool hasRainReflection{};
     bool hasSprite{};     // Sky: the sun's or the moon's sprite
     bool isFarSea{};      // Sea: the far sea, a plane 5 m below the near sea (its material constants' c0.z)
-    // ForwardWater: the game's shadow map's texture slot (t14 for the rivers and the liquids) and their
-    // reflection cube map's slot (t2), with the value the rays' guide writes (1 a river or a liquid).
-    std::uint32_t shadowSlot{};
-    std::uint32_t cubeSlot{};
-    float guideValue{1.0f};
-    // ForwardWater: how its normal is built (water.hpp). Layered (Prim_TppPrimRiverTl*, Prim_TppPrimRiverOl*): the
-    // normal map's scales at cPSMaterial[6], its tangent frame at TEXCOORD6-8, not [3] and TEXCOORD5-7. Two-channel
-    // (*Hnm*): the normal map holds x and y in w and y, z rebuilt.
-    bool isLayeredRiver{}, hasTwoChannelNormal{};
+    // ForwardWater: how its normal is built (forward_surfaces). Layered (Prim_TppPrimRiverTl*, Prim_TppPrimRiverOl*): the normal
+    // map's scales at cPSMaterial[6], its tangent frame at TEXCOORD6-8, not [3] and TEXCOORD5-7. Two-channel (*Hnm*): the normal map
+    // holds x and y in w and y, z rebuilt. Ripples (*Rpl*): the rain's rings over it.
+    bool isLayeredRiver{}, hasTwoChannelNormal{}, hasRipples{};
+    bool isRiverOverlay{}; // ForwardWater: lies on another river (Prim_TppPrimRiverOl*)
     // Glass, Mirror: the texture slot of what it reflects with: a cube map, or a mirror's picture.
     std::uint8_t reflectionSlot{};
     bool hasColorTexture{}; // Glass: its t0 is a colour with its cover in alpha, not a cover in red
@@ -128,6 +124,28 @@ inline constexpr GameShader GameShaders[]{
     {.pass = GamePass::Resolve, .name = "DR_TonemapRainFilter", .checksum = "9a4abc815afc5f121572d695f07af5af", .hasTppTonemap = true, .hasRainReflection = true},
     {.pass = GamePass::Resolve, .name = "DR_TonemapRainFilter_NoIR", .checksum = "47f52852eaccaa83c25745ce790a212c", .hasTppTonemap = true,
         .hasRainReflection = true},
+    // Rivers and other liquids: how each builds its normal (GameShader::isLayeredRiver, hasTwoChannelNormal, hasRipples; disassembly
+    // of all twelve, 2026-11-01).
+    {.pass = GamePass::ForwardWater, .name = "Prim_TppPrimRiverDownwash", .checksum = "024af58ed0b070154ff8c4e263716995"},
+    {.pass = GamePass::ForwardWater, .name = "Prim_TppPrimRiverDownwHnm", .checksum = "4ba6bef020f7d2943037076096d710ca", .hasTwoChannelNormal = true},
+    {.pass = GamePass::ForwardWater, .name = "Prim_TppPrimRiverModelShd", .checksum = "aeaf76eae86dc75f0fc2ba66ab01fe74"},
+    {.pass = GamePass::ForwardWater, .name = "Prim_TppPrimRiverModelShHnm", .checksum = "b57076062df2a95067065b90838173c9",
+        .hasTwoChannelNormal = true},
+    {.pass = GamePass::ForwardWater, .name = "Prim_TppRiverModelShdRpl", .checksum = "1ea40764baeac2f960acd0ac69353731", .hasRipples = true},
+    {.pass = GamePass::ForwardWater, .name = "Prim_TppRiverModelShHnmRpl", .checksum = "1f6f0ff669cc08d207f827ce3133a98c",
+        .hasTwoChannelNormal = true, .hasRipples = true},
+    {.pass = GamePass::ForwardWater, .name = "Prim_TppPrimRiverTl", .checksum = "a61cfda0e23b106b18fc10da848bb8e5", .isLayeredRiver = true},
+    {.pass = GamePass::ForwardWater, .name = "Prim_TppPrimRiverTlHnm", .checksum = "90dac558d763e91fd382087fe8dd8d13", .isLayeredRiver = true,
+        .hasTwoChannelNormal = true},
+    {.pass = GamePass::ForwardWater, .name = "Prim_TppPrimRiverTlRpl", .checksum = "d43a6faa59aaedabdaf9fa74e8534505", .isLayeredRiver = true,
+        .hasRipples = true},
+    {.pass = GamePass::ForwardWater, .name = "Prim_TppPrimRiverTlHnmRpl", .checksum = "899bafb9d05d2dac1769c13c9b291372", .isLayeredRiver = true,
+        .hasTwoChannelNormal = true, .hasRipples = true},
+    {.pass = GamePass::ForwardWater, .name = "Prim_TppPrimRiverOl", .checksum = "e3f69560bb4bb0eda4ea252b28addf0d", .isLayeredRiver = true,
+        .isRiverOverlay = true},
+    {.pass = GamePass::ForwardWater, .name = "Prim_TppPrimRiverOlHnm", .checksum = "1c26d459156902ddf72a4e019d569162", .isLayeredRiver = true,
+        .hasTwoChannelNormal = true, .isRiverOverlay = true},
+
     {GamePass::ReflectionMask, "LocalReflectionMask", "2d9cb6c5e467cff5e9c6401b4aafebb7"},
     {GamePass::ReflectionAdd, "LocalReflectionAddBuffer", "97a9ad7e0faca7b1594a38c331826a94"},
     {GamePass::Resolve, "DeferredRendering", "df87979884e90877ee0337c13e01664f"},

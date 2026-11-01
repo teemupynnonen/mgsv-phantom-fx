@@ -14,10 +14,6 @@
 // So whatever the game draws reflects, its shapes and normals its own: a character's visor needs no pose from the rays.
 namespace phantom_fx::glass
 {
-void attach(ID3D11Device* device) noexcept;
-// Releases everything; only when no Direct3D work can run (device teardown, unload).
-void detach() noexcept;
-
 // A glass or mirror draw, drawn here while the reflections are traced; returns true when the game's draw must be skipped.
 bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_shaders::DrawnShader& shader) noexcept;
 }

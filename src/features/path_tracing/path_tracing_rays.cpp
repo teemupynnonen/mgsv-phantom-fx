@@ -24,7 +24,6 @@ void describe(gi_d3d12::Descriptors& d, const Textures& textures)
     if (textures.surfaceDepth) d.texture(binding::SurfaceDepth, textures.surfaceDepth, DXGI_FORMAT_R32_FLOAT);
     if (textures.surfaceNormal) d.texture(binding::SurfaceNormal, textures.surfaceNormal, DXGI_FORMAT_R16G16B16A16_FLOAT);
     if (textures.surfaceReflection) d.outputTexture(binding::SurfaceReflection, textures.surfaceReflection, DXGI_FORMAT_R16G16B16A16_FLOAT);
-    if (textures.forwardShadow) d.outputTexture(binding::ForwardShadow, textures.forwardShadow, DXGI_FORMAT_R16_FLOAT);
 }
 
 void recordLamps(gi_d3d12::Recorder& r, std::uint32_t width, std::uint32_t height)

@@ -8,7 +8,6 @@
 #include "d3d11_helpers.hpp"
 #include "dev_tools.hpp"
 #include "features/global_illumination/gi_lighting.hpp"
-#include "features/forward_shadows/forward_shadows.hpp"
 #include "features/path_tracing/forward_surfaces.hpp"
 #include "features/path_tracing/path_tracing.hpp"
 #include "features/path_tracing/sky_capture.hpp"
@@ -387,7 +386,7 @@ std::atomic<std::uint64_t> kicksFromSmallerView{}, expiredNotes{}, expiredCamera
 // whichever thread asks first. Taken after executionMutex when both are.
 std::mutex lightMutex;
 ComPtr<ID3D11Device> lightDevice;
-SharedTexture output, shadowOutput, shadowDebugOutput, lightDebugOutput, reflectionMapOutput, reflectionOutput, reflectionDistanceOutput, forwardShadowOutput, lampDiffuseOutput,
+SharedTexture output, shadowOutput, shadowDebugOutput, lightDebugOutput, reflectionMapOutput, reflectionOutput, reflectionDistanceOutput, lampDiffuseOutput,
     lampSpecularOutput;
 // What the last kick traced, for the threads that read its results.
 std::atomic<kick_traces::KickTraces> lastTraces{};
@@ -719,7 +718,6 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
 
     if (!sceneCamera || !depth || !normals) return;
 
-
     if constexpr (DiagnosticLog)
     {
         const auto [width, height] = sizeOf(depth);
@@ -777,7 +775,6 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     ID3D11Texture2D* reflection{};
     ID3D11Texture2D* reflectionDistance{};
     ID3D11Texture2D* reflectionMap{};
-    ID3D11Texture2D* forwardShadowTexture{};
     if (traces.isPathTraced)
     {
         std::lock_guard lock(lightMutex);
@@ -787,8 +784,6 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         reflection = reflectionOutput.texture.Get();
         reflectionDistance = reflectionDistanceOutput.texture.Get();
         reflectionMap = reflectionMapOutput.texture.Get();
-        resizeShared(forwardShadowOutput, device.Get(), depthOut.width, depthOut.height, DXGI_FORMAT_R16_FLOAT, "Creating the forward surfaces' shadow");
-        forwardShadowTexture = forwardShadowOutput.texture.Get();
     }
 
     auto* lampMasks = traces.isPathTraced ? path_tracing::packMasks(immediate.Get(), tracedLights) : nullptr;
@@ -840,6 +835,7 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     const bool velocityCopied = wantsVelocity && objectVelocityDrawn && objectVelocity && sizeOf(objectVelocity.Get()) == sizeOf(depth)
         && copyShared(objectVelocity.Get(), objectVelocityCopy, velocityFormat);
     if (wantsVelocity) ++(velocityCopied ? kicksWithObjectVelocity : kicksWithoutObjectVelocity);
+
     endStep(TerrainStep);
     const auto inputsReady = ++fenceValue;
     check(immediate->Signal(fence.Get(), inputsReady), "Signalling the global illumination's inputs");
@@ -874,12 +870,10 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         textures.surfaceDepth = surfaces.depth;
         textures.surfaceNormal = surfaces.normal;
         textures.surfaceReflection = surfaces.reflection;
-        textures.forwardShadow = forwardShadowTexture;
     }
 
     frame.width = depthOut.width;
     frame.height = depthOut.height;
-
     const auto view = camera::viewOf(*sceneCamera);
     frame.viewProjection = matrixOf(sceneCamera->projectionView);
     frame.previousViewProjection = matrixOf(previousCamera->projectionView);
@@ -918,15 +912,6 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     frame.characters = std::move(engineScene.characters);
     frame.modelInstancesUpdated = engineScene.instancesUpdated;
     frame.frameIndex = ++kicks;
-
-    // The water's caustics: the render size and the pattern's time.
-    {
-        forward_shadows::Cameras cameras{};
-        cameras.dimensions[0] = static_cast<float>(depthOut.width);
-        cameras.dimensions[1] = static_cast<float>(depthOut.height);
-        cameras.frame = static_cast<float>(frame.frameIndex);
-        forward_shadows::setCameras(cameras);
-    }
     if (asked.asksRayReconstruction) guidesKick = kicks;
     frame.traces = traces;
     frame.emissionScale = traces.isPathTraced ? options.emission * LightScale : 0;
@@ -1427,14 +1412,6 @@ ID3D11Texture2D* reflectionDistance(UINT width, UINT height) noexcept
 
     std::lock_guard lock(lightMutex);
     return reflectionDistanceOutput.width == width && reflectionDistanceOutput.height == height ? reflectionDistanceOutput.texture.Get() : nullptr;
-}
-
-ID3D11ShaderResourceView* forwardShadow(UINT width, UINT height) noexcept
-{
-    if (!wasPathTraced()) return nullptr;
-
-    std::lock_guard lock(lightMutex);
-    return forwardShadowOutput.width == width && forwardShadowOutput.height == height ? forwardShadowOutput.view.Get() : nullptr;
 }
 
 bool active() noexcept

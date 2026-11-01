@@ -10,12 +10,13 @@ namespace phantom_fx
 {
 // The lighting effects: those the enhancements switch (F1) holds.
 // In a cost measurement's order (performance.hpp): the sea first, so its cost holds the light the other
-// effects give its pixels; path tracing, the ray-traced shadows and lights before the global illumination,
+// effects give its pixels, then the caustics, a draw of their own; path tracing, the ray-traced shadows and lights before the global illumination,
 // so with it on, their steps give their own cost while its scene stays; the last of them left out takes the
 // scene with it.
 enum class Effect : std::uint8_t
 {
     Sea,
+    WaterCaustics,
     VolumetricFog,
     PathTracing,
     RayTracedShadows,

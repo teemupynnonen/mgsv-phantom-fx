@@ -306,13 +306,14 @@ DebugRay TraceDebugRay(float3 position, float3 normal, float depth)
 }
 
 // The debug view of where a pixel's shadow rays leave (ShadowSurfaceAt), against the depth's point and
-// the G-buffer's normal. Grey: from the depth's point, the scene having no surface near it, or one facing
-// over 60 degrees away from the game's normal (not the surface the game drew). Otherwise red where it lies
+// the G-buffer's normal. Grey: from the depth's point, the scene having no surface near it. Blue: the
+// scene's surface there faces over 60 degrees away from the game's normal. Otherwise red where it lies
 // nearer the eye than the depth's point, cyan where farther, clear up to 5 mm apart and full from 3 cm.
 float4 ShadowStartColor(float3 position, float3 normal)
 {
     ShadowSurface surface = ShadowSurfaceAt(position, normal);
     if (!surface.exact) return float4(0.5f, 0.5f, 0.5f, 0.6f);
+    if (dot(surface.normal, normal) < 0.5f) return float4(0.2f, 0.3f, 1.0f, 0.75f);
 
     float apart = distance(surface.position, g_Frame.eye.xyz) - distance(position, g_Frame.eye.xyz);
     float strength = saturate((abs(apart) - 0.005f) / 0.025f);

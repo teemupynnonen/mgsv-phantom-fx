@@ -178,10 +178,11 @@ what draws it, when that is the feature's own.
 | `ray_traced_shadows/` | `gi_shadow.*`: the sun's shadow rays and the FidelityFX Shadow Denoiser on Direct3D 12. `gi_shadow.hlsl`, `gi_shadow_filter.hlsl`: the rays, the denoiser's temporal pass and filters |
 | `ray_traced_lights/` | `local_lights.*`: the game's point and spot light draws kept for their stencil, their light drawn again at the sun pass's list with specular and the rays' shadow (see "Ray-traced lights"). `light_choice.*`: which lights a kick gives the rays (each light's reach, the light cap) and each light as the rays take it. `lamp_shadow_rays.*`, `light_shadows.hlsl`: the lamps' shadow rays and filter, a trace (see "What a kick traces") |
 | `global_illumination/` | `gi_light.*`, `gi_light.hlsl`: the light on Direct3D 12, its rays, the denoiser's inputs and the render size (see "Global illumination"); their hits' light and the hash grid cache in `passes/ray_tracing/shaders/gi_hit_light.hlsli`. `gi_denoiser.*`: NVIDIA NRD's RELAX denoiser without NRI. `gi_lighting.*`: the game's sky and sun in the light's terms. `light_combine.*`: the traced light in place of the game's probe light at the resolve |
-| `path_tracing/` | `path_tracing.*`: path tracing on Direct3D 11: the traced reflections added at the resolve and blended as the game blends its own, the lamps' light added at the draw point, the masks' atlas (see "Path tracing"). `path_tracing_shaders.hpp`: those draws. `forward_surfaces.*`, `glass.*`, `water.*`, `surface_shaders.hpp`: the forward surfaces, their surfaces drawn beside the game's and what they reflect added over the scene. `sky_capture.*`: the game's sky drawn again for the rays. `path_tracing_rays.*`: its passes on Direct3D 12. `reflections.hlsl`, `direct_light.hlsl`: the reflections and the point and spot lights |
+| `path_tracing/` | `path_tracing.*`: path tracing on Direct3D 11: the traced reflections added at the resolve and blended as the game blends its own, the lamps' light added at the draw point, the masks' atlas (see "Path tracing"). `path_tracing_shaders.hpp`: those draws. `forward_surfaces.*`, `glass.*`, `water.*`, `surface_shaders.hpp`: the forward surfaces, their surfaces drawn beside the game's and what they reflect added over the scene (see "Forward surfaces: rivers, liquids and glass"). `sky_capture.*`: the game's sky drawn again for the rays. `path_tracing_rays.*`: its passes on Direct3D 12. `reflections.hlsl`, `direct_light.hlsl`: the reflections and the point and spot lights |
 | `ambient_occlusion/` | `gtvbao.*`: GTVBAO's occlusion multiplied into the indirect light at the upscale. `gtvbao_shaders.hpp`: that multiply |
 | `indirect_light/` | `ssilvb.*`: SSILVB's light, brought to the render size and added to the diffuse light the resolve reads. `ssilvb_shaders.hpp`: the upsample |
 | `volumetric_fog/` | `atmosphere.*`: the larger fog texture, the game's fog pass over all of it, the shadowed fill before the resolve. `atmosphere_shaders.hpp`: the game's fog formula per froxel with the sun shadowed; Hillaire's atmosphere tables, the physical fog and sky (Epic Games' reference, MIT) |
+| `water_caustics/` | `water_caustics.*`: the light a river's waves focus on its bed, drawn over the river's own draw. `caustics_map.*`: the tiling web, made at start-up. `water_caustics_shaders.hpp`: that draw |
 | `sea/` | `sea.*`: the sea's waves and its surface in the G-buffer in place of the game's sea, its level and wind from the game's, its depth for the guides and its level for the ray-traced scene (see "Sea"). `sea_shaders.hpp`: the spectrum, the FFT, the maps, the surface |
 | `photo_mode/` | `photo_mode.*`: photo mode (F2), the game's pause, a free camera through the camera selector, the game's input held back; hiding the UI (F3). `focus.*`: its autofocus |
 | `hdr/` | `hdr.*`: the float scene, in SDR too, and HDR10 output: the swap chain, the float scene targets and their sRGB views, the shader patches, the grading and output passes (see "HDR"). `hdr_shaders.hpp`: the encode and decode of the float scene, bloom's reduction, the grading, the output to PQ or, in SDR, to the game's 8 bits with a dither |
@@ -197,6 +198,7 @@ what draws it, when that is the feature's own.
 | `src/passes/local_light_pass.*` | The game's point and spot light draws, with the lamps' contact shadows and soft shadows composed in: the marking and lighting draws |
 | `src/passes/contact_shadow_trace.*` | Bend Studio's screen-space shadow trace, for the sun's and the lamps' contact shadows. `contact_shadow_trace_shaders.hpp`: Bend's trace ported to FXC |
 | `third_party/bend_sss/bend_sss_cpu.h` | Bend Studio's dispatch layout, unchanged (Apache License 2.0) |
+| `src/passes/forward_water_pass.*` | The game's rivers and liquids, with what the rays replace in their draw and the caustics composed in. `forward_scene.hpp`: the HLSL the shaders over the game's forward draws share: the scene's constants, the fog, the scene's depth |
 | `src/passes/indirect_light_pass.*` | The game's sky light, upscale and resolve: the G-buffer notes, the resolve's white occlusion and diffuse light, the diagnostics views, the ray-traced scene's notes. `indirect_light_pass_shaders.hpp`: the diagnostics views |
 | `src/passes/visibility_bitmask.*` | The visibility bitmask march GTVBAO and SSILVB share: the depth prefilter, the march, the denoiser. `visibility_bitmask_shaders.hpp`: the march (GTVBAO from three-gtvbao, SSILVB's light as SSRT3 gathers it), XeGTAO's noise and denoiser |
 | `src/passes/ray_tracing/ray_tracing.*` | The ray-traced scene's frame on Direct3D 11: the kick, the waits, the shared textures the global illumination and the ray-traced shadows hand back |
@@ -499,8 +501,8 @@ made.
   shows as the Direct3D 11 time around it.
 - **Real cost.** The timed passes miss what they change in the game's work: GTVBAO leaves the
   game's SSAO out, the physical look the game's sky. **Measure the real cost** times the GPU frame
-  with everything on, then leaves out, one more at a time and only where running: the volumetric
-  fog, the ray-traced shadows, the ray-traced lights, the global illumination (its light passes,
+  with everything on, then leaves out, one more at a time and only where running: the sea, the
+  water's caustics, the volumetric fog, the ray-traced shadows, the ray-traced lights, the global illumination (its light passes,
   then the rest), SSILVB, GTVBAO, the lamp and the sun contact shadows, the soft shadows, the
   sharpening and last the upscaler (the game's FXAA at the same render size, as the Diagnostics
   comparison). The lighting effects go in `Effect`'s order, and what runs is the effect plan's
@@ -3564,47 +3566,62 @@ They are drawn forward, over the lit scene, after the G-buffer and so after the 
 them, and the game's own shaders sample its shadow map alone, so a character's shadow stood on a river where the
 ground had the rays'.
 
-Three modules: `forward_surfaces` owns what they share - the targets, the second trace and the composite - and
-`glass` and `water` only draw their own passes into it.
+Three modules share the second trace: `forward_surfaces` owns the targets, the surfaces' shaders, the trace and the
+composite; `glass` and `water` own what their draws leave out. The rivers' draw is a game pass two features change, so
+it belongs to `forward_water_pass` (`src/passes/`), which composes them: the river without what the rays replaced
+(`water::drawRiver`), its caustics (`water_caustics::draw`), then the surface (`forward_surfaces::record`). What the
+shaders over those draws read of the game's is in `src/passes/forward_scene.hpp`.
 
-Two halves, one mechanism:
+All twelve river shaders are rows of the table (`Prim_TppPrimRiver*`, `Prim_TppRiverModel*`). From their disassembly:
+the cube map at `t2`, the scene's copy at `t3`, the ripples at `t6`, the fog at `t12`, the depth at `t13`, the shadow map
+at `t14` with `s15`; `cPSMaterial` at `b4`, whose `[0]` holds the normal map's two scrolled offsets, and `cPSObject` at
+`b5`, whose `m_localParam[1]` is the sun's colour and `[2].x` the shore's fade. `b6` and up and `t7` to `t11` are free.
 
-- **Shadow.** At a river's or liquid's draw (`forward_shadows`, `src/features/forward_shadows/`) the game's shadow
-  map is replaced by a 1x1 white one and the sampler that always compares, so the map's shadow — which no longer
-  matches the rays' scene — does not darken the surface. The water takes no sun shadow of its own: its reflection is
-  what the eye reads, and the bed's shadow stays in the deferred lighting under it. Glass takes the same pair from
-  `forward_shadows::tracedShadowResources`, blanked at its own draw in `glass::draw`.
-- **Caustics.** Before the water blends (`shaders::Caustics`), the same geometry draws once more and multiplies the
-  scene by the light the water's waves focus: `caustics_map.hpp` (the art's tiling map, `caust_016.png`) sampled twice,
-  scrolled apart, its mip from the water's column. The bed's depth comes from the kick's copy (`ray_tracing::surfaceDepth`),
-  so the webs ramp in over the first 25 cm of water (nothing focuses where it meets the shore or anything standing in
-  it), fade exponentially with the column, and are strongest just under the surface. The bed is placed with the river
-  draw's own camera: its vertex shader's `cVSScene` (`cb2` in all twelve `Prim_TppPrimRiver*`/`Prim_TppRiverModel*`
-  variants, `m_projection` rows 4-7, `m_view` rows 8-11), bound to the pass at `b1`. The kick's camera was a frame
-  old at every caustic draw (all recorded on deferred contexts, measured 2026-11-01), so aiming's quick change of view
-  moved the webs. `Atmosphere > Water caustics` holds the switch and the **Intensity**.
-- **Reflection.** The forward draw blanks the game's cube map and records the water as a surface
-  (`water::recordWater`), the same way glass and mirrors are recorded: depth, its ripples' normal, a negative
-  roughness that marks water, and the menu's share of what it reflects. The normal is the game's own
-  (`WaterSurface`, from the disassembly of all twelve river pixel shaders, 2026-11-01): the normal map `t1` (`s10`)
-  sampled twice at the mesh UV times a material scale plus the material's scrolling offset (`cPSMaterial[0]`, the
-  second layer at 0.97 of its scale), each `2t - 1`, summed, normalized and taken out of the vertex shader's
-  tangent frame. The rows say where: layered rivers (`Tl`, `Ol`) keep the scales at `cPSMaterial[6]` and the frame at
-  `TEXCOORD6-8`, the others at `[3]` and `TEXCOORD5-7`; `Hnm` maps hold x and y in w and y, z rebuilt. A draw
-  without a frame writes no normal, and the trace falls back to the depth's slope. The second trace
-  (`TraceSurfaceReflections`, reflections.hlsl) runs after the scene, so it reflects from where the water is now:
-  no lag, and no reprojection to undo one. What it reflects is scaled by water's reflectance at the eye's angle
-  (`WaterReflectance`, Karis' split-sum fit, F0 0.02), and added over the scene at the exposure by the
-  composite. Its roughness is fixed at 0.05, near a mirror: the game's shader samples its cube map without one, and
-  the ripples' normal carries the variation.
-- **Shadow of a surface.** `TraceSurfaceReflections` also traces the sun for each glass and mirror pixel, into
-  `g_ForwardShadow` (u100): the glass composite reads it. Water traces none and writes 1: the composite ignores the
-  value at water's pixels (water takes no sun shadow; the bed under it is lit by the sun pass as the rest of the
-  scene is).
+- **Shadow.** Where the rays took the shadow's place on the ground, the river's draw takes a 1x1 white shadow map and a
+  sampler that always passes, so the map's shadow, which no longer matches the rays' scene, does not darken the
+  surface. The water takes no sun shadow of its own: its reflection is what the eye reads, and the bed's shadow stays
+  in the deferred lighting under it. Glass keeps the game's: it barely shows there, and a shadow of its own would take a
+  sun ray for each pixel of glass.
+- **Reflection.** While the reflections are traced, the river's draw leaves its cube map out and records the water as a
+  surface: its depth, its ripples' normal and, in the normal's `w`, negative, the share of what it reflects that
+  shows. The sign marks water. The share is there and not in the weights because those blend: a pane drawn over a river
+  must stand alone, not on top of the water's share. It is 0.3 x the water's cover (the base texture's alpha, the
+  vertex's and the shore's fade, as `NComputeDepthBlendFactor` gives them) x the fog in front of it.
 
-Why the surfaces are one ray a pixel: they are drawn after the upscaler, so neither Ray Reconstruction nor the
-add-on's denoisers see them; their grain is the trace's own, and the water's ripples stay the game's own normal
-map rather than something the trace knows.
+  The normal is the game's own (`WaterSurface`, from the disassembly): the normal map `t1` (`s10`) sampled twice at the
+  mesh UV times a material scale plus the material's offset, the second layer at 0.97 of its scale, each `2t - 1`,
+  summed, normalized and taken out of the vertex shader's tangent frame. The rows say where: layered rivers (`Tl`,
+  `Ol`) keep the scales at `cPSMaterial[6]` and the frame at `TEXCOORD6-8`, the others at `[3]` and `TEXCOORD5-7`;
+  `Hnm` maps hold x and y in w and y, z rebuilt; `Rpl` shaders add the rain's rings from `t6` (`NAddRippleNormal`).
+
+  The second trace (`TraceSurfaceReflections`, reflections.hlsl) runs after the scene, so it reflects from where the
+  water is now: no lag, and no reprojection to undo one. What it reflects is scaled by water's reflectance at the eye's
+  angle (`WaterReflectance`, Karis' split-sum fit, F0 0.02, the same as the sea's guides on Direct3D 11), and added over the
+  scene at the exposure by the composite. Its roughness is fixed at 0.05, near a mirror: the game's shader samples its cube
+  map without one, and the ripples' normal carries the variation.
+- **Caustics** (`src/features/water_caustics/`). Over each river, right after its draw, the same geometry draws once more:
+  `shaders::Caustics` gives `o`, and the blend makes the scene `scene x (1 + o)`, which brightens on the game's 8-bit
+  scene too, where a colour past 1 would not reach the blend. Over the water and not under it: the river shows the bed
+  through a copy of the scene taken before it (`t3`), so anything drawn before the river is lost where the water is
+  opaque. An overlay river (`Ol`) lies on another, whose caustics show through, so it takes none.
+
+  Everything is read from what the river's draw left bound, so the pass needs neither the rays nor the upscaler, and draws
+  nothing into the shared core. The bed is the game's depth at `t13`; on the eye's ray a point's distance goes with its view
+  z, so the bed's place is the eye and the water's `TEXCOORD4` scaled by their view z's. Its web is `makeCausticsMap`, made at
+  start-up: a tiling web of cells, whose edges gather the light, sampled twice at different scales. The two layers drift
+  against each other in real seconds, as the sea's waves keep time, so the webs move at any frame rate and go on through
+  a pause. On a river's own scroll (`cPSMaterial[0]`) they stood still through one: the same webs 9 s apart matched 0.996,
+  against 0.42 on the clock (2026-11-01).
+
+  The webs ramp in over the first 25 cm of water (nothing focuses where it meets the shore or anything standing in it),
+  fade exponentially with the column and blur with its depth. The sun's colour at the exposure sets their strength: about 1.5 at noon, 0.9 in the
+  morning, 0.3 in the rain and none at dusk and night (measured at the Africa river, 2026-11-01), so they are full by day and go
+  with it. The rays' sun shadow on the bed
+  (`ray_tracing::sunShadow`) takes them off whatever stands in the sun's way, and without the rays nothing does. The fog in
+  front of the bed takes them too, as it hides the bed. `Atmosphere > Water caustics` holds the switch and the **Intensity**.
+
+The surfaces take one ray a pixel. Ray Reconstruction sees what the composite added, as the composite runs before the
+exposure, and its guides are told where a surface dominates (`forward_surfaces::guideReconstruction`).
 
 ## Depth of field
 

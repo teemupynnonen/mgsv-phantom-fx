@@ -12,16 +12,12 @@
 #include "gi_hit_light.hlsli"
 
 Texture2D<float4> g_Guide_NormalRoughness : register(t18); // The world-space normal, the roughness in w (ray_tracing::ReconstructionGuides)
-Texture2D<float4> g_Guide_SpecularAlbedo : register(t19);  // The share of light the surface reflects towards the eye
-// The forward pass's rivers and liquids (forward_shadows), one frame old: where one drew, the trace below is
-// its own surface, not the riverbed's behind it.
-// The sun's shadow on a surface itself, for the forward pass's multiply and the glass composite.
-RWTexture2D<float> g_ForwardShadow : register(u100);
+Texture2D<float4> g_Guide_SpecularAlbedo : register(t19);  // The share of light the surface reflects towards the eye; a: 0 on the sea
 RWTexture2D<float4> g_Reflection : register(u93);          // The reflected light times the specular albedo and the exposure; a: how far across the screen its hit is
 RWTexture2D<float> g_ReflectionDistance : register(u94);   // The ray's hit distance; FP16's largest where it got away
 RWTexture2D<float4> g_ReflectionMap : register(u98);       // The hit as the game's reflection map holds it (ReflectionBlend): rgb its light, a how much it blends
-Texture2D<float> g_SurfaceDepth : register(t26);           // The nearest glass or mirror the game drew at each pixel (forward_surfaces.hpp); 0 without
-Texture2D<float4> g_SurfaceNormal : register(t27);         // Its world-space normal, its roughness in w
+Texture2D<float> g_SurfaceDepth : register(t26);           // The nearest glass, mirror or water the game drew at each pixel (forward_surfaces.hpp); 0 without
+Texture2D<float4> g_SurfaceNormal : register(t27);         // Its world-space normal, its roughness in w; water's w is negative
 RWTexture2D<float4> g_SurfaceReflection : register(u99);   // What it reflects, times the exposure; a: the ray's hit distance
 
 // Water's reflectance (F0 0.02) at the eye's angle over GGX's lobe: Karis' fit of the split sum ("Physically
@@ -37,9 +33,9 @@ float WaterReflectance(float toEyeN, float roughness)
     return 0.02 * ab.x + ab.y;
 }
 
-// What a river's reflected light keeps when it is added: the game's own water draws a sky reflection into its
-// colour and ours is added over it, so the full reflectance read as a mirror.
-static const float ForwardReflectionStrength = 0.3f;
+// A river's or a liquid's, near a mirror as the game's shader samples its cube map: the ripples' normal does the rest.
+// The guides take the same (surface_shaders.hpp, ReconstructionGuides).
+static const float WaterRoughness = 0.05f;
 // FP16's largest, which Ray Reconstruction takes as the sky.
 static const float SkyHitDistance = 65504.0f;
 
@@ -254,16 +250,15 @@ void TraceReflections(uint2 did : SV_DispatchThreadID)
 
     float depth = g_Depth.Load(int3(did, 0));
     float4 specularAlbedo = g_Guide_SpecularAlbedo.Load(int3(did, 0));
-    float4 normalRoughness = g_Guide_NormalRoughness.Load(int3(did, 0));
     if (depth <= 0.0f || all(specularAlbedo.rgb < 1e-3f))
     {
         g_Reflection[did] = 0.0f;
         g_ReflectionMap[did] = 0.0f;
         g_ReflectionDistance[did] = depth <= 0.0f ? SkyHitDistance : 0.0f;
-        g_ForwardShadow[did] = 1.0f;
         return;
     }
 
+    float4 normalRoughness = g_Guide_NormalRoughness.Load(int3(did, 0));
     float3 normal = normalize(normalRoughness.xyz);
     float alpha = max(normalRoughness.w * normalRoughness.w, 1e-3f);
     float3 world = DepthPosition(did, depth);
@@ -283,13 +278,9 @@ void TraceReflections(uint2 did : SV_DispatchThreadID)
     g_Reflection[did] = float4(exposed * specularAlbedo.rgb, isGameBlended ? ScreenTravel(world, origin + hitDistance * direction) : BehindTheEye);
     g_ReflectionMap[did] = isGameBlended ? float4(min(exposed, BrightestHit) * fresnel, GameReflectionFade(world, normal, direction, normalRoughness.w, fresnel)) : 0.0f;
     g_ReflectionDistance[did] = hitDistance;
-
-    // The sun's shadow on a surface itself is the surface trace's (TraceSurfaceReflections): here only the
-    // pixels it does not cover get the lit value, which the forward multiply and the glass composite skip.
-    g_ForwardShadow[did] = 1.0f;
 }
 
-// What glass and mirrors reflect, from the surfaces the game drew in front of the rest (forward_surfaces.hpp): as a mirror does, spread
+// What glass, mirrors and water reflect, from the surfaces the game drew in front of the rest (forward_surfaces.hpp): as a mirror does, spread
 // by the material's roughness, a ray a pixel. Nothing to the game's blend or to the resolve: their weights are the game's
 // own, in the surface's draw, and this frame's scene is built.
 [numthreads(8, 8, 1)]
@@ -301,29 +292,12 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
     if (depth <= 0.0f) return;
 
     float4 normalRoughness = g_SurfaceNormal.Load(int3(did, 0));
-    // A river or a liquid (WaterSurface, surface_shaders.hpp) marks itself with a negative roughness: its normal is its
-    // ripples' as the game's shader builds them, and what it reflects is scaled by water's reflectance. Without one
-    // (xyz 0: the draw had no tangent frame) the normal comes from its depth's slope.
+    // A river or a liquid (WaterSurface, surface_shaders.hpp) marks itself with a negative w.
     const bool isWater = normalRoughness.w < 0.0f;
-    normalRoughness.w = abs(normalRoughness.w);
-    float3 world = DepthPosition(did, depth);
-    if (isWater && all(normalRoughness.xyz == 0.0f))
-    {
-        const uint2 last = g_BufferDimensions - 1;
-        const uint2 rightPixel = min(did + uint2(1, 0), last);
-        const uint2 downPixel = min(did + uint2(0, 1), last);
-        const float rightDepth = g_SurfaceDepth.Load(int3(rightPixel, 0));
-        const float downDepth = g_SurfaceDepth.Load(int3(downPixel, 0));
-        float3 slope = float3(0, 0, 1);
-        if (rightDepth > 0.0f && downDepth > 0.0f)
-            slope = cross(DepthPosition(rightPixel, rightDepth) - world, DepthPosition(downPixel, downDepth) - world);
-        if (!all(slope == 0.0f)) slope = normalize(slope);
-        const float3 toEyeNow = normalize(g_Frame.eye.xyz - world);
-        if (dot(slope, toEyeNow) < 0.0f) slope = -slope;
-        normalRoughness = float4(slope, normalRoughness.w);
-    }
+    if (isWater) normalRoughness.w = WaterRoughness;
     float3 normal = normalize(normalRoughness.xyz);
     float alpha = max(normalRoughness.w * normalRoughness.w, 1e-3f);
+    float3 world = DepthPosition(did, depth);
     float3 toEye = normalize(g_Frame.eye.xyz - world);
 
     // Apart from the rays from the surface behind it (TraceReflections).
@@ -334,22 +308,7 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
     float hitDistance;
     bool isRough = normalRoughness.w >= RoughSurface;
     float3 light = ReflectedLight(origin, normal, CopyTolerance(world), direction, PixelCone(world, g_Frame.rayCone.x + alpha), isRough, random, hitDistance);
-    // A river or a liquid reflects as water does, not as glass: its reflectance at the eye's angle scales what it
-    // reflected (its weight, recorded at the draw, is the menu's share).
+    // Water reflects as water does: its reflectance at the eye's angle. Glass's is in its weights, from the game's own shader.
     if (isWater) light *= WaterReflectance(saturate(dot(normal, toEye)), normalRoughness.w);
     g_SurfaceReflection[did] = float4(min(RemoveNaNs(light) * g_Frame.nearFar.w, BrightestHit), hitDistance);
-
-    // the surface that is can be seen (menu, "Water: fallback normals").
-
-    // The surface's own sun shadow, for the composite to dim what it covers (surface_shaders.hpp, Composite): a ray
-    // from the surface towards a point on the sun's disc, one sample, seeded by the pixel alone. Water takes no sun
-    // shadow (Composite reads 1 at its pixels), so it traces none: no ray there is ever read.
-    if (isWater)
-    {
-        g_ForwardShadow[did] = 1.0f;
-        return;
-    }
-    Random sunRandom = MakeRandom(did.x + did.y * g_BufferDimensions.x, 0u);
-    g_ForwardShadow[did] = VisibilityFromSurface(origin, normal, CopyTolerance(world), SunSample(sunRandom.rand2()), 1e4f,
-        ShadowRayTowards(RayTowardsSun));
 }
