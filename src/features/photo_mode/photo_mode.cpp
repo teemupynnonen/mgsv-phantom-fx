@@ -277,9 +277,10 @@ void selectorUpdate(std::uint8_t* selector)
     if (teleportRequested.exchange(false) && flying && camera)
     {
         // A held camera (a debug case, or automation) would keep photo mode on and the game paused, so
-        // the warp would wait forever: teleport lets it go.
+        // the warp would wait forever: teleport lets it go, from the pose it moved to this update.
         if constexpr (DevTools)
         {
+            if (heldCamera) place(freeCamera, *heldCamera);
             held_camera::release();
             heldCamera.reset();
         }
