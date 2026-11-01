@@ -124,6 +124,7 @@ void install(const std::filesystem::path& addonDirectory) noexcept
     perf_record::install(addonDirectory / "PhantomFX-automation" / "perf");
 }
 
+/** The game thread, at the main loop's frame start: each tool that runs there, in order. */
 void onFrameStart() noexcept
 {
     travel::onFrameStart();

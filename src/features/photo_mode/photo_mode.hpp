@@ -36,11 +36,11 @@ void toggleBlur() noexcept;
 // The lens's f-number, from the settings.
 void configure(const Configuration& configuration) noexcept;
 void setControls(const Controls& controls) noexcept;
-// In photo mode, the game thread leaves photo mode and warps the player to the free camera's position
-// once the game's time runs again. The dev build only (dev_tools.hpp).
+/** In photo mode, the game thread leaves photo mode and warps the player to the free camera's position
+    once the game's time runs again. The dev build only (dev_tools.hpp). */
 void teleport() noexcept;
-// The game thread, at the main loop's frame start through dev::onFrameStart: runs the warp the last
-// teleport asked for. The dev build only.
+/** The game thread, at the main loop's frame start through dev::onFrameStart: runs the warp the last
+    teleport asked for. The dev build only. */
 void onFrameStart() noexcept;
 // In photo mode, or hidden with F3: the 2D pass does not draw into the scene.
 bool uiHidden() noexcept;

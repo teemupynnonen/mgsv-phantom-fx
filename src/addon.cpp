@@ -592,6 +592,7 @@ bool onOpenOverlay(effect_runtime*, bool open, input_source)
     return false;
 }
 
+/** Every frame, with ReShade's overlay open or closed: the hotkeys, and the photo mode's keys held. */
 void onReshadePresent(effect_runtime* runtime)
 {
     if (runtime->is_key_pressed(VK_F1)) core::toggleEnhancements();

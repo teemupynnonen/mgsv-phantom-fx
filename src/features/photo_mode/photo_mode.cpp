@@ -205,6 +205,7 @@ CameraState photoState(const FreeCamera& camera, const CameraState& game, bool i
     return state;
 }
 
+/** Moves the free camera by the mouse turns and the keys held, for a step of `seconds`: slow with C, fast with Shift. */
 void fly(FreeCamera& camera, std::uint8_t keys, int turnX, int turnY, float seconds)
 {
     // Moving the mouse right turns right, which is towards -x when looking along +z.
@@ -265,6 +266,7 @@ double secondsSince(LONGLONG& last)
     return std::min(seconds, MaxStep);
 }
 
+/** The camera selector's update, hooked: takes Enter's teleport, flies the free camera, then runs the game's own update. */
 void selectorUpdate(std::uint8_t* selector)
 {
     auto* camera = activeCamera(selector);
@@ -431,11 +433,13 @@ bool uiHidden() noexcept
     return hideUi || flying;
 }
 
+/** Asks for the player to be warped to the free camera's position at the next camera update. The dev build only. */
 void teleport() noexcept
 {
     if constexpr (DevTools) teleportRequested = true;
 }
 
+/** Runs the warp the last teleport asked for, through the game's Lua, and says how it went. The dev build only. */
 void onFrameStart() noexcept
 {
     if constexpr (DevTools)
@@ -490,6 +494,7 @@ end
     }
 }
 
+/** Leaves photo mode as the add-on unloads: the game unpauses and the camera and any warp are let go. */
 void leave() noexcept
 {
     if constexpr (DevTools) held_camera::release();
