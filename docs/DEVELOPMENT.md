@@ -3067,15 +3067,17 @@ used. Off, the add-on only checks a flag on each full-screen draw.
   context, with the game's compute bindings saved and restored: from the resolve's depth (`t11`),
   diffuse light (`t9`), albedo (`t8`, its sRGB view, so linear), the specular light (`t10`) and
   `cPSScene`. A golden-angle disk of up to 16 jittered taps per pixel, each rejected by plane
-  elevation, source facing and inverse-square distance, returns the mean `albedo x diffuse +
-  specular` of the taps that survive; alpha is validity. The radius is a share of the screen's
-  height (50% by default), and the same radius in view units at the pixel's depth. Into an
+  elevation and source facing, then weighted by inverse-square distance, returns the mean `albedo x
+  diffuse + specular` of the taps that survive; alpha is validity. The radius is a share of the
+  screen's height (50% by default), and the same radius in view units at the pixel's depth. Into an
   `R16G16B16A16_FLOAT` bounce target at the gather's size (full, half or quarter, rounded up).
   Before it, `visibility_bitmask::prefilterDistances` fills this add-on's own copy of the distance
   mips at the render size, and each tap marches them (the **Visibility** setting's steps, 5 by
   default) from the receiver to the sample: a surface nearer, in view depth, than the ray at that
-  point blocks the tap, so light does not bleed through occluders, which the disk alone would not
-  see. 0 disables the test.
+  point by more than the ray's thickness allowance blocks the tap, so light does not bleed through
+  occluders, which the disk alone would not see. That allowance is 12% of the ray's view depth,
+  clamped between 0.02 and the radius, so a surface closer than the ray but within the margin still
+  passes. 0 disables the test.
 - **Accumulate** (`shaders::Accumulate`): reprojects with the velocity, fetches the ping-ponged
   history bilinearly, clips it to this frame's 3x3 neighbourhood, and rejects on depth, normal and
   screen bounds (a separate aux target carries the history's depth and normal). The blend is an
