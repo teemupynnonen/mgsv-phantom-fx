@@ -909,20 +909,12 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     frame.modelInstancesUpdated = engineScene.instancesUpdated;
     frame.frameIndex = ++kicks;
 
-    // The water's caustics unproject their pixels with the camera the forward pass draws with.
+    // The water's caustics: the render size and the pattern's time.
     {
         forward_shadows::Cameras cameras{};
-        const auto projectionView = matrixOf(sceneCamera->projectionView);
-        camera::Matrix matrix{};
-        for (std::size_t index = 0; index < matrix.size(); ++index) matrix[index] = static_cast<double>(projectionView[index]);
-        const auto inverse = camera::inverse(matrix);
-        for (std::size_t index = 0; index < inverse.size(); ++index) cameras.viewProjectionInverse[index] = static_cast<float>(inverse[index]);
-        std::memcpy(cameras.eye, sceneCamera->eye, sizeof(cameras.eye));
         cameras.dimensions[0] = static_cast<float>(depthOut.width);
         cameras.dimensions[1] = static_cast<float>(depthOut.height);
         cameras.frame = static_cast<float>(frame.frameIndex);
-        cameras.nearFar[0] = view.nearPlane;
-        cameras.nearFar[1] = view.farPlane;
         forward_shadows::setCameras(cameras);
     }
     if (asked.asksRayReconstruction) guidesKick = kicks;

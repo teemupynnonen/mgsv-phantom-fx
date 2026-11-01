@@ -3339,8 +3339,11 @@ Two halves, one mechanism:
   scene by the light the water's waves focus: `caustics_map.hpp` (the art's tiling map, `caust_016.png`) sampled twice,
   scrolled apart, its mip from the water's column. The bed's depth comes from the kick's copy (`ray_tracing::surfaceDepth`),
   so the webs ramp in over the first 25 cm of water (nothing focuses where it meets the shore or anything standing in
-  it), fade exponentially with the column, and are strongest just under the surface. `Atmosphere > Water caustics`
-  holds the switch and the **Intensity**.
+  it), fade exponentially with the column, and are strongest just under the surface. The bed is placed with the river
+  draw's own camera: its vertex shader's `cVSScene` (`cb2` in all twelve `Prim_TppPrimRiver*`/`Prim_TppRiverModel*`
+  variants, `m_projection` rows 4-7, `m_view` rows 8-11), bound to the pass at `b1`. The kick's camera was a frame
+  old at every caustic draw (all recorded on deferred contexts, measured 2026-11-01), so aiming's quick change of view
+  moved the webs. `Atmosphere > Water caustics` holds the switch and the **Intensity**.
 - **Reflection.** The forward draw blanks the game's cube map and records the water as a surface
   (`water::recordWater`), the same way glass and mirrors are recorded: depth, a zero normal (the water's is its
   depth's slope) and the menu's share of what it reflects. The second trace (`TraceSurfaceReflections`,

@@ -21,17 +21,13 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
 // white map shadow and the sampler that always passes, for its shadow slot and s15. False when unavailable.
 bool tracedShadowResources(ID3D11DeviceContext* context, ID3D11ShaderResourceView** whiteMap, ID3D11SamplerState** alwaysPass) noexcept;
 
-// The camera the water is drawn with, for the caustics the forward pass puts on the bed under it: the inverse of the
-// frame's projection-view, the eye, the render size, and the frame's index (the pattern's time). The kick fills it,
-// so the forward draw reads it without a lock of its own.
+// For the caustics the forward pass puts on the bed under the water: the render size and the frame's index (the
+// pattern's time). The kick fills it; the camera is the water draw's own, so a frame's lag here cannot move the
+// pattern.
 struct Cameras
 {
-    float viewProjectionInverse[16];
-    float eye[4];
     float dimensions[2];
     float frame;
-    float padding;
-    float nearFar[4];  // xy: the camera's near and far, for the water column the caustics read
 };
 void setCameras(const Cameras& cameras) noexcept;
 

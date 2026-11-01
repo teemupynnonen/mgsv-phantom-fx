@@ -9,10 +9,16 @@ namespace phantom_fx::forward_shadows::shaders
 inline constexpr char Caustics[] = R"(
 cbuffer Parameters : register(b0)
 {
-    row_major float4x4 viewProjectionInverse; // This frame's, the one the water is drawn with
-    float4 eye;
-    float4 dimensions;                        // xy: the render size; z: the frame's index; w: the strength
-    float4 nearFar;                           // xy: the camera's near and far
+    float4 dimensions; // xy: the render size; z: the frame's index; w: the strength
+};
+// The river's own camera, its vertex shader's cVSScene (cb2 in every Prim_TppPrimRiver* and Prim_TppRiverModel*):
+// the camera this draw is drawn with, so the pattern cannot lag it. Each matrix is applied a row at a time, as the
+// vertex shader does (dp4 with the row).
+cbuffer Scene : register(b1)
+{
+    float4 projectionViewRows[4]; // m_projectionView, rows 0-3: unread, it places the two below
+    float4 projectionRows[4]; // m_projection, rows 4-7: view to clip
+    float4 viewRows[4];       // m_view, rows 8-11: world to view, rigid
 };
 Texture2D<float> BedDepth : register(t0);     // The bed's depth, as the kick copied it: the water column above it
 Texture2D<float> CausticsMap : register(t1);  // The art's caustic web, tiling
@@ -21,10 +27,24 @@ SamplerState CausticsSampler : register(s0);  // Linear, wrap
 // How many metres one tile of the map spans.
 static const float TileMetres = 2.5f;
 
-// The game's reversed-Z: 1 at the near plane, 0 at the far.
-float ToLinear(float depth, float2 nearFar)
+// The view-space point at a pixel's NDC and depth: the projection's rows, each less the depth's share of w, are three
+// planes through it (clip_i - ndc_i * clip_w = 0), solved by Cramer's rule.
+float3 ViewAt(float2 ndc, float depth)
 {
-    return (nearFar.x * nearFar.y) / (nearFar.x + depth * (nearFar.y - nearFar.x));
+    const float4 a = projectionRows[0] - ndc.x * projectionRows[3];
+    const float4 b = projectionRows[1] - ndc.y * projectionRows[3];
+    const float4 c = projectionRows[2] - depth * projectionRows[3];
+    const float3 bc = cross(b.xyz, c.xyz), ca = cross(c.xyz, a.xyz), ab = cross(a.xyz, b.xyz);
+
+    return -(a.w * bc + b.w * ca + c.w * ab) / dot(a.xyz, bc);
+}
+
+// A view-space point back in the world: the view is rigid, so its inverse is its rotation's transpose.
+float3 WorldOf(float3 view)
+{
+    const float3 relative = view - float3(viewRows[0].w, viewRows[1].w, viewRows[2].w);
+
+    return relative.x * viewRows[0].xyz + relative.y * viewRows[1].xyz + relative.z * viewRows[2].xyz;
 }
 
 // Two layers of the map, scrolled apart and at different scales, so the tile's repetition does not read: the product
@@ -47,11 +67,11 @@ float4 main(float4 position : SV_Position) : SV_Target
     // The web is on the bed, not the surface: the bed's own world position anchors it, so it stays with the
     // bottom when the water moves over it.
     const float bed = BedDepth.Load(int3(int2(position.xy), 0));
-    const float4 bedClip = mul(viewProjectionInverse, float4(ndc, bed, 1));
-    const float3 bedWorld = bedClip.xyz / bedClip.w;
+    const float3 bedView = ViewAt(ndc, bed);
+    const float3 bedWorld = WorldOf(bedView);
 
-    // The water column under this fragment: the bed is farther than the surface, both reversed-Z.
-    const float under = max(ToLinear(bed, nearFar.xy) - ToLinear(position.z, nearFar.xy), 0.0f);
+    // The water column under this fragment, along the view: the bed is farther than the surface.
+    const float under = max(abs(bedView.z) - abs(ViewAt(ndc, position.z).z), 0.0f);
 
     // Nothing focuses where the water meets the bed, the shore or anything standing in it: the column goes to nothing,
     // so the contact ramps the webs in over the first few centimetres instead of cutting at the geometry's edge.

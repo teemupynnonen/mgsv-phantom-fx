@@ -24,14 +24,15 @@ namespace
 {
 using Microsoft::WRL::ComPtr;
 
-// The caustics' constants: as Cameras, plus the strength in dimensions.w.
+// The caustics' constants: the render size, the frame's index and the strength. The camera is the draw's own
+// (shaders::Caustics, b1).
 struct CausticParameters
 {
-    float viewProjectionInverse[16];
-    float eye[4];
     float dimensions[4];
-    float nearFar[4];
 };
+
+// The river's vertex shader reads its camera, cVSScene, at cb2; the caustics read it at b1.
+constexpr UINT RiverSceneSlot = 2, CausticSceneSlot = 1;
 
 // The game's comparison sampler, which the forward shaders sample their shadow map with (s15 in both the
 // river's and the glass's shaders).
@@ -341,21 +342,16 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
             if (SUCCEEDED(device->CreateDepthStencilState(&noWriteDesc, noWriteDepth.GetAddressOf()))) noWriteDepthDesc = noWriteDesc;
         }
 
-        CausticParameters parameters{};
-        {
-            // stateMutex is already held for the whole draw.
-            std::memcpy(parameters.viewProjectionInverse, cameras.viewProjectionInverse, sizeof(parameters.viewProjectionInverse));
-            std::memcpy(parameters.eye, cameras.eye, sizeof(parameters.eye));
-            std::memcpy(parameters.nearFar, cameras.nearFar, sizeof(parameters.nearFar));
-            parameters.dimensions[0] = cameras.dimensions[0];
-            parameters.dimensions[1] = cameras.dimensions[1];
-            parameters.dimensions[2] = cameras.frame;
-            parameters.dimensions[3] = causticsIntensity.load();
-        }
+        // stateMutex is already held for the whole draw.
+        const CausticParameters parameters{{cameras.dimensions[0], cameras.dimensions[1], cameras.frame, causticsIntensity.load()}};
 
+        ComPtr<ID3D11Buffer> scene, gameSceneSlot;
+        context->VSGetConstantBuffers(RiverSceneSlot, 1, scene.GetAddressOf());
         ComPtr<ID3D11SamplerState> gameMapSampler;
-        if (noWriteDepth && SUCCEEDED(write(context, causticConstants.Get(), parameters)))
+        if (noWriteDepth && scene && SUCCEEDED(write(context, causticConstants.Get(), parameters)))
         {
+            context->PSGetConstantBuffers(CausticSceneSlot, 1, gameSceneSlot.GetAddressOf());
+            context->PSSetConstantBuffers(CausticSceneSlot, 1, scene.GetAddressOf());
             // The game's s0, ours for the pass: the map's sampler, put back after.
             context->PSGetSamplers(0, 1, gameMapSampler.GetAddressOf());
             context->PSSetShader(causticShader.Get(), nullptr, 0);
@@ -370,6 +366,7 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
             context->OMSetBlendState(gameBlend.Get(), factor, sampleMask);
             context->PSSetShader(gamePixel.Get(), nullptr, 0);
             context->PSSetConstantBuffers(0, 1, gameConstants.GetAddressOf());
+            context->PSSetConstantBuffers(CausticSceneSlot, 1, gameSceneSlot.GetAddressOf());
             context->PSSetSamplers(0, 1, gameMapSampler.GetAddressOf());
             context->PSSetShaderResources(0, 1, &gameTargets3[0]);
             ID3D11ShaderResourceView* noMap{};
