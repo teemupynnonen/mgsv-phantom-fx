@@ -340,7 +340,13 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
     // the surface that is can be seen (menu, "Water: fallback normals").
 
     // The surface's own sun shadow, for the composite to dim what it covers (surface_shaders.hpp, Composite): a ray
-    // from the surface towards a point on the sun's disc, one sample, seeded by the pixel alone.
+    // from the surface towards a point on the sun's disc, one sample, seeded by the pixel alone. Water takes no sun
+    // shadow (Composite reads 1 at its pixels), so it traces none: no ray there is ever read.
+    if (isWater)
+    {
+        g_ForwardShadow[did] = 1.0f;
+        return;
+    }
     Random sunRandom = MakeRandom(did.x + did.y * g_BufferDimensions.x, 0u);
     g_ForwardShadow[did] = VisibilityFromSurface(origin, normal, CopyTolerance(world), SunSample(sunRandom.rand2()), 1e4f,
         ShadowRayTowards(RayTowardsSun));

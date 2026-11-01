@@ -3352,8 +3352,10 @@ Two halves, one mechanism:
   (`WaterReflectance`, Karis' split-sum fit, F0 0.02), and added over the scene at the exposure by the
   composite. Its roughness (`Atmosphere > Water reflections`) spreads it as ripples would: the game's own
   normal map is sampled in screen space through a flow map, so the trace cannot read it.
-- **Shadow of a surface.** `TraceSurfaceReflections` also traces the sun for each surface pixel, into
-  `g_ForwardShadow` (u97): the glass composite reads it.
+- **Shadow of a surface.** `TraceSurfaceReflections` also traces the sun for each glass and mirror pixel, into
+  `g_ForwardShadow` (u97): the glass composite reads it. Water traces none and writes 1: the composite ignores the
+  value at water's pixels (water takes no sun shadow; the bed under it is lit by the sun pass as the rest of the
+  scene is).
 
 Why the surfaces are one ray a pixel: they are drawn after the upscaler, so neither Ray Reconstruction nor the
 add-on's denoisers see them; their grain is the trace's own, and the water's ripples stay the game's own normal
