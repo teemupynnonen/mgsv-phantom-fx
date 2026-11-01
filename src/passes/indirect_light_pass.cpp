@@ -3,7 +3,7 @@
 #include "d3d11_helpers.hpp"
 #include "features/ambient_occlusion/gtvbao.hpp"
 #include "features/global_illumination/light_combine.hpp"
-#include "features/indirect_light/ssilvb.hpp"
+#include "features/indirect_light/ssgi.hpp"
 #include "features/path_tracing/path_tracing.hpp"
 #include "features/ray_traced_lights/local_lights.hpp"
 #include "frame_latch.hpp"
@@ -33,7 +33,8 @@ using game_shaders::GamePass, game_shaders::GameShader;
 // The game passes the effects note (docs/DEVELOPMENT.md, "Ambient occlusion"): every sun pass, inside the
 // shadow range or beyond it, and every resolve. The sky light binds the G-buffer normals right before
 // the upscale in the same command list.
-constexpr GamePass NotedPasses[]{GamePass::SkyLight, GamePass::IndirectUpscale, GamePass::Sun, GamePass::SkySpecular, GamePass::Resolve};
+constexpr GamePass NotedPasses[]{GamePass::SkyLight, GamePass::IndirectUpscale, GamePass::Sun, GamePass::SkySpecular, GamePass::Resolve,
+    GamePass::CameraVelocity};
 // And those they draw in the game's place, or skip.
 constexpr GamePass DrawnPasses[]{GamePass::IndirectUpscale, GamePass::Resolve, GamePass::GameOcclusion};
 
@@ -66,6 +67,12 @@ std::atomic<bool> active{}, pipelineFailed{};
 std::mutex gBufferMutex;
 std::unordered_map<ID3D11DeviceContext*, ComPtr<ID3D11ShaderResourceView>> normals;
 ComPtr<ID3D11ShaderResourceView> lastNormals, lastSpecular;
+// The game's velocity buffer (camera and object motion, .ba) that this frame's CameraVelocity pass
+// drew into, as a shader resource view; only drawn while the velocity passes run, which VB-SSGI
+// forces on. Cleared each present: the buffer is rewritten every frame.
+ComPtr<ID3D11Texture2D> velocityTexture;
+ComPtr<ID3D11ShaderResourceView> velocityView;
+bool velocityDrawn{};
 MaterialTables lastTables;
 
 // ---- Direct3D, guarded by resourceMutex ----
@@ -73,7 +80,7 @@ std::mutex resourceMutex;
 ComPtr<ID3D11Device> device;
 ComPtr<ID3D11PixelShader> showOcclusionShader, showLightShader;
 ComPtr<ID3D11ShaderResourceView> whiteView; // 1x1, the resolve's occlusion while an effect replaces the game's
-// The game's diffuse light with SSILVB's or the global illumination's added, read by the resolve in
+// The game's diffuse light with SSGI's or the global illumination's added, read by the resolve in
 // its place.
 visibility_bitmask::Target diffuseWithLight;
 
@@ -88,7 +95,7 @@ bool ensurePipeline()
     {
         const D3D_SHADER_MACRO occlusionView[]{{"LIGHT", "0"}, {}}, lightView[]{{"LIGHT", "1"}, {}};
         showOcclusionShader = pixelShader(device.Get(), shaders::Show, "gtvbao-show", occlusionView);
-        showLightShader = pixelShader(device.Get(), shaders::Show, "ssilvb-show", lightView);
+        showLightShader = pixelShader(device.Get(), shaders::Show, "ssgi-show", lightView);
 
         D3D11_TEXTURE2D_DESC white{};
         white.Width = white.Height = white.MipLevels = white.ArraySize = 1;
@@ -109,7 +116,7 @@ bool ensurePipeline()
     catch (const std::exception& error)
     {
         pipelineFailed = true;
-        log(std::string("GTVBAO, SSILVB and the global illumination's light are unavailable: ") + error.what());
+        log(std::string("GTVBAO, SSGI and the global illumination's light are unavailable: ") + error.what());
 
         return false;
     }
@@ -165,6 +172,45 @@ ComPtr<ID3D11ShaderResourceView> latestSpecular(std::pair<UINT, UINT> size)
     return sizeOf(view.Get()) == size ? view : nullptr;
 }
 
+// The CameraVelocity pass (MotionBlurCameraVelocity) draws the game's velocity buffer — camera and
+// object motion in .ba — as its render target, right after the G-buffer. Keep the target and make a
+// view of it, for SSGI's temporal accumulation at the resolve.
+void noteVelocity(ID3D11DeviceContext* context)
+{
+    ComPtr<ID3D11RenderTargetView> target;
+    context->OMGetRenderTargets(1, target.GetAddressOf(), nullptr);
+    ComPtr<ID3D11Resource> resource;
+    if (target) target->GetResource(resource.GetAddressOf());
+    ComPtr<ID3D11Texture2D> texture;
+    if (resource) resource->QueryInterface(IID_PPV_ARGS(&texture));
+    if (!texture) return;
+
+    std::lock_guard lock(resourceMutex);
+    if (!device) return;
+    std::lock_guard glock(gBufferMutex);
+    if (texture != velocityTexture)
+    {
+        D3D11_SHADER_RESOURCE_VIEW_DESC viewDesc{};
+        viewDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        viewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        viewDesc.Texture2D.MipLevels = 1;
+        ComPtr<ID3D11ShaderResourceView> view;
+        const auto result = device->CreateShaderResourceView(texture.Get(), &viewDesc, view.GetAddressOf());
+        logOnce(std::string("SSGI: velocity view ") + (SUCCEEDED(result) ? "created" : "failed (" + hex(static_cast<std::uint32_t>(result)) + ")") + ".");
+        if (FAILED(result)) return;
+        velocityTexture = texture;
+        velocityView = std::move(view);
+    }
+    velocityDrawn = true;
+}
+
+// This frame's velocity buffer, if the CameraVelocity pass drew it; null otherwise.
+ComPtr<ID3D11ShaderResourceView> velocity() noexcept
+{
+    std::lock_guard lock(gBufferMutex);
+    return velocityDrawn ? velocityView : nullptr;
+}
+
 // The game's upscale, then GTVBAO's occlusion multiplied into what it wrote. False leaves the draw to the game.
 bool drawUpscale(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call)
 {
@@ -184,7 +230,7 @@ bool drawUpscale(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call
     return true;
 }
 
-// The resolve, with the diffuse light SSILVB added to while it runs, and white in place of the
+// The resolve, with the diffuse light SSGI added to while it runs, and white in place of the
 // game's occlusion while GTVBAO runs; or, for the diagnostics, either effect alone. False leaves
 // the draw to the game.
 bool drawResolve(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, const Composition& composition, ID3D11PixelShader* gameShader)
@@ -196,14 +242,18 @@ bool drawResolve(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call
     bool lit{};
     if (composition.light)
     {
-        ComPtr<ID3D11ShaderResourceView> depth, diffuse, albedo;
+        ComPtr<ID3D11ShaderResourceView> depth, diffuse, albedo, specular;
         ComPtr<ID3D11Buffer> scene;
         context->PSGetShaderResources(ResolveDepthSlot, 1, depth.GetAddressOf());
         context->PSGetShaderResources(DiffuseSlot, 1, diffuse.GetAddressOf());
         context->PSGetShaderResources(AlbedoSlot, 1, albedo.GetAddressOf());
+        // The specular light the resolve adds to albedo x diffuse, as the RenoDX gather reads it;
+        // not the G-buffer's specular target, whose rgb is material data.
+        context->PSGetShaderResources(SpecularLightSlot, 1, specular.GetAddressOf());
         context->PSGetConstantBuffers(SceneSlot, 1, scene.GetAddressOf());
-        const auto specular = latestSpecular(sizeOf(depth.Get()));
-        lit = ssilvb::compute(context, depth.Get(), normalView.Get(), diffuse.Get(), albedo.Get(), specular.Get(), scene.Get(), diffuseWithLight);
+        const auto specularMaterial = latestSpecular(sizeOf(depth.Get()));
+        lit = ssgi::compute(context, depth.Get(), normalView.Get(), diffuse.Get(), albedo.Get(), specular.Get(), specularMaterial.Get(), velocity().Get(),
+            scene.Get(), diffuseWithLight);
     }
 
     if (!lit && !composition.occlusion) return false;
@@ -362,6 +412,9 @@ void detach() noexcept
         normals.clear();
         lastNormals.Reset();
         lastSpecular.Reset();
+        velocityTexture.Reset();
+        velocityView.Reset();
+        velocityDrawn = false;
     }
 }
 
@@ -374,7 +427,9 @@ void configure(const Configuration& configuration) noexcept
         .globalIllumination = configuration.effects.runs(Effect::GlobalIllumination),
         .rayTracing = configuration.effects.tracesScene(),
         .showOcclusion = diagnostics.showAmbientOcclusion,
-        .showLight = diagnostics.showIndirectLight,
+        // SSGI's debug views draw its light alone too: the game's resolve would multiply it by the
+        // albedo, and the gathered light is what is being judged.
+        .showLight = diagnostics.showIndirectLight || configuration.settings.indirectLight.debug >= 1,
         .showGlobalIllumination = diagnostics.showGlobalIllumination || diagnostics.showTracedScene,
     };
 
@@ -411,6 +466,17 @@ MaterialTables materialTables() noexcept
 
 void note(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_shaders::DrawnShader& shader) noexcept
 {
+    // The velocity buffer is noted whatever the draw's shape, so the fullscreen-triangle filter
+    // below does not apply to it.
+    if (active.load(std::memory_order_relaxed) && !call.indexed)
+    {
+        const auto* row = shader.row();
+        if (row && row->pass == GamePass::CameraVelocity)
+        {
+            noteVelocity(context);
+            return;
+        }
+    }
     if (!active.load(std::memory_order_relaxed) || call.indexed || call.count != 3 || call.instances != 1) return;
 
     try
@@ -440,7 +506,7 @@ void note(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
     catch (const std::exception& error)
     {
         std::lock_guard lock(resourceMutex);
-        logOnce(std::string("GTVBAO or SSILVB: a pass kept the game's drawing: ") + error.what());
+        logOnce(std::string("GTVBAO or SSGI: a pass kept the game's drawing: ") + error.what());
     }
     catch (...)
     {
@@ -479,7 +545,7 @@ void targetsBound(UINT count, ID3D11RenderTargetView* const* targets, ID3D11Dept
     catch (const std::exception& error)
     {
         std::lock_guard lock(resourceMutex);
-        logOnce(std::string("GTVBAO, SSILVB or the rays: no specular target: ") + error.what());
+        logOnce(std::string("GTVBAO, SSGI or the rays: no specular target: ") + error.what());
     }
     catch (...)
     {
@@ -516,7 +582,7 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
     catch (const std::exception& error)
     {
         std::lock_guard lock(resourceMutex);
-        logOnce(std::string("GTVBAO or SSILVB: a pass kept the game's drawing: ") + error.what());
+        logOnce(std::string("GTVBAO or SSGI: a pass kept the game's drawing: ") + error.what());
     }
     catch (...)
     {
@@ -529,5 +595,9 @@ void present() noexcept
 {
     const auto current = latch.present();
     active = (current.occlusion || current.light || current.globalIllumination || current.rayTracing) && !pipelineFailed;
+    {
+        std::lock_guard lock(gBufferMutex);
+        velocityDrawn = false;
+    }
 }
 }

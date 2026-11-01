@@ -12,7 +12,17 @@
   sunlight the waves focus on the bed, strongest just under the surface, fading with the depth, gone where the water meets
   the shore or anything standing in it, in the shade, and as the sun leaves. They need no ray tracing.
   **Atmosphere > Water caustics** has the switch and the **Intensity**.
-
+- **Indirect lighting (VB-SSGI) tests what blocks each gather tap**: the distance prefilter runs for it
+  (apart from GTVBAO's copy), and every tap ray-marches the prefiltered depth, so occluders stop the
+  bounced light instead of bleeding through. New **Visibility** setting: ray-march steps per tap
+  (0 to 8, 5 by default; 0 disables the test).
+- **Indirect lighting is now VB-SSGI**, ported from the RenoDX MGSV add-on's indirect lighting
+  (`renodx-mgsv` `src/games/mgsv/il`), in place of SSILVB's visibility-bitmask gather: a golden-angle
+  gather of the neighbouring surfaces' light, temporal accumulation against the game's velocity
+  buffer (the velocity passes are forced on while it runs), an a-trous denoiser and a joint-bilateral
+  resolve. New settings: **Samples**, **Resolution** (full/half/quarter), **Denoise passes**,
+  **History** and a **Debug view**; **Radius** is now a share of the screen's height (was metres, so
+  saved values clamp). The `indirect_light` switch and the radius/strength keys are unchanged.
 - **Depth of field: no more jagged edges around what is in focus.** The game decided what is blurred in blocks of
   four pixels, so the blur bit into the rim of anything in focus in steps, and the lower the render size the wider
   the steps: DLSS and Ray Reconstruction kept them as detail. Each pixel's own depth now decides, so in-focus edges

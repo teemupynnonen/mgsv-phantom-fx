@@ -148,7 +148,7 @@ struct Diagnostics
     bool gameFxaa{}; // Comparison: leave the frame to the game's FXAA, keeping DLSS ready
     bool onlyScreenSpaceShadows{}; // The sun shadowed by the screen-space shadows alone
     bool showAmbientOcclusion{};   // GTVBAO's occlusion alone in place of the lit scene
-    bool showIndirectLight{};      // SSILVB's light alone in place of the lit scene
+    bool showIndirectLight{};      // VB-SSGI's light alone in place of the lit scene
     bool showGlobalIllumination{}; // The global illumination's light alone in place of the lit scene
     bool showTracedScene{};        // The global illumination's traced scene from the camera
     bool twoSidedShadows{};        // Rays towards lights blocked by every surface from both sides, as until 2026-10-26

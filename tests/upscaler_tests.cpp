@@ -85,12 +85,12 @@ void settingsPersist(const fs::path& root)
         .sunContactShadows = {.on = true}, .rayTracedLights = {.on = true, .shadowRaysPerPixel = 8, .flashlightBrightness = 3.5f},
         .lampContactShadows = {.on = true}, .lampSoftShadows = {.on = true},
         .contactShadowShape = {.contrast = 2, .reachPixels = 40, .thickness = 0.01f, .fadeMetres = 300}, .globalIllumination = {.raysPerLightPixel = 4}, .ambientOcclusion = {.on = true, .radiusMetres = 2, .strength = 1.5f},
-        .indirectLight = {.on = true, .radiusMetres = 3, .strength = 0.5f}, .volumetricFog = {.on = true, .look = AtmosphereLook::Physical, .haze = 0.5f},
+        .indirectLight = {.on = true, .radius = 0.9f, .strength = 0.5f}, .volumetricFog = {.on = true, .look = AtmosphereLook::Physical, .haze = 0.5f},
         .frameRate = {.unlocked = true}};
     saveSettings(path, chosen);
     expect(loadSettings(path) == chosen,
         "Restart restores the upscaler, mode, preset, sharpening, frame rate unlock, frame generation, soft, screen-space and ray-traced "
-        "shadows, the contact shadows' shape, GTVBAO, SSILVB, the global illumination's rays and the volumetric fog.");
+        "shadows, the contact shadows' shape, GTVBAO, VB-SSGI, the global illumination's rays and the volumetric fog.");
     write(path, "frame_generation=dynamic\n");
     expect(loadSettings(path).frameGeneration.mode == FrameGenerationMode::Dynamic, "Dynamic frame generation is read back.");
     write(path, "frame_generation=fsr\n");
@@ -119,8 +119,8 @@ void settingsPersist(const fs::path& root)
     expect(!shadows.softShadows.on && shadows.sun.diameterDegrees == 4, "An invalid toggle leaves soft shadows off, and the sun size is clamped.");
     write(path, "indirect_light=yes\nindirect_light_radius=0\nindirect_light_strength=9\n");
     const auto light = loadSettings(path).indirectLight;
-    expect(!light.on && light.radiusMetres == 0.25f && light.strength == 3,
-        "An invalid toggle leaves SSILVB off, and its radius and strength are clamped.");
+    expect(!light.on && light.radius == 0.05f && light.strength == 3,
+        "An invalid toggle leaves VB-SSGI off, and its radius and strength are clamped.");
 
     const Settings upscaling{.upscaling = {.mode = Mode::Custom, .dlssPreset = Preset::K, .sharpness = 0.25f, .customRenderScale = 0.75f, .textureBiasOffset = -0.5f}};
     saveSettings(path, upscaling);
@@ -131,7 +131,7 @@ void settingsPersist(const fs::path& root)
              Settings{.upscaling = {.sharpness = 2}}, Settings{.upscaling = {.customRenderScale = 2}}, Settings{.upscaling = {.textureBiasOffset = 3}},
              Settings{.frameGeneration = {.mode = FrameGenerationMode::Count}}, Settings{.sun = {.diameterDegrees = 0}},
              Settings{.globalIllumination = {.raysPerLightPixel = 3}}, Settings{.ambientOcclusion = {.radiusMetres = 0}},
-             Settings{.ambientOcclusion = {.strength = 4}}, Settings{.indirectLight = {.radiusMetres = 5}}, Settings{.indirectLight = {.strength = -1}}})
+             Settings{.ambientOcclusion = {.strength = 4}}, Settings{.indirectLight = {.radius = 5}}, Settings{.indirectLight = {.strength = -1}}})
         expect(saveRejected(path, chosen, invalid), "Invalid settings cannot replace valid saved ones.");
 }
 
@@ -193,7 +193,7 @@ void effectPlan()
 
     for (const auto effect : {Effect::SoftShadows, Effect::SunContactShadows, Effect::LampContactShadows, Effect::LampSoftShadows, Effect::AmbientOcclusion,
              Effect::IndirectLight})
-        expect(plan[effect] == EffectState::Replaced, "The ray-traced effects replace the soft and contact shadows, GTVBAO and SSILVB.");
+        expect(plan[effect] == EffectState::Replaced, "The ray-traced effects replace the soft and contact shadows, GTVBAO and VB-SSGI.");
 
     Settings withoutTracedLights = all;
     withoutTracedLights.rayTracedLights.on = false;

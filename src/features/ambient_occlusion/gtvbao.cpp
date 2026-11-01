@@ -145,7 +145,7 @@ bool compute(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D
     const visibility_bitmask::Parameters parameters{{width, height}, settings.radiusMetres, visibility_bitmask::MaxRadiusShare * static_cast<float>(height),
         settings.strength, 1, 1, 0};
     const SavedComputeState saved(context, visibility_bitmask::PassSlots);
-    visibility_bitmask::march(context, visibility_bitmask::Mode::Occlusion, parameters, scene, depth, normals, nullptr, nullptr, specular, visibility, edges);
+    visibility_bitmask::march(context, parameters, scene, depth, normals, specular, visibility, edges);
 
     return true;
 }

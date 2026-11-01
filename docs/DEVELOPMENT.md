@@ -182,7 +182,7 @@ what draws it, when that is the feature's own.
 | `global_illumination/` | `gi_light.*`, `gi_light.hlsl`: the light on Direct3D 12, its rays, the denoiser's inputs and the render size (see "Global illumination"); their hits' light and the hash grid cache in `passes/ray_tracing/shaders/gi_hit_light.hlsli`. `gi_denoiser.*`: NVIDIA NRD's RELAX denoiser without NRI. `gi_lighting.*`: the game's sky and sun in the light's terms. `light_combine.*`: the traced light in place of the game's probe light at the resolve |
 | `path_tracing/` | `path_tracing.*`: path tracing on Direct3D 11: the traced reflections added at the resolve and blended as the game blends its own, the lamps' light added at the draw point, the masks' atlas (see "Path tracing"). `path_tracing_shaders.hpp`: those draws. `forward_surfaces.*`, `glass.*`, `water.*`, `surface_shaders.hpp`: the forward surfaces, their surfaces drawn beside the game's and what they reflect added over the scene (see "Forward surfaces: rivers, liquids and glass"). `sky_capture.*`: the game's sky drawn again for the rays. `path_tracing_rays.*`: its passes on Direct3D 12. `reflections.hlsl`, `direct_light.hlsl`: the reflections and the point and spot lights |
 | `ambient_occlusion/` | `gtvbao.*`: GTVBAO's occlusion multiplied into the indirect light at the upscale. `gtvbao_shaders.hpp`: that multiply |
-| `indirect_light/` | `ssilvb.*`: SSILVB's light, brought to the render size and added to the diffuse light the resolve reads. `ssilvb_shaders.hpp`: the upsample |
+| `indirect_light/` | `ssgi.*`: VB-SSGI's bounce, added to the diffuse light the resolve reads. `ssgi_shaders.hpp`: the gather (with its per-tap visibility test), the temporal accumulation, the a-trous denoiser and the resolve |
 | `volumetric_fog/` | `atmosphere.*`: the larger fog texture, the game's fog pass over all of it, the shadowed fill before the resolve. `atmosphere_shaders.hpp`: the game's fog formula per froxel with the sun shadowed; Hillaire's atmosphere tables, the physical fog and sky (Epic Games' reference, MIT) |
 | `water_caustics/` | `water_caustics.*`: the light a river's waves focus on its bed, drawn over the river's own draw. `caustics_map.*`: the tiling web, made at start-up. `water_caustics_shaders.hpp`: that draw |
 | `sea/` | `sea.*`: the sea's waves and its surface in the G-buffer in place of the game's sea, its level and wind from the game's, its depth for the guides and its level for the ray-traced scene (see "Sea"). `sea_shaders.hpp`: the spectrum, the FFT, the maps, the surface |
@@ -202,7 +202,7 @@ what draws it, when that is the feature's own.
 | `third_party/bend_sss/bend_sss_cpu.h` | Bend Studio's dispatch layout, unchanged (Apache License 2.0) |
 | `src/passes/forward_water_pass.*` | The game's rivers and liquids, with what the rays replace in their draw and the caustics composed in. `forward_scene.hpp`: the HLSL the shaders over the game's forward draws share: the scene's constants, the fog, the scene's depth |
 | `src/passes/indirect_light_pass.*` | The game's sky light, upscale and resolve: the G-buffer notes, the resolve's white occlusion and diffuse light, the diagnostics views, the ray-traced scene's notes. `indirect_light_pass_shaders.hpp`: the diagnostics views |
-| `src/passes/visibility_bitmask.*` | The visibility bitmask march GTVBAO and SSILVB share: the depth prefilter, the march, the denoiser. `visibility_bitmask_shaders.hpp`: the march (GTVBAO from three-gtvbao, SSILVB's light as SSRT3 gathers it), XeGTAO's noise and denoiser |
+| `src/passes/visibility_bitmask.*` | The visibility bitmask march GTVBAO uses: the depth prefilter, the march, the denoiser; VB-SSGI takes the prefilter's distance mips for its per-tap occlusion test (`prefilterDistances`). `visibility_bitmask_shaders.hpp`: the march (GTVBAO, from three-gtvbao), XeGTAO's noise and denoiser |
 | `src/passes/ray_tracing/ray_tracing.*` | The ray-traced scene's frame on Direct3D 11: the kick, the waits, the shared textures the global illumination and the ray-traced shadows hand back |
 | `src/passes/ray_tracing/kick_traces.*` | What each kick traces, the one answer for everything that makes, runs or reads a trace (see "What a kick traces") |
 | `src/passes/ray_tracing/trace.*` | A trace's steps, and the traces in the order the frame runs them (see "What a kick traces") |
@@ -506,15 +506,15 @@ file ("Costs on file"); otherwise no query is made.
 - **Real cost.** The timed passes miss what they change in the game's work: GTVBAO leaves the
   game's SSAO out, the physical look the game's sky. **Measure the real cost** times the GPU frame
   with everything on, then leaves out, one more at a time and only where running: the sea, the
-  water's caustics, the volumetric fog, the ray-traced shadows, the ray-traced lights, the global illumination (its light passes,
-  then the rest), SSILVB, GTVBAO, the lamp and the sun contact shadows, the soft shadows, the
-  sharpening and last the upscaler (the game's FXAA at the same render size, as the Diagnostics
-  comparison). The lighting effects go in `Effect`'s order, and what runs is the effect plan's
-  (`planEffects`, `src/phantom_fx_settings.hpp`): a replaced effect stays off while its replacer is left out,
-  so each step leaves out one effect alone. 1.5 s to settle and 2.5 s timed per step; the
-  difference between steps is what the effect left out costs. The steps run through
-  `upscaler::leaveOut`, which the settings, `PhantomFX.ini` and the overlay never see, and the
-  effects come back at the end. HDR takes a restart and is not measured. The GPU frame, not the
+  water's caustics, the volumetric fog, the ray-traced shadows, the ray-traced lights, the global
+  illumination (its light passes, then the rest), VB-SSGI, GTVBAO, the lamp and the sun contact
+  shadows, the soft shadows, the sharpening and last the upscaler (the game's FXAA at the same
+  render size, as the Diagnostics comparison). The lighting effects go in `Effect`'s order, and what
+  runs is the effect plan's (`planEffects`, `src/phantom_fx_settings.hpp`): a replaced effect stays
+  off while its replacer is left out, so each step leaves out one effect alone. 1.5 s to settle and
+  2.5 s timed per step; the difference between steps is what the effect left out costs. The steps run
+  through `upscaler::leaveOut`, which the settings, `PhantomFX.ini` and the overlay never see, and
+  the effects come back at the end. HDR takes a restart and is not measured. The GPU frame, not the
   frame time, is compared, as the 60 fps cap would hide the difference.
 - **Report.** While the costs show over the game or are measured, `PhantomFX-performance.txt`
   beside the log holds them, rewritten every second and once more after, so it keeps a finished
@@ -1615,10 +1615,11 @@ rate"), the photo mode hooks (see "Photo mode"), the game loop hooks (see "Frame
   with its motion blur on. `motion_blur.cpp`
   checks the build and the first bytes of PreExec (`80 79 68 00 49 8B 80 70 05 00 00`) and Exec
   (`48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20`) and detours both with MinHook at `AddonInit`.
-  While DLSS replaces FXAA (any DLSS mode, not the FXAA comparison), PreExec runs the game's code
-  and then sets the velocity bit, and Exec draws the blur only when the game's setting asks for it
-  and the add-on's **Motion blur** toggle is on. So the velocity passes run every frame whatever the
-  game's setting. Off and the comparison give both back to the game's setting from the next frame.
+  While DLSS replaces FXAA (any DLSS mode, not the FXAA comparison) or **VB-SSGI** runs, PreExec runs
+  the game's code and then sets the velocity bit, and Exec draws the blur only when the game's
+  setting asks for it and the add-on's **Motion blur** toggle is on. So the velocity passes run
+  every frame whatever the game's setting — VB-SSGI's temporal accumulation reprojects with the
+  buffer they draw. Off and the comparison give both back to the game's setting from the next frame.
   When a check fails nothing is hooked and the game's setting stays in charge. `AddonUninit` removes
   all engine hooks with `MH_Uninitialize`. The blur runs after DLSS, at half the output size while
   upscaling (see "The UI at the output size").
@@ -3332,47 +3333,64 @@ Not handled:
 - Forward and transparent objects, drawn after the lighting, get no occlusion, as with the game's
   SSAO.
 
-## SSILVB
+## VB-SSGI
 
-With **Indirect lighting (SSILVB)** on, screen-space indirect lighting with visibility bitmask
-(Therrien, Levesque and Gilet) adds one bounce of light between the surfaces on screen. It runs
-GTVBAO's march (`shaders::March` with `LIGHT` 1) and gathers light as SSRT3 does (CDRIN, MIT). Off,
-the add-on only checks a flag on each full-screen draw.
+With **Indirect lighting (VB-SSGI)** on, screen-space global illumination with a visibility test
+adds one bounce of light
+between the surfaces on screen. The chain is ported from the RenoDX MGSV add-on's indirect lighting
+(`renodx-mgsv` `src/games/mgsv/il`), which reads better than the visibility-bitmask gather SSILVB
+used. Off, the add-on only checks a flag on each full-screen draw.
 
 - **Where.** At the resolve, which already has the frame's finished diffuse light: the probes and
   sky (occluded by GTVBAO when it is on), the sun with its shadows, the local lights and the skin
-  filter. The bounce is lit by this frame's light, so it needs no reprojection or history. The
-  resolve and the sky light pass are in different command lists, so the march takes the normals
-  any sky light pass bound last (the G-buffer's, one texture for the session).
-- **March**, recorded at the resolve's draw on its deferred context, with the game's compute
-  bindings saved and restored: from the resolve's depth (`t11`), diffuse light (`t9`), albedo
-  (`t8`, its sRGB view, so linear) and `cPSScene`, with GTVBAO's slices, steps, thickness and noise
-  and its own radius (2 m by default). It runs the depth prefilter first, with its radius, into the
-  same texture GTVBAO uses. A sample lights the sectors it covers that no nearer sample
-  covered, with the diffuse light its surface reflects (albedo x diffuse light) times the cosine
-  between its normal and the direction to the receiver, which drops back faces (SSRT3). Equal
-  sectors carry equal cosine weight (GT-VBAO's CDF), so the receiver's cosine needs no extra term
-  and the sum is the irradiance over pi, the unit the resolve multiplies by the albedo. Specular
-  light is left out, being view-dependent. At half the render size, rounded up (`Scale` 2): each
-  texel marches from the top-left pixel of its 2 x 2, with the same steps in render pixels. At full
-  size the march took 2.3 ms at 2560 x 1440, nearly all of SSILVB's cost, for a soft result. Into an
-  `R11G11B10_FLOAT` target. A slice whose normal
-  faces away from the camera (normal maps on surfaces seen edge on) drops out, in both effects: its
-  negative weight could cancel the other slice's, and the light divided by the near-zero sum showed
-  as white specks.
-- **Denoise** (`shaders::Denoise` with `LIGHT` 1): XeGTAO's filter on the colour, two passes at
-  the march's size, with depth edges the march wrote at that size (GTVBAO keeps its own).
-- **Upsample** (`shaders::Upsample`): each render pixel blends the four nearest half-size texels
-  bilinearly, each weighed by 1 / (relative depth difference + 0.001), so light stays on its side of
-  an edge and sky texels drop out. It writes `diffuse + strength x light` into an
-  `R16G16B16A16_FLOAT` copy of the diffuse light (alpha kept).
-- **Resolve.** Drawn by the add-on with that copy in `t9` (and white in `t13` with GTVBAO on); the
-  game's `t9` is restored. The game's occlusion, with GTVBAO off, multiplies the bounce like the
+  filter. The resolve and the sky light pass are in different command lists, so the passes take the
+  normals any sky light pass bound last (the G-buffer's, one texture for the session).
+- **Velocity.** The temporal accumulation reprojects with the game's velocity buffer (camera and
+  object motion in `.ba`), which `MotionBlurCameraVelocity` draws right after the G-buffer. The
+  indirect light pass notes that draw's render target and makes a view of it; the engine draws the
+  velocity passes only with motion blur or an upscaler, so while VB-SSGI runs the add-on forces them on
+  (`motion_blur::wantVelocityPasses`). Without the buffer the history blend collapses to zero and
+  the raw gather shows. Measured in the RenoDX add-on: the TAA jitter cancels inside the buffer (the
+  velocity pass runs with the jittered projection), so no jitter term is subtracted.
+- **Gather** (`ssgi_shaders.hpp` `shaders::Gather`), recorded at the resolve's draw on its deferred
+  context, with the game's compute bindings saved and restored: from the resolve's depth (`t11`),
+  diffuse light (`t9`), albedo (`t8`, its sRGB view, so linear), the specular light (`t10`) and
+  `cPSScene`. A golden-angle disk of up to 16 jittered taps per pixel, each rejected by plane
+  elevation and source facing, then weighted by inverse-square distance, returns the mean `albedo x
+  diffuse + specular` of the taps that survive; alpha is validity. The radius is a share of the
+  screen's height (50% by default), and the same radius in view units at the pixel's depth. Into an
+  `R16G16B16A16_FLOAT` bounce target at the gather's size (full, half or quarter, rounded up).
+  Before it, `visibility_bitmask::prefilterDistances` fills this add-on's own copy of the distance
+  mips at the render size, and each tap marches them (the **Visibility** setting's steps, 5 by
+  default) from the receiver to the sample: a surface nearer, in view depth, than the ray at that
+  point by more than the ray's thickness allowance blocks the tap, so light does not bleed through
+  occluders, which the disk alone would not see. That allowance is 12% of the ray's view depth,
+  clamped between 0.02 and the radius, so a surface closer than the ray but within the margin still
+  passes. 0 disables the test.
+- **Accumulate** (`shaders::Accumulate`): reprojects with the velocity, fetches the ping-ponged
+  history bilinearly, clips it to this frame's 3x3 neighbourhood, and rejects on depth, normal and
+  screen bounds (a separate aux target carries the history's depth and normal). The blend is an
+  adaptive ramp capped by the History setting, and the history's length rides in alpha. Running
+  luminance moments go into an `R16G16_FLOAT` target, which the denoiser reads as its noise estimate.
+  Non-finite values are guarded everywhere: one bad value would be carried forward by the temporal
+  blend, squared into infinity by the moments, and render black forever.
+- **Denoise** (`shaders::Filter`): an a-trous edge-aware filter, 1-3 dispatches of 5x5 taps whose
+  stride doubles each step (1, 2, 4), weighted by normal, depth and the measured per-pixel noise.
+  Never-sampled pixels are skipped, not averaged in. The targets alternate so no dispatch reads what
+  it writes.
+- **Resolve** (`shaders::Resolve`) at the render size: a depth-joint bilateral upsample of the
+  filtered gather, times Strength, written as `diffuse + bounce` into an `R16G16B16A16_FLOAT` copy of
+  the diffuse light (alpha kept).
+- **Resolve draw.** Drawn by the add-on with that copy in `t9` (and white in `t13` with GTVBAO on);
+  the game's `t9` is restored. The game's occlusion, with GTVBAO off, multiplies the bounce like the
   rest of the light.
 - **Options** apply from the frame after the next present. A resolve without normals, with sizes
   that differ or without `cPSScene` keeps the game's diffuse light and logs the reason once.
-- **Diagnostics.** "SSILVB only" writes the light without the game's diffuse light and draws the
-  resolve with `shaders::Show`: the bounce alone, as light before the albedo. Both views write the
+- **Diagnostics.** "VB-SSGI only" writes the light without the game's diffuse light and draws the
+  resolve with `shaders::Show`: the bounce alone, as light before the albedo. The **Debug view**
+  setting shows the gather alone, the history delta, the history length, the reprojection offset or
+  the measured variance, and it draws through `shaders::Show` too: the game's resolve would multiply
+  the light by the albedo, and the gathered light is what is being judged. Both views write the
   resolve's alpha, `sqrt(luminance / 32)`, which exposure, bloom and depth of field read from the
   scene target (`CopyReductionX4`, `DOF_ScatterBakeFirst`); with 1 there, they blurred the view.
 
@@ -3380,9 +3398,12 @@ Not handled:
 
 - One bounce, from what is on screen: light from off-screen or hidden surfaces is missing, and the
   bounce fades towards the screen's edges.
-- The probe lighting may already hold some bounce from static scenery, which SSILVB adds again
-  beyond GTVBAO's radius.
+- The probe lighting may already hold some bounce from static scenery, which VB-SSGI adds again.
 - Forward and transparent objects neither give nor receive the bounce.
+- The gather's plane test rejects samples on the receiver's own surface, which starves flat ground
+  of valid samples (26-73% of them); the denoiser fills the holes, so the ground reads slightly
+  flat rather than broken. A fix needs real radiance (a hemisphere ambient term), not merely more
+  accepted samples.
 
 ## Volumetric fog
 

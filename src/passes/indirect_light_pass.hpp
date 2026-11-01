@@ -14,7 +14,7 @@
 //
 // - GTVBAO's occlusion multiplies into the upscale, and the resolve reads white in place of the game's
 //   SSAO, which is skipped (gtvbao.hpp).
-// - SSILVB's light joins the diffuse light the resolve reads (ssilvb.hpp).
+// - SSGI's light joins the diffuse light the resolve reads (ssgi.hpp).
 // - The global illumination's light takes the game's probe light's place in it (light_combine.hpp),
 //   and its rays take the G-buffer and the frame's kick from these passes (ray_tracing.hpp).
 namespace phantom_fx::indirect_light_pass

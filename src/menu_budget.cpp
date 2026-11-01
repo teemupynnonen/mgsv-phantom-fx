@@ -7,7 +7,7 @@
 #include "features/frame_generation/presenter.hpp"
 #include "features/global_illumination/light_combine.hpp"
 #include "features/hdr/hdr.hpp"
-#include "features/indirect_light/ssilvb.hpp"
+#include "features/indirect_light/ssgi.hpp"
 #include "features/lamp_contact_shadows/lamp_contact_shadows.hpp"
 #include "features/lamp_soft_shadows/lamp_soft_shadows.hpp"
 #include "features/path_tracing/path_tracing.hpp"
@@ -81,9 +81,9 @@ const EffectLine EffectLines[]{
     {.effect = Effect::AmbientOcclusion, .passes = {{Pass::OcclusionPrefilter, "Depth prefilter"}, {Pass::OcclusionMarch, "March"}, {Pass::OcclusionDenoise, "Denoise"},
             {Pass::OcclusionApply, "Applying to the indirect light"}},
         .health = gtvbao::health},
-    {.effect = Effect::IndirectLight, .passes = {{Pass::LightPrefilter, "Depth prefilter"}, {Pass::LightMarch, "March (half size)"}, {Pass::LightDenoise, "Denoise"},
-            {Pass::LightUpsample, "Upscaling to the render size"}},
-        .health = ssilvb::health},
+    {.effect = Effect::IndirectLight, .passes = {{Pass::SsgiGather, "Gather"}, {Pass::SsgiAccumulate, "Temporal accumulation"}, {Pass::SsgiFilter, "Denoise"},
+            {Pass::SsgiResolve, "Resolve to the render size"}},
+        .health = ssgi::health},
     {.effect = Effect::VolumetricFog, .passes = {{Pass::FogPass, "The game's fog pass, larger"}, {Pass::SkyTables, "Sky tables (physical look)"}, {Pass::FogShadow, "Sun shadow in the fog"},
             {Pass::FogScattering, "Scattering"}, {Pass::FogIntegration, "Integration"}, {Pass::Sky, "Physical sky"}},
         .health = atmosphere::health},

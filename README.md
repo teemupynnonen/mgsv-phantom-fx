@@ -62,7 +62,7 @@ Needs DXR 1.1.
 - **Soft shadows** (PCSS)
 - **Contact shadows** (Bend Studio's screen-space shadows)
 - **Ambient occlusion** (GTVBAO)
-- **Indirect lighting** (SSILVB)
+- **Indirect lighting** (VB-SSGI)
 - **Volumetric fog** with light shafts and a physical sky
 - **Sea:** ocean waves around Mother Base, lit and reflected like the rest of the world
 
