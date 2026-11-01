@@ -42,7 +42,7 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_GEOMETRY_SHADOW_ONLY   128u // The game draws it into its shadow maps only (a tarp's stand-in): only rays towards lights meet it (StopsRay)
 #define GI_GEOMETRY_SUN_ONLY      256u // With GI_GEOMETRY_SHADOW_ONLY (a building's stand-in): of the rays towards lights, only the sun's meet it (StopsShadowRay)
 #define GI_GEOMETRY_EMISSIVE      512u // With GI_GEOMETRY_NO_SHADOW: it gives light (GIGeometry::emission) and takes none, its texture its light's colour
-#define GI_GEOMETRY_GLASS         1024u // With GI_GEOMETRY_CUT_OUT: every ray passes it (CutOutBlocks) but a reflection's, which it reflects by its mask (TraceReflectionRay)
+#define GI_GEOMETRY_GLASS         1024u // With GI_GEOMETRY_CUT_OUT: every ray passes it (CutOutBlocks), a light's dimmed by its mask (PaneTransmittance), but a reflection's, which it reflects by its mask (TraceReflectionRay)
 #define GI_GEOMETRY_MIRROR        2048u // With GI_GEOMETRY_GLASS: it reflects all of a reflection's rays
 #define GI_GEOMETRY_LAYER_BLEND   4096u // Its layer takes the base texture's place where it lies, not multiplying it (LayeredAlbedo)
 #define GI_GEOMETRY_LAYER_LINEAR  8192u // With GI_GEOMETRY_LAYER_BLEND: in linear light, not on the encoded values

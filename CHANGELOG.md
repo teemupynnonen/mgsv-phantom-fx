@@ -9,6 +9,9 @@
   scene the rays shaded, so glass stayed lit in a dark room. It leaves that map out and takes the rays' sun shadow at its
   own pixels: at most 15% dimmer in shade, as little as it shows of the sun.
 
+- **Dirty and frosted glass casts a shadow.** Sunlight and lamplight went through every pane untouched. A pane now lets
+  through what it neither reflects nor covers, so its dirt shows in the light on the floor behind it.
+
 - **Rivers and liquids take the rays' reflections, and a river's bed takes the caustics.** Under path tracing the water
   reflects what is around it, from where it is now and not where it was a frame ago, with the game's own ripples and the
   rain's rings on it. It fades at the shore and behind the fog as the water itself does. It no longer takes the shadow map's

@@ -345,9 +345,10 @@ std::optional<BlasId> Scene::createBlas(Use use, const std::vector<Geometry>& ge
     {
         D3D12_RAYTRACING_GEOMETRY_DESC desc{};
         desc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-        // Hair dims a ray once for each layer it crosses (PassHair), so a ray must meet each of its triangles once.
+        // Hair and glass dim a ray once for each layer it crosses (PassHair, PaneTransmittance), so a ray must meet each of
+        // their triangles once.
         if (!(geometry.material.flags & GI_GEOMETRY_CUT_OUT)) desc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
-        else if (geometry.material.flags & GI_GEOMETRY_HAIR) desc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NO_DUPLICATE_ANYHIT_INVOCATION;
+        else if (geometry.material.flags & (GI_GEOMETRY_HAIR | GI_GEOMETRY_GLASS)) desc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NO_DUPLICATE_ANYHIT_INVOCATION;
         desc.Triangles.VertexBuffer = {poolAddress + geometry.vertexOffset, 16};
         desc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
         desc.Triangles.VertexCount = geometry.vertexCount;

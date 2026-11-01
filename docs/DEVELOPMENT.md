@@ -1955,8 +1955,11 @@ the game's lights) is left alone until it runs.
   - **The rays.** Glass used to be left out for its alpha and shadow bytes. It is now `MeshRole::Glass`, taken by its material: any
     with a `GlassColor` vector, which four techniques have and no other (`fox3DFW_Glass_CommonRef`, `_CommonRef_LNM`,
     `_LNM` and two unnamed); mirrors are `MeshRole::Mirror`, by their technique, `fox3DFW_ParallaxReflection`. They are non-opaque
-    in their structures, so `CutOutBlocks` lets every ray through in one place: the sun's and the lamps' light comes through,
-    tinted or not, and the global illumination's rays and the camera's pass as before. Only a reflection's rays meet them
+    in their structures, so `CutOutBlocks` lets every ray through in one place. A ray towards the sun or a lamp keeps, past
+    each pane it crosses, what the pane neither reflects nor covers (`PaneTransmittance`: 1 - its cover, `GlassCover`, by
+    its row of the table, the same split a reflection's ray takes), so a pane's dirt and frosting dim the light behind it,
+    as hair does (`NO_DUPLICATE_ANYHIT_INVOCATION`, so each pane counts once). A mirror lets it through; the global
+    illumination's rays and the camera's pass as before. Only a reflection's rays meet them
     (`RayAlongReflection`, `TraceReflectionRay`): by chance, as much as a pane's cover (`Base_Tex_LIN`, red, or alpha in a colour
     texture) by its table's row gives, a ray reflects as from a mirror, and otherwise goes on, through at most `MostPanes`, with
     nothing behind the pane taken for a copy of it. A mirror reflects all of a ray: it has no row of the table, and its mask is
