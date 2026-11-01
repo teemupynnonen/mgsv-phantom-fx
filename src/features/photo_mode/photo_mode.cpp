@@ -276,6 +276,14 @@ void selectorUpdate(std::uint8_t* selector)
     // start runs the warp with the game running.
     if (teleportRequested.exchange(false) && flying && camera)
     {
+        // A held camera (a debug case, or automation) would keep photo mode on and the game paused, so
+        // the warp would wait forever: teleport lets it go.
+        if constexpr (DevTools)
+        {
+            held_camera::release();
+            heldCamera.reset();
+        }
+
         std::memcpy(warp.position, freeCamera.position, sizeof(warp.position));
         warp.yaw = static_cast<float>(std::remainder(freeCamera.yaw, 6.2831853f));
         warpPending = true;

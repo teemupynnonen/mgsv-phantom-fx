@@ -3853,7 +3853,8 @@ F2 does nothing.
   after it, so the game's camera keeps its own.
 - **Teleport (dev build only).** Enter leaves photo mode and warps the player to the free camera's
   position, facing the camera's yaw. The game's warp needs game time, so the request is taken at the
-  next selector update (which also clears the pause) and run at the next frame start through the game's
+  next selector update (which also clears the pause), and a held camera, as a debug case leaves behind,
+  is let go so the pause really clears; the warp then runs at the next frame start through the game's
   Lua, from `dev::onFrameStart` (`src/dev/game_lua.hpp`): `GameObject.SendCommand` with
   `WarpAndWaitBlock` for the player (object 0), or `SetPosition` for the vehicle or walker gear they are
   in; missions and free roam only. It is the call Infinite Heaven's `InfTppUtil.Warp` makes.

@@ -43,7 +43,7 @@ Delete this folder, `tools/automation/` and `.agents/skills/mgsv-automation/`, t
 | `src/passes/sun_light_pass.cpp` | The `game_shadow` block, its `detach` and the include |
 | `src/passes/sun_light_pass_shaders.hpp` | The three `GAME_SHADOW` blocks |
 | `src/performance.cpp`, `src/features/ray_traced_lights/local_lights.cpp` | The `perf_record` call and the include |
-| `src/features/photo_mode/photo_mode.cpp` | The `held_camera` calls, `heldCamera` and the include; the `game_lua` include, `Warp` state and `onFrameStart`'s teleport warp |
+| `src/features/photo_mode/photo_mode.cpp` | The `held_camera` calls, `heldCamera` and the include; the `game_lua` include, `teleportRequested`, the `Warp` state, its capture at `selectorUpdate`'s teleport and the clears `leave` makes, and `onFrameStart`'s teleport warp |
 | `src/passes/ray_tracing/ray_tracing.cpp`, `.hpp` | The `PHANTOM_FX_DEV_TOOLS` blocks: the probe's pixel and `saveTextures` |
 | `src/passes/ray_tracing/gi_renderer.cpp`, `.hpp` | `waitingWork`, `workWaiting`, `Frame::probePixel`, and the `perf_record` calls with `countersReadback`, `countersWritten` and `phaseTimes` |
 | `src/phantom_fx_settings.cpp`, `.hpp` | `withLine` and `iniText` |
