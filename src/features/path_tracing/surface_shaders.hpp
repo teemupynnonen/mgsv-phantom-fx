@@ -157,7 +157,20 @@ cbuffer cPSObject : register(b5)
 
 Texture2D<float4> inBaseTexture : register(t0);
 Texture2D<float4> inNormalTexture : register(t1);
+#if RIPPLES
+cbuffer cPSSystem : register(b0)
+{
+    float4 m_param;
+    float4 m_renderInfo; // xy: the size the screen's UV divides by
+};
+// Where each of the four *Rpl shaders reads its rings: the layered ones (Prim_TppPrimRiverTl*Rpl) at t6, the others
+// (Prim_TppRiverModelSh*Rpl) at t4, where t6 is not theirs and holds whatever an earlier draw left.
+#if LAYERED
 Texture2D<float4> inRippleTexture : register(t6);
+#else
+Texture2D<float4> inRippleTexture : register(t4);
+#endif
+#endif
 Texture2D<float> g_depth : register(t13);
 SamplerState g_samplerLinear_Wrap : register(s10);
 
@@ -188,7 +201,7 @@ float3 LayerNormal(float2 uv)
 #if RIPPLES
 float3 WithRipples(float3 normal, float2 position)
 {
-    const float2 uv = position / m_viewportSize.xy;
+    const float2 uv = position / m_renderInfo.xy;
     const float here = inRippleTexture.Sample(g_samplerLinear_Wrap, uv).x;
     const float right = inRippleTexture.Sample(g_samplerLinear_Wrap, uv + float2(m_materials[2].z, 0)).x;
     const float below = inRippleTexture.Sample(g_samplerLinear_Wrap, uv + float2(0, m_materials[2].w)).x;
@@ -197,7 +210,8 @@ float3 WithRipples(float3 normal, float2 position)
     ripple = normalize(ripple);
 
     const float3 up = float3(0, 1, 0);
-    const float3 forward = normalize(cross(up, m_view[0].xyz));
+    // The view's first column, as NAddRippleNormal reads it (GetRowT), not its first row.
+    const float3 forward = normalize(cross(up, float3(m_view[0].x, m_view[1].x, m_view[2].x)));
     const float3 side = cross(forward, up);
     normal.xz += m_materials[2].y * float2(dot(side, ripple), dot(forward, ripple));
     return normalize(normal);

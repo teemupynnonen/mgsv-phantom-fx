@@ -3573,7 +3573,7 @@ it belongs to `forward_water_pass` (`src/passes/`), which composes them: the riv
 shaders over those draws read of the game's is in `src/passes/forward_scene.hpp`.
 
 All twelve river shaders are rows of the table (`Prim_TppPrimRiver*`, `Prim_TppRiverModel*`). From their disassembly:
-the cube map at `t2`, the scene's copy at `t3`, the ripples at `t6`, the fog at `t12`, the depth at `t13`, the shadow map
+the cube map at `t2`, the scene's copy at `t3`, the ripples at `t6` (`t4` in `Prim_TppRiverModelSh*Rpl`), the fog at `t12`, the depth at `t13`, the shadow map
 at `t14` with `s15`; `cPSMaterial` at `b4`, whose `[0]` holds the normal map's two scrolled offsets, and `cPSObject` at
 `b5`, whose `m_localParam[1]` is the sun's colour and `[2].x` the shore's fade. `b6` and up and `t7` to `t11` are free.
 
@@ -3592,7 +3592,10 @@ at `t14` with `s15`; `cPSMaterial` at `b4`, whose `[0]` holds the normal map's t
   mesh UV times a material scale plus the material's offset, the second layer at 0.97 of its scale, each `2t - 1`,
   summed, normalized and taken out of the vertex shader's tangent frame. The rows say where: layered rivers (`Tl`,
   `Ol`) keep the scales at `cPSMaterial[6]` and the frame at `TEXCOORD6-8`, the others at `[3]` and `TEXCOORD5-7`;
-  `Hnm` maps hold x and y in w and y, z rebuilt; `Rpl` shaders add the rain's rings from `t6` (`NAddRippleNormal`).
+  `Hnm` maps hold x and y in w and y, z rebuilt; `Rpl` shaders add the rain's rings (`NAddRippleNormal`): from `t6` in the
+  layered ones, from `t4` in `Prim_TppRiverModelSh*Rpl`, at the screen position over `cPSSystem`'s `m_renderInfo.xy`, turned
+  by the view's first column. Reading `t6` there took whatever an earlier draw left in it for the rings, and the ground's
+  grain showed in the river's reflection (2026-11-01).
 
   The second trace (`TraceSurfaceReflections`, reflections.hlsl) runs after the scene, so it reflects from where the
   water is now: no lag, and no reprojection to undo one. What it reflects is scaled by water's reflectance at the eye's
