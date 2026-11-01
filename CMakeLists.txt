@@ -235,7 +235,7 @@ add_library(phantom_fx SHARED src/addon.cpp src/core.cpp src/modules.cpp src/fea
 # The dev preset's alone (src/dev_tools.hpp): none of this is in a release build. Its files hook the system's
 # file calls, patch Steam's interfaces and run what they are told, as security software rightly dislikes.
 if(PHANTOM_FX_DEV_TOOLS)
-    target_sources(phantom_fx PRIVATE src/game_lua.cpp src/travel.cpp src/automation.cpp src/save_redirect.cpp)
+    target_sources(phantom_fx PRIVATE src/game_lua.cpp src/travel.cpp src/cutscenes.cpp src/automation.cpp src/save_redirect.cpp)
 endif()
 add_dependencies(phantom_fx gi_kernels)
 target_include_directories(phantom_fx PRIVATE src "${GI_SHADER_DIR}")

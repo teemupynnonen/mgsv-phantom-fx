@@ -2,6 +2,7 @@
 
 #include "automation.hpp"
 #include "character.hpp"
+#include "cutscenes.hpp"
 #include "dev_tools.hpp"
 #include "device_check.hpp"
 #include "features/frame_generation/frame_generation.hpp"
@@ -50,6 +51,7 @@ void frameStart(std::uint8_t* loop, void* argument)
     if constexpr (DevTools)
     {
         travel::onFrameStart();
+        cutscenes::onFrameStart();
         game_lua::onFrameStart();
         automation::onFrameStart();
     }

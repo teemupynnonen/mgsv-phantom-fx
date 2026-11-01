@@ -46,11 +46,12 @@ only feeds them (`DiagnosticLog` in `src/log.hpp`, tested with `if constexpr`):
 
 Its log's first line says "with the diagnostic log". Builds for in-game checks use this preset.
 It also sets `PHANTOM_FX_DEV_TOOLS` (`DevTools` in `src/dev_tools.hpp`), which adds the overlay's
-**Developer** page, below Diagnostics: **Travel** (see "Travel"), the **Lua console** (see "Game
-Lua") and the log switch above, and the debug cases (see "Debug cases"). All of it is left out of a
-release build altogether, not just switched off: CMake drops their files and the `InspectPixels` kernel,
-and what they need elsewhere stands in `#if PHANTOM_FX_DEV_TOOLS`. Those files hook the system's file calls,
-patch Steam's interfaces and run what they are told, which security software rightly flags.
+**Developer** page, below Diagnostics: **Travel** (see "Travel"), **Cutscenes** (see "Cutscenes"),
+the **Lua console** (see "Game Lua") and the log switch above, and the debug cases (see "Debug
+cases"). All of it is left out of a release build altogether, not just switched off: CMake drops
+their files and the `InspectPixels` kernel, and what they need elsewhere stands in
+`#if PHANTOM_FX_DEV_TOOLS`. Those files hook the system's file calls, patch Steam's interfaces and
+run what they are told, which security software rightly flags.
 `tools/automation/check_release.py` looks at a built add-on to prove it.
 
 `cmake --install build/release --component addon --prefix <dir>` collects the add-on, its DLLs,
@@ -237,7 +238,8 @@ what draws it, when that is the feature's own.
 | `src/game_dither.cpp`, `src/game_dither.hpp` | The game's colour dither taken out of its shaders as they are made (see "Dither") |
 | `src/dev_tools.hpp` | Whether the build has the Developer page (the dev preset) |
 | `src/game_lua.cpp`, `src/game_lua.hpp` | Lua in the game's script state, and the Developer page's console (see "Game Lua") |
-| `src/travel.cpp`, `src/travel.hpp` | The Developer page's travel: free roam in another map (see "Travel") |
+| `src/travel.cpp`, `src/travel.hpp` | The Developer page's travel: free roam in another map, and the way the page's tools leave a mission (see "Travel") |
+| `src/cutscenes.cpp`, `src/cutscenes.hpp`, `src/cutscene_list.hpp` | The Developer page's cutscene player and its list (see "Cutscenes") |
 | `src/frame_log.cpp`, `src/frame_log.hpp` | Development diagnostics, off by default: shader log, F10 frame record, constant and texture dumps |
 | `src/automation.cpp`, `src/automation.hpp` | Dev builds: commands from files into the running game, F9's debug cases (see "Debug cases") |
 | `src/save_redirect.cpp`, `src/save_redirect.hpp` | The automation copy of the game: its saves, backups and display settings kept apart from the player's |
@@ -581,6 +583,89 @@ screens. It runs a chunk through Game Lua, and a toast says whether the game lef
   Base (9.12, 8.75, -42.43), the Command platform's first helipad (landing point
   `cl00pl0_mb_fndt_plnt_heli_30050` in `mbdvc_map_mbstage_parameter.lua`, the same in every
   layout).
+- **Shared.** The leaving and the arrival on foot are Lua helpers in `src/travel.cpp`, which
+  `travel::depart` puts ahead of a chunk. The cutscene player leaves the same way.
+
+### Cutscenes
+
+The dev build's Developer page has **Cutscenes** (`src/cutscenes.cpp`): a searchable list of the
+game's cutscenes and a Play button, for free roam and the ACC. The game calls a cutscene a demo.
+Search takes the mission's code or title, the name in its script or the demo id.
+
+- **List.** `src/cutscene_list.hpp` holds 198 cutscenes: each mission's `demoList` (157, without the
+  names that repeat a demo id and the placeholders that are not cutscenes) and 41 of the 47 in
+  `TppDefine.MB_FREEPLAY_DEMO_PRIORITY_LIST`. Only the running mission's list is in memory, so the
+  file is written out from the game's `s*_demo.lua` scripts.
+- **Story missions.** The chunk clears free roam or the ACC with Travel's Lua (`travel::depart`),
+  with the cutscene's mission next. That starts the player on foot, and a wrap of
+  `TppSequence.SaveMissionStartSequence` adds a sequence of ours and makes it the mission's
+  start. Its name starts `Seq_Demo`, so the game takes it for a cutscene start: no mission title, no
+  fade-in. It loads the cutscene's demo block when the mission's `demoBlockList` has one, then calls
+  `TppDemo.ReserveInTheBackGround`, which moves the player and `StageBlockCurrentPositionSetter`
+  to the cutscene's start, and `TppDemo.Play` with `waitTextureLoadOnDemoPlay`, which holds 10 s
+  under the cutscene's first camera. The name is looked up again through `dem_invDemoList`: the game
+  files a demo id under one name only, and calls `onEnd` under that one.
+- **Stages.** A mission can reload part way through to other packs, at times in another location
+  (`TppMission.Reload`, `TppMissionList.missionPackTable`). A demo block holds the cutscene, but the
+  actors and the set can be in those packs: Hellbound's `Demo_MotherBase` on the mission's first
+  stage is Huey alone in fog, over a map that has no Mother Base. So the list gives such a cutscene
+  its stage, as the fields `TppMission.Reload` takes, and the sequence reloads there first, keeping
+  the `SaveMissionStartSequence` wrap for the second start. The game takes that reload for a mission
+  start (`TppMission.IsMissionStart`) and puts the mission's preloaded demo block back, so the
+  cutscene's block has to load after it. The start position goes first, in both of its copies
+  (`TppPlayer.ResetInitialPosition` and `ResetMissionStartPosition`). Coming from the ACC the
+  player has the mission's `NO_HELICOPTER_MISSION_START_POSITION`, the reload copies
+  `gvars.ply_missionStartPos` back over the initial one, and on another location nothing exists
+  there: `Mission.CanStart` stays false and `Seq_Mission_Prepare` never ends.
+- **Placing.** Some cutscenes are placed by the mission's script
+  (`DemoDaemon.SetDemoTransform`, mostly `MotherBaseStage.GetDemoCenter`). The list gives those a Lua
+  function, which runs as the demo starts (`onInit`). `s10040`'s two stay unplaced: the script only
+  moves them on some of the mission's routes.
+- **The way out.** `TppMission.AbortForRideOnHelicopter`, the menu's abort, back to the ACC of the
+  location: Afghanistan's for any location but Africa and Mother Base. No mission is cleared, so the
+  story and the score stay as they are. It runs when the cutscene ends or is skipped, and when 60 s
+  pass without it starting. A cutscene's start wait turns a soldier into Snake and its end turns them
+  back, so the 60 s path puts `mvars.dem_tempPlayerInfo` back itself. A mission that starts on a
+  cutscene is not in game until the cutscene ends (`mis_missionStateIsNotInGame`), and
+  `TppMission.Update` leaves an abort waiting until it is, so the sequence calls
+  `TppMission.EnableInGameFlag` first.
+- **Mother Base.** These use the game's queue (`TppDemo.SetNextMBDemo`), since
+  `TppMbFreeDemo.PlayMtbsEventDemo` and the `f30050` sequences set up the cluster, the time, the
+  weather and the buddy. Arriving from the ACC, `missionPackTable[30050]` fills the queue itself
+  (`TppDemo.UpdateMBDemo`), so that is wrapped to put the pick back, until the game plays it. The end
+  of a cutscene runs `demoOptions[name].OnEnd`, which can start story events, change the buddy or
+  end the mission, and sets `gvars.mbFreeDemoPlayedFlag`. All of that lands in the save, also with an
+  abort's `isNoSave`, which still writes the `gvars`. So the chosen cutscene and those it leads to
+  (`GetNextDemoNameOrNil`) run without `OnEnd`, and their flags go back. `NuclearEliminationCeremony`
+  ends in the credits and a mission clear, which give heroism and write the save, so the last of its
+  chain clears `mvars.f30050_demoName` and the sequence ends as any other. If the game plays another
+  cutscene than the pick, the wraps go, that one runs as usual and the status says so. The player
+  stays in Mother Base free roam afterwards.
+- **Status.** The scripts cannot call out, so while a cutscene is on its way the add-on reads
+  `TppDemo.phantomFxStatus` once every 60 frames. `PhantomFX.log` gets "playing", "done" or the
+  problem, and a problem also shows as a toast. A Mother Base cutscene says "playing" as the game
+  asks for it and "done" at the end of its chain. Between the two, Play is refused: leaving mid-cutscene
+  would lose the end that puts the end scripts back. It is a field of a module because the game's
+  `_G` has a metatable that drops new globals without an error.
+
+Known limits:
+
+- A cutscene runs in the mission's time and weather. The sequence that plays it in the story often
+  sets its own (`TppClock.SetTime`, `TppWeather.ForceRequestWeather`).
+- `DdogGoWithMe` and `QuietWishGoMission` are not in the list. They start when the player leaves
+  Mother Base by helicopter (`TppDefine.MB_FREEPLAY_RIDEONHELI_DEMO`, `Seq_Demo_Play_Sortie`), and
+  their `OnEnd` is what ends the mission, so they cannot run without it.
+- `DevelopedBattleGear1`, `2`, `4` and `5` are not in the list. The queue only opens the hangar
+  (`TppDemo.IsBattleHangerDemo`): `Seq_Demo_BattleHanger` picks the cutscene from
+  `TppStory.GetBattleGearDevelopLevel`, and the hangar's pack too, so only the save's level can play,
+  and at level -1 the pack does not exist. Forcing the level could leave a save in a hangar on a
+  level it has not reached.
+- The five cutscenes of `f30010` do not load: four are in a side op's pack and `Demo_RecoverVolgin`
+  needs the `recoverVolginDemo` label. Their labels say so, and the 60 s limit ends them in the ACC,
+  with a toast.
+- The 60 s limit starts in our sequence. A hang before that, in `Seq_Mission_Prepare`, stays on the
+  black screen until the game is killed.
+- Mother Base cutscenes have no time limit. If the game never asks for the pick, no toast says so.
 
 ## How Fox Engine renders
 

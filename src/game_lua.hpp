@@ -5,7 +5,7 @@
 #include <string_view>
 
 // Lua in the game's own script state (Lua 5.1.5), run the way the game's own calls into it run: for
-// the Developer page's travel (travel.hpp) and its console. docs/DEVELOPMENT.md, "Game Lua".
+// the Developer page's tools and its console. docs/DEVELOPMENT.md, "Game Lua".
 namespace phantom_fx::game_lua
 {
 struct Outcome
