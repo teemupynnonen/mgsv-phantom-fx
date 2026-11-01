@@ -71,6 +71,9 @@ def stretch_line(rows):
 
 
 def log(name=None):
+    if not name and not sessions():
+        sys.exit("Nothing recorded: tick Record the costs on the Developer page, or run fx.py run \"record_costs 1\".")
+
     path = fx.link() / "perf" / name if name else sessions()[-1]
     rows = [row for row in rows_of(path) if "frame" in row]
     print(f"{path.name}: {len(rows)} s")

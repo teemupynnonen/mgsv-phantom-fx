@@ -68,7 +68,7 @@ To drive the copy by hand: run `install.ps1` (`-Settings @()` for the player's e
 
 ## Costs
 
-A dev build writes what each second cost to `PhantomFX-automation/perf/`, with no one asking. The user plays, you read `perf.py log`. A case also takes `perf.json` on its frozen frame. Judge a change by `perf.py ab` on a frozen frame, and never by a difference smaller than the drift it reports.
+With **Record the costs** on the Developer page ticked, or after `fx.py run "record_costs 1"`, a dev build writes what each second cost to `PhantomFX-automation/perf/`. The user plays, you read `perf.py log`. It stays as set across starts. A case always takes `perf.json` on its frozen frame. Judge a change by `perf.py ab` on a frozen frame, and never by a difference smaller than the drift it reports.
 
 ## Reading a report
 

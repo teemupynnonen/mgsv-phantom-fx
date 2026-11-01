@@ -19,6 +19,7 @@
 #include <fstream>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <string_view>
 #include <vector>
 
 namespace phantom_fx::perf_record
@@ -30,6 +31,8 @@ using performance::Pass;
 
 constexpr LONGLONG RowMilliseconds = 1000;
 constexpr std::uint64_t PlaceMilliseconds = 1000;
+// Its being there is the switch: a setting of its own would put a tool's line in every player's PhantomFX.ini.
+constexpr std::string_view RecordingMarker = "recording";
 
 // In performance::Pass's order: a pass added there fails to compile here until it is named.
 constexpr std::array<const char*, static_cast<std::size_t>(Pass::Count)> PassNames{
@@ -90,6 +93,7 @@ struct Place
 };
 
 std::filesystem::path folder; // Empty while off
+std::atomic<bool> recording{};
 
 std::mutex recordMutex;
 Tally row;
@@ -264,6 +268,33 @@ void install(const std::filesystem::path& into) noexcept
     if (error) return;
 
     folder = into;
+    recording = std::filesystem::exists(folder / RecordingMarker, error);
+}
+
+bool isRecording() noexcept
+{
+    return recording;
+}
+
+void setRecording(bool isOn) noexcept
+{
+    if (folder.empty()) return;
+
+    std::error_code error;
+    try
+    {
+        if (isOn) std::ofstream(folder / RecordingMarker).flush();
+        else std::filesystem::remove(folder / RecordingMarker, error);
+
+        std::lock_guard lock(recordMutex);
+        row = {};
+        rowStart = 0;
+        recording = isOn;
+    }
+    catch (const std::exception& failure)
+    {
+        log(std::string("Costs on file: ") + failure.what());
+    }
 }
 
 void onFrameStart() noexcept
@@ -304,8 +335,6 @@ void onPresent(const std::optional<performance::FrameCost>& cost) noexcept
 {
     if (folder.empty()) return;
 
-    // Timed for as long as the recorder runs, as while someone looks at the costs.
-    performance::watch();
     try
     {
         const auto now = clock::ticksNow();
@@ -315,6 +344,11 @@ void onPresent(const std::optional<performance::FrameCost>& cost) noexcept
         double seconds{};
         {
             std::lock_guard lock(recordMutex);
+            const bool isOn = recording;
+
+            // Timed for as long as anything is kept, as while someone looks at the costs.
+            if (isOn || running) performance::watch();
+
             const auto add = [&](Tally& tally) {
                 if (lastPresent) tally.frameTimes.push_back(static_cast<float>(clock::millisecondsOf(now - lastPresent)));
                 if (!cost || cost->gpuFrame <= 0.0f) return;
@@ -323,7 +357,7 @@ void onPresent(const std::optional<performance::FrameCost>& cost) noexcept
                 for (std::size_t i = 0; i < tally.passes.size(); ++i) tally.passes[i] += cost->passes[i];
             };
 
-            add(row);
+            if (isOn) add(row);
             if (running)
             {
                 add(running->tally);
@@ -335,8 +369,9 @@ void onPresent(const std::optional<performance::FrameCost>& cost) noexcept
             }
 
             lastPresent = now;
-            if (!firstPresent) firstPresent = rowStart = now;
-            if (clock::millisecondsOf(now - rowStart) >= RowMilliseconds)
+            if (!firstPresent) firstPresent = now;
+            if (!rowStart) rowStart = now;
+            if (isOn && clock::millisecondsOf(now - rowStart) >= RowMilliseconds)
             {
                 finishedRow = std::move(row);
                 row = {};
@@ -367,7 +402,7 @@ void onLights(std::size_t traced, std::size_t overCap) noexcept
         ++tally.lightFrames;
     };
 
-    add(row);
+    if (recording) add(row);
     if (running) add(running->tally);
 }
 
@@ -376,7 +411,7 @@ void onKick(const Kick& kick) noexcept
     if (folder.empty()) return;
 
     std::lock_guard lock(recordMutex);
-    row.kick = kick;
+    if (recording) row.kick = kick;
     if (running) running->tally.kick = kick;
 }
 
@@ -387,7 +422,7 @@ void onPhases(std::span<const std::pair<const char*, double>> phases) noexcept
     try
     {
         std::lock_guard lock(recordMutex);
-        row.addPhases(phases);
+        if (recording) row.addPhases(phases);
         if (running) running->tally.addPhases(phases);
     }
     catch (const std::exception& error)
@@ -406,7 +441,7 @@ void onCounters(std::span<const std::uint32_t> counters) noexcept
         ++tally.counterFrames;
     };
 
-    add(row);
+    if (recording) add(row);
     if (running) add(running->tally);
 }
 

@@ -519,14 +519,16 @@ made.
 
 ### Costs on file
 
-So a play session needs no one watching it. A dev build keeps the costs running and writes what each second cost to
-`PhantomFX-automation/perf/<time>.jsonl` (`src/dev/perf_record.cpp`): the frames' times with their spread, the GPU frame,
-each pass, each traced phase, the lights, the scene and the rays' counters, with the map, the game's clock, the camera
-and whether the game is frozen. A line with PhantomFX.ini's values comes first and whenever they change.
+So a play session needs no one watching it. With **Record the costs** on the Developer page ticked, a dev build keeps the
+costs running and writes what each second cost to `PhantomFX-automation/perf/<time>.jsonl` (`src/dev/perf_record.cpp`): the
+frames' times with their spread, the GPU frame, each pass, each traced phase, the lights, the scene and the rays' counters,
+with the map, the game's clock, the camera and whether the game is frozen. A line with PhantomFX.ini's values comes first
+and whenever they change. It is off by default and stays as set across starts, by a `recording` file in that folder: a setting
+would put a tool's line in every player's PhantomFX.ini.
 
 - `perf.py log` reads a session by stretch of the same place, then its worst seconds.
-- The `perf <file> [<frames>]` line takes the same over a set number of frames into a file of its own. A debug case takes
-  one before anything else, as `perf.json`.
+- The `perf <file> [<frames>]` line takes the same over a set number of frames into a file of its own, recording or not. A
+  debug case takes one before anything else, as `perf.json`.
 - `perf.py ab <test> ...` compares changes on the frame as it stands: base, test, base, test, base, each after settling,
   so a GPU that drifts as it warms shows up. Judge a difference only against the drift it reports. `--images` also
   saves each frame and says how far it moved from the base.

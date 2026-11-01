@@ -343,6 +343,7 @@ void run(Script& running, const std::string& line)
         running.captureDeadline = presents + frames + InspectionFrames;
         perf_record::capture(folder / file, frames);
     }
+    else if (command == "record_costs") perf_record::setRecording(invert("0"));
     else if (command == "image" && !rest.empty())
     {
         askJob(running, [file = folder / (rest + ".dds"), rest](ID3D11DeviceContext* context, ID3D11Resource* backBuffer) {

@@ -10,10 +10,10 @@
 #include <utility>
 
 // What frames cost, on file (docs/DEVELOPMENT.md, "Costs on file"), so a play session needs no one watching it.
-// `perf/<time>.jsonl` beside the automation's commands takes one JSON object a second: the frames' times, each pass and
-// each traced phase, the rays, the lights and the scene, with where the game was and what time it was there.
-// capture() takes the same over a set number of frames into a file of its own, to compare one frozen frame under
-// changes (tools/automation/perf.py).
+// While recording, `perf/<time>.jsonl` beside the automation's commands takes one JSON object a second: the frames' times,
+// each pass and each traced phase, the rays, the lights and the scene, with where the game was and what time it was there.
+// capture() takes the same over a set number of frames into a file of its own, recording or not, to compare one frozen
+// frame under changes (tools/automation/perf.py).
 namespace phantom_fx::perf_record
 {
 // What a kick traced.
@@ -25,6 +25,9 @@ struct Kick
 };
 
 void install(const std::filesystem::path& folder) noexcept;
+// The Developer page's switch, which lasts across starts.
+bool isRecording() noexcept;
+void setRecording(bool isOn) noexcept;
 // The game thread, at the main loop's frame start.
 void onFrameStart() noexcept;
 
