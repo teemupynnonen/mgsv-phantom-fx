@@ -4,6 +4,7 @@
 #include "dev/automation.hpp"
 #include "dev/cutscenes.hpp"
 #include "dev/game_lua.hpp"
+#include "dev/perf_record.hpp"
 #include "dev/remaster/tool.hpp"
 #include "dev/travel.hpp"
 #include "fxui/fxui.hpp"
@@ -105,6 +106,7 @@ void drawLuaConsole()
 void install(const std::filesystem::path& addonDirectory) noexcept
 {
     automation::install(addonDirectory);
+    perf_record::install(addonDirectory / "PhantomFX-automation" / "perf");
 }
 
 void onFrameStart() noexcept
@@ -113,6 +115,7 @@ void onFrameStart() noexcept
     cutscenes::onFrameStart();
     game_lua::onFrameStart();
     automation::onFrameStart();
+    perf_record::onFrameStart();
 }
 
 void onPresent(ID3D11DeviceContext* context, ID3D11Resource* backBuffer) noexcept

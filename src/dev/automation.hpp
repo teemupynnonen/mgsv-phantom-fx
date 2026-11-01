@@ -26,6 +26,7 @@ struct ID3D11Resource;
 //   wait <frames>                 lets that many frames present
 //   wait_scene                    until the scene's work to do has stopped changing
 //   probe <x> <y>                 the shadow and lamp probes' text at that render pixel
+//   perf <file> [<frames>]        what those frames cost, into `<file>.json` (perf_record.hpp), 120 without saying
 //   inspect <file>                a record of every pixel, into `<file>.bin` and `<file>.tsv` (inspect_trace.hpp)
 //   image <file>                  the next presented frame as `<file>.dds`
 //   textures <folder>             the ray tracing's textures and the game's shadow, as DDS files

@@ -61,8 +61,14 @@ Cases are in `PhantomFX-automation/cases` beside each game:
 | `fx.py [--copy] acc` | From free roam into the helicopter's cabin (the ACC) |
 | `fx.py png <file.dds>`, `fx.py diff <a.dds> <b.dds>` | A texture as a picture; how two captures differ |
 | `check_release.py` | Fails if the tools reached a release build |
+| `perf.py [--copy] log [<file>]` | A play session's costs by place, then its worst seconds |
+| `perf.py [--copy] ab <test> ...` | What each change costs on the frame as it stands, with the drift to judge it by. `--images` also says how far the frame moved |
 
 To drive the copy by hand: run `install.ps1` (`-Settings @()` for the player's exact settings), start `launch.ps1` in the background, then `fx.py --copy boot`. `replay` and `scenarios` do all of this themselves.
+
+## Costs
+
+A dev build writes what each second cost to `PhantomFX-automation/perf/`, with no one asking. The user plays, you read `perf.py log`. A case also takes `perf.json` on its frozen frame. Judge a change by `perf.py ab` on a frozen frame, and never by a difference smaller than the drift it reports.
 
 ## Reading a report
 

@@ -57,6 +57,13 @@ struct Costs
     Milliseconds passes{}; // 0 where a pass did not run
 };
 
+// What a frame took on the GPU.
+struct FrameCost
+{
+    float gpuFrame{}; // 0 when no command list executed
+    Milliseconds passes{};
+};
+
 // The real cost of each effect: the GPU frame with everything on, then with the effects left out
 // one by one, cumulatively. Each step settles, then is timed. Effects that are off are skipped.
 struct Measurement

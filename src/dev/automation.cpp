@@ -4,6 +4,7 @@
 #include "dev/game_shadow.hpp"
 #include "dev/held_camera.hpp"
 #include "dev/inspect_trace.hpp"
+#include "dev/perf_record.hpp"
 #include "fxui/fxui.hpp"
 #include "game_loop.hpp"
 #include "dev/game_lua.hpp"
@@ -44,6 +45,8 @@ constexpr std::uint64_t InspectionFrames = 3600, SceneFrames = 3600;
 // Presents the scene's work to do stays the same before it counts as made: a model that never gets room
 // would otherwise hold a case up for SceneFrames.
 constexpr std::uint64_t SettledFrames = 60;
+// Presents a `perf` line takes without saying.
+constexpr std::uint32_t DefaultCaptureFrames = 120;
 // Presents after a probe's pixel changes before its text has that pixel: a readback's frames in flight.
 constexpr std::string_view ProbeWait = "wait 8";
 
@@ -80,6 +83,8 @@ struct Script
     bool isWaitingForJob{};
     std::optional<std::uint64_t> inspectionsBefore;
     std::uint64_t inspectionDeadline{};
+    std::optional<std::uint64_t> capturesBefore;
+    std::uint64_t captureDeadline{};
     // Waiting for the scene: the give-up present, the work it had to do, and the present that last changed.
     std::optional<std::uint64_t> sceneDeadline;
     std::size_t sceneWork{};
@@ -178,7 +183,7 @@ std::string status()
 std::deque<std::string> caseLines(const std::string& name)
 {
     const auto path = "cases/" + name;
-    return {"game_shadow 1", "freeze", "wait 30", "state " + name, "inspect " + path + "/scene", "image " + path + "/traced", "textures " + path, "game_shadow 0",
+    return {"freeze", "wait 30", "perf " + path + "/perf", "game_shadow 1", "wait 30", "state " + name, "inspect " + path + "/scene", "image " + path + "/traced", "textures " + path, "game_shadow 0",
         "enhancements 0", "wait 45", "image " + path + "/vanilla", "enhancements 1", "reveal all", "inspect " + path + "/revealed", "reveal off", "case_done " + name};
 }
 
@@ -328,6 +333,16 @@ void run(Script& running, const std::string& line)
         running.inspectionDeadline = presents + InspectionFrames;
         inspect_trace::request(folder / rest);
     }
+    else if (command == "perf" && !rest.empty())
+    {
+        std::istringstream arguments(rest);
+        std::string file;
+        std::uint32_t frames = DefaultCaptureFrames;
+        arguments >> file >> frames;
+        running.capturesBefore = perf_record::capturesFinished();
+        running.captureDeadline = presents + frames + InspectionFrames;
+        perf_record::capture(folder / file, frames);
+    }
     else if (command == "image" && !rest.empty())
     {
         askJob(running, [file = folder / (rest + ".dds"), rest](ID3D11DeviceContext* context, ID3D11Resource* backBuffer) {
@@ -436,6 +451,21 @@ bool isWaiting(Script& running)
         {
             running.output += "error: no record came: is the ray-traced scene running?\n";
             running.inspectionsBefore.reset();
+        }
+    }
+
+    if (running.capturesBefore)
+    {
+        if (perf_record::capturesFinished() != *running.capturesBefore)
+        {
+            running.output += perf_record::lastCapture() + "\n";
+            running.capturesBefore.reset();
+        }
+        else if (presents < running.captureDeadline) return true;
+        else
+        {
+            running.output += "error: no capture came: is the recorder on?\n";
+            running.capturesBefore.reset();
         }
     }
 

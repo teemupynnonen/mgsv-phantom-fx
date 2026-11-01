@@ -3,6 +3,7 @@
 
 #include "camera.hpp"
 #include "clock.hpp"
+#include "dev/perf_record.hpp"
 #include "dev_tools.hpp"
 #include "features/global_illumination/gi_light.hpp"
 #include "features/path_tracing/path_tracing_rays.hpp"
@@ -148,6 +149,9 @@ struct State
 
     // Diagnostics: a copy of the output every ten seconds, read once the GPU is past it.
     ComPtr<ID3D12Resource> statsReadback, statsCounters;
+    // The development tools': each slot's frame's counters.
+    std::array<ComPtr<ID3D12Resource>, FramesInFlight> countersReadback;
+    std::array<bool, FramesInFlight> countersWritten{};
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT statsFootprint{};
     std::uint64_t statsFence{}, lastStats{};
     Shared depth, normal, albedo, output, shadow, shadowDebug, velocity, terrainPages, terrainHeights, lightDebug, materialSpecular, skyCube, guideNormals,
@@ -525,6 +529,35 @@ void copyStats(State& s, Recorder& recorder, ID3D12Resource* output, const Frame
     s.statsFence = frame.signalValue;
 }
 
+// The development tools: the frame's counters for the costs on file (perf_record.hpp).
+void copyCounters(State& s, Recorder& recorder, std::uint32_t slot)
+{
+    auto& readback = s.countersReadback[slot];
+    if (!readback)
+        readback = createBuffer(s.device.Get(), GI_COUNTER_COUNT * 4, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_NONE,
+            "Creating the counters' readback");
+
+    recorder.transition(s.counters.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    s.list->CopyBufferRegion(readback.Get(), 0, s.counters.Get(), 0, GI_COUNTER_COUNT * 4);
+    recorder.transition(s.counters.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    s.countersWritten[slot] = true;
+}
+
+// Once the GPU is past the slot's frame.
+void readCounters(State& s, std::uint32_t slot)
+{
+    if (!std::exchange(s.countersWritten[slot], false)) return;
+
+    void* mapped{};
+    if (FAILED(s.countersReadback[slot]->Map(0, nullptr, &mapped))) return;
+
+    std::array<std::uint32_t, GI_COUNTER_COUNT> counters{};
+    std::memcpy(counters.data(), mapped, sizeof(counters));
+    const D3D12_RANGE none{};
+    s.countersReadback[slot]->Unmap(0, &none);
+    if constexpr (DevTools) perf_record::onCounters(counters);
+}
+
 // Diagnostics: the output light's level, logged once its copy is back.
 void logStats(State& s)
 {
@@ -607,6 +640,7 @@ void readTimes(State& s, std::uint32_t slot)
     const auto* ticks = reinterpret_cast<const std::uint64_t*>(static_cast<const std::uint8_t*>(data) + range.Begin);
     const double toMilliseconds = 1000.0 / static_cast<double>(s.timestampFrequency);
     performance::Milliseconds passes{};
+    std::vector<std::pair<const char*, double>> phaseTimes;
     for (std::size_t i = 0; i + 1 < marks.size(); ++i)
     {
         // From the frame's list's end to the next list's start: the game's own work.
@@ -618,12 +652,14 @@ void readTimes(State& s, std::uint32_t slot)
         const auto found = std::find_if(phases.begin(), phases.end(), [&](const auto& phase) { return std::strcmp(phase.first, marks[i].phase) == 0; });
         if (found != phases.end()) found->second += milliseconds;
         else phases.emplace_back(marks[i].phase, milliseconds);
+        if constexpr (DevTools) phaseTimes.emplace_back(marks[i].phase, milliseconds);
     }
 
     const D3D12_RANGE none{};
     s.timestampReadback->Unmap(0, &none);
     marks.clear();
     performance::timedOnDirect3D12(passes);
+    if constexpr (DevTools) perf_record::onPhases(phaseTimes);
 
     using enum performance::Pass;
     const auto sum = [&](std::initializer_list<performance::Pass> of) {
@@ -835,6 +871,7 @@ Result render(const Frame& frame)
     if constexpr (DiagnosticLog) logStats(s);
     readTimes(s, slot);
     readProbe(s, slot);
+    if constexpr (DevTools) readCounters(s, slot);
     const std::function<void()> waitForAll = [&] { waitFor(s, *std::max_element(s.submitted.begin(), s.submitted.end())); };
     const trace::TraceFrame traceFrame{frame, s.device.Get(), waitForAll, *s.contents, s.instancedModels[slot], slot};
     for (auto* each : trace::inOrder()) each->prepare(traceFrame);
@@ -1133,6 +1170,11 @@ Result render(const Frame& frame)
             if (traces.tracesLight && !frame.showScene) copyStats(s, recorder, output, frame);
         }
 
+        if constexpr (DevTools)
+        {
+            if (traces.tracesLight && !frame.showScene) copyCounters(s, recorder, slot);
+        }
+
         transitionShared(true);
         recorder.mark(nullptr);
         list.ResolveQueryData(s.timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * MaxMarks, static_cast<UINT>(marks.size()), s.timestampReadback.Get(),
@@ -1166,6 +1208,8 @@ Result render(const Frame& frame)
     t.builtTriangles += stats.builtTriangles;
     t.waiting += stats.waiting;
     t.compactions += stats.compactedThisFrame;
+    if constexpr (DevTools)
+        perf_record::onKick({frame.width, frame.height, instanceCount, static_cast<std::uint32_t>(update.skins.size()), stats.builtThisFrame, s.triangles, stats.builtTriangles});
 #if PHANTOM_FX_DEV_TOOLS
     workWaiting = stats.waiting + s.contents->waitingWork();
 #endif

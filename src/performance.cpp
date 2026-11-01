@@ -3,6 +3,8 @@
 #include "performance.hpp"
 #include "clock.hpp"
 #include "command_list_notes.hpp"
+#include "dev/perf_record.hpp"
+#include "dev_tools.hpp"
 #include "log.hpp"
 
 #include <Windows.h>
@@ -29,13 +31,6 @@ struct Frame
     Milliseconds direct3D12{};
     bool started{}; // A command list executed, so `start` was ended
     bool pending{}; // Closed and not read yet
-};
-
-// What a frame took on the GPU.
-struct Sample
-{
-    float gpuFrame{}; // 0 when no command list executed
-    Milliseconds passes{};
 };
 
 // What a measurement step leaves out, with the steps before it.
@@ -170,7 +165,7 @@ std::optional<float> millisecondsBetween(ID3D11Query* start, ID3D11Query* end, U
 
 // Call with timerMutex held. Nullopt while the GPU has not finished the frame, or when its clock
 // changed speed during it (a power state change), which makes its times meaningless.
-std::optional<Sample> read(Frame& frame)
+std::optional<FrameCost> read(Frame& frame)
 {
     D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint{};
     if (immediate->GetData(frame.disjoint.Get(), &disjoint, sizeof(disjoint), D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK) return std::nullopt;
@@ -182,7 +177,7 @@ std::optional<Sample> read(Frame& frame)
         return std::nullopt;
     }
 
-    Sample sample{.passes = frame.direct3D12};
+    FrameCost sample{.passes = frame.direct3D12};
     if (frame.started) sample.gpuFrame = millisecondsBetween(frame.start.Get(), frame.end.Get(), disjoint.Frequency).value_or(0.0f);
     for (const auto& run : frame.runs)
         if (const auto time = millisecondsBetween(run.start.Get(), run.end.Get(), disjoint.Frequency))
@@ -196,7 +191,7 @@ std::optional<Sample> read(Frame& frame)
 // Closes the frame being recorded, then returns the newest frame the GPU has finished since the last
 // call, if any. Oldest first; the frame about to be recorded into again is given up if the GPU has
 // not finished it.
-std::optional<Sample> closeAndRead()
+std::optional<FrameCost> closeAndRead()
 {
     std::lock_guard lock(timerMutex);
     if (!immediate) return std::nullopt;
@@ -210,7 +205,7 @@ std::optional<Sample> closeAndRead()
         current = (current + 1) % FrameCount;
     }
 
-    std::optional<Sample> newest;
+    std::optional<FrameCost> newest;
     for (std::size_t i = 0; i < FrameCount; ++i)
     {
         auto& candidate = frames[(current + i) % FrameCount];
@@ -259,7 +254,7 @@ void openFrame(bool wanted)
 }
 
 // Adds the frame to the averages, which follow about the last half second.
-void average(LONGLONG now, const std::optional<Sample>& sample)
+void average(LONGLONG now, const std::optional<FrameCost>& sample)
 {
     if (lastPresent)
     {
@@ -342,7 +337,7 @@ void finishMeasurement()
 
 // One present into the measurement: each step settles, then its GPU frames are timed. Returns what
 // to leave out from now on, when that changes.
-std::optional<LeftOut> advanceMeasurement(LONGLONG now, const std::optional<Sample>& sample)
+std::optional<LeftOut> advanceMeasurement(LONGLONG now, const std::optional<FrameCost>& sample)
 {
     auto& m = measurement;
     if (measurementRequested.exchange(false) && !m.running) return startMeasurement(now);
@@ -553,6 +548,7 @@ void present() noexcept
         const auto now = clock::ticksNow();
         const auto sample = closeAndRead();
         average(now, sample);
+        if constexpr (DevTools) perf_record::onPresent(sample);
         // Not under a lock: the effects' settings take theirs.
         if (const auto leftOut = advanceMeasurement(now, sample)) core::leaveOut(*leftOut);
 
