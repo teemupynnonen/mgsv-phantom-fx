@@ -242,19 +242,32 @@ void finishRow(Tally&& finishedRow, const Place& where, double seconds)
     writeLine(line);
 }
 
+// Whatever comes of it counts as finished, so a command waiting for it hears why.
 void finishCapture(Capture&& capture, const Place& where)
 {
-    auto json = toJson(capture.tally, where);
-    const auto gpu = json["gpu"].value("mean", 0.0), frame = json["frame"].value("mean", 0.0);
-    std::error_code error;
-    std::filesystem::create_directories(capture.file.parent_path(), error);
-    auto path = capture.file;
-    path += ".json";
-    std::ofstream(path, std::ios::trunc) << json.dump(1);
+    std::string outcome;
+    try
+    {
+        auto json = toJson(capture.tally, where);
+        const auto gpu = json["gpu"].value("mean", 0.0), frame = json["frame"].value("mean", 0.0);
+        std::error_code error;
+        std::filesystem::create_directories(capture.file.parent_path(), error);
+        auto path = capture.file;
+        path += ".json";
+        std::ofstream output(path, std::ios::trunc);
+        output << json.dump(1);
+        output.close();
+        outcome = output ? std::format("{} frames, frame {:.2f} ms, GPU {:.2f} ms", json["frames"].get<std::size_t>(), frame, gpu)
+                         : "error: " + path.string() + " could not be written";
+    }
+    catch (const std::exception& error)
+    {
+        outcome = std::string("error: ") + error.what();
+    }
 
     {
         std::lock_guard lock(lastMutex);
-        lastLine = std::format("{} frames, frame {:.2f} ms, GPU {:.2f} ms", json["frames"].get<std::size_t>(), frame, gpu);
+        lastLine = std::move(outcome);
     }
 
     ++finished;

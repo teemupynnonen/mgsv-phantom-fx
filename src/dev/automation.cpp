@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <cstdint>
 #include <deque>
 #include <exception>
@@ -335,10 +336,20 @@ void run(Script& running, const std::string& line)
     }
     else if (command == "perf" && !rest.empty())
     {
-        std::istringstream arguments(rest);
-        std::string file;
+        // The frame count comes last, if at all: a case's name can have spaces.
+        std::string_view file = rest;
         std::uint32_t frames = DefaultCaptureFrames;
-        arguments >> file >> frames;
+        if (const auto space = rest.rfind(' '); space != rest.npos)
+        {
+            const auto* const end = rest.data() + rest.size();
+            std::uint32_t asked{};
+            if (const auto [stop, error] = std::from_chars(rest.data() + space + 1, end, asked); error == std::errc{} && stop == end)
+            {
+                file = trimmed(file.substr(0, space));
+                frames = asked;
+            }
+        }
+
         running.capturesBefore = perf_record::capturesFinished();
         running.captureDeadline = presents + frames + InspectionFrames;
         perf_record::capture(folder / file, frames);
