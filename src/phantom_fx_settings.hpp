@@ -154,6 +154,7 @@ struct Diagnostics
     bool showIndirectLight{};      // SSILVB's light alone in place of the lit scene
     bool showGlobalIllumination{}; // The global illumination's light alone in place of the lit scene
     bool showTracedScene{};        // The global illumination's traced scene from the camera
+    bool waterFallbackNormals{};   // Diagnostics: magenta where a water pixel had no neighbours' depth (reflections.hlsl)
     bool twoSidedShadows{};        // Rays towards lights blocked by every surface from both sides, as until 2026-10-26
     int lightVolumes{};            // 0 the ray-traced lights within the game's volumes, 1 those with a shadow map beyond, 2 every one beyond
     bool logGlobalIlluminationOften{}; // The global illumination's light logged every few frames, not every ten seconds

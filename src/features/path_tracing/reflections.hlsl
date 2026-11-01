@@ -305,6 +305,7 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
     // has no shader interface to read it from, and what it reflects is scaled by water's reflectance.
     const bool isWater = all(normalRoughness.xyz == 0.0f);
     float3 world = DepthPosition(did, depth);
+    bool fallbackNormal = false; // The neighbours' depths were missing: the slope below is a stand-in
     if (isWater)
     {
         const uint2 last = g_BufferDimensions - 1;
@@ -312,10 +313,9 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
         const uint2 downPixel = min(did + uint2(0, 1), last);
         const float rightDepth = g_SurfaceDepth.Load(int3(rightPixel, 0));
         const float downDepth = g_SurfaceDepth.Load(int3(downPixel, 0));
-        // The engine's world is Y-up (gi_common.hlsli, TerrainPoint): the neighbours' depths can be missing at the
-        // surface's edges, and a horizontal fallback there would reflect at a grazing angle.
-        float3 slope = float3(0, 1, 0);
-        if (rightDepth > 0.0f && downDepth > 0.0f)
+        float3 slope = float3(0, 0, 1);
+        fallbackNormal = !(rightDepth > 0.0f && downDepth > 0.0f);
+        if (!fallbackNormal)
             slope = cross(DepthPosition(rightPixel, rightDepth) - world, DepthPosition(downPixel, downDepth) - world);
         if (!all(slope == 0.0f)) slope = normalize(slope);
         const float3 toEyeNow = normalize(g_Frame.eye.xyz - world);
@@ -338,6 +338,10 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
     // reflected (its weight, recorded at the draw, is the menu's share).
     if (isWater) light *= WaterReflectance(saturate(dot(normal, toEye)), normalRoughness.w);
     g_SurfaceReflection[did] = float4(min(RemoveNaNs(light) * g_Frame.nearFar.w, BrightestHit), hitDistance);
+
+    // Diagnostics: magenta where a water pixel had no neighbours' depth and took the stand-in normal, so how much of
+    // the surface that is can be seen (menu, "Water: fallback normals").
+    if (fallbackNormal && g_Frame.shadowDiagnostics.z != 0u) g_SurfaceReflection[did] = float4(1.0f, 0.0f, 1.0f, 0.0f);
 
     // The surface's own sun shadow, for the composite to dim what it covers (glass_shaders.hpp, Composite): a ray
     // from the surface towards a point on the sun's disc, one sample, seeded by the pixel alone.

@@ -500,6 +500,9 @@ void drawDiagnostics(const upscaler::Status& state)
         changed |= fxui::combo("Light volumes", options.lightVolumes, volumes,
             "With ray-traced lights on: the game bounds each light by a box (a spot by its cone within one), and they stop at it as the "
             "game's do. Beyond, a light shines over all its reach, stopped by the rays alone: those the game gives a shadow map, or every one.");
+        changed |= fxui::checkbox("Water: fallback normals", options.waterFallbackNormals,
+            "Paints magenta where a water pixel had no neighbours' depth for its normal and took the stand-in, so how much of the surface that is "
+            "can be seen at a river or pond.");
         changed |= fxui::checkbox("Shadows from every surface (old)", options.twoSidedShadows,
             "Ray-traced shadows of the sun and lamps: every surface in the scene blocks light, from both sides, as before. By default they take "
             "what the game's shadow maps hold: an opaque surface casts only from its back as the light sees it, and meshes the game shows in the "
