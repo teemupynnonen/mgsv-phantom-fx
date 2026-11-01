@@ -938,7 +938,7 @@ Result render(const Frame& frame)
                 traced.surfaceReflection = openShared(s, s.surfaceReflection, frame.textures.surfaceReflection, "Opening the glass's reflections").Get();
             }
             // The rivers' and liquids' own sun shadow (forward_shadows), and the water's mask for the caustics:
-            // the previous frame's surfaces, copied by glass::beginFrame before it clears them.
+            // the previous frame's surfaces, copied by forward_surfaces::beginFrame before it clears them.
             if (frame.textures.forwardShadow) traced.forwardShadow = openShared(s, s.forwardShadow, frame.textures.forwardShadow, "Opening the forward surfaces' shadow").Get();
         }
         if (traces.tracesLampLight)

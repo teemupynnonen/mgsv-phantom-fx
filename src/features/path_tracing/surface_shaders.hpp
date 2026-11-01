@@ -1,7 +1,8 @@
 #pragma once
 
-// HLSL for glass and mirrors on Direct3D 11 (glass.hpp), compiled at runtime with d3dcompiler_47.
-namespace phantom_fx::glass::shaders
+// HLSL for the forward surfaces on Direct3D 11 (forward_surfaces.hpp, glass.hpp, water.hpp), compiled at runtime with
+// d3dcompiler_47.
+namespace phantom_fx::surface_shaders
 {
 // Where glass dominates, tells Ray Reconstruction of it, as its guide asks of a window: depth, normal and hit distance
 // from the one surface. The normal and the hit distance go into its guides; `SurfaceDepth` is left with the depth of those

@@ -171,7 +171,7 @@ what draws it, when that is the feature's own.
 | `ray_traced_shadows/` | `gi_shadow.*`: the sun's shadow rays and the FidelityFX Shadow Denoiser on Direct3D 12. `gi_shadow.hlsl`, `gi_shadow_filter.hlsl`: the rays, the denoiser's temporal pass and filters |
 | `ray_traced_lights/` | `local_lights.*`: the game's point and spot light draws kept for their stencil, their light drawn again at the sun pass's list with specular and the rays' shadow (see "Ray-traced lights"). `light_choice.*`: which lights a kick gives the rays (each light's reach, the light cap) and each light as the rays take it. `lamp_shadow_rays.*`, `light_shadows.hlsl`: the lamps' shadow rays and filter, a trace (see "What a kick traces") |
 | `global_illumination/` | `gi_light.*`, `gi_light.hlsl`: the light on Direct3D 12, its rays, the denoiser's inputs and the render size (see "Global illumination"); their hits' light and the hash grid cache in `passes/ray_tracing/shaders/gi_hit_light.hlsli`. `gi_denoiser.*`: NVIDIA NRD's RELAX denoiser without NRI. `gi_lighting.*`: the game's sky and sun in the light's terms. `light_combine.*`: the traced light in place of the game's probe light at the resolve |
-| `path_tracing/` | `path_tracing.*`: path tracing on Direct3D 11: the traced reflections added at the resolve and blended as the game blends its own, the lamps' light added at the draw point, the masks' atlas (see "Path tracing"). `path_tracing_shaders.hpp`: those draws. `glass.*`, `glass_shaders.hpp`: glass and mirrors, their surfaces drawn beside the game's and what they reflect added over the scene. `sky_capture.*`: the game's sky drawn again for the rays. `path_tracing_rays.*`: its passes on Direct3D 12. `reflections.hlsl`, `direct_light.hlsl`: the reflections and the point and spot lights |
+| `path_tracing/` | `path_tracing.*`: path tracing on Direct3D 11: the traced reflections added at the resolve and blended as the game blends its own, the lamps' light added at the draw point, the masks' atlas (see "Path tracing"). `path_tracing_shaders.hpp`: those draws. `forward_surfaces.*`, `glass.*`, `water.*`, `surface_shaders.hpp`: the forward surfaces, their surfaces drawn beside the game's and what they reflect added over the scene. `sky_capture.*`: the game's sky drawn again for the rays. `path_tracing_rays.*`: its passes on Direct3D 12. `reflections.hlsl`, `direct_light.hlsl`: the reflections and the point and spot lights |
 | `ambient_occlusion/` | `gtvbao.*`: GTVBAO's occlusion multiplied into the indirect light at the upscale. `gtvbao_shaders.hpp`: that multiply |
 | `indirect_light/` | `ssilvb.*`: SSILVB's light, brought to the render size and added to the diffuse light the resolve reads. `ssilvb_shaders.hpp`: the upsample |
 | `volumetric_fog/` | `atmosphere.*`: the larger fog texture, the game's fog pass over all of it, the shadowed fill before the resolve. `atmosphere_shaders.hpp`: the game's fog formula per froxel with the sun shadowed; Hillaire's atmosphere tables, the physical fog and sky (Epic Games' reference, MIT) |
@@ -1686,7 +1686,7 @@ the game's lights) is left alone until it runs.
   the blend nothing. Only where a surface was drawn in front of the G-buffer's, water, which the G-buffer
   and so the rays lack, does the blend keep the screen-space map: where the depth the reflections' mask read
   (`LocalReflectionMask`, `2d9cb6c5e467cff5e9c6401b4aafebb7`, `t0`) is nearer than the G-buffer's as the kick packed
-  it (`ray_tracing::surfaceDepth`). Glass there leaves it out (`glass::surfaceWeights`): that map is the surface's behind
+  it (`ray_tracing::surfaceDepth`). Glass there leaves it out (`forward_surfaces::surfaceWeights`): that map is the surface's behind
   the glass.
 - **Glass and mirrors** (`glass.*`, `TraceSurfaceReflections`). The game's glass has no reflection of its surroundings.
   `fox3dfw_glass*` (disassembly and frames of 2026-10-31) sample a cube map, `t2`, or the common one, `t11`, 128 x 128,
@@ -1717,7 +1717,7 @@ the game's lights) is left alone until it runs.
     `SpecularRays` as any glossy surface; Direct3D 11 waits. The rays' hits come from the same `ReflectedLight`. So
     whatever the game draws reflects, with its own shape and normal map, a character's visor without the rays' pose,
     and a frame without glass traces nothing. The cost goes to the **Reflections** line of the budget.
-  - **The composite** (`glass::executing`, `Composite`). The reflection by the menu's **Reflections** and the weight, sRGB
+  - **The composite** (`forward_surfaces::executing`, `Composite`). The reflection by the menu's **Reflections** and the weight, sRGB
     encoded and added by the surface's alpha, in the scene's encoded values, as the game blends its glass, over a copy of the
     scene, before the exposure, the depth of field and the upscaler read it. So a particle in front of a pane has the
     reflection over it. A traced reflection is added to what the draw left, as encoding the sum of the two would need
@@ -1732,7 +1732,7 @@ the game's lights) is left alone until it runs.
     nothing behind the pane taken for a copy of it. A mirror reflects all of a ray: it has no row of the table, and its mask is
     on the second texture coordinates, which the scene does not keep. So glass shows in reflections, and mirrors in each
     other. The rays leave out glass's tint.
-  - **Ray Reconstruction** (`glass::guideReconstruction`). Most glass draws no depth, so the motion, made from depth, moved a
+  - **Ray Reconstruction** (`forward_surfaces::guideReconstruction`). Most glass draws no depth, so the motion, made from depth, moved a
     pane's detail as what is behind it, and with the guides of that too its cracks melted away in motion and came back
     once still (the player's hospital window, 2026-10-31: the same pose settled, then arrived at in half a second, 0.6 m to
     the side; the same held-still turn of 0.08 radians as a control, which depth does not change). Most of that detail is the
@@ -3325,6 +3325,9 @@ They are drawn forward, over the lit scene, after the G-buffer and so after the 
 them, and the game's own shaders sample its shadow map alone, so a character's shadow stood on a river where the
 ground had the rays'.
 
+Three modules: `forward_surfaces` owns what they share - the targets, the second trace and the composite - and
+`glass` and `water` only draw their own passes into it.
+
 Two halves, one mechanism:
 
 - **Shadow.** At a river's or liquid's draw (`forward_shadows`, `src/features/forward_shadows/`) the game's shadow
@@ -3339,12 +3342,12 @@ Two halves, one mechanism:
   it), fade exponentially with the column, and are strongest just under the surface. `Atmosphere > Water caustics`
   holds the switch and the **Intensity**.
 - **Reflection.** The forward draw blanks the game's cube map and records the water as a surface
-  (`glass::recordWater`), the same way glass and mirrors are recorded: depth, a zero normal (the water's is its
-  depth's slope) and the menu's share of what it reflects. The glass module's second trace
-  (`TraceSurfaceReflections`, reflections.hlsl) runs after the scene, so it reflects from where the water is
-  now: no lag, and no reprojection to undo one. What it reflects is scaled by water's reflectance at the eye's
-  angle (`WaterReflectance`, Karis' split-sum fit, F0 0.02), and added over the scene at the exposure by the
-  glass composite. Its roughness (`Atmosphere > Water reflections`) spreads it as ripples would: the game's own
+  (`water::recordWater`), the same way glass and mirrors are recorded: depth, a zero normal (the water's is its
+  depth's slope) and the menu's share of what it reflects. The second trace (`TraceSurfaceReflections`,
+  reflections.hlsl) runs after the scene, so it reflects from where the water is now: no lag, and no
+  reprojection to undo one. What it reflects is scaled by water's reflectance at the eye's angle
+  (`WaterReflectance`, Karis' split-sum fit, F0 0.02), and added over the scene at the exposure by the
+  composite. Its roughness (`Atmosphere > Water reflections`) spreads it as ripples would: the game's own
   normal map is sampled in screen space through a flow map, so the trace cannot read it.
 - **Shadow of a surface.** `TraceSurfaceReflections` also traces the sun for each surface pixel, into
   `g_ForwardShadow` (u97): the glass composite reads it.

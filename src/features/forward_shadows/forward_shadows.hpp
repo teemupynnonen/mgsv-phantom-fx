@@ -11,7 +11,7 @@
 // map's shadow is left out, so the surface is not shadowed by a map that no longer matches the scene; the water
 // takes no sun shadow of its own (its reflection is what the eye reads), and the bed under it is lit by the sun
 // pass as the rest of the scene is. The draw is also where the water is recorded as a surface for the traced
-// reflections (glass::recordWater).
+// reflections (water::recordWater).
 namespace phantom_fx::forward_shadows
 {
 void configure(const Configuration& configuration) noexcept;

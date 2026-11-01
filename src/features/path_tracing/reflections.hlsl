@@ -20,7 +20,7 @@ RWTexture2D<float> g_ForwardShadow : register(u97);
 RWTexture2D<float4> g_Reflection : register(u93);          // The reflected light times the specular albedo and the exposure; a: how far across the screen its hit is
 RWTexture2D<float> g_ReflectionDistance : register(u94);   // The ray's hit distance; FP16's largest where it got away
 RWTexture2D<float4> g_ReflectionMap : register(u98);       // The hit as the game's reflection map holds it (ReflectionBlend): rgb its light, a how much it blends
-Texture2D<float> g_SurfaceDepth : register(t26);           // The nearest glass or mirror the game drew at each pixel (glass.hpp); 0 without
+Texture2D<float> g_SurfaceDepth : register(t26);           // The nearest glass or mirror the game drew at each pixel (forward_surfaces.hpp); 0 without
 Texture2D<float4> g_SurfaceNormal : register(t27);         // Its world-space normal, its roughness in w
 RWTexture2D<float4> g_SurfaceReflection : register(u99);   // What it reflects, times the exposure; a: the ray's hit distance
 
@@ -289,7 +289,7 @@ void TraceReflections(uint2 did : SV_DispatchThreadID)
     g_ForwardShadow[did] = 1.0f;
 }
 
-// What glass and mirrors reflect, from the surfaces the game drew in front of the rest (glass.hpp): as a mirror does, spread
+// What glass and mirrors reflect, from the surfaces the game drew in front of the rest (forward_surfaces.hpp): as a mirror does, spread
 // by the material's roughness, a ray a pixel. Nothing to the game's blend or to the resolve: their weights are the game's
 // own, in the surface's draw, and this frame's scene is built.
 [numthreads(8, 8, 1)]
@@ -301,7 +301,7 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
     if (depth <= 0.0f) return;
 
     float4 normalRoughness = g_SurfaceNormal.Load(int3(did, 0));
-    // A river or a liquid (WaterSurface, glass_shaders.hpp): its normal comes from its depth's slope, as the trace
+    // A river or a liquid (WaterSurface, surface_shaders.hpp): its normal comes from its depth's slope, as the trace
     // has no shader interface to read it from, and what it reflects is scaled by water's reflectance.
     const bool isWater = all(normalRoughness.xyz == 0.0f);
     float3 world = DepthPosition(did, depth);
@@ -339,7 +339,7 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
 
     // the surface that is can be seen (menu, "Water: fallback normals").
 
-    // The surface's own sun shadow, for the composite to dim what it covers (glass_shaders.hpp, Composite): a ray
+    // The surface's own sun shadow, for the composite to dim what it covers (surface_shaders.hpp, Composite): a ray
     // from the surface towards a point on the sun's disc, one sample, seeded by the pixel alone.
     Random sunRandom = MakeRandom(did.x + did.y * g_BufferDimensions.x, 0u);
     g_ForwardShadow[did] = VisibilityFromSurface(origin, normal, CopyTolerance(world), SunSample(sunRandom.rand2()), 1e4f,

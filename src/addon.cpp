@@ -19,6 +19,7 @@
 #include "features/lamp_contact_shadows/lamp_contact_shadows.hpp"
 #include "features/depth_of_field/depth_of_field.hpp"
 #include "features/motion_blur/motion_blur.hpp"
+#include "features/path_tracing/forward_surfaces.hpp"
 #include "features/path_tracing/glass.hpp"
 #include "features/forward_shadows/forward_shadows.hpp"
 #include "features/path_tracing/path_tracing.hpp"
@@ -233,7 +234,7 @@ bool onDraw(command_list* list, uint32_t vertices, uint32_t instances, uint32_t 
     atmosphere::note(context, call, shader);
     indirect_light_pass::note(context, call, shader);
     path_tracing::note(context, call, shader);
-    glass::note(context, shader);
+    forward_surfaces::note(context, shader);
     sea::note(context, call, shader);
 
     // 2. While upscaling, the game's grading draws at the output size, whoever draws it.
@@ -514,7 +515,7 @@ void onExecuteSecondary(command_list* list, command_list* secondary)
         ray_tracing::executing(native(list), secondary->get_native());
         // After the global illumination's wait: the point and spot lights read their shadows.
         local_lights::executing(native(list), secondary->get_native());
-        glass::executing(native(list), secondary->get_native());
+        forward_surfaces::executing(native(list), secondary->get_native());
         return;
     }
 
@@ -526,7 +527,7 @@ void onExecuteSecondary(command_list* list, command_list* secondary)
     ray_tracing::recorded(list->get_native(), secondary->get_native());
     local_lights::recorded(list->get_native(), secondary->get_native());
     sea::recorded(list->get_native(), secondary->get_native());
-    glass::recorded(list->get_native(), secondary->get_native());
+    forward_surfaces::recorded(list->get_native(), secondary->get_native());
     ui_redirect::contextFinished(native(secondary));
     sun_contact_shadows::contextFinished(native(secondary));
     lamp_contact_shadows::contextFinished(native(secondary));
@@ -539,7 +540,7 @@ void onDestroyCommandList(command_list* list)
     ray_tracing::forget(list->get_native());
     local_lights::forget(list->get_native());
     sea::forget(list->get_native());
-    glass::forget(list->get_native());
+    forward_surfaces::forget(list->get_native());
 }
 
 // With frame generation the game's swap chain is the presenter's stand-in, whose Present follows.

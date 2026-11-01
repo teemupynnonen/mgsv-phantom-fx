@@ -3,7 +3,8 @@
 #include "d3d11_helpers.hpp"
 #include "features/forward_shadows/caustics_map.hpp"
 #include "features/forward_shadows/forward_shadows_shaders.hpp"
-#include "features/path_tracing/glass.hpp"
+#include "features/path_tracing/forward_surfaces.hpp"
+#include "features/path_tracing/water.hpp"
 #include "hresult.hpp"
 #include "log.hpp"
 #include "passes/ray_tracing/ray_tracing.hpp"
@@ -383,7 +384,7 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
     {
         static std::atomic<bool> loggedReflection{};
         if (!loggedReflection.exchange(true)) log("Forward shadows: the rivers' reflection leaves the cube map to the surface trace.");
-        glass::recordWater(context, call);
+        water::recordWater(context, call);
     }
 
     // Back as the game had it.

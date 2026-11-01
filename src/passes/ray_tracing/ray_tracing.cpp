@@ -8,7 +8,7 @@
 #include "d3d11_helpers.hpp"
 #include "features/global_illumination/gi_lighting.hpp"
 #include "features/forward_shadows/forward_shadows.hpp"
-#include "features/path_tracing/glass.hpp"
+#include "features/path_tracing/forward_surfaces.hpp"
 #include "features/path_tracing/path_tracing.hpp"
 #include "features/path_tracing/sky_capture.hpp"
 #include "features/ray_traced_lights/lamp_shadow_rays.hpp"
@@ -729,8 +729,8 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     // them itself, with their masks.
     std::vector<local_lights::TracedLight> tracedLights;
     if (kick_traces::takesLights(asked, isDenoisedByReconstruction)) tracedLights = local_lights::takeForTrace(*sceneCamera);
-    glass::SurfaceTextures surfaces;
-    if (kick_traces::isPathTraced(asked, isDenoisedByReconstruction)) surfaces = glass::beginFrame(immediate.Get(), depthOut.width, depthOut.height);
+    forward_surfaces::SurfaceTextures surfaces;
+    if (kick_traces::isPathTraced(asked, isDenoisedByReconstruction)) surfaces = forward_surfaces::beginFrame(immediate.Get(), depthOut.width, depthOut.height);
     const auto traces = kick_traces::tracesOf(asked,
         {.isDenoisedByReconstruction = isDenoisedByReconstruction,
             .hasSun = sun.has_value(),

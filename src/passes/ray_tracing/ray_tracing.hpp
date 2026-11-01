@@ -82,7 +82,7 @@ struct ReconstructionGuides
     Microsoft::WRL::ComPtr<ID3D11Texture2D> normalRoughness; // R16G16B16A16_FLOAT: the world-space normal, the roughness in w
     Microsoft::WRL::ComPtr<ID3D11Texture2D> diffuseAlbedo;   // R8G8B8A8_UNORM, linear
     Microsoft::WRL::ComPtr<ID3D11Texture2D> specularAlbedo;  // R16G16B16A16_FLOAT: a few hundredths, too small for 8 bits
-    Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> normalAccess; // For what the kick could not know of (glass::guideReconstruction)
+    Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> normalAccess; // For what the kick could not know of (forward_surfaces::guideReconstruction)
 };
 // None until a kick made them at this size, or when the last kick did not make them.
 std::optional<ReconstructionGuides> reconstructionGuides(UINT width, UINT height) noexcept;
@@ -106,7 +106,7 @@ ID3D11Texture2D* reflectionDistance(UINT width, UINT height) noexcept;
 // where the sun reaches the water. Null while off.
 ID3D11ShaderResourceView* forwardShadow(UINT width, UINT height) noexcept;
 ID3D11UnorderedAccessView* reflectionDistanceAccess(UINT width, UINT height) noexcept;
-// On the immediate context, once the game drew this frame's glass and mirrors (glass.hpp): their reflections, on the scene the
+// On the immediate context, once the game drew this frame's glass and mirrors (forward_surfaces.hpp): their reflections, on the scene the
 // kick built, waited for before anything after runs. False when the kick traced no reflections.
 bool traceSurfaces() noexcept;
 // The point and spot lights' light the last kick path traced (direct_light.hlsl), at the render size,
