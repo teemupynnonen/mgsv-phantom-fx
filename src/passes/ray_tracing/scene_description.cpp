@@ -33,6 +33,58 @@ constexpr std::uint64_t MaterialIndexParameter = 0xCAB8E38487FF, SelfColorParame
 // "fox3DFW_ParallaxReflection", as "HeightScale" is not its alone. Its Base_Tex_SRGB is a painted picture of the room, its mask
 // is on the second texture coordinates, which the scene does not keep, and it has no row of the material table.
 constexpr std::uint64_t GlassColorParameter = 0xBE61C83A81D, GlassMaskParameter = 0x679A3387A4DF, MirrorTechnique = 0x2EB4D1D33DF8;
+// A mesh's layer, which its G-buffer shader lays over the base texture (fox3ddf_cloth*, fox3ddf_blin_*layer* and more, 52
+// shaders): "Layer_Tex_SRGB", "LayerMask_Tex_LIN", and the layer's coordinates, (second coordinates + shift) x repeat, by
+// "URepeat_UV", "VRepeat_UV", "UShift_UV" and "VShift_UV". It can be all of a mesh's colour: the base of Kaz's beige coat is white.
+constexpr std::uint64_t LayerTextureParameter = 0xFB6E9826DBE6, LayerMaskTextureParameter = 0xD5C6F91A8B72;
+constexpr std::uint64_t URepeatParameter = 0xE544FE2CA129, VRepeatParameter = 0xE7C7FA3697B2, UShiftParameter = 0x7B8B5E0E16EB, VShiftParameter = 0x38DA962E408E;
+// How a technique's pixel shader reads a mesh's layer: how it lies, the vertices' coordinates its mask lies on (TEXCOORD0, the
+// base texture's, to TEXCOORD3) and whether its mask is in the blue channel, not the red.
+struct LayerTechnique
+{
+    std::uint64_t hash{};
+    LayerBlend blend{};
+    std::uint8_t maskUvSet{};
+    bool isMaskInBlue{};
+};
+
+// The techniques known to use their layer, as no parameter tells: 59 F10 records, each mesh's technique by its pixel shader in
+// the frame's G-buffer draws, each row from that shader's disassembly, 2026-11-01. A material can name a layer its technique may
+// not read (a white base under a black layer, technique 0xC0CE81F00048, in no record): any other technique keeps its base texture.
+constexpr LayerTechnique LayerTechniques[]{
+    {0xE2C9B71532D1, LayerBlend::Multiply},                  // fox3ddf_cloth_dirty
+    {0x1B8D4DA0667B, LayerBlend::Multiply},                  // fox3ddf_cloth
+    {0x276F029CDBA2, LayerBlend::Multiply},                  // fox3ddf_cloth_nc
+    {0x339701C2A10D, LayerBlend::Multiply},                  // fox3ddf_skin_layer_dirty_nu, no mask
+    {0xD41DF652A584, LayerBlend::Multiply},                  // fox3ddf_blin_layer_mul_dirty
+    {0xD5F0795801BA, LayerBlend::Multiply},                  // fox3ddf_blin_layer_mul
+    {0x74891B27D58C, LayerBlend::Multiply},                  // fox3ddf_blin_ic_lym_sbn_dirty
+    {0x16C65FA108DD, LayerBlend::Multiply},                  // fox3ddf_blin_ic_lym_3mt_dirty
+    {0x7E8ECE300722, LayerBlend::Multiply},                  // fox3ddf_blin_ic_lym_4mt_dirty_vr
+    {0x88C852A00C01, LayerBlend::Multiply},                  // fox3ddf_blin_lym_subnm_nu
+    {0xA83595F3456F, LayerBlend::Multiply},                  // fox3ddf_blin_lym_subnm_dirty
+    {0xC71F96A72DD9, LayerBlend::Multiply},                  // fox3ddf_blin_2mt_layerm
+    {0xB17EB6AEFBB4, LayerBlend::Multiply},                  // fox3ddf_blin_3mt_layerm
+    {0x8DF300329F91, LayerBlend::Multiply},                  // fox3ddf_blin_4mt_layerm
+    {0xE910A72719EF, LayerBlend::Multiply},                  // tpp3ddf_blin_lym_rustdirty
+    {0xAA02EC2A2C1D, LayerBlend::Multiply, 0, true},         // fox3ddf_blin_ly_mul_2subnorm
+    {0x3FBC9A12FB36, LayerBlend::BlendEncoded, 2},           // fox3ddf_blin_layer_sbl_mu
+    {0xD1B559F90CB6, LayerBlend::BlendEncoded, 2},           // fox3ddf_blin_layer_sbl_mu
+    {0x9BF9366EE4C1, LayerBlend::BlendEncoded, 2},           // fox3ddf_blin_layersb_subnm_mu
+    {0xCDDF56CB51E3, LayerBlend::BlendEncoded, 2, true},     // fox3ddf_blin_ly_sbl_2snm_nu
+    {0xEF52ACD48A68, LayerBlend::BlendEncoded, 2, true},     // fox3ddf_blin_ly_sbl_2snm_nu
+    {0xD8DE23B18660, LayerBlend::BlendEncoded, 1},           // fox3ddf_blin_layersb_snm_nlmu
+    {0xCB4EF239308D, LayerBlend::BlendLinear},               // fox3ddf_blin_3mt_layerb
+    {0x203D1676BC8E, LayerBlend::BlendLinear},               // fox3ddf_blin_ic_lyb_4mt_dirty
+    {0x54214F48645B, LayerBlend::BlendLinear},               // fox3ddf_blin_layer_bl
+    {0xE7C991D84F41, LayerBlend::BlendLinear},               // fox3ddf_blin_layer_bl
+    {0x975741EC6B0A, LayerBlend::BlendLinear, 0, true},      // fox3ddf_blin_layer_bl_2snm
+    {0xE14611544E45, LayerBlend::BlendLinear, 2},            // fox3ddf_blin_layer_bl_mu
+    {0x4E818B32A91D, LayerBlend::BlendLinear, 2},            // fox3ddf_blin_layerb_subnm_mu
+    {0xC887CFC09D78, LayerBlend::BlendLinear, 2},            // fox3ddf_blin_layerb_subnm_mu
+    {0x7B049948758F, LayerBlend::BlendLinear, 2, true},      // fox3ddf_blin_layer_bl_2snm_nu
+    {0xECC9C23CA8E4, LayerBlend::BlendLinear, 3},            // fox3ddf_blin_layer_bl_mu_nu
+};
 // Its alpha bits' additive blend: a glow card around a lamp (four vertices), no surface.
 constexpr std::uint8_t AdditiveAlpha = 0x01;
 // A self colour times intensity below this lights nothing: the sky's dome and the moon have 1, a mesh painted black
@@ -97,6 +149,13 @@ std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isC
     }
 
     return isMainViewOnly ? MeshRole::MainViewOnly : MeshRole::Solid;
+}
+
+// How a technique reads its layer, none where it is not known to read one.
+std::optional<LayerTechnique> layerTechniqueOf(std::uint64_t technique)
+{
+    const auto found = std::ranges::find(LayerTechniques, technique, &LayerTechnique::hash);
+    return found != std::ranges::end(LayerTechniques) ? std::optional{*found} : std::nullopt;
 }
 
 std::uint32_t flagsOf(MeshRole role)
@@ -199,6 +258,12 @@ struct Stream
     std::uint32_t stride{};
     std::uint8_t dataType{};
 };
+
+// Vertex format usages and data types.
+constexpr std::uint8_t Position = 0, BoneWeights = 1, Normal = 2, BoneNumbers = 7, Uv0 = 8, Tangent = 14, ThreeFloats = 1, FourHalves = 6, TwoHalves = 7,
+                       FourUnorms = 8, FourBytes = 9;
+// A mesh's sets of texture coordinates, by TEXCOORD: usages Uv0 and on.
+using UvSets = std::array<std::optional<Stream>, 4>;
 
 // Each mesh's group (block 2, 32 bytes: the group at +4, the count of its meshes at +6, the first at +8).
 std::optional<std::vector<std::uint32_t>> meshGroupsOf(const FileReader& file, const FileLayout& layout)
@@ -342,6 +407,44 @@ bool readSkin(const FileReader& file, const Block& boneGroups, std::uint64_t mes
 
     return true;
 }
+
+bool readUvs(const FileReader& file, const Stream& stream, std::uint32_t vertices, std::vector<std::uint32_t>& uvs)
+{
+    uvs.resize(vertices);
+    for (std::uint32_t v = 0; v < vertices; ++v)
+        if (!file.at(stream.at + std::uint64_t{v} * stream.stride, uvs[v])) return false;
+
+    return true;
+}
+
+// A mesh's layer (ModelPart::layer): none unless it names one, its technique is known to read it and its vertices have the
+// coordinates that takes, as two halves each.
+bool readLayer(const FileReader& file, const FileLayout& layout, std::uint16_t materialInstance, std::uint64_t technique, const UvSets& uvSets,
+    std::uint32_t vertices, ModelPart& part)
+{
+    const auto known = layerTechniqueOf(technique);
+    if (!known) return true;
+
+    const auto texture = textureOf(file, layout, materialInstance, LayerTextureParameter);
+    const auto maskTexture = textureOf(file, layout, materialInstance, LayerMaskTextureParameter);
+    const auto hasUvs = [&](std::uint8_t set) { return uvSets[set] && uvSets[set]->dataType == TwoHalves; };
+    if (!texture || !hasUvs(0) || !hasUvs(1) || (maskTexture && !hasUvs(known->maskUvSet))) return true;
+
+    const auto scalarOf = [&](std::uint64_t parameter, float otherwise) {
+        const auto vector = vectorOf(file, layout, materialInstance, parameter);
+        return vector ? (*vector)[0] : otherwise;
+    };
+
+    auto& layer = part.layer.emplace();
+    layer.texture = texture;
+    layer.maskTexture = maskTexture;
+    layer.mapping = {scalarOf(URepeatParameter, 1), scalarOf(VRepeatParameter, 1), scalarOf(UShiftParameter, 0), scalarOf(VShiftParameter, 0)};
+    layer.blend = known->blend;
+    layer.isMaskInBlue = known->isMaskInBlue;
+    if (maskTexture && known->maskUvSet && !readUvs(file, *uvSets[known->maskUvSet], vertices, layer.maskUvs)) return false;
+
+    return readUvs(file, *uvSets[1], vertices, layer.uvs);
+}
 }
 
 ModelFile fileKindOf(std::span<const std::uint8_t> file)
@@ -363,9 +466,6 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
 
     const auto& b = layout->blocks;
     constexpr int Bones = 0, Meshes = 3, BoneGroups = 5, Assignments = 9, MeshFormats = 10, VertexFormats = 11, BufferOffsets = 14, FaceInfos = 17;
-    // Vertex format usages and data types.
-    constexpr std::uint8_t Position = 0, BoneWeights = 1, Normal = 2, BoneNumbers = 7, Uv0 = 8, Tangent = 14, ThreeFloats = 1, FourHalves = 6, TwoHalves = 7,
-                           FourUnorms = 8, FourBytes = 9;
     if (!b[BufferOffsets].count) return nullptr;
 
     std::uint32_t facesOffset{};
@@ -422,7 +522,8 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
             || !file.at(assignmentAt + 6, firstVertexFormat))
             return nullptr;
 
-        std::optional<Stream> positions, uvs, weights, numbers, normals, tangents;
+        std::optional<Stream> positions, weights, numbers, normals, tangents;
+        UvSets uvSets;
         std::uint32_t vertexFormat = firstVertexFormat;
         for (std::uint32_t i = firstMeshFormat; i < std::uint32_t{firstMeshFormat} + meshFormatCount && i < b[MeshFormats].count; ++i)
         {
@@ -441,7 +542,7 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
 
                 const Stream stream{layout->bufferData + buffer + offset + element, stride, dataType};
                 if (usage == Position && !positions) positions = stream;
-                if (usage == Uv0 && !uvs) uvs = stream;
+                if (usage >= Uv0 && usage < Uv0 + uvSets.size() && !uvSets[usage - Uv0]) uvSets[usage - Uv0] = stream;
                 if (usage == BoneWeights && !weights) weights = stream;
                 if (usage == BoneNumbers && !numbers) numbers = stream;
                 if (usage == Normal && !normals) normals = stream;
@@ -477,8 +578,11 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
             part.materialIndex = static_cast<std::uint32_t>(std::clamp((*index)[0], 0.0f, 255.0f));
         part.emission = emission;
 
+        const auto& uvs = uvSets[0];
         const bool textured = uvs && uvs->dataType == TwoHalves;
         const bool hasNormals = normals && tangents && normals->dataType == FourHalves && tangents->dataType == FourHalves;
+        if (!isGlass && !isMirror && !readLayer(file, *layout, materialInstance, technique, uvSets, vertexCount, part)) return nullptr;
+
         part.vertices.resize(vertexCount);
         if (textured) part.uvs.resize(vertexCount);
         if (hasNormals) part.normals.resize(vertexCount);
@@ -520,6 +624,12 @@ bool isCutOut(MeshRole role)
     return role == MeshRole::CutOut || role == MeshRole::Leaf || role == MeshRole::Hair;
 }
 
+std::array<std::uint64_t, 5> texturePathsOf(const ModelPart& part)
+{
+    const auto layer = part.layer ? part.layer->texture : 0, layerMask = part.layer ? part.layer->maskTexture : 0;
+    return {part.baseTexture, part.specularTexture, part.normalTexture, layer, layerMask};
+}
+
 Material materialOf(const ModelPart& part, const MaterialTextures& textures)
 {
     Material material{.flags = flagsOf(part.role) | (part.uvs.empty() ? 0u : GI_GEOMETRY_UV), .materialIndex = part.materialIndex, .emission = part.emission};
@@ -536,6 +646,16 @@ Material materialOf(const ModelPart& part, const MaterialTextures& textures)
         material.flags |= GI_GEOMETRY_ALPHA_TEXTURE;
         material.alphaThreshold = CutOutThreshold;
     }
+
+    // Before its mask's copy comes a layer would lie on all of the mesh.
+    const auto& layer = part.layer;
+    if (!layer || !textures.layer || (layer->maskTexture && !textures.layerMask)) return material;
+
+    material.layerTexture = *textures.layer + 1;
+    if (textures.layerMask) material.layerMaskTexture = *textures.layerMask + 1;
+    if (layer->blend != LayerBlend::Multiply) material.flags |= GI_GEOMETRY_LAYER_BLEND;
+    if (layer->blend == LayerBlend::BlendLinear) material.flags |= GI_GEOMETRY_LAYER_LINEAR;
+    if (layer->isMaskInBlue) material.flags |= GI_GEOMETRY_LAYER_MASK_BLUE;
 
     return material;
 }

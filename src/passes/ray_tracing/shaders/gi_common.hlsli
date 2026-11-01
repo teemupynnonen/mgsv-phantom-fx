@@ -427,16 +427,39 @@ float3 TrianglePoint(SceneTriangle t, float2 barycentrics)
     return (1.0f - barycentrics.x - barycentrics.y) * t.v0 + barycentrics.x * t.v1 + barycentrics.y * t.v2;
 }
 
+// Texture coordinates in the pool at `offset`: two halves.
+float2 PoolUV(uint offset)
+{
+    uint packed = g_GeometryPool.Load(offset);
+    return f16tof32(uint2(packed, packed >> 16));
+}
+
 float2 VertexUV(GIGeometry geometry, uint index)
 {
-    uint packed = g_GeometryPool.Load(geometry.vertexOffset + 16 * index + 12);
-    return f16tof32(uint2(packed, packed >> 16));
+    return PoolUV(geometry.vertexOffset + 16 * index + 12);
+}
+
+// A vertex's coordinates on its mesh's layer (GIGeometry::layerMapping).
+float2 VertexLayerUV(GIGeometry geometry, uint index)
+{
+    return (PoolUV(geometry.layerUvOffset + 4 * index) + geometry.layerMapping.zw) * geometry.layerMapping.xy;
+}
+
+// A vertex's coordinates on its mesh's layer's mask: the first coordinates, or its own.
+float2 VertexLayerMaskUV(GIGeometry geometry, uint index)
+{
+    return geometry.layerMaskUvOffset ? PoolUV(geometry.layerMaskUvOffset + 4 * index) : VertexUV(geometry, index);
+}
+
+// The coordinates at DXR's barycentrics, from those at a triangle's corners.
+float2 InterpolatedUV(float2 uv0, float2 uv1, float2 uv2, float2 barycentrics)
+{
+    return (1.0f - barycentrics.x - barycentrics.y) * uv0 + barycentrics.x * uv1 + barycentrics.y * uv2;
 }
 
 float2 TriangleUV(GIGeometry geometry, uint3 indices, float2 barycentrics)
 {
-    return (1.0f - barycentrics.x - barycentrics.y) * VertexUV(geometry, indices.x) + barycentrics.x * VertexUV(geometry, indices.y)
-        + barycentrics.y * VertexUV(geometry, indices.z);
+    return InterpolatedUV(VertexUV(geometry, indices.x), VertexUV(geometry, indices.y), VertexUV(geometry, indices.z), barycentrics);
 }
 
 // The level of detail at which a ray cone `footprint` metres across meets a triangle (Akenine-Moller

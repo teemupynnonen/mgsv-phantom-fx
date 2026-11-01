@@ -48,10 +48,12 @@ template<class Record> auto findVariant(Record& record, std::uint64_t hiddenGrou
 
 // A mesh's bytes in the pool, in this order and each from a 16-byte boundary: its vertices (16 bytes:
 // the position, then the texture coordinates), its indices, a skinned model's skin (GISkinRecord:
-// 16 bytes a vertex), and its vertices' normals and tangents (GIGeometry::normalOffset: 16 bytes a vertex).
+// 16 bytes a vertex), its vertices' normals and tangents (GIGeometry::normalOffset: 16 bytes a vertex) and
+// a layered mesh's second texture coordinates then any of its mask's (GIGeometry::layerUvOffset, layerMaskUvOffset:
+// 4 bytes a vertex each).
 struct PoolLayout
 {
-    std::uint64_t vertices{}, indices{}, skin{}, normals{};
+    std::uint64_t vertices{}, indices{}, skin{}, normals{}, layerUvs{};
 };
 
 // A self-lit mesh's diffuse light reaches as far as it gives this much, in the game's light units: a ten-thousandth of
@@ -68,7 +70,9 @@ std::uint64_t aligned(std::uint64_t value, std::uint64_t alignment)
 
 PoolLayout poolLayoutOf(const Model& model, const ModelPart& part)
 {
-    return {part.vertices.size() * 16, aligned(part.indices.size() * 2, 16), model.bones ? part.vertices.size() * 16 : 0, part.normals.size() * 16};
+    const auto layerUvs = part.layer ? part.layer->uvs.size() + part.layer->maskUvs.size() : 0;
+    return {part.vertices.size() * 16, aligned(part.indices.size() * 2, 16), model.bones ? part.vertices.size() * 16 : 0, part.normals.size() * 16,
+        aligned(layerUvs * 4, 16)};
 }
 
 // The bytes of a model's meshes in the pool.
@@ -78,7 +82,7 @@ std::uint64_t modelBytes(const Model& model)
     for (std::size_t i = 0; i < model.parts.size() && i < MaxModelParts; ++i)
     {
         const auto layout = poolLayoutOf(model, model.parts[i]);
-        bytes += layout.vertices + layout.indices + layout.skin + layout.normals;
+        bytes += layout.vertices + layout.indices + layout.skin + layout.normals + layout.layerUvs;
     }
 
     return bytes;
@@ -139,7 +143,8 @@ scene_description::Material SceneContents::materialOf(const ModelPart& part) con
         return texture != textures.end() ? texture->second.slot : std::nullopt;
     };
 
-    return scene_description::materialOf(part, {slotOf(part.baseTexture), slotOf(part.specularTexture), slotOf(part.normalTexture)});
+    const auto [base, specular, normal, layer, layerMask] = texturePathsOf(part);
+    return scene_description::materialOf(part, {slotOf(base), slotOf(specular), slotOf(normal), slotOf(layer), slotOf(layerMask)});
 }
 
 // The model's meshes laid out from `poolOffset` into `bytes`, and their geometries; a skinned model's
@@ -155,14 +160,7 @@ std::vector<Geometry> SceneContents::stageModel(const Model& model, std::uint64_
     {
         const auto& part = model.parts[i];
         const auto layout = poolLayoutOf(model, part);
-        const auto material = materialOf(part);
-        Geometry geometry{.flags = material.flags,
-            .texture = material.texture,
-            .alphaThreshold = material.alphaThreshold,
-            .specularTexture = material.specularTexture,
-            .normalTexture = material.normalTexture,
-            .materialIndex = material.materialIndex,
-            .emission = material.emission};
+        Geometry geometry{.material = materialOf(part)};
         geometry.vertexOffset = poolOffset + at;
         geometry.vertexCount = static_cast<std::uint32_t>(part.vertices.size());
         for (std::size_t v = 0; v < part.vertices.size(); ++v)
@@ -178,11 +176,26 @@ std::vector<Geometry> SceneContents::stageModel(const Model& model, std::uint64_
         std::memcpy(bytes.data() + at, part.indices.data(), part.indices.size() * 2);
         at += layout.indices;
         if (!part.normals.empty()) geometry.normalOffset = poolOffset + at + layout.skin;
+
+        if (part.layer)
+        {
+            const auto& layer = *part.layer;
+            const auto uvsAt = at + layout.skin + layout.normals, maskUvsAt = uvsAt + layer.uvs.size() * 4;
+            geometry.layerMapping = layer.mapping;
+            geometry.layerUvOffset = poolOffset + uvsAt;
+            std::memcpy(bytes.data() + uvsAt, layer.uvs.data(), layer.uvs.size() * 4);
+            if (!layer.maskUvs.empty())
+            {
+                geometry.layerMaskUvOffset = poolOffset + maskUvsAt;
+                std::memcpy(bytes.data() + maskUvsAt, layer.maskUvs.data(), layer.maskUvs.size() * 4);
+            }
+        }
+
         geometries.push_back(geometry);
         if (!model.bones)
         {
             if (!part.normals.empty()) std::memcpy(bytes.data() + at, part.normals.data(), layout.normals);
-            at += layout.normals;
+            at += layout.normals + layout.layerUvs;
             continue;
         }
 
@@ -197,7 +210,7 @@ std::vector<Geometry> SceneContents::stageModel(const Model& model, std::uint64_
 
         at += layout.skin;
         if (!part.normals.empty()) std::memcpy(bytes.data() + at, part.normals.data(), layout.normals);
-        at += layout.normals;
+        at += layout.normals + layout.layerUvs;
     }
 
     return geometries;
@@ -234,7 +247,8 @@ void SceneContents::updateTextures(const GameScene& frame)
             const auto& parts = modelRecord.geometry->parts;
             for (std::uint32_t i = 0; i < parts.size() && i < MaxModelParts; ++i)
             {
-                if (parts[i].baseTexture != made.path && parts[i].specularTexture != made.path && parts[i].normalTexture != made.path) continue;
+                const auto paths = texturePathsOf(parts[i]);
+                if (std::ranges::find(paths, made.path) == paths.end()) continue;
 
                 const auto material = materialOf(parts[i]);
                 if (modelRecord.blas) memory.setMaterial(*modelRecord.blas, i, material);
@@ -242,11 +256,7 @@ void SceneContents::updateTextures(const GameScene& frame)
 
                 // Its variants' structures, and a skinned model's characters' structures, that have it among
                 // the meshes they show.
-                modelRecord.parts[i].flags = material.flags;
-                modelRecord.parts[i].texture = material.texture;
-                modelRecord.parts[i].alphaThreshold = material.alphaThreshold;
-                modelRecord.parts[i].specularTexture = material.specularTexture;
-                modelRecord.parts[i].normalTexture = material.normalTexture;
+                modelRecord.parts[i].material = material;
                 for (const auto& variant : modelRecord.variants)
                 {
                     const auto shown = std::find(variant.parts.begin(), variant.parts.end(), i);
@@ -270,7 +280,7 @@ void SceneContents::updateTextures(const GameScene& frame)
 void SceneContents::useTextures(const Model& model, bool isUsed, Update& update)
 {
     for (const auto& part : model.parts)
-        for (const auto path : {part.baseTexture, part.specularTexture, part.normalTexture})
+        for (const auto path : texturePathsOf(part))
         {
             if (!path) continue;
 
@@ -665,7 +675,7 @@ void SceneContents::addEmitters(const ModelRecord& record, const ModelInstance& 
 
         const auto& [x, y, z] = emitter.centre;
         const std::array centre{t[0] * x + t[1] * y + t[2] * z + t[3], t[4] * x + t[5] * y + t[6] * z + t[7], t[8] * x + t[9] * y + t[10] * z + t[11]};
-        const auto& emission = record.parts[emitter.part].emission;
+        const auto& emission = record.parts[emitter.part].material.emission;
         const float spread = emitter.area * scale * scale / std::numbers::pi_v<float>;
         const float strongest = std::max({emission[0], emission[1], emission[2]}) * spread;
         const float reach = std::sqrt(strongest / LeastEmitterLight) + emitter.radius * scale;
