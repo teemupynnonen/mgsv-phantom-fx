@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Path tracing is faster where many lights burn.** Each pixel and each ray's hit now looks only at the lights that can
+  reach it, not at every light in the frame. At Mother Base at night that saves 4.4 ms of a 32 ms frame, about 31 to 36 fps,
+  and the picture stays the same.
+- **Rivers and liquids take the rays' reflections, and a river's bed takes the caustics.** Under path tracing the water
+  reflects what is around it, from where it is now and not where it was a frame ago, with the game's own ripples and the
+  rain's rings on it. It fades at the shore and behind the fog as the water itself does. It no longer takes the shadow map's
+  shadow where the rays replaced it on the ground: the bed's shadow stays in the light under it. **Caustics** put the
+  sunlight the waves focus on the bed, strongest just under the surface, fading with the depth, gone where the water meets
+  the shore or anything standing in it, in the shade, and as the sun leaves. They need no ray tracing.
+  **Atmosphere > Water caustics** has the switch and the **Intensity**.
 - **Indirect lighting (VB-SSGI) tests what blocks each gather tap**: the distance prefilter runs for it
   (apart from GTVBAO's copy), and every tap ray-marches the prefiltered depth, so occluders stop the
   bounced light instead of bleeding through. New **Visibility** setting: ray-march steps per tap
@@ -40,6 +50,10 @@
 - **Glass and mirrors reflect.** With path tracing, windows, vehicle glass, glasses, visors and mirrors show what is
   really around them, at the strength the game gives each, in place of its small cube maps and the mirrors' painted
   pictures. The rays see them too: light comes through, and they show in reflections.
+- **Rays see clothes and other layered materials in their real colours.** Many of the game's materials get their colour
+  from a second texture, and rays only read the first: Kaz's beige coat was white in a window's reflection, and the
+  light bouncing off such surfaces took the wrong colour. Reflections and the global illumination now see them as the
+  camera does.
 - **DLSS Ray Reconstruction.** A new **Ray Reconstruction** switch under the upscaler, for NVIDIA RTX GPUs,
   shown while a ray-traced effect is on: NVIDIA's model cleans up the ray-traced global illumination,
   shadows and lights and upscales in one step, in place of DLSS and the add-on's own denoisers, with a

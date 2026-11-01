@@ -367,8 +367,8 @@ groupshared float3 g_ProbeReceiver, g_ProbeNormal;
 groupshared uint g_ProbeValid;
 groupshared uint4 g_ProbeLightHits[GI_PROBE_LIGHT_RAYS];
 
-// The probe, one group: the centre pixel's sun ray, then its global illumination rays. Needs this
-// frame's shadow passes done.
+// The probe, one group: its pixel's sun ray (the screen's centre, or the one a debug case asks for), then
+// its global illumination rays. Needs this frame's shadow passes done.
 [numthreads(64, 1, 1)]
 void ProbeShadows(uint index : SV_GroupIndex)
 {
@@ -378,7 +378,7 @@ void ProbeShadows(uint index : SV_GroupIndex)
 
         GIShadowProbe probe = (GIShadowProbe)0;
         probe.terrain.w = float(g_Frame.dimensions.z);
-        uint2 centre = g_Frame.dimensions.xy / 2;
+        uint2 centre = g_Frame.shadowDiagnostics.zw;
         float depth = g_Depth.Load(int3(centre, 0));
         probe.receiver.w = depth;
         if (depth > 0.0f)

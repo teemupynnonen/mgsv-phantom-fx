@@ -63,7 +63,7 @@ struct Textures
     // R16G16B16A16_FLOAT), and the sky from every side (sky_capture.hpp), null until captured.
     ID3D11Texture2D* materialSpecular{};
     ID3D11Texture2D* skyCube{};
-    // And glass and mirrors (glass.hpp), which traceSurfaces traces: the nearest one's depth (R32_FLOAT) and normal with its
+    // And glass and mirrors (forward_surfaces.hpp), which traceSurfaces traces: the nearest one's depth (R32_FLOAT) and normal with its
     // roughness (R16G16B16A16_FLOAT) at each pixel, what it reflects (R16G16B16A16_FLOAT); null while off.
     ID3D11Texture2D* surfaceDepth{};
     ID3D11Texture2D* surfaceNormal{};
@@ -137,6 +137,8 @@ struct Frame
     std::vector<LocalLight> localLights;
     std::uint32_t localLightRays{1};
     bool probeLights{}; // Diagnostics: the lamp probe at the screen's centre (lamp_shadow_rays::probe), sun or none
+    // Diagnostics: the pixel the probes read in place of the screen's centre.
+    std::optional<std::array<std::uint32_t, 2>> probePixel;
     std::uint64_t waitValue{}, signalValue{}; // On the shared fence
 };
 
@@ -163,6 +165,8 @@ bool traceSurfaces(std::uint64_t waitValue, std::uint64_t signalValue);
 
 // For the overlay: instances, triangles and memory in use.
 std::string status();
+// Diagnostics: what the scene has yet to make.
+std::uint32_t waitingWork();
 // For the overlay: the latest shadow probe as text, a few frames old; empty while the debug view is
 // off. Logged by itself whenever what blocks the probe's sun ray changes.
 std::string shadowProbe();

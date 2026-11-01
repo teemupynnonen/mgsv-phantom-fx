@@ -25,7 +25,7 @@ namespace phantom_fx::upscaler::shaders
 // clamped into it keeps full precision where a character does not move.
 //
 // With DLSS Ray Reconstruction, the depth of glass that dominates a pixel takes the place of the scene's, and its motion
-// with it: most glass draws no depth, so its cracks and dirt would move as what is behind them (glass::guideReconstruction).
+// with it: most glass draws no depth, so its cracks and dirt would move as what is behind them (forward_surfaces::guideReconstruction).
 //
 // With DLSS Ray Reconstruction on a frame the game's depth of field drew, also its depth of field guide:
 // how much the depth of field changed each pixel's light, luminance(after - before) by NVIDIA's luminance

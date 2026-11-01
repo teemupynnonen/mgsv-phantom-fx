@@ -4,6 +4,8 @@
 #include "command_list_notes.hpp"
 #include "constant_capture.hpp"
 #include "d3d11_helpers.hpp"
+#include "dev/perf_record.hpp"
+#include "dev_tools.hpp"
 #include "features/path_tracing/path_tracing.hpp"
 #include "features/ray_traced_lights/lamp_shadow_rays.hpp"
 #include "frame_log.hpp"
@@ -1005,6 +1007,7 @@ std::vector<TracedLight> takeForTrace(const SceneConstants& camera) noexcept
             const auto choice = light_choice::choose(drawn, camera);
             otherFrame += choice.otherFrame;
             overCap += choice.overCap;
+            if constexpr (DevTools) perf_record::onLights(choice.taken.size(), choice.overCap);
             for (const auto index : choice.taken)
             {
                 auto& light = *untraced[index];

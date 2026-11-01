@@ -15,6 +15,14 @@ struct Controls
     bool forward{}, back{}, left{}, right{}, up{}, down{}, fast{};
 };
 
+// A camera in world space: yaw 0 looks along +z, turning towards +x; the pitch is positive upwards.
+// Radians; roll is not kept.
+struct Pose
+{
+    float position[3]{};
+    float yaw{}, pitch{};
+};
+
 // Hooks the camera selector and the game's raw input on the supported build, with MinHook
 // initialised; returns what was done, for the log. Without the hooks photo mode is unavailable;
 // hiding the UI does not need them.

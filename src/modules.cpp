@@ -8,7 +8,8 @@
 #include "features/lamp_soft_shadows/lamp_soft_shadows.hpp"
 #include "features/depth_of_field/depth_of_field.hpp"
 #include "features/motion_blur/motion_blur.hpp"
-#include "features/path_tracing/glass.hpp"
+#include "features/path_tracing/forward_surfaces.hpp"
+#include "features/path_tracing/water.hpp"
 #include "features/path_tracing/path_tracing.hpp"
 #include "features/path_tracing/sky_capture.hpp"
 #include "features/photo_mode/focus.hpp"
@@ -17,12 +18,14 @@
 #include "features/sea/sea.hpp"
 #include "features/sun_contact_shadows/sun_contact_shadows.hpp"
 #include "features/volumetric_fog/atmosphere.hpp"
+#include "features/water_caustics/water_caustics.hpp"
 #include "passes/contact_shadow_trace.hpp"
 #include "passes/indirect_light_pass.hpp"
 #include "passes/local_light_pass.hpp"
 #include "passes/ray_tracing/ray_tracing.hpp"
 #include "passes/sun_light_pass.hpp"
 #include "passes/visibility_bitmask.hpp"
+#include "remaster/remaster.hpp"
 
 namespace phantom_fx::modules
 {
@@ -59,7 +62,8 @@ constexpr Module Modules[]{
     {.attach = withDevice<ssgi::attach>, .configure = ssgi::configure, .present = ssgi::present, .detach = ssgi::detach},
     {.attach = withDevice<light_combine::attach>, .configure = light_combine::configure, .present = light_combine::present, .detach = light_combine::detach},
     {.attach = withDevice<path_tracing::attach>, .configure = path_tracing::configure, .present = path_tracing::present, .detach = path_tracing::detach},
-    {.attach = withDevice<glass::attach>, .present = glass::present, .detach = glass::detach},
+    {.attach = withDevice<forward_surfaces::attach>, .present = forward_surfaces::present, .detach = forward_surfaces::detach},
+    {.attach = withDevice<water::attach>, .detach = water::detach},
     {.attach = withDevice<sky_capture::attach>, .present = sky_capture::present, .detach = sky_capture::detach},
     {.attach = withDevice<visibility_bitmask::attach>, .configure = visibility_bitmask::configure, .detach = visibility_bitmask::detach},
 
@@ -67,12 +71,14 @@ constexpr Module Modules[]{
     {.attach = local_lights::attach, .configure = local_lights::configure, .present = local_lights::present, .detach = local_lights::detach},
     {.attach = atmosphere::attach, .configure = atmosphere::configure, .present = atmosphere::present, .detach = atmosphere::detach},
     {.attach = sea::attach, .configure = sea::configure, .present = sea::present, .detach = sea::detach},
+    {.attach = withDevice<water_caustics::attach>, .configure = water_caustics::configure, .present = water_caustics::present, .detach = water_caustics::detach},
 
     {.attach = withDevice<depth_of_field::attach>, .configure = depth_of_field::configure, .present = depth_of_field::present, .detach = depth_of_field::detach},
     {.configure = motion_blur::configure},
     {.configure = frame_rate::configure},
     {.configure = photo_mode::configure},
     {.detach = focus::detach},
+    {.configure = remaster::configure},
 };
 }
 

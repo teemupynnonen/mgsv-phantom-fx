@@ -1,5 +1,7 @@
 #include "phantom_fx_settings.hpp"
 
+#include "dev_tools.hpp"
+
 #include <Windows.h>
 #include <algorithm>
 #include <charconv>
@@ -8,6 +10,7 @@
 #include <locale>
 #include <map>
 #include <ostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -292,7 +295,7 @@ EffectPlan planEffects(const Settings& settings, const EffectConditions& conditi
 }
 
 Configuration::Configuration(const Settings& settings, const Diagnostics& diagnostics, const EffectConditions& conditions)
-    : settings(settings), diagnostics(diagnostics), leftOut(conditions.leftOut), supportedBuild(conditions.supportedBuild),
+    : settings(settings), diagnostics(diagnostics), leftOut(conditions.leftOut), supportedBuild(conditions.supportedBuild), areEnhancementsOn(conditions.enhancements),
       effects(planEffects(settings, conditions))
 {
 }
@@ -325,6 +328,27 @@ Settings loadSettings(const std::filesystem::path& path)
 
     return settings;
 }
+
+#if PHANTOM_FX_DEV_TOOLS
+Settings withLine(Settings settings, std::string_view key, std::string_view value)
+{
+    IniValues values;
+    values.insert_or_assign(std::string(trim(key)), std::string(trim(value)));
+    IniReader reader(values);
+    describe(settings, reader);
+
+    return settings;
+}
+
+std::string iniText(const Settings& settings)
+{
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    writeDescribed(output, settings);
+
+    return output.str();
+}
+#endif
 
 void saveSettings(const std::filesystem::path& path, const Settings& settings)
 {

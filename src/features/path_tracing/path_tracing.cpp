@@ -2,7 +2,7 @@
 #include "features/path_tracing/path_tracing.hpp"
 
 #include "d3d11_helpers.hpp"
-#include "features/path_tracing/glass.hpp"
+#include "features/path_tracing/forward_surfaces.hpp"
 #include "features/path_tracing/path_tracing_shaders.hpp"
 #include "frame_latch.hpp"
 #include "log.hpp"
@@ -284,7 +284,7 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         auto* reflection = ray_tracing::reflection(width, height);
         if (!surfaceDepth || !reflectionMap || !reflection) return false;
 
-        const auto surfaceWeights = glass::surfaceWeights(width, height);
+        const auto surfaceWeights = forward_surfaces::surfaceWeights(width, height);
 
         // Without the mask's depth, the rays take every surface.
         ComPtr<ID3D11ShaderResourceView> sceneDepth;

@@ -23,7 +23,7 @@ struct Textures
     ID3D12Resource* reflectionMap{};
     ID3D12Resource* lampDiffuse{};
     ID3D12Resource* lampSpecular{};
-    ID3D12Resource* surfaceDepth{}; // Glass and mirrors (glass.hpp); null while not traced
+    ID3D12Resource* surfaceDepth{}; // Glass and mirrors (forward_surfaces.hpp); null while not traced
     ID3D12Resource* surfaceNormal{};
     ID3D12Resource* surfaceReflection{};
 };

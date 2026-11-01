@@ -11,11 +11,12 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 // What Phantom FX's passes cost on the GPU, for the settings window (docs/DEVELOPMENT.md, "Costs").
-// While someone looks (the settings window open, the costs shown over the game, or a
-// measurement running), each pass ends a timestamp query before and after its work, in the context
+// While someone looks (the settings window open, the costs shown over the game, a measurement running,
+// or a dev build keeping them on file), each pass ends a timestamp query before and after its work, in the context
 // it records in. The game records a frame on its deferred contexts while the immediate context
 // executes the one before, so a deferred context's timestamps follow its command list and count for
 // the frame whose present follows the list's execution. They are read back a few frames later,
@@ -38,7 +39,7 @@ enum class Pass : std::size_t
     OcclusionPrefilter, OcclusionMarch, OcclusionDenoise, OcclusionApply,
     SsgiGather, SsgiAccumulate, SsgiFilter, SsgiResolve,
     FogPass, SkyTables, FogShadow, FogScattering, FogIntegration, Sky,
-    SeaWaves, SeaSurface,
+    SeaWaves, SeaSurface, WaterCaustics,
     GiInputs, GiProbeLight, GiCombine, GiWait, LocalLights, PathTracedLight,
 
     // On Direct3D 12
@@ -55,6 +56,13 @@ struct Costs
     float frame{};    // Between presents: the whole frame, as the frame rate shows it
     float gpuFrame{}; // The GPU's work on a frame, from its first command list to its present
     Milliseconds passes{}; // 0 where a pass did not run
+};
+
+// What a frame took on the GPU.
+struct FrameCost
+{
+    float gpuFrame{}; // 0 when no command list executed
+    Milliseconds passes{};
 };
 
 // The real cost of each effect: the GPU frame with everything on, then with the effects left out
@@ -115,6 +123,9 @@ void forget(std::uint64_t contextOrList) noexcept;
 // ---- The ray tracing's Direct3D 12 queue (gi_renderer.cpp) ----
 // A frame's passes there, once the GPU is past them; they count for the frame being timed now.
 void timedOnDirect3D12(const Milliseconds& passes) noexcept;
+// Milliseconds by phase, in the order the phases first ran. The names are literals.
+using PhaseTimes = std::vector<std::pair<const char*, double>>;
+void addPhase(PhaseTimes& phases, const char* name, double milliseconds);
 
 // ---- Immediate context ----
 // Before the immediate context executes `list`.
@@ -124,7 +135,7 @@ void present() noexcept;
 
 // ---- Overlay (performance_menu.cpp) ----
 Status status();
-// The costs are on screen: frames are timed for the next second.
+// The costs are on screen or kept on file: frames are timed for the next second.
 void watch() noexcept;
 void showOverlay(bool show) noexcept;
 // Starts measuring each effect's real cost, unless a measurement is running.

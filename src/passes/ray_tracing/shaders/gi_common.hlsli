@@ -427,16 +427,39 @@ float3 TrianglePoint(SceneTriangle t, float2 barycentrics)
     return (1.0f - barycentrics.x - barycentrics.y) * t.v0 + barycentrics.x * t.v1 + barycentrics.y * t.v2;
 }
 
+// Texture coordinates in the pool at `offset`: two halves.
+float2 PoolUV(uint offset)
+{
+    uint packed = g_GeometryPool.Load(offset);
+    return f16tof32(uint2(packed, packed >> 16));
+}
+
 float2 VertexUV(GIGeometry geometry, uint index)
 {
-    uint packed = g_GeometryPool.Load(geometry.vertexOffset + 16 * index + 12);
-    return f16tof32(uint2(packed, packed >> 16));
+    return PoolUV(geometry.vertexOffset + 16 * index + 12);
+}
+
+// A vertex's coordinates on its mesh's layer (GIGeometry::layerMapping).
+float2 VertexLayerUV(GIGeometry geometry, uint index)
+{
+    return (PoolUV(geometry.layerUvOffset + 4 * index) + geometry.layerMapping.zw) * geometry.layerMapping.xy;
+}
+
+// A vertex's coordinates on its mesh's layer's mask: the first coordinates, or its own.
+float2 VertexLayerMaskUV(GIGeometry geometry, uint index)
+{
+    return geometry.layerMaskUvOffset ? PoolUV(geometry.layerMaskUvOffset + 4 * index) : VertexUV(geometry, index);
+}
+
+// The coordinates at DXR's barycentrics, from those at a triangle's corners.
+float2 InterpolatedUV(float2 uv0, float2 uv1, float2 uv2, float2 barycentrics)
+{
+    return (1.0f - barycentrics.x - barycentrics.y) * uv0 + barycentrics.x * uv1 + barycentrics.y * uv2;
 }
 
 float2 TriangleUV(GIGeometry geometry, uint3 indices, float2 barycentrics)
 {
-    return (1.0f - barycentrics.x - barycentrics.y) * VertexUV(geometry, indices.x) + barycentrics.x * VertexUV(geometry, indices.y)
-        + barycentrics.y * VertexUV(geometry, indices.z);
+    return InterpolatedUV(VertexUV(geometry, indices.x), VertexUV(geometry, indices.y), VertexUV(geometry, indices.z), barycentrics);
 }
 
 // The level of detail at which a ray cone `footprint` metres across meets a triangle (Akenine-Moller
@@ -615,7 +638,7 @@ float3 LocalLightReaching(GILocalLight light, float3 world, out float3 toLight, 
     if (lightDistance >= light.position.w) return 0.0f;
 
     // The game lights only within the light's volume: a fill light's box keeps its 200 m of reach to its room.
-    const float margin = 0.02f;
+    const float margin = GI_LIGHT_VOLUME_MARGIN;
     if (light.volumeLow.w > 0.0f && (any(world < light.volumeLow.xyz - margin) || any(world > light.volumeHigh.xyz + margin))) return 0.0f;
 
     // A point's distance is at least its least, plus its added; a spot's is as it is.
@@ -630,6 +653,31 @@ float3 LocalLightReaching(GILocalLight light, float3 world, out float3 toLight, 
     if (light.axis.w >= -1.0f) cut = pow(saturate((dot(light.axis.xyz, -toLight) - light.axis.w) * light.shape.y), light.shape.z);
 
     return light.color.rgb * (falloff * cut);
+}
+
+// The frame's lights that can reach `world`, a bit each, in the order of g_Frame.localLights (light_bins.hpp).
+uint4 LightsNear(float3 world)
+{
+    int3 bin = int3(floor((world - g_Frame.lightBinsOrigin.xyz) / GI_LIGHT_BIN_SIZE));
+    bin = clamp(bin, int3(0, 0, 0), int3(GI_LIGHT_BINS_ACROSS, GI_LIGHT_BINS_HIGH, GI_LIGHT_BINS_ACROSS) - 1);
+
+    return g_Frame.lightBinsX[bin.x] & g_Frame.lightBinsY[bin.y] & g_Frame.lightBinsZ[bin.z];
+}
+
+// The first of `lights`, as LightsNear gives them, from the light `from` on; GI_MAX_LOCAL_LIGHTS past the last. A walk from 0
+// keeps the order of g_Frame.localLights.
+uint NextLight(uint4 lights, uint from)
+{
+    uint bitsFrom = ~0u << (from % 32u);
+    for (uint word = from / 32u; word < 4u; ++word)
+    {
+        uint bits = lights[word] & bitsFrom;
+        if (bits != 0u) return word * 32u + firstbitlow(bits);
+
+        bitsFrom = ~0u;
+    }
+
+    return GI_MAX_LOCAL_LIGHTS;
 }
 
 // Its diffuse light at a surface of `normal`.
