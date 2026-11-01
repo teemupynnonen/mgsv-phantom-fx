@@ -551,25 +551,27 @@ float3 SampledLocalLightReaching(float3 world, float3 normal, float3 origin, flo
     float total = 0.0f, chosenWeight = 0.0f;
     float3 chosenLight = 0.0f, chosenDirection = 0.0f;
     float chosenDistance = 0.0f, chosenClearance = 0.0f;
-    for (uint i = 0; i < g_Frame.localLightCount.x; ++i)
-    {
-        GILocalLight candidate = g_Frame.localLights[i];
-        float3 toLight;
-        float lightDistance;
-        float3 reaching = LocalLightReaching(candidate, world, toLight, lightDistance);
-        float weight = luminance(reaching) * dot(normal, toLight);
-        if (!(weight > 0.0f)) continue;
-
-        total += weight;
-        if (random.rand() * total < weight)
+    uint4 nearby = LightsNear(world);
+    for (uint word = 0; word < 4u; ++word)
+        for (uint bits = nearby[word]; bits != 0u; bits &= bits - 1u)
         {
-            chosenWeight = weight;
-            chosenLight = reaching;
-            chosenDirection = toLight;
-            chosenDistance = lightDistance;
-            chosenClearance = ClearanceTowards(candidate, toLight);
+            GILocalLight candidate = g_Frame.localLights[word * 32u + firstbitlow(bits)];
+            float3 toLight;
+            float lightDistance;
+            float3 reaching = LocalLightReaching(candidate, world, toLight, lightDistance);
+            float weight = luminance(reaching) * dot(normal, toLight);
+            if (!(weight > 0.0f)) continue;
+
+            total += weight;
+            if (random.rand() * total < weight)
+            {
+                chosenWeight = weight;
+                chosenLight = reaching;
+                chosenDirection = toLight;
+                chosenDistance = lightDistance;
+                chosenClearance = ClearanceTowards(candidate, toLight);
+            }
         }
-    }
 
     if (!(chosenWeight > 0.0f)) return 0.0f;
 

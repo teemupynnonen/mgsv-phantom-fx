@@ -134,20 +134,23 @@ void TraceLampLight(uint2 did : SV_DispatchThreadID)
         pickedWeight[k] = 0.0f;
     }
 
-    for (uint i = 0; i < count; ++i)
-    {
-        float3 diffuse, specular, toLight;
-        if (!LampLightAt(g_Frame.localLights[i], surface, diffuse, specular, toLight)) continue;
+    uint4 nearby = LightsNear(surface.world);
+    for (uint word = 0; word < 4u; ++word)
+        for (uint bits = nearby[word]; bits != 0u; bits &= bits - 1u)
+        {
+            uint i = word * 32u + firstbitlow(bits);
+            float3 diffuse, specular, toLight;
+            if (!LampLightAt(g_Frame.localLights[i], surface, diffuse, specular, toLight)) continue;
 
-        float weight = luminance(diffuse + specular);
-        total += weight;
-        [unroll] for (uint k = 0; k < PickedLights; ++k)
-            if (random.rand() * total < weight)
-            {
-                picked[k] = i;
-                pickedWeight[k] = weight;
-            }
-    }
+            float weight = luminance(diffuse + specular);
+            total += weight;
+            [unroll] for (uint k = 0; k < PickedLights; ++k)
+                if (random.rand() * total < weight)
+                {
+                    picked[k] = i;
+                    pickedWeight[k] = weight;
+                }
+        }
 
     float3 diffuseLight = 0.0f, specularLight = 0.0f;
     if (total > 0.0f)

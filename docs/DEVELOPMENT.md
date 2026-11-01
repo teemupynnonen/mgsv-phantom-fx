@@ -65,7 +65,7 @@ documentation and licenses are in `PhantomFX/`.
 ctest --test-dir build/release
 ```
 
-This runs eleven tests that need neither the game nor a GPU. `tests/upscaler_tests.cpp`: settings
+This runs fourteen tests that need neither the game nor a GPU. `tests/upscaler_tests.cpp`: settings
 (defaults, round trip, clamping, invalid files and values), the mode maths (render scales, texture LOD
 bias), the render size plan (DLSS's own size or the nominal one, rounded up to even and never above the
 output size, Custom's DLSS quality, the settings that make a new plan), the frames (when one starts,
@@ -107,6 +107,8 @@ view and the glass's targets. `tests/shared_textures_tests.cpp`: a shared output
 read until written, the same size keeping what it holds, a new size or a replaced texture leaving it unwritten.
 `tests/d3d12_host_tests.cpp`: Direct3D 12 work at a point of the immediate context, on WARP devices: each side reads what
 the other just wrote, frame after frame as the lists come round, and a failed evaluation leaves the next one fine.
+`tests/light_bins_tests.cpp`: a light that reaches a place is in that place's bins, wherever the light, the place and
+the eye are, in the bins or past them, and stays out of places off its box.
 `tests/kernel_table_tests.cpp`: what the build makes of the compiled kernels: each kind of binding its own type,
 what the root signature binds left out, a slot with two names, a name with two shapes and a kernel without
 bindings failing.
@@ -206,6 +208,7 @@ what draws it, when that is the feature's own.
 | `src/passes/ray_tracing/trace.*` | A trace's steps, and the traces in the order the frame runs them (see "What a kick traces") |
 | `src/passes/ray_tracing/shared_textures.*` | What Direct3D 11 and 12 share: the Direct3D 11 half of a trace's results, and the rows that open, transition and bind a trace's textures |
 | `src/passes/ray_tracing/gi_renderer.*` | The Direct3D 12 side: the device, the scene's frame (the scene contents' update, then the recording), each feature's passes recorded in turn, the probes |
+| `src/passes/ray_tracing/light_bins.*` | Which of the frame's lights can reach a place, in bins along each world axis (see "Light bins") |
 | `src/passes/ray_tracing/scene_contents.*` | The scene contents: the game's models, their variants, characters, terrain rings, the sea's plane and textures the ray-traced scene holds, made as the scene memory has room and let go after a while unplaced; each frame's instances of them; their diagnostics (status, the probes' hits, F10's `models.txt`) (see "Ray-traced scene") |
 | `src/passes/ray_tracing/scene_memory.hpp` | The scene memory: the seam the scene contents reach the GPU through (the pool, structures, texture slots, instances) |
 | `src/passes/ray_tracing/gi_scene.*` | The ray-traced scene on Direct3D 12, the scene memory: the geometry pool, bottom-level structures (a geometry per mesh, compacted), the geometry table, the game's textures' slots, the frame's instances and top level (see "Ray-traced scene") |
@@ -3204,6 +3207,29 @@ Not handled:
 - A spot's mask (a flashlight's pattern) is left out of its bounce, which is a little brighter for it.
 - The bounce comes with the ray-traced lights: with them off, the global illumination has the sun and
   the sky only.
+
+### Light bins
+
+Path tracing's lamps at every pixel and the rays' hits at every bounce pick among the frame's lights (`TraceLampLight`,
+`SampledLocalLightReaching`). Walking all of them cost more than the rays that followed: at Mother Base at night a frame
+asks 6.5 million places, and of the 128 lights only 3.2 can reach one on average.
+
+`src/passes/ray_tracing/light_bins.cpp` keeps three tables in the frame's constants, one for each world axis: 2 m bins around
+the eye, 128 along x and z and 64 along y, each with a bit for every light whose bounding box crosses it. `LightsNear`
+ANDs the three bins of a place. A box is a run of bins along each axis, so this is as sharp as a grid of every cell, which would
+take 16 MB a frame where these take 5 KB. A light's box is its reach, cut to the game's volume for it where that is known.
+
+Places and lights past the bins take the last bin at that end, so a far light is still found at its place, only with less
+culling. The bins only ever hold too much: a light left out gives that place no light, and the walk keeps the lights'
+order, so the light, and the random numbers it draws, stay as they were. A test run with a count of every light that
+reached a place outside its bins read 0 over 6.5 million places a frame.
+
+| Frozen frame, 2228 x 1254, night | Lights | Walked a place | GPU frame |
+| --- | --- | --- | --- |
+| Mother Base walkway | 128, 205 past the cap | 128 to 3.2 | 32.2 to 27.8 ms |
+| Mother Base deck | 79 | 79 to 1.95 | 26.2 to 24.3 ms |
+
+The lamp shadows of the non-path-traced lights (`light_shadows.hlsl`) still walk them all.
 
 ## GTVBAO
 

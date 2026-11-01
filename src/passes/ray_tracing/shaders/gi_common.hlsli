@@ -655,6 +655,15 @@ float3 LocalLightReaching(GILocalLight light, float3 world, out float3 toLight, 
     return light.color.rgb * (falloff * cut);
 }
 
+// The frame's lights that can reach `world`, a bit each, in the order of g_Frame.localLights (light_bins.hpp).
+uint4 LightsNear(float3 world)
+{
+    int3 bin = int3(floor((world - g_Frame.lightBinsOrigin.xyz) / GI_LIGHT_BIN_SIZE));
+    bin = clamp(bin, int3(0, 0, 0), int3(GI_LIGHT_BINS_ACROSS, GI_LIGHT_BINS_HIGH, GI_LIGHT_BINS_ACROSS) - 1);
+
+    return g_Frame.lightBinsX[bin.x] & g_Frame.lightBinsY[bin.y] & g_Frame.lightBinsZ[bin.z];
+}
+
 // Its diffuse light at a surface of `normal`.
 float3 LocalLightAt(GILocalLight light, float3 world, float3 normal, out float3 toLight, out float lightDistance)
 {
