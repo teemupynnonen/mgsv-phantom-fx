@@ -73,6 +73,10 @@ struct GameShader
     std::uint32_t shadowSlot{};
     std::uint32_t cubeSlot{};
     float guideValue{1.0f};
+    // ForwardWater: how its normal is built (water.hpp). Layered (Prim_TppPrimRiverTl*, Prim_TppPrimRiverOl*): the
+    // normal map's scales at cPSMaterial[6], its tangent frame at TEXCOORD6-8, not [3] and TEXCOORD5-7. Two-channel
+    // (*Hnm*): the normal map holds x and y in w and y, z rebuilt.
+    bool isLayeredRiver{}, hasTwoChannelNormal{};
     // Glass, Mirror: the texture slot of what it reflects with: a cube map, or a mirror's picture.
     std::uint8_t reflectionSlot{};
     bool hasColorTexture{}; // Glass: its t0 is a colour with its cover in alpha, not a cover in red

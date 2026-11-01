@@ -20,20 +20,28 @@ using Microsoft::WRL::ComPtr;
 
 std::mutex stateMutex;
 ComPtr<ID3D11Device> device;
-ComPtr<ID3D11PixelShader> waterShader;
+// WaterSurface, by how the river builds its normal: [isLayeredRiver][hasTwoChannelNormal] (game_shaders.hpp).
+ComPtr<ID3D11PixelShader> waterShaders[2][2];
 ComPtr<ID3D11Buffer> waterParameters; // The water's roughness, for its surface shader (the menu's)
 bool hasPipelineFailed{};
 
-// Compiles the shader once; call with stateMutex held. Returns false when it is unavailable.
+// Compiles the shaders once; call with stateMutex held. Returns false when they are unavailable.
 bool ensurePipeline()
 {
-    if (waterShader) return true;
+    if (waterShaders[1][1]) return true;
     if (!device || hasPipelineFailed) return false;
 
     try
     {
-        waterShader = pixelShader(device.Get(), (std::string(surface_shaders::SurfaceCommon) + surface_shaders::WaterSurface).c_str(), "water-surface");
         waterParameters = makeConstantBuffer(device.Get(), 16, "Creating the water's constants");
+        const auto source = std::string(surface_shaders::SurfaceCommon) + surface_shaders::WaterSurface;
+        for (int layered = 0; layered < 2; ++layered)
+            for (int twoChannel = 0; twoChannel < 2; ++twoChannel)
+            {
+                const D3D_SHADER_MACRO defines[]{{"LAYERED", layered ? "1" : "0"}, {"TWO_CHANNEL", twoChannel ? "1" : "0"}, {}};
+                // Last, [1][1], so it marks a complete pipeline.
+                waterShaders[layered][twoChannel] = pixelShader(device.Get(), source.c_str(), "water-surface", defines);
+            }
         return true;
     }
     catch (const std::exception& error)
@@ -54,13 +62,14 @@ void attach(ID3D11Device* gameDevice) noexcept
 void detach() noexcept
 {
     std::lock_guard lock(stateMutex);
-    waterShader.Reset();
+    for (auto& shaders : waterShaders)
+        for (auto& shader : shaders) shader.Reset();
     waterParameters.Reset();
     device.Reset();
     hasPipelineFailed = false;
 }
 
-void recordWater(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call) noexcept
+void recordWater(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, const game_shaders::GameShader& row) noexcept
 {
     try
     {
@@ -70,7 +79,7 @@ void recordWater(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call
             std::lock_guard lock(stateMutex);
             if (!ensurePipeline()) return;
 
-            surface = waterShader;
+            surface = waterShaders[row.isLayeredRiver ? 1 : 0][row.hasTwoChannelNormal ? 1 : 0];
             parameters = waterParameters;
         }
 

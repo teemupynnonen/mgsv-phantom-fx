@@ -26,7 +26,9 @@ void main(uint2 pixel : SV_DispatchThreadID)
         return;
     }
 
-    Normals[pixel] = SurfaceNormal[pixel];
+    // Water marks itself with a negative roughness (WaterSurface): the guide reads the roughness itself.
+    const float4 normal = SurfaceNormal[pixel];
+    Normals[pixel] = float4(normal.xyz, abs(normal.w));
     HitDistance[pixel] = SurfaceReflection[pixel].a;
 }
 )";
@@ -151,24 +153,68 @@ Surface main(float4 position : SV_Position, float4 uv : TEXCOORD0, float3 unused
 }
 )";
 
-// A river or another liquid, drawn with the game's own vertex shader after its draw: its depth, no normal (the
-// trace takes the slope from the depth's neighbours, so no shader interface can go wrong), and 0.3 of what it
-// reflects, which the trace scales by the water's reflectance at the eye's angle.
+// A river or another liquid, drawn with the game's own vertex shader after its draw: its depth, its ripples' normal as
+// the game's shader builds it, and 0.3 of what it reflects, which the trace scales by the water's reflectance at the
+// eye's angle. The roughness is written negative: that marks water.
+//
+// The normal, from the disassembly of all twelve Prim_TppPrimRiver*/Prim_TppRiverModel* pixel shaders: the normal map
+// (t1, s10) twice, at the mesh's UV times a material scale plus the material's scrolling offset (cPSMaterial[0]), the
+// second at 0.97 of its scale; each 2 x texel - 1, summed and normalized, then out of the vertex shader's tangent frame.
+// LAYERED (Tl, Ol): the scales at cPSMaterial[6] and the frame at TEXCOORD6-8; else [3] and TEXCOORD5-7. TWO_CHANNEL
+// (Hnm): the texel's w and y, z rebuilt. Every input is declared in the vertex shader's order, so each lands in its
+// register.
 inline constexpr char WaterSurface[] = R"(
 cbuffer Parameters : register(b0)
 {
     float Roughness; // The menu's (features/water_reflections)
     float3 Padding;
 };
-
-Surface main(float4 position : SV_Position)
+cbuffer cPSMaterial : register(b4)
 {
+    float4 m_materials[7]; // [0]: the two layers' UV offsets; [3].xy or [6].xy: their scales
+};
+
+Texture2D<float4> inNormalTexture : register(t1);
+SamplerState g_samplerLinear_Wrap : register(s10);
+
+#if LAYERED
+#define FRAME_TANGENT TEXCOORD6
+#define FRAME_BINORMAL TEXCOORD7
+#define FRAME_NORMAL TEXCOORD8
+static const int ScaleRow = 6;
+#else
+#define FRAME_TANGENT TEXCOORD5
+#define FRAME_BINORMAL TEXCOORD6
+#define FRAME_NORMAL TEXCOORD7
+static const int ScaleRow = 3;
+#endif
+
+float3 LayerNormal(float2 uv)
+{
+    const float4 texel = inNormalTexture.Sample(g_samplerLinear_Wrap, uv);
+#if TWO_CHANNEL
+    const float2 xy = texel.wy * 2 - 1;
+    const float z = sqrt(saturate(1 - dot(xy, xy)) + 0.0001f);
+    return float3(xy, z);
+#else
+    return texel.xyz * 2 - 1;
+#endif
+}
+
+Surface main(float4 color : COLOR0, float4 position : SV_Position, float2 uv : TEXCOORD0, float3 basePosition : TEXCOORD1,
+    float4 shadowPosition : TEXCOORD2, float4 viewPosition : TEXCOORD3, float3 worldPosition : TEXCOORD4,
+    float3 tangent : FRAME_TANGENT, float3 binormal : FRAME_BINORMAL, float3 vertexNormal : FRAME_NORMAL)
+{
+    const float4 offsets = m_materials[0];
+    const float2 scales = m_materials[ScaleRow].xy;
+    const float3 local = normalize(LayerNormal(offsets.xy + scales.x * uv) + LayerNormal(offsets.zw + scales.y * 0.97f * uv));
+    float3 normal = local.x * tangent + local.y * binormal + local.z * vertexNormal;
+    // No frame: xyz 0, and the trace takes the slope from the depth's neighbours instead.
+    normal = all(isfinite(normal)) && dot(normal, normal) > 1e-8f ? normalize(normal) : 0.0f;
+
     Surface surface;
     surface.depth = position.z;
-    // xyz 0: water, the trace takes the slope from the depth's neighbours. Its roughness spreads the traced
-    // reflection as the ripples would: the game's normal map is screen-space and driven by a flow map, and the trace
-    // cannot read it, so the spread stands in for the detail.
-    surface.normal = float4(0.0f, 0.0f, 0.0f, Roughness);
+    surface.normal = float4(normal, -max(Roughness, 1e-3f));
     surface.weight = float4(0.3f, 0.3f, 0.3f, 1.0f);
     return surface;
 }
@@ -187,7 +233,7 @@ Texture2D<float4> Scene : register(t0);
 Texture2D<float4> Weight : register(t1);     // The surfaces' weights
 Texture2D<float4> Reflection : register(t2); // What they reflect, in the scene's units
 Texture2D<float> Shadow : register(t3);     // The sun's traced shadow on the surface itself (ray_tracing::forwardShadow)
-Texture2D<float4> SurfaceNormal : register(t4); // The surfaces' normal: zero xyz marks water
+Texture2D<float4> SurfaceNormal : register(t4); // The surfaces' normal: a negative roughness (w) marks water
 
 float4 main(float4 position : SV_Position) : SV_Target
 {
@@ -200,7 +246,7 @@ float4 main(float4 position : SV_Position) : SV_Target
     // The surface dims in the sun's shade, as the water does: a pane is mostly what it reflects and the sky behind
     // it, so blocking the sun barely changes it. Water takes no shadow here: the caustics and its light are the bed's,
     // drawn under it before it blends (forward_shadows' caustics), and what it reflects is added untouched.
-    const bool water = all(SurfaceNormal.Load(pixel).xyz == 0.0f);
+    const bool water = SurfaceNormal.Load(pixel).w < 0.0f;
     const float shade = water ? 1.0f : lerp(0.85f, 1.0f, Shadow.Load(pixel));
     return float4(Scene.Load(pixel).rgb * lerp(1.0f, shade, weight.a) + weight.a * encoded, 1);
 }

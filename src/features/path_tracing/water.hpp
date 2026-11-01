@@ -16,6 +16,7 @@ void attach(ID3D11Device* device) noexcept;
 void detach() noexcept;
 
 // A river or another liquid, after its own draw (forward_shadows): the surface into the targets the surface trace reads.
-// Its cube map is already bound black by the caller.
-void recordWater(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call) noexcept;
+// Its cube map is already bound black by the caller. `row` says how its shader builds its ripples' normal, which the
+// surface takes as its own.
+void recordWater(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, const game_shaders::GameShader& row) noexcept;
 }

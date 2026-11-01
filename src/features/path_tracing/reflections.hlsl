@@ -301,11 +301,13 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
     if (depth <= 0.0f) return;
 
     float4 normalRoughness = g_SurfaceNormal.Load(int3(did, 0));
-    // A river or a liquid (WaterSurface, surface_shaders.hpp): its normal comes from its depth's slope, as the trace
-    // has no shader interface to read it from, and what it reflects is scaled by water's reflectance.
-    const bool isWater = all(normalRoughness.xyz == 0.0f);
+    // A river or a liquid (WaterSurface, surface_shaders.hpp) marks itself with a negative roughness: its normal is its
+    // ripples' as the game's shader builds them, and what it reflects is scaled by water's reflectance. Without one
+    // (xyz 0: the draw had no tangent frame) the normal comes from its depth's slope.
+    const bool isWater = normalRoughness.w < 0.0f;
+    normalRoughness.w = abs(normalRoughness.w);
     float3 world = DepthPosition(did, depth);
-    if (isWater)
+    if (isWater && all(normalRoughness.xyz == 0.0f))
     {
         const uint2 last = g_BufferDimensions - 1;
         const uint2 rightPixel = min(did + uint2(1, 0), last);

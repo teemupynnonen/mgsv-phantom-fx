@@ -3345,13 +3345,18 @@ Two halves, one mechanism:
   old at every caustic draw (all recorded on deferred contexts, measured 2026-11-01), so aiming's quick change of view
   moved the webs. `Atmosphere > Water caustics` holds the switch and the **Intensity**.
 - **Reflection.** The forward draw blanks the game's cube map and records the water as a surface
-  (`water::recordWater`), the same way glass and mirrors are recorded: depth, a zero normal (the water's is its
-  depth's slope) and the menu's share of what it reflects. The second trace (`TraceSurfaceReflections`,
-  reflections.hlsl) runs after the scene, so it reflects from where the water is now: no lag, and no
-  reprojection to undo one. What it reflects is scaled by water's reflectance at the eye's angle
+  (`water::recordWater`), the same way glass and mirrors are recorded: depth, its ripples' normal, a negative
+  roughness that marks water, and the menu's share of what it reflects. The normal is the game's own
+  (`WaterSurface`, from the disassembly of all twelve river pixel shaders, 2026-11-01): the normal map `t1` (`s10`)
+  sampled twice at the mesh UV times a material scale plus the material's scrolling offset (`cPSMaterial[0]`, the
+  second layer at 0.97 of its scale), each `2t - 1`, summed, normalized and taken out of the vertex shader's
+  tangent frame. The rows say where: layered rivers (`Tl`, `Ol`) keep the scales at `cPSMaterial[6]` and the frame at
+  `TEXCOORD6-8`, the others at `[3]` and `TEXCOORD5-7`; `Hnm` maps hold x and y in w and y, z rebuilt. A draw
+  without a frame writes no normal, and the trace falls back to the depth's slope. The second trace
+  (`TraceSurfaceReflections`, reflections.hlsl) runs after the scene, so it reflects from where the water is now:
+  no lag, and no reprojection to undo one. What it reflects is scaled by water's reflectance at the eye's angle
   (`WaterReflectance`, Karis' split-sum fit, F0 0.02), and added over the scene at the exposure by the
-  composite. Its roughness (`Atmosphere > Water reflections`) spreads it as ripples would: the game's own
-  normal map is sampled in screen space through a flow map, so the trace cannot read it.
+  composite. Its roughness (`Atmosphere > Water reflections`) spreads it further.
 - **Shadow of a surface.** `TraceSurfaceReflections` also traces the sun for each glass and mirror pixel, into
   `g_ForwardShadow` (u97): the glass composite reads it. Water traces none and writes 1: the composite ignores the
   value at water's pixels (water takes no sun shadow; the bed under it is lit by the sun pass as the rest of the

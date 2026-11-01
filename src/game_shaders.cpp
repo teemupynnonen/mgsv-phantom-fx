@@ -39,16 +39,28 @@ std::size_t indexOf(const GameShader& row)
 // The forward pass's rivers and other liquids, by their source path since every variant of them is not
 // listed ("...Prim_TppPrimRiver..." and "...Prim_TppRiverModel..."): they sample their shadow map at t14 and
 // reflect with a cube map at t2 (docs/DEVELOPMENT.md, "Forward shadows").
+// Four rows, by how their normal is built (GameShader::isLayeredRiver, hasTwoChannelNormal; disassembly of all twelve,
+// 2026-11-01).
 const GameShader RiverShader{.pass = GamePass::ForwardWater, .name = "Prim_TppPrimRiver", .checksum = "", .shadowSlot = 14, .cubeSlot = 2};
+const GameShader RiverShaderTwoChannel{.pass = GamePass::ForwardWater, .name = "Prim_TppPrimRiver (Hnm)", .checksum = "", .shadowSlot = 14,
+    .cubeSlot = 2, .hasTwoChannelNormal = true};
+const GameShader LayeredRiverShader{.pass = GamePass::ForwardWater, .name = "Prim_TppPrimRiver (Tl, Ol)", .checksum = "", .shadowSlot = 14,
+    .cubeSlot = 2, .isLayeredRiver = true};
+const GameShader LayeredRiverShaderTwoChannel{.pass = GamePass::ForwardWater, .name = "Prim_TppPrimRiver (Tl, Ol, Hnm)", .checksum = "",
+    .shadowSlot = 14, .cubeSlot = 2, .isLayeredRiver = true, .hasTwoChannelNormal = true};
 
 const GameShader* forwardRow(std::string_view code)
 {
     const auto name = sourceName(code, "_ps.hlsl");
     std::string lower(name);
     std::ranges::transform(lower, lower.begin(), [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
-    if (lower.find("river") != std::string::npos) return &RiverShader;
+    if (lower.find("river") == std::string::npos) return nullptr;
 
-    return nullptr;
+    const bool layered = lower.find("rivertl") != std::string::npos || lower.find("riverol") != std::string::npos;
+    const bool twoChannel = lower.find("hnm") != std::string::npos;
+    if (layered) return twoChannel ? &LayeredRiverShaderTwoChannel : &LayeredRiverShader;
+
+    return twoChannel ? &RiverShaderTwoChannel : &RiverShader;
 }
 
 VertexShader kindOf(std::string_view code)
