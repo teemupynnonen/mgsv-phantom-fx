@@ -41,15 +41,15 @@ void Shadows::describe(gi_d3d12::Descriptors& d, std::uint32_t parity, ID3D12Res
 {
     const auto now = parity, last = 1 - parity;
     const auto maskTiles = std::uint64_t{groups(renderWidth, MaskTileWidth)} * groups(renderHeight, MaskTileHeight);
-    d.outputBuffer(80, masks.Get(), 4, maskTiles);
-    d.outputBuffer(81, metadata.Get(), 4, std::uint64_t{groups(renderWidth, Tile)} * groups(renderHeight, Tile));
-    d.outputTexture(82, reprojection.Get(), DXGI_FORMAT_R16G16_FLOAT);
-    d.outputTexture(83, history.Get(), DXGI_FORMAT_R16G16_FLOAT);
-    d.outputTexture(84, moments[now].Get(), DXGI_FORMAT_R11G11B10_FLOAT);
-    d.outputTexture(85, moments[last].Get(), DXGI_FORMAT_R11G11B10_FLOAT);
-    d.outputTexture(86, depths[now].Get(), DXGI_FORMAT_R32_FLOAT);
-    d.outputTexture(87, depths[last].Get(), DXGI_FORMAT_R32_FLOAT);
-    d.outputTexture(88, output, DXGI_FORMAT_R16_FLOAT);
+    d.outputBuffer(binding::Shadow_Masks, masks.Get(), 4, maskTiles);
+    d.outputBuffer(binding::Shadow_TileMetadata, metadata.Get(), 4, std::uint64_t{groups(renderWidth, Tile)} * groups(renderHeight, Tile));
+    d.outputTexture(binding::Shadow_Reprojection, reprojection.Get(), DXGI_FORMAT_R16G16_FLOAT);
+    d.outputTexture(binding::Shadow_History, history.Get(), DXGI_FORMAT_R16G16_FLOAT);
+    d.outputTexture(binding::Shadow_Moments.at(0), moments[now].Get(), DXGI_FORMAT_R11G11B10_FLOAT);
+    d.outputTexture(binding::Shadow_Moments.at(1), moments[last].Get(), DXGI_FORMAT_R11G11B10_FLOAT);
+    d.outputTexture(binding::Shadow_Depths.at(0), depths[now].Get(), DXGI_FORMAT_R32_FLOAT);
+    d.outputTexture(binding::Shadow_Depths.at(1), depths[last].Get(), DXGI_FORMAT_R32_FLOAT);
+    d.outputTexture(binding::Shadow_Output, output, DXGI_FORMAT_R16_FLOAT);
 }
 
 void Shadows::record(gi_d3d12::Recorder& r, bool forReconstruction)

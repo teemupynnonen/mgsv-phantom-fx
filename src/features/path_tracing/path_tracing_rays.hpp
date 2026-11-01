@@ -30,7 +30,7 @@ struct Textures
     ID3D12Resource* forwardShadow{};  // R16_FLOAT, the sun's shadow on the surface itself (u97)
 };
 
-// Their views in the frame's tables, by the slots reflections.hlsl and direct_light.hlsl give them.
+// Their views in the frame's tables.
 void describe(gi_d3d12::Descriptors& descriptors, const Textures& textures);
 // The lamps' light at the render size. Needs the frame's scene built.
 void recordLamps(gi_d3d12::Recorder& recorder, std::uint32_t width, std::uint32_t height);
