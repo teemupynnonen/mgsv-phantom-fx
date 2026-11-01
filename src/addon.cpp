@@ -592,6 +592,7 @@ bool onOpenOverlay(effect_runtime*, bool open, input_source)
     return false;
 }
 
+/** Every frame, with ReShade's overlay open or closed: the hotkeys, and the photo mode's keys held. */
 void onReshadePresent(effect_runtime* runtime)
 {
     if (runtime->is_key_pressed(VK_F1)) core::toggleEnhancements();
@@ -601,10 +602,12 @@ void onReshadePresent(effect_runtime* runtime)
     if constexpr (DevTools)
     {
         if (runtime->is_key_pressed(VK_F9)) dev::onCaseKey();
+        // Enter teleports the player to the free camera (photo_mode.cpp); the overlay's own Enter is left alone.
+        if (!overlayOpen && runtime->is_key_pressed(VK_RETURN)) photo_mode::teleport();
     }
 
     const auto down = [runtime](uint32_t key) { return !overlayOpen && runtime->is_key_down(key); };
-    photo_mode::setControls({down('W'), down('S'), down('A'), down('D'), down(VK_SPACE), down(VK_CONTROL), down(VK_SHIFT)});
+    photo_mode::setControls({down('W'), down('S'), down('A'), down('D'), down(VK_SPACE), down(VK_CONTROL), down(VK_SHIFT), down('C')});
 }
 }
 

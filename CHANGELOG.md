@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Photo mode crawls with C.** Holding C moves the free camera at 0.5 m/s, next to Shift's 25 m/s, for
+  lining up a close shot.
 - **Path tracing is faster where many lights burn.** Each pixel and each ray's hit now looks only at the lights that can
   reach it, not at every light in the frame. At Mother Base at night that saves 4.4 ms of a 32 ms frame, about 31 to 36 fps,
   and the picture stays the same.
