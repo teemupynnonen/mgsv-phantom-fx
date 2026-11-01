@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <set>
 #include <stdexcept>
@@ -88,11 +89,13 @@ public:
 
     std::uint64_t uploadRoom() const override { return GeometryUploadBytes - uploaded; }
 
-    bool upload(std::uint64_t, std::span<const std::uint8_t> data) override
+    bool upload(std::uint64_t offset, std::span<const std::uint8_t> data) override
     {
         if (uploaded + data.size() > GeometryUploadBytes) return false;
 
         uploaded += data.size();
+        lastUploadOffset = offset;
+        lastUpload.assign(data.begin(), data.end());
 
         return true;
     }
@@ -163,8 +166,9 @@ public:
         textureEvents.push_back("close " + std::to_string(slot));
     }
 
-    // The test's limits; the pool's bytes in use.
-    std::uint64_t poolRoom = 1ull << 40, poolUsed{};
+    // The test's limits; the pool's bytes in use, and the last bytes given to it.
+    std::uint64_t poolRoom = 1ull << 40, poolUsed{}, lastUploadOffset{};
+    std::vector<std::uint8_t> lastUpload;
     std::size_t structureRoom = SIZE_MAX, instanceCap = SIZE_MAX;
 
     // What the contents asked: every structure by id; this frame's instances, rebuilds and refits; every
@@ -400,6 +404,43 @@ void textureArrival()
         "The model's meshes with the texture take it, in its variant and its character too.");
 }
 
+// A layered mesh's coordinates reach the pool, where its row says, on a rigid model and a character's skin between them and
+// its vertices alike, and it takes its layer and the layer's mask as their copies come.
+void layeredMesh()
+{
+    constexpr std::uint64_t Weave = 0x300, WeaveMask = 0x400;
+    auto coat = mesh(0, 0, Paint);
+    coat.normals = {{}, {}, {}};
+    coat.layer = {.texture = Weave, .maskTexture = WeaveMask, .mapping = {5, 5, 0, 0}, .uvs = {7, 8, 9}, .maskUvs = {4, 5, 6}};
+
+    const auto bytesAt = [](const TestScene& scene, std::uint64_t offset) { return scene.memory.lastUpload.data() + (offset - scene.memory.lastUploadOffset); };
+    for (const std::uint32_t bones : {0u, 1u})
+    {
+        TestScene scene;
+        GameFrame frame{.newModels = {model(Soldier, {coat}, bones)}};
+        if (bones) frame.characters = {listed(7, Soldier)};
+        else frame.placements = {placed(Soldier)};
+
+        scene.run(frame);
+        const auto& geometry = scene.memory.structures[scene.structureWith(bones ? Use::Refit : Use::Static, 1)].geometries[0];
+        expect(geometry.layerMapping == coat.layer->mapping && geometry.material.layerTexture == 0, "Its row has its layer's mapping, and no layer before its copy.");
+        expect(std::memcmp(bytesAt(scene, geometry.layerUvOffset), coat.layer->uvs.data(), 12) == 0, "Its second coordinates are where its row says.");
+        expect(std::memcmp(bytesAt(scene, geometry.layerMaskUvOffset), coat.layer->maskUvs.data(), 12) == 0, "So are its mask's.");
+
+        frame.newModels.clear();
+        frame.textures = {{Paint}, {Weave}, {WeaveMask}};
+        scene.run(frame);
+        const auto& change = scene.memory.materialChanges.back();
+        expect(change.material.texture == 1 && change.material.layerTexture == 2 && change.material.layerMaskTexture == 3, "It takes its textures' slots.");
+    }
+
+    auto uniform = coat;
+    uniform.layer->maskUvs.clear();
+    TestScene scene;
+    scene.run({.newModels = {model(Building, {uniform})}, .placements = {placed(Building)}});
+    expect(scene.memory.structures[scene.structureWith(Use::Static, 1)].geometries[0].layerMaskUvOffset == 0, "A mask on the base's coordinates has none of its own.");
+}
+
 // A finer copy of a texture opens a new slot before the old one closes. Without a free slot the copy is
 // dropped and the meshes keep the old one.
 void textureReplacement()
@@ -594,6 +635,7 @@ int main()
         variant();
         variantWithoutRoomNeverTraced();
         textureArrival();
+        layeredMesh();
         textureReplacement();
         textureRelease();
         characters();
