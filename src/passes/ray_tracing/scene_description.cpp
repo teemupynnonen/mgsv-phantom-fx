@@ -13,9 +13,10 @@ namespace
 // An FMDL mesh's shadow bits (its second byte): bit 0, drawn in the main view only, never into the
 // shadow maps; bit 1, drawn into the shadow maps only, a stand-in for what the main view shows.
 constexpr std::uint8_t CastsNoShadow = 0x01, ShadowMapsOnly = 0x02;
-// Its alpha bits (its first byte): glass, cut out (the shadow pass tests its alpha), translucent (never
-// drawn into the shadow maps) and decals (cast or not by the material's technique).
-constexpr std::uint8_t GlassAlpha = 0x10, CutOutAlpha = 0x20, TranslucentAlpha = 0x40, DecalAlpha = 0x80;
+// Its alpha bits (its first byte): drawn forward, after the G-buffer (glass, and most of all fox3DFW_ConstantSRGB), cut out
+// (the shadow pass tests its alpha), translucent (never drawn into the shadow maps) and decals (cast or not by the
+// material's technique).
+constexpr std::uint8_t ForwardAlpha = 0x10, CutOutAlpha = 0x20, TranslucentAlpha = 0x40, DecalAlpha = 0x80;
 // The StrCode64s of a material's texture parameters "Base_Tex_SRGB" (the colour, and a cut-out mesh's
 // alpha) and "Mask_Tex_LIN" (a shadow-only mesh's mask, its only texture, often the visible mesh's
 // colour: the shadow pass cuts by its alpha, as ModelForward_Shadow's pixel shader samples t0.w):
@@ -27,6 +28,11 @@ constexpr std::uint64_t BaseTextureParameter = 0x41EA7BE81B61, MaskTextureParame
 // "SelfColorIntensity" (fox3dfw_constant*: the texture times the colour times the intensity's x).
 constexpr std::uint64_t SpecularTextureParameter = 0x104D6B98B10E, NormalTextureParameter = 0xCC4305511AE0;
 constexpr std::uint64_t MaterialIndexParameter = 0xCAB8E38487FF, SelfColorParameter = 0x557B9224571E, SelfColorIntensityParameter = 0xE40A3A2518CF;
+// Glass: "GlassColor", which every glass technique's material gives and no other's (the game's files, 2026-10-31), and
+// "Base_Tex_LIN" (the game's t0, how much of the surface reflects). A mirror is known by its technique,
+// "fox3DFW_ParallaxReflection", as "HeightScale" is not its alone. Its Base_Tex_SRGB is a painted picture of the room, its mask
+// is on the second texture coordinates, which the scene does not keep, and it has no row of the material table.
+constexpr std::uint64_t GlassColorParameter = 0xBE61C83A81D, GlassMaskParameter = 0x679A3387A4DF, MirrorTechnique = 0x2EB4D1D33DF8;
 // Its alpha bits' additive blend: a glow card around a lamp (four vertices), no surface.
 constexpr std::uint8_t AdditiveAlpha = 0x01;
 // A self colour times intensity below this lights nothing: the sky's dome and the moon have 1, a mesh painted black
@@ -42,7 +48,8 @@ constexpr float CutOutThreshold = 0.5f;
 // meshes the game draws, in its main view or its shadow maps, as its draws showed them mesh by mesh
 // (docs/DEVELOPMENT.md, "Scene objects", "Ray-traced scene"; the cases measured are
 // tests/scene_description_tests.cpp's):
-// - Glass the main view alone shows is dropped: the game never casts it.
+// - Glass and mirrors are taken for their material, whatever their bytes, for the reflections: every other ray passes them.
+// - Any other mesh drawn forward that the main view alone shows is dropped: the game never casts it.
 // - A character is taken as the main view shows it: its stand-ins dropped, its see-through meshes cut
 //   out by their alpha, and those the game never casts with, its hair, let light through in part.
 // - A rigid model is taken as the game casts: see-through meshes are dropped, and cut-out ones and
@@ -59,16 +66,18 @@ constexpr float CutOutThreshold = 0.5f;
 //   shadows").
 // - The object brush's bushes and grass cast no shadow in the game: their meshes are taken as leaves
 //   all the same, for the rays' shadows; the brush's props are solid.
-// - A self-lit mesh is taken for its light, its glass flag or not, but for an additive glow card, which is no surface.
-std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isCharacter, bool isVegetation, bool areMainViewCutOutsDropped, bool isSelfLit)
+// - A self-lit mesh is taken for its light, whatever else it is, but for an additive glow card, which is no surface.
+std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isCharacter, bool isVegetation, bool areMainViewCutOutsDropped, bool isSelfLit,
+    std::optional<MeshRole> materialRole)
 {
     if (isSelfLit && !(alpha & AdditiveAlpha)) return MeshRole::Emissive;
+    if (materialRole) return materialRole;
 
     const bool isCutOut = (alpha & (CutOutAlpha | DecalAlpha)) != 0;
     const bool isSeeThrough = (alpha & TranslucentAlpha) != 0;
     const bool isMainViewOnly = (shadow & CastsNoShadow) && !isVegetation;
     const bool isStandIn = (shadow & ShadowMapsOnly) != 0;
-    if (isMainViewOnly && (alpha & GlassAlpha)) return std::nullopt;
+    if (isMainViewOnly && (alpha & ForwardAlpha)) return std::nullopt;
 
     if (isCharacter)
     {
@@ -100,6 +109,10 @@ std::uint32_t flagsOf(MeshRole role)
         return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_LEAF;
     case MeshRole::Hair:
         return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_HAIR;
+    case MeshRole::Glass:
+        return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_GLASS;
+    case MeshRole::Mirror:
+        return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_GLASS | GI_GEOMETRY_MIRROR;
     case MeshRole::MainViewOnly:
         return GI_GEOMETRY_NO_SHADOW;
     case MeshRole::Emissive:
@@ -388,10 +401,15 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
 
         const auto emission = emissionOf(file, *layout, materialInstance);
         const bool isSelfLit = emission != std::array<float, 3>{};
-        const auto role = roleOf(alpha, shadow, model->bones != 0, isVegetation, areMainViewCutOutsDropped, isSelfLit);
+        const auto technique = techniqueOf(file, *layout, materialInstance);
+        std::optional<MeshRole> materialRole;
+        if (technique == MirrorTechnique) materialRole = MeshRole::Mirror;
+        else if (vectorOf(file, *layout, materialInstance, GlassColorParameter)) materialRole = MeshRole::Glass;
+
+        const auto role = roleOf(alpha, shadow, model->bones != 0, isVegetation, areMainViewCutOutsDropped, isSelfLit, materialRole);
         if (!role)
         {
-            model->dropped.push_back({mesh, alpha, shadow, techniqueOf(file, *layout, materialInstance)});
+            model->dropped.push_back({mesh, alpha, shadow, technique});
             continue;
         }
 
@@ -444,9 +462,10 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
         part.role = *role;
         part.alphaBits = alpha;
         part.shadowBits = shadow;
-        part.technique = techniqueOf(file, *layout, materialInstance);
-        part.baseTexture = textureOf(file, *layout, materialInstance, BaseTextureParameter);
-        if (!part.baseTexture)
+        part.technique = technique;
+        const bool isGlass = *role == MeshRole::Glass, isMirror = *role == MeshRole::Mirror;
+        part.baseTexture = isMirror ? 0 : textureOf(file, *layout, materialInstance, isGlass ? GlassMaskParameter : BaseTextureParameter);
+        if (!part.baseTexture && !isGlass && !isMirror)
         {
             part.baseTexture = textureOf(file, *layout, materialInstance, MaskTextureParameter);
             part.textureIsMask = part.baseTexture != 0;

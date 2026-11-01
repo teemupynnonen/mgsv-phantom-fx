@@ -35,6 +35,8 @@ enum class MeshRole : std::uint8_t
     CutOut,       // Its texture cuts holes in it
     Leaf,         // The object brush's bushes and grass: cut out, and thin, they let light through
     Hair,         // A character's see-through mesh the game never casts with: cut out, and rays towards lights pass it in part
+    Glass,        // Every ray passes it but a reflection's, which it reflects by its mask
+    Mirror,       // Every ray passes it but a reflection's, which it reflects
     MainViewOnly, // A rigid model's solid mesh the game never draws into its shadow maps: rays towards lights pass it
     Emissive,     // A self-lit mesh (a bulb, a sign): it gives light, takes none, and rays towards lights pass it
     ShadowOnly,   // A rigid model's stand-in for main-view cut-outs the scene drops (a tarp's): only rays towards lights meet it
@@ -50,7 +52,8 @@ enum class ModelFile : std::uint8_t
 
 // A mesh of a model: its index in the model file and its mesh group, its role, its material's base
 // texture (its colour, and the alpha a cut-out mesh cuts with: the path hash of its Base_Tex_SRGB, 0
-// without) or, for a mesh with none, its mask (Mask_Tex_LIN, cutting with its alpha), its vertices in
+// without) or, for a mesh with none, its mask (Mask_Tex_LIN, cutting with its alpha); glass's mask (Base_Tex_LIN, how much
+// of it reflects); a mirror has none; its vertices in
 // object space and, when it has them, their texture coordinates (two halves packed in a uint, a vertex
 // each); its most detailed triangles, three indices each. A skinned model's mesh also has each vertex's
 // four bones (the model's bone numbers, 16 bits each, the first lowest) and their weights (8-bit unorms,

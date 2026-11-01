@@ -13,7 +13,7 @@
 
 // The ray-traced scene's frame on Direct3D 11 (docs/DEVELOPMENT.md, "Global illumination"): what the
 // global illumination (gi_light.hpp), the sun's ray-traced shadows (gi_shadow.hpp) and the point and
-// spot lights' (light_shadow_rays.hpp) trace. The scene is the game's own, read from its memory
+// spot lights' (lamp_shadow_rays.hpp) trace. The scene is the game's own, read from its memory
 // (engine_scene.hpp), and traced on a Direct3D 12 device beside the game's (gi_renderer.hpp); the
 // camera and the terrain's inputs come from its draws (gi_inputs.hpp).
 //
@@ -65,9 +65,6 @@ ID3D11ShaderResourceView* light(UINT width, UINT height) noexcept;
 // The sun's ray-traced shadow at the render size for the sun pass: R16_FLOAT, 1 where the sun
 // reaches. Null while off, or until Direct3D 12 has written one at this size.
 ID3D11ShaderResourceView* sunShadow(UINT width, UINT height) noexcept;
-// The point and spot lights' shadows this frame's kick traced, at the render size: R16_FLOAT, the share of
-// the lights local_lights::takeForTrace gave that reaches each pixel. Null when none were traced.
-ID3D11ShaderResourceView* localLightShadow(UINT width, UINT height) noexcept;
 // Diagnostics: the shadow debug view at the render size, R8G8B8A8_UNORM to blend over the image by
 // its alpha (DebugShadows in gi_shadow.hlsl), and the probe at the screen's centre as text.
 // Null and empty while off.
@@ -85,15 +82,16 @@ struct ReconstructionGuides
     Microsoft::WRL::ComPtr<ID3D11Texture2D> normalRoughness; // R16G16B16A16_FLOAT: the world-space normal, the roughness in w
     Microsoft::WRL::ComPtr<ID3D11Texture2D> diffuseAlbedo;   // R8G8B8A8_UNORM, linear
     Microsoft::WRL::ComPtr<ID3D11Texture2D> specularAlbedo;  // R16G16B16A16_FLOAT: a few hundredths, too small for 8 bits
+    Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> normalAccess; // For what the kick could not know of (glass::guideReconstruction)
 };
 // None until a kick made them at this size, or when the last kick did not make them.
 std::optional<ReconstructionGuides> reconstructionGuides(UINT width, UINT height) noexcept;
 // Ray Reconstruction denoised a frame. While it does, frame after frame, the kicks leave the light and the
 // shadows noisy for it: the light a sample a render pixel without its denoiser, the shadows unfiltered.
 void reconstructed() noexcept;
-// Path tracing (path_tracing.hpp): the last kick traced the reflections. The passes recorded meanwhile leave
-// them to it: the sun pass's sky reflection, the indoor sky specular, the screen-space reflections' march on the
-// G-buffer's surfaces.
+// Path tracing (path_tracing.hpp): the effect plan runs it for the frame being recorded, and the last kick traced
+// it. The passes recorded meanwhile leave the reflections to it: the sun pass's sky reflection, the indoor sky
+// specular, the screen-space reflections' march on the G-buffer's surfaces.
 bool isPathTracing() noexcept;
 // The reflections the last kick traced, at the render size, for the resolve to add to the specular light:
 // R16G16B16A16_FLOAT, the reflected light times the specular albedo and the exposure, and in alpha how far across
@@ -104,6 +102,10 @@ ID3D11ShaderResourceView* reflection(UINT width, UINT height) noexcept;
 ID3D11ShaderResourceView* reflectionMap(UINT width, UINT height) noexcept;
 // Their hit distance, R16_FLOAT, for Ray Reconstruction (ray_reconstruction.hpp). Null while off.
 ID3D11Texture2D* reflectionDistance(UINT width, UINT height) noexcept;
+ID3D11UnorderedAccessView* reflectionDistanceAccess(UINT width, UINT height) noexcept;
+// On the immediate context, once the game drew this frame's glass and mirrors (glass.hpp): their reflections, on the scene the
+// kick built, waited for before anything after runs. False when the kick traced no reflections.
+bool traceSurfaces() noexcept;
 // The point and spot lights' light the last kick path traced (direct_light.hlsl), at the render size,
 // R16G16B16A16_FLOAT times the exposure.
 struct LampLight

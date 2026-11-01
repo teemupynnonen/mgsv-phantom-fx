@@ -59,7 +59,7 @@ documentation and licenses are in `PhantomFX/`.
 ctest --test-dir build/release
 ```
 
-This runs seven tests that need neither the game nor a GPU. `tests/upscaler_tests.cpp`: settings
+This runs eleven tests that need neither the game nor a GPU. `tests/upscaler_tests.cpp`: settings
 (defaults, round trip, clamping, invalid files and values), the mode maths (render scales, texture LOD
 bias), the render size plan (DLSS's own size or the nominal one, rounded up to even and never above the
 output size, Custom's DLSS quality, the settings that make a new plan), the frames (when one starts,
@@ -93,6 +93,16 @@ patched, and the G-buffer's fade mask kept.
 and are handed over: once, a context starting empty after its finish or at a gone one's address, a list
 run inside a deferred context joining its notes in the order they run, a forgotten list, notes expiring
 at the fourth present, the next frame recorded during a present, and the lists waiting at the kick.
+`tests/kick_traces_tests.cpp`: what a kick traces, from settings through the effect plan and what the kick
+finds: path tracing keeping the rays of what it replaces, waiting for Ray Reconstruction, the lamps waiting
+for the game's tables, a kick without a sun or lights, a cost measurement leaving the light out, the scene
+view and the glass's targets. `tests/shared_textures_tests.cpp`: a shared output on a WARP device: nothing to
+read until written, the same size keeping what it holds, a new size or a replaced texture leaving it unwritten.
+`tests/d3d12_host_tests.cpp`: Direct3D 12 work at a point of the immediate context, on WARP devices: each side reads what
+the other just wrote, frame after frame as the lists come round, and a failed evaluation leaves the next one fine.
+`tests/kernel_table_tests.cpp`: what the build makes of the compiled kernels: each kind of binding its own type,
+what the root signature binds left out, a slot with two names, a name with two shapes and a kernel without
+bindings failing.
 Everything else is checked in the game.
 
 ## Package a release
@@ -150,7 +160,7 @@ what draws it, when that is the feature's own.
 
 | Folder | What draws it |
 | --- | --- |
-| `upscaling/` | `upscaler.*`: DLSS or FSR before the grading, in place of FXAA: NGX, composite, the grading at the output size, texture LOD bias. `frames.*`: the frames the upscaler runs on: when one starts, its main view and its jitter. `render_size_plan.*`: the render size plan, from the upscaler, mode and output size, with DLSS's own size from NGX. `upscaler_shaders.hpp`: the upscaler's inputs and motion vectors, composite with RCAS and debug views, stretch fallback. `fsr_upscaler.*`: FSR upscaling on Direct3D 12. `ray_reconstruction.*`: DLSS Ray Reconstruction on Direct3D 12 (see "Ray Reconstruction"). `fxaa.*`: hook on the FXAA plugin, the FXAA pass at any post processing setting |
+| `upscaling/` | `upscaler.*`: DLSS or FSR before the grading, in place of FXAA: NGX, composite, the grading at the output size, texture LOD bias. `frames.*`: the frames the upscaler runs on: when one starts, its main view and its jitter. `render_size_plan.*`: the render size plan, from the upscaler, mode and output size, with DLSS's own size from NGX. `d3d12_host.*`: Direct3D 12 work at a point of the immediate context, for FSR and Ray Reconstruction (see "FSR upscaling"). `upscaler_shaders.hpp`: the upscaler's inputs and motion vectors, composite with RCAS and debug views, stretch fallback. `fsr_upscaler.*`: FSR upscaling on Direct3D 12. `ray_reconstruction.*`: DLSS Ray Reconstruction on Direct3D 12 (see "Ray Reconstruction"). `fxaa.*`: hook on the FXAA plugin, the FXAA pass at any post processing setting |
 | `frame_generation/` | `presenter.*`: the game's stand-in swap chain, presented through Direct3D 12. `frame_generation.*`: DLSS Frame Generation, Streamline, its inputs and camera, Reflex. `fsr_frame_generation.*`: AMD's swap chain and its inputs |
 | `sun/` | Settings only: the sun size the soft and ray-traced shadows and the global illumination share |
 | `soft_shadows/` | Settings only: a mode of the sun light pass's shaders (`passes/sun_light_pass.*`) |
@@ -159,9 +169,9 @@ what draws it, when that is the feature's own.
 | `lamp_soft_shadows/` | `lamp_soft_shadows.*`: the replacement shaders a point or spot light with a shadow map lights with, and their options. `lamp_soft_shadows_shaders.hpp`: the game's `SSLighting2_Point` and `SSLighting2_Spot` rebuilt, with the light's shadow map filtered by contact-hardening soft shadows |
 | `contact_shadow_shape/` | Settings only: the contrast, reach, thickness and fade of the contact shadow trace (`passes/contact_shadow_trace.*`), which the sun's and the lamps' share |
 | `ray_traced_shadows/` | `gi_shadow.*`: the sun's shadow rays and the FidelityFX Shadow Denoiser on Direct3D 12. `gi_shadow.hlsl`, `gi_shadow_filter.hlsl`: the rays, the denoiser's temporal pass and filters |
-| `ray_traced_lights/` | `local_lights.*`: the game's point and spot light draws kept for their stencil, their light drawn again at the sun pass's list with specular and the rays' shadow (see "Ray-traced lights"). `light_choice.*`: which lights a kick gives the rays (each light's reach, the light cap) and each light as the rays take it. `light_shadow_rays.*`, `light_shadows.hlsl`: the lights' shadow rays and filter on Direct3D 12 |
+| `ray_traced_lights/` | `local_lights.*`: the game's point and spot light draws kept for their stencil, their light drawn again at the sun pass's list with specular and the rays' shadow (see "Ray-traced lights"). `light_choice.*`: which lights a kick gives the rays (each light's reach, the light cap) and each light as the rays take it. `lamp_shadow_rays.*`, `light_shadows.hlsl`: the lamps' shadow rays and filter, a trace (see "What a kick traces") |
 | `global_illumination/` | `gi_light.*`, `gi_light.hlsl`: the light on Direct3D 12, its rays, the denoiser's inputs and the render size (see "Global illumination"); their hits' light and the hash grid cache in `passes/ray_tracing/shaders/gi_hit_light.hlsli`. `gi_denoiser.*`: NVIDIA NRD's RELAX denoiser without NRI. `gi_lighting.*`: the game's sky and sun in the light's terms. `light_combine.*`: the traced light in place of the game's probe light at the resolve |
-| `path_tracing/` | `path_tracing.*`: path tracing on Direct3D 11: the traced reflections added at the resolve and blended as the game blends its own, the lamps' light added at the draw point, the masks' atlas (see "Path tracing"). `path_tracing_shaders.hpp`: those draws. `sky_capture.*`: the game's sky drawn again for the rays. `path_tracing_rays.*`: its passes on Direct3D 12. `reflections.hlsl`, `direct_light.hlsl`: the reflections and the point and spot lights |
+| `path_tracing/` | `path_tracing.*`: path tracing on Direct3D 11: the traced reflections added at the resolve and blended as the game blends its own, the lamps' light added at the draw point, the masks' atlas (see "Path tracing"). `path_tracing_shaders.hpp`: those draws. `glass.*`, `glass_shaders.hpp`: glass and mirrors, their surfaces drawn beside the game's and what they reflect added over the scene. `sky_capture.*`: the game's sky drawn again for the rays. `path_tracing_rays.*`: its passes on Direct3D 12. `reflections.hlsl`, `direct_light.hlsl`: the reflections and the point and spot lights |
 | `ambient_occlusion/` | `gtvbao.*`: GTVBAO's occlusion multiplied into the indirect light at the upscale. `gtvbao_shaders.hpp`: that multiply |
 | `indirect_light/` | `ssilvb.*`: SSILVB's light, brought to the render size and added to the diffuse light the resolve reads. `ssilvb_shaders.hpp`: the upsample |
 | `volumetric_fog/` | `atmosphere.*`: the larger fog texture, the game's fog pass over all of it, the shadowed fill before the resolve. `atmosphere_shaders.hpp`: the game's fog formula per froxel with the sun shadowed; Hillaire's atmosphere tables, the physical fog and sky (Epic Games' reference, MIT) |
@@ -170,6 +180,7 @@ what draws it, when that is the feature's own.
 | `hdr/` | `hdr.*`: the float scene, in SDR too, and HDR10 output: the swap chain, the float scene targets and their sRGB views, the shader patches, the grading and output passes (see "HDR"). `hdr_shaders.hpp`: the encode and decode of the float scene, bloom's reduction, the grading, the output to PQ or, in SDR, to the game's 8 bits with a dither |
 | `frame_rate/` | `frame_rate.*`: hook on the frame wait setter, the optional 60 fps unlock |
 | `motion_blur/` | `motion_blur.*`: hooks on the motion blur plugin, velocity passes every frame |
+| `depth_of_field/` | `depth_of_field.*`: the game's depth of field with its focus edges at the render size: each pixel's own cover from its depth, the far layer kept apart, the composite, and the lens's far blur (see "Depth of field"). `depth_of_field_shaders.hpp`: the cover, the lens's passes and the composites |
 
 ### Passes
 
@@ -182,16 +193,21 @@ what draws it, when that is the feature's own.
 | `src/passes/indirect_light_pass.*` | The game's sky light, upscale and resolve: the G-buffer notes, the resolve's white occlusion and diffuse light, the diagnostics views, the ray-traced scene's notes. `indirect_light_pass_shaders.hpp`: the diagnostics views |
 | `src/passes/visibility_bitmask.*` | The visibility bitmask march GTVBAO and SSILVB share: the depth prefilter, the march, the denoiser. `visibility_bitmask_shaders.hpp`: the march (GTVBAO from three-gtvbao, SSILVB's light as SSRT3 gathers it), XeGTAO's noise and denoiser |
 | `src/passes/ray_tracing/ray_tracing.*` | The ray-traced scene's frame on Direct3D 11: the kick, the waits, the shared textures the global illumination and the ray-traced shadows hand back |
+| `src/passes/ray_tracing/kick_traces.*` | What each kick traces, the one answer for everything that makes, runs or reads a trace (see "What a kick traces") |
+| `src/passes/ray_tracing/trace.*` | A trace's steps, and the traces in the order the frame runs them (see "What a kick traces") |
+| `src/passes/ray_tracing/shared_textures.*` | What Direct3D 11 and 12 share: the Direct3D 11 half of a trace's results, and the rows that open, transition and bind a trace's textures |
 | `src/passes/ray_tracing/gi_renderer.*` | The Direct3D 12 side: the device, the scene's frame (the scene contents' update, then the recording), each feature's passes recorded in turn, the probes |
 | `src/passes/ray_tracing/scene_contents.*` | The scene contents: the game's models, their variants, characters, terrain rings, the sea's plane and textures the ray-traced scene holds, made as the scene memory has room and let go after a while unplaced; each frame's instances of them; their diagnostics (status, the probes' hits, F10's `models.txt`) (see "Ray-traced scene") |
 | `src/passes/ray_tracing/scene_memory.hpp` | The scene memory: the seam the scene contents reach the GPU through (the pool, structures, texture slots, instances) |
 | `src/passes/ray_tracing/gi_scene.*` | The ray-traced scene on Direct3D 12, the scene memory: the geometry pool, bottom-level structures (a geometry per mesh, compacted), the geometry table, the game's textures' slots, the frame's instances and top level (see "Ray-traced scene") |
 | `src/passes/ray_tracing/engine_scene.*` | The game's loaded models from its visibility managers and object brush, its characters from its model list, their model files read once, its texture manager, the terrain's heightmap inputs (see "Scene objects") |
-| `src/passes/ray_tracing/scene_description.*` | What the ray-traced scene takes of a model file: its FMDL meshes, each with its mesh role from its alpha and shadow bytes and its model source, their base textures and skins; the flags, texture and alpha threshold a role gives its row of the geometry table (see "Ray-traced scene", "Mesh roles") |
+| `src/passes/ray_tracing/scene_description.*` | What the ray-traced scene takes of a model file: its FMDL meshes, each with its mesh role from its material, its alpha and shadow bytes and its model source, their base textures and skins; the flags, texture and alpha threshold a role gives its row of the geometry table (see "Ray-traced scene", "Mesh roles") |
 | `src/passes/ray_tracing/engine_brush.*` | The game's object brush: its loaded blocks' vegetation and props, read from their placement records (see "Scene objects") |
 | `src/passes/ray_tracing/gi_inputs.*` | What the ray tracing takes from the game's draws: the main camera of the frame drawn, its skinned meshes' bones, the terrain's inputs |
 | `src/passes/ray_tracing/gi_textures.*` | Shared copies of the game's textures the ray-traced scene's meshes use, from its texture manager (see "Ray-traced scene") |
 | `src/passes/ray_tracing/gi_d3d12.hpp` | The kernels, root signature and descriptor tables every ray-traced feature shares |
+| `src/passes/ray_tracing/gi_slots.hpp` | The slots of those tables, a type a kind; `gi_bindings.h`, generated, names each one (see "Kernels and their slots") |
+| `tools/kernel_bindings/` | Build tool: C++'s slot names, `Kernel` enum and table of DXIL, from the compiled kernels (see "Kernels and their slots") |
 | `src/passes/ray_tracing/shaders/` | HLSL the ray-traced features share: `gi_shared.h` (also C++), `gi_common.hlsli`, `gi_shadow.hlsli` (where shadow rays leave a surface; the FidelityFX Shadow Denoiser's data access), `gi_hit_light.hlsli` (a ray's hit lit as the global illumination lights it, the hash grid cache), `ggx_specular.hlsli` (the specular of what path tracing's rays hit), `gi_scene.hlsl` |
 | `third_party/ffx_denoiser_shadows/` | AMD's FidelityFX Shadow Denoiser headers, unchanged (MIT; `licenses/AMD-FidelityFX-LICENSE.txt`) |
 
@@ -1168,10 +1184,11 @@ level at Camp Omega's cliffs. No names in the exe: the class names here are desc
   bit 0 and alpha bit 6, and since 2026-10-25 the opaque meshes with shadow bit 0 as well ("Ray-traced
   scene", "Characters"). Which of them the shadow pass
   alpha-tests was measured per draw (its `cPSSystem` `m_param.w`, 1 testing, 0 not): alpha 32 (bit 5)
-  and the shadow-only decal (alpha 128, shadow 66) test; alpha 16 (glass, shadow 4) does not and casts a
-  solid shadow. The scene takes alpha bits 5 and 7 as cut out, the rest as opaque. Glass with shadow
-  bit 0 (a helicopter's windows, alpha 16 with shadow 5) the game never casts, and the scene leaves it
-  out for every model (2026-10-25): taken, it kept the sun out of the helicopter's cabin.
+  and the shadow-only decal (alpha 128, shadow 66) test; alpha 16 (drawn forward, shadow 4) does not and casts a
+  solid shadow. The scene takes alpha bits 5 and 7 as cut out, the rest as opaque. Alpha bit 4 marks a mesh drawn
+  forward, not glass: most of those are `fox3DFW_ConstantSRGB`. One with shadow bit 0 the game never casts,
+  and the scene leaves it out for every model. Glass is known by its material instead (see "Path tracing",
+  "Glass and mirrors"): taken as solid, a helicopter's windows kept the sun out of its cabin (2026-10-25).
 
 ## What the add-on changes
 
@@ -1519,7 +1536,7 @@ add-on (1.7.1). FSR runs on Direct3D 12 only.
 
 - **Interop.** The colour, depth, motion and output textures are created shared while FSR is chosen.
   A native Direct3D 12 device on the game's GPU opens them
-  (`src/features/upscaling/fsr_upscaler.cpp`); Direct3D 11 signals a shared fence and flushes after the inputs pass, Direct3D 12 runs FSR on its own queue,
+  (`src/features/upscaling/fsr_upscaler.cpp`, on `d3d12_host::Host`, which Ray Reconstruction shares); Direct3D 11 signals a shared fence and flushes after the inputs pass, Direct3D 12 runs FSR on its own queue,
   and Direct3D 11 waits on the GPU before the composite reads the output.
 - **Colour.** FSR is made for linear colour, so the inputs pass decodes the sRGB-encoded image into
   `R16G16B16A16_FLOAT`, the game's 8-bit LDR one too, and the composite encodes FSR's output again,
@@ -1597,7 +1614,7 @@ otherwise DLSS runs, and the upscaler's status line says why.
   `DOF_ScatterCompositeFinal` drew (noted at its recording, `Recorded::dofFrame`), the upscaler's input
   pass makes it from the scene and the float copy the composite drew over (`hdr::sceneBeforeDof`), both
   decoded to linear light. Preset D cannot take it, so it gets none.
-- **Noisy light for it** (`gi_renderer::Frame::forReconstruction`, `GIFrameConstants::reconstruction`).
+- **Noisy light for it** (`kick_traces::KickTraces::isForReconstruction`, `GIFrameConstants::reconstruction`).
   Ray Reconstruction asks for samples apart at every render pixel, without other denoisers. While it
   denoised the frame before (the upscaler counts its frames, `ray_tracing::reconstructed`), the kick
   leaves the light and the shadows to it: the global illumination takes a sample a render pixel, one ray
@@ -1620,7 +1637,7 @@ Reconstruction") and the global illumination runs. It is a lighting effect of it
 (`Effect::PathTracing`), which builds on the global illumination and Ray Reconstruction
 (`FeatureInfo::needs`, `needsRayReconstruction`: without them the plan has it `Lacking`, and its budget
 line says what it needs) and waits for Ray Reconstruction to denoise: the frames it denoised before take
-it (`gi_renderer::Frame::isPathTraced`, `ray_tracing::isPathTracing`), and the budget line says when it
+it (`kick_traces::KickTraces::isPathTraced`, `ray_tracing::isPathTracing`), and the budget line says when it
 waits. Primary visibility stays the G-buffer, as in Cyberpunk 2077's path tracing.
 
 It does what the ray-traced shadows and lights do, with rays of its own, so it replaces them in the plan
@@ -1666,10 +1683,69 @@ the game's lights) is left alone until it runs.
   across the screen (alpha of `Reflection`). `ReflectionBlend`, drawn for `LocalReflectionAddBuffer`, fades them by
   `t` and the fog (`FogAt`), and takes the menu's **Reflections** strength. A ray lacks the screen-space march's
   limits: what is off-screen or hidden reflects too, without a fade at the screen's edges. A hit behind the eye gives
-  the blend nothing. Only where a surface was drawn in front of the G-buffer's, water and glass, which the G-buffer
+  the blend nothing. Only where a surface was drawn in front of the G-buffer's, water, which the G-buffer
   and so the rays lack, does the blend keep the screen-space map: where the depth the reflections' mask read
   (`LocalReflectionMask`, `2d9cb6c5e467cff5e9c6401b4aafebb7`, `t0`) is nearer than the G-buffer's as the kick packed
-  it (`ray_tracing::surfaceDepth`).
+  it (`ray_tracing::surfaceDepth`). Glass there leaves it out (`glass::surfaceWeights`): that map is the surface's behind
+  the glass.
+- **Glass and mirrors** (`glass.*`, `TraceSurfaceReflections`). The game's glass has no reflection of its surroundings.
+  `fox3dfw_glass*` (disassembly and frames of 2026-10-31) sample a cube map, `t2`, or the common one, `t11`, 128 x 128,
+  and draw `(ambient + diffuse) x lerp(R, lerp(GlassColor, R, F), GlassColor.a) + specular`, with `R` the cube map by
+  `ReflectionColor` (by the colour of `t0` in the `_color` variants), premultiplied by `alpha = cover x F x` the
+  vertex's alpha, `cover` being `t0.x` or, in those variants, `t0.a`. `F` is Schlick's from the material table's F0, but
+  glass's rows have an F0 of 0.58 to 0.95 (rows 54, 154, 158: 0.88), so it hardly varies with the angle: how much
+  a pane reflects is its texture's. The windows measured have `GlassColor` (1, 1, 1, 1), the doctor's lenses (1, 1, 1, 0).
+  The eyes' shell is additive glass (ONE, ONE). A mirror, `fox3dfw_parallax_refrection`, is no reflection at all: a
+  painted picture of the room (`t0`, 512 x 512), its UV shifted by a height map, unlit, by a mask (`t2.y`); with a
+  negative `cPSMaterial` `c0.x` it reads a texture across the screen, flipped, the intro's mirror camera. Where they
+  draw: model glass after the sky and before the game's reflection blend, in the list before it, writing depth; `_prim`
+  glass, alpha bit 6 in its file, among the particles after the blend, without depth: 16 of the 17 glass draws of
+  four frames (a truck, the hospital's windows, a doctor's glasses). Every glass draw of 141 F10 records comes
+  before the list with `Tonemap_Lum_Lacc`, which opens with it. Their pixel shaders' hashes in a frame record
+  are the game dither's patched ones (`22ab650c`, `79fd24a8`, `61ff7b30`, `800abf58`, `d12d4eca`, `1e3ae7c7`): find glass by
+  its vertex shaders. So while the reflections are traced:
+  - **The draws** (`glass::draw`). Each leaves out what it reflects with (`GameShader::reflectionSlot` unbound, reading
+    black), which keeps its tint, highlights, cover and fog, and is drawn again with the game's vertex shader and its
+    depth test into three shared targets: the depth, the normal with `GlassRoughness`, and the weight the
+    game's shader gives its reflection, `alpha x (1 - GlassColor.a + GlassColor.a x F) x ReflectionColor x` the fog's
+    share (`GlassSurface`; `MirrorSurface`: its mask and the fog, the normal from the position across the pixel, as
+    its vertex shader gives none). The last drawn is the nearest, as the game sorts what blends; the weights blend as the
+    game blends, so a pane drawn twice, as many are, weighs as it shows. A mirror with the live picture stays the game's
+    (its texture is a render target), and so does whatever a smaller camera's view draws.
+  - **The trace** (`ray_tracing::traceSurfaces`). Before the exposure's list, a frame that drew a surface signals the fence,
+    and Direct3D 12 traces the marked pixels on the scene the kick built, in a list of their own (`gi_renderer::traceSurfaces`), up to
+    `SpecularRays` as any glossy surface; Direct3D 11 waits. The rays' hits come from the same `ReflectedLight`. So
+    whatever the game draws reflects, with its own shape and normal map, a character's visor without the rays' pose,
+    and a frame without glass traces nothing. The cost goes to the **Reflections** line of the budget.
+  - **The composite** (`glass::executing`, `Composite`). The reflection by the menu's **Reflections** and the weight, sRGB
+    encoded and added by the surface's alpha, in the scene's encoded values, as the game blends its glass, over a copy of the
+    scene, before the exposure, the depth of field and the upscaler read it. So a particle in front of a pane has the
+    reflection over it. A traced reflection is added to what the draw left, as encoding the sum of the two would need
+    each pane's own colour.
+  - **The rays.** Glass used to be left out for its alpha and shadow bytes. It is now `MeshRole::Glass`, taken by its material: any
+    with a `GlassColor` vector, which four techniques have and no other (`fox3DFW_Glass_CommonRef`, `_CommonRef_LNM`,
+    `_LNM` and two unnamed); mirrors are `MeshRole::Mirror`, by their technique, `fox3DFW_ParallaxReflection`. They are non-opaque
+    in their structures, so `CutOutBlocks` lets every ray through in one place: the sun's and the lamps' light comes through,
+    tinted or not, and the global illumination's rays and the camera's pass as before. Only a reflection's rays meet them
+    (`RayAlongReflection`, `TraceReflectionRay`): by chance, as much as a pane's cover (`Base_Tex_LIN`, red, or alpha in a colour
+    texture) by its table's row gives, a ray reflects as from a mirror, and otherwise goes on, through at most `MostPanes`, with
+    nothing behind the pane taken for a copy of it. A mirror reflects all of a ray: it has no row of the table, and its mask is
+    on the second texture coordinates, which the scene does not keep. So glass shows in reflections, and mirrors in each
+    other. The rays leave out glass's tint.
+  - **Ray Reconstruction** (`glass::guideReconstruction`). Most glass draws no depth, so the motion, made from depth, moved a
+    pane's detail as what is behind it, and with the guides of that too its cracks melted away in motion and came back
+    once still (the player's hospital window, 2026-10-31: the same pose settled, then arrived at in half a second, 0.6 m to
+    the side; the same held-still turn of 0.08 radians as a control, which depth does not change). Most of that detail is the
+    traced reflection's: with the game's reflection in its place, `path_traced_reflections=0`, the pane has a third of it
+    and keeps 87% moving. Where a pixel's glass covers at least `DominantCover` of it, 0.1, its depth, motion, normal,
+    roughness and reflection hit distance go in place of what is behind, as NVIDIA's guide (3.4.1, 3.4.9) asks of a window.
+    In one scene, detail kept moving went from 45% to 71%, off the glass 85%, and the difference from settled from 0.0114 to
+    0.0073; turning stayed at 71 to 72%, as a wrong depth predicts. Cover 0.5 keeps less than 0.25, and 0.1 and 0.05 are the
+    same. Blending the albedos too gained no more than repeat runs differ by (0.0074 to 0.0070) and takes three textures, so
+    they stay as they are. The gap left to 85% is unexplained; the reflection's noise is the suspect, as neighbouring pixels
+    differ by about four times its mean.
+  - The glass with `Prim_TppFxGlassMat*` and `tpp3dfw_MetalicBacteriaGlass` are
+    no part of this: none drew in 205 F10 records.
 - **Hits** (`HitMaterialOf`, `gi_hit_light.hlsli`). The G-buffer's shaders (`fox3ddf_blin` and its family) take a
   surface's look from three textures and one number, and the scene reads the same from the model file: the
   material parameters `SpecularMap_Tex_LIN` (`g_tex_srm`: red the specular rate, green the roughness, the G-buffer's
@@ -1774,7 +1850,7 @@ the game's lights) is left alone until it runs.
   (`SpecularTableAt`, `direct_light.hlsl`).
 - **What stays the game's.** Its shadow maps: 85 of its pixel shaders sample them (its lit particles,
   glass, rivers and liquids, decals, forward models, the terrain's self-shadow), and the volumetric fog the
-  sun's for its light shafts. Its screen-space reflections' march, for water and glass. Its probe light in
+  sun's for its light shafts. Its screen-space reflections' march, for water. Its probe light in
   the diffuse light target, which its exposure measures.
 - **Cost** (2026-10-30, 2228x1254 rendered for 3840x2160): the light's line in the log,
   which holds the reflections and the lights, 4 to 5.7 ms, against about 2.4 ms with Ray Reconstruction
@@ -2206,6 +2282,60 @@ again with the last frame's random numbers (NRD's `IN_DIFF_CONFIDENCE`).
 With DLSS Ray Reconstruction denoising, the light takes a sample a render pixel and goes out without
 NRD (see "Ray Reconstruction").
 
+### What a kick traces
+
+A kick can run six traces on the ray-traced scene: the lamps' shadow rays, the lamps' light, the sun's rays,
+the light, the reflections and, later in the frame, the glass's reflections. An effect's state does not say
+which: under path tracing the sun's rays run while the ray-traced shadows are replaced, and the lamps' shadow
+rays run until the game's tables arrive, while the ray-traced lights are replaced.
+
+`kick_traces.*` holds the one answer, in two pure steps. `askedBy` takes what the effect plan asks of the rays
+for a frame. `tracesOf` adds what the kick finds: whether Ray Reconstruction denoised, a sun, lights, the
+game's tables and the glass's targets. The kick makes the textures of what it traces, `gi_renderer` runs
+`Frame::traces`, and the threads recording the next frame read the last kick's answer
+(`ray_tracing::isPathTracing`). Only the path-traced question comes earlier (`isPathTraced`), because the
+kick takes the lights and sets up the glass for it.
+
+A trace owns what it needs on both Direct3D sides, behind `trace::Trace`, and `trace::inOrder` lists them in
+the frame's order. The kick calls `gather` on each, on Direct3D 11: it makes the trace's results. The frame
+then calls `prepare` on each, for its memory and last probe, and `bind` and `record` on those the kick runs.
+`release` gives its Direct3D 12 memory back when the rays stop, and `detach` the rest.
+
+A trace declares each texture it shares in a `SharedRow`: its format and slot, whose kind says read or write. `SharedBindings` opens it
+in Direct3D 12, puts it in the frame's tables, moves it out of the common state for the frame's passes and back,
+and marks a `SharedOutput` written once the frame is submitted. A `SharedOutput` keeps its own lock, since the kick
+and the threads recording the next frame use it at the same time.
+
+So far the lamps' shadow rays are a trace (`lamp_shadow_rays.*`); the others are recorded by `gi_renderer` itself.
+
+### Kernels and their slots
+
+A kernel's HLSL is the one home of its slots: the `register()` lines, each in the file of the trace that owns it. A
+kernel's one home is its `add_gi_kernels` line in `CMakeLists.txt`. The build reads the rest from the compiled kernels,
+so nothing is typed twice.
+
+`tools/kernel_bindings` reflects each kernel's DXIL with DXC's own reflection (`dxcompiler.dll`, beside `dxc.exe`) and
+writes three headers into `build/<preset>/gi_shaders`:
+
+| Header | What it holds | Who includes it |
+| --- | --- | --- |
+| `gi_bindings.h` | Each slot by its HLSL name without `g_`, in `namespace binding`: `binding::Depth`, `binding::Light_Noisy.at(1)` | `gi_d3d12.hpp` |
+| `gi_kernel_list.h` | The `Kernel` enum, in `add_gi_kernels` order | `gi_d3d12.hpp` |
+| `gi_kernel_bytecode.h` | `Bytecode`, every kernel's DXIL in that order (about 8 MB of headers) | `gi_renderer.cpp` |
+
+To add a resource: declare it in the HLSL, use it in a kernel, then bind `binding::Name`. DXC drops what no kernel
+uses, so until then the name does not exist. To add a kernel: add it to `add_gi_kernels`.
+
+The build stops when a slot has two names, a name has two shapes across kernels, or a kernel has no bindings. Each kind of
+binding has a type of its own (`gi_slots.hpp`), so `Descriptors::texture` does not compile with an output's slot, and `at()` past the
+end of an array does not compile either.
+
+Not checked: a view's format against the HLSL (a write-only `RWTexture2D<float4>` on a UNORM texture is fine, a typed
+load needs `unorm`), and a slot left null at run time, which the optional inputs are on purpose.
+
+The tool reads DXC's reflection and not the binding table DXC prints in each kernel's `.h`: that table is for people,
+and runs its columns together (`UAVunorm_f32`).
+
 ### Smaller views
 
 The rays trace the main view only, one kick a frame. The intro's mirror is a camera of its own, drawn
@@ -2332,7 +2462,8 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   A character's meshes are taken as the main view shows them, not as its shadow maps do (2026-10-24):
   its meshes with shadow bit 1 (drawn into the shadow maps only: stand-ins) are left out, those with
   shadow bit 0 (main view only) and see-through ones (alpha bit 6) taken, the see-through ones cut out
-  by their alpha; its main-view glass (alpha bit 4 with shadow bit 0) stays out. The helicopter's
+  by their alpha; its other forward meshes the main view alone shows (alpha bit 4 with shadow bit 0) stay out, and its
+  glass is glass (see "Path tracing", "Glass and mirrors"). The helicopter's
   windows (model `84a12883d81ea5e3`, meshes 12, 13, 17, 21, 22 and 25) were taken until 2026-10-25 and
   shaded its cabin: the shadow probe found the cabin's sunward surfaces blocked by mesh 13 0.2 to 1.8 m
   away, and the camera's ray meeting it at the window, 2.7 m before the game's surface. Before, the shadow probe on a woman in the sun found her hair missing (every mesh of
@@ -2397,8 +2528,9 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   from 91% to 16%. Placements come grouped by model, so the renderer looks a
   model up once a run.
 - **Mesh roles** (2026-10-27). `scene_description.cpp` gives each mesh of a model file its role from
-  its alpha and shadow bytes, whether the file has bones and its model source, by the rules above
-  ("Characters", "Vegetation"): solid, cut-out, leaf, hair, main view only, shadow only, or dropped. The
+  its material where that says (glass, a mirror, a self-lit mesh), else from its alpha and shadow bytes, whether the file
+  has bones and its model source, by the rules above ("Characters", "Vegetation"): solid, cut-out, leaf, hair, main view
+  only, shadow only, or dropped. The
   role alone sets its row's flags. `tests/scene_description_tests.cpp` keeps the cases measured in the
   game as rows. Checked against the code before it for every alpha and shadow byte, rigid and skinned
   and from each source, every mesh had the same flags but two kinds. A rigid model's solid stand-in the
@@ -2443,8 +2575,8 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
 With **Ray-traced shadows** on, the sun's shadow comes from rays traced through the ray-traced scene
 (see "Ray-traced scene"), in place of the game's
 shadow map, soft shadows and sun contact shadows. The scene runs for them with the global
-illumination's light on or off; its `Options::shadows` (`src/passes/ray_tracing/ray_tracing.cpp`) turns them on, and the
-light passes run only with `enabled`. Lamp contact shadows stay as they are: lamps are not ray
+illumination's light on or off; `kick_traces::Asked::runsRayTracedShadows` turns them on, and the
+light passes run only with `runsLight`. Lamp contact shadows stay as they are: lamps are not ray
 traced here (see "Ray-traced lights"). With DLSS Ray Reconstruction denoising, the rays go out without the
 denoiser (see "Ray Reconstruction").
 
@@ -2844,10 +2976,13 @@ flag on each full-screen draw.
 - **Recognition.** By checksum at `init_pipeline`: the sky light, the upscale, the ten resolves, the
   two SSAO passes (see "Ambient occlusion") and the two sun passes (`SunLight_DL_CS_ES`,
   `SunLight_DL_ES`). At the sky light's draw the add-on keeps the normals it binds for that deferred
-  context. At a sun pass's draw it keeps the G-buffer's specular target (`t1`,
-  `g_SpecularTexture`), whose `z` is the material. The sun comes after the upscale, so the march
-  reads an earlier frame's binding: the same texture while the render size stays. `onDraw` calls
-  GTVBAO before the sun shadows, which draw the sun pass themselves.
+  context. Each time the game binds the G-buffer it keeps a view of the third target, the specular
+  target, whose `z` is the material. The sun pass reads it too (`t1`, `g_SpecularTexture`) but cannot
+  give it: not every scene has one (mission 10010's hospital room has none), and a
+  view kept from it would outlive the target. The game makes new targets at a new render size, so
+  back at the first size the old view fits and shows that moment's picture for good, as a ghost in
+  everything path tracing reads from the specular target. `onDraw` calls GTVBAO before the sun
+  shadows, which draw the sun pass themselves.
 - **Depth prefilter** (`shaders::PrefilterDepths`, XeGTAO's depth MIPs), first: the view distance
   at the render size and four smaller copies in one `R32_FLOAT` texture, each 8x8 group covering
   16x16 pixels. Each copy is XeGTAO's `DepthMIPFilter` of the 2x2 below: the weighted mean, fading
@@ -3200,18 +3335,66 @@ with the game's Depth of Field option on runs the `DOF_Scatter*` passes; `DOF_0_
   pixel through an sRGB decode, raises bright pixels to the HDR luminance in alpha (`a^2 x 32`,
   capped at `cPSObject` c11.y), and takes each pixel's blur radius from depth as
   `c12.z x (z - c12.w) / z` (`ReconstructViewZ`), clamped to c11.w in front and c11.z behind. Near
-  and far split at device depth c11.x.
+  and far split at device depth c11.x. It gathers the four depths under each half-size pixel: the near
+  layer's radius comes from the nearest, the far layer's from the farthest, and the far colour from
+  the four behind c11.x alone. One background pixel of four makes all four blurred.
 - **Scatter.** `DOF_ScatterBakeSecond` makes 1/4, 1/8 and 1/16 size levels. `DOF_ScatterSprite`
   (indexed, 2048 quads a draw) draws a quad per pixel of a level, sized by its blur, shaped by a
   64x64 bokeh texture and divided by its area, with additive blending; big blurs go to the small
   levels. Near, then far. Small blurs are gathered with a few taps (`DOF_ScatterGather1`,
-  `CompositeNear`, `CompositeFar`).
+  `CompositeNear`, `CompositeFar`). `CompositeNear` draws into the half-size result and `CompositeFar`
+  blends under it (one minus the target's alpha, plus the target). The far layer's cover is at least
+  `saturate(2 (r - c12.x) / (c12.y - c12.x))`, `r` the half-size pixel's radius.
 - **`DOF_ScatterCompositeFinal`** writes `blur + (1 - coverage) x scene` from the half-size result
   and a copy of the scene (`CopyRenderBuffer`) into the scene target, sRGB-encoded, alpha kept.
 - Weak points: everything is half size or less, so slight blur turns blocky and shimmers at focus
   edges; one depth splits near from far; the HDR lights are not tonemapped back, so they clip.
 
-The add-on draws the game's depth of field as it is, before DLSS (see "What the add-on changes").
+The add-on keeps the game's depth of field before DLSS (see "What the add-on changes"), with its
+focus edges at the render size (`features/depth_of_field`).
+
+- **Why.** The farthest of four depths lays the blur over the rim of whatever is in focus, in steps
+  of a half-size pixel. Those steps stay where they are as the jitter moves the image, so DLSS and Ray
+  Reconstruction keep them, and they widen as the render size falls: 2 output pixels at native 4K, 3.4
+  at Balanced. In frame 32570 (Balanced, 4K), the steps along a photo's edge fell every 48 render
+  columns, on the columns the block rule gives from that frame's depth (29, 76, 123), not on the
+  geometry's (every 24).
+- **The pass.** At `DOF_ScatterBakeFirst`, while the game's constants are bound, a draw at the render
+  size works out each pixel's own far cover by the formulas above. `DOF_ScatterCompositeFar` draws
+  into a layer of its own, unblended, which leaves the near layer alone in the game's target. The
+  composite is then `near + (1 - near.a) x lerp(scene, far.rgb / far.a, own cover)`. The half-size far
+  layer gives the blur's colour, and each render pixel's depth says how much shows. That edge is the
+  geometry's, which moves with the jitter and which DLSS resolves as any other. Where the two covers
+  agree this is the game's blend; the game's shaders and these on WARP agree to under an 8-bit step
+  over four lenses, and to the last digit in the composite. The near layer stays as the game drew it,
+  because near blur rightly spreads over what is in focus behind it.
+- **What it leaves.** A far blur's bokeh no longer spreads over what is in focus in front of it, which
+  a lens would not do either. Far cover under 5% fades out, as a colour from so little of a pixel
+  stands for nothing.
+- **The background's blur** (Camera, **Depth of field**, `depth_of_field_far_blur`). **MGSV** keeps the
+  game's far layer in the composite above. It is a soft smear, not a lens's disc: built from layers
+  down to 1/16 size, it falls off like a Gaussian. **Lens**, the default, skips the game's
+  `CompositeFar` draw and makes its own layer at half the render size, at the composite:
+  - The prefilter leaves out what is in focus and weighs each pixel down by how bright it is (Karis),
+    so one noisy ray cannot turn into a disc. Its colour is multiplied by the radius, so a bilinear tap
+    beside an in-focus texel keeps its colour.
+  - A disc gather of up to 96 taps on a golden-angle spiral, where a tap counts if its own blur reaches
+    this far (Jimenez 2014, "scatter as you gather"), then two 8-tap fills between the taps. Past 96
+    taps, from about 11 render pixels of radius, the taps spread out and a small lamp's disc breaks
+    into them. One fill as wide as the taps are apart lands on the neighbouring taps, so the first ring
+    is 0.105 of the radius and the second 0.05. Offline, the gather's maths at 60 render pixels: a lamp's
+    ripple 0.65 with one fill, 0.42 with 192 taps, 0.12 with two fills; frame 32570's scene against a
+    true disc, rms 1.12, 0.98, 0.61 of 255. Mips the width of the gap were worse than either, at 1.97.
+  - The composite stretches the layer with a cubic B-spline in four bilinear taps (Sigg and Hadwiger
+    2005). A pixel's cover is its own radius: sharp under half a render pixel, all blur over one and a
+    half. The radius follows the game's formula, starting at its smallest size (c12.x), and comes from
+    a second channel of the cover draw.
+  - Measured on the copy (4K, Quality, Ray Reconstruction, f/1.4), against a true disc blur of the
+    no-blur frame: detail, rms 8.80 (game) to 7.75; a flat wall, 2.05 to 1.78. Lamps at strong blurs
+    were checked offline alone, and the cost is unmeasured.
+
+  The near layer stays the game's with either.
+
 Photo mode blurs with it: it sets the active camera's focus distance (`+0x38`), f-number (`+0x44`,
 the overlay's **f-stop**, or f/64 with the blur off) and the byte that allows any aperture
 (`+0xEA`) for the selector's update, which copies them into `GrCamera` (see "Photo mode").

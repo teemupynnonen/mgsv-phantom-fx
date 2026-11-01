@@ -2,6 +2,7 @@
 #include "features/path_tracing/path_tracing.hpp"
 
 #include "d3d11_helpers.hpp"
+#include "features/path_tracing/glass.hpp"
 #include "features/path_tracing/path_tracing_shaders.hpp"
 #include "frame_latch.hpp"
 #include "log.hpp"
@@ -28,8 +29,9 @@ using Microsoft::WRL::ComPtr;
 using game_shaders::GamePass;
 
 constexpr UINT MaskDepthSlot = 0; // The reflections' mask's inDepthImage
-// The blend's additions (shaders::ReflectionBlend): the depths, the reflection map and the reflections; its constants.
-constexpr UINT BlendViewSlot = 3, BlendViews = 4, BlendParameterSlot = 1;
+// The blend's additions (shaders::ReflectionBlend): the depths, the reflection map, the reflections and glass's weights; its
+// constants.
+constexpr UINT BlendViewSlot = 3, BlendViews = 5, BlendParameterSlot = 1;
 constexpr ComputeSlots PassSlots{.buffers = 1, .views = 2, .accesses = 1};
 
 struct Parameters
@@ -48,11 +50,9 @@ struct MaskParameters
     std::uint32_t tile, padding[3];
 };
 
-// The effect plan runs path tracing (configure), with DLSS Ray Reconstruction asked for, which it waits on;
-// and how strongly the reflections are added.
+// How strongly the reflections are added.
 struct Wanted
 {
-    bool on{};
     float reflections{};
 };
 
@@ -124,13 +124,6 @@ bool ensurePipeline()
     }
 }
 
-// The reflections take the place of the game's: the last kick traced them, and the sun pass can leave its
-// sky reflection out.
-bool isReflecting()
-{
-    return wanted.load(std::memory_order_relaxed) && latch.frame().on && ray_tracing::isPathTracing() && !sun_light_pass::failed();
-}
-
 // The masks' tiles into the atlas; call with resourceMutex held.
 void copyMasks(ID3D11DeviceContext* immediate, const std::vector<ID3D11ShaderResourceView*>& masks)
 {
@@ -185,7 +178,7 @@ void detach() noexcept
 void configure(const Configuration& configuration) noexcept
 {
     const bool on = configuration.effects.runs(Effect::PathTracing);
-    latch.set({on, configuration.settings.pathTracing.reflections});
+    latch.set({configuration.settings.pathTracing.reflections});
     wanted = on;
     if (!on) return;
 
@@ -196,6 +189,16 @@ void configure(const Configuration& configuration) noexcept
 void present() noexcept
 {
     latch.present();
+}
+
+bool isReflecting() noexcept
+{
+    return ray_tracing::isPathTracing() && !sun_light_pass::failed();
+}
+
+float reflectionStrength() noexcept
+{
+    return latch.frame().reflections;
 }
 
 Health health()
@@ -281,6 +284,8 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         auto* reflection = ray_tracing::reflection(width, height);
         if (!surfaceDepth || !reflectionMap || !reflection) return false;
 
+        const auto surfaceWeights = glass::surfaceWeights(width, height);
+
         // Without the mask's depth, the rays take every surface.
         ComPtr<ID3D11ShaderResourceView> sceneDepth;
         {
@@ -299,7 +304,7 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         context->PSGetConstantBuffers(BlendParameterSlot, 1, gameParameters.GetAddressOf());
         for (UINT i = 0; i < BlendViews; ++i) context->PSGetShaderResources(BlendViewSlot + i, 1, gameViews[i].GetAddressOf());
 
-        ID3D11ShaderResourceView* views[BlendViews]{sceneDepth.Get(), surfaceDepth.Get(), reflectionMap, reflection};
+        ID3D11ShaderResourceView* views[BlendViews]{sceneDepth.Get(), surfaceDepth.Get(), reflectionMap, reflection, surfaceWeights.Get()};
         context->PSSetShader(blendShader.Get(), nullptr, 0);
         context->PSSetConstantBuffers(BlendParameterSlot, 1, blendParameters.GetAddressOf());
         context->PSSetShaderResources(BlendViewSlot, BlendViews, views);
@@ -309,7 +314,7 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         context->PSSetShaderResources(BlendViewSlot, BlendViews, views);
         context->PSSetConstantBuffers(BlendParameterSlot, 1, gameParameters.GetAddressOf());
         context->PSSetShader(gameShader.Get(), nullptr, 0);
-        logOnce(sceneDepth ? "Path tracing: the game's reflection blend takes the rays' hits, and the screen-space reflections on water and glass."
+        logOnce(sceneDepth ? "Path tracing: the game's reflection blend takes the rays' hits, and the screen-space reflections on water."
                            : "Path tracing: the game's reflection blend takes the rays' hits.");
 
         return true;
