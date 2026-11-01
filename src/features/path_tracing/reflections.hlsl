@@ -19,7 +19,7 @@ RWTexture2D<float4> g_ReflectionMap : register(u98);       // The hit as the gam
 Texture2D<float> g_SurfaceDepth : register(t26);           // The nearest glass, mirror or water the game drew at each pixel (forward_surfaces.hpp); 0 without
 Texture2D<float4> g_SurfaceNormal : register(t27);         // Its world-space normal, its roughness in w; water's w is negative
 RWTexture2D<float4> g_SurfaceReflection : register(u99);   // What it reflects, times the exposure; a: the ray's hit distance
-RWTexture2D<float> g_ForwardShadow : register(u97);        // The sun's visibility at the surface itself, for the composite to dim it by
+RWTexture2D<float> g_ForwardShadow : register(u100);       // The sun's visibility at the surface itself, for the composite to dim it by
 
 // Water's reflectance (F0 0.02) at the eye's angle over GGX's lobe: Karis' fit of the split sum ("Physically
 // Based Shading on Mobile", 2014), as the sea's guides use it. A water surface with its ripples' roughness,
