@@ -57,8 +57,6 @@ struct Wanted
 };
 
 FrameLatch<Wanted> latch;
-// The water's traced-reflection roughness (features/water_reflections).
-std::atomic<float> waterRoughness{0.25f};
 std::atomic<bool> wanted{}, pipelineFailed{};
 
 // The scene's depth each context's reflection mask read, for the blend it records next.
@@ -181,7 +179,6 @@ void configure(const Configuration& configuration) noexcept
 {
     const bool on = configuration.effects.runs(Effect::PathTracing);
     latch.set({configuration.settings.pathTracing.reflections});
-    waterRoughness = configuration.settings.waterReflections.roughness;
     wanted = on;
     if (!on) return;
 
@@ -202,11 +199,6 @@ bool isReflecting() noexcept
 float reflectionStrength() noexcept
 {
     return latch.frame().reflections;
-}
-
-float waterReflectionRoughness() noexcept
-{
-    return waterRoughness.load();
 }
 
 Health health()

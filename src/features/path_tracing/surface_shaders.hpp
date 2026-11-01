@@ -164,11 +164,9 @@ Surface main(float4 position : SV_Position, float4 uv : TEXCOORD0, float3 unused
 // (Hnm): the texel's w and y, z rebuilt. Every input is declared in the vertex shader's order, so each lands in its
 // register.
 inline constexpr char WaterSurface[] = R"(
-cbuffer Parameters : register(b0)
-{
-    float Roughness; // The menu's (features/water_reflections)
-    float3 Padding;
-};
+// Near a mirror, as the game's own shader samples its cube map: the ripples' normal does the rest.
+static const float Roughness = 0.05f;
+
 cbuffer cPSMaterial : register(b4)
 {
     float4 m_materials[7]; // [0]: the two layers' UV offsets; [3].xy or [6].xy: their scales
@@ -214,7 +212,7 @@ Surface main(float4 color : COLOR0, float4 position : SV_Position, float2 uv : T
 
     Surface surface;
     surface.depth = position.z;
-    surface.normal = float4(normal, -max(Roughness, 1e-3f));
+    surface.normal = float4(normal, -Roughness);
     surface.weight = float4(0.3f, 0.3f, 0.3f, 1.0f);
     return surface;
 }

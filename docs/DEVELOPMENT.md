@@ -3356,7 +3356,8 @@ Two halves, one mechanism:
   (`TraceSurfaceReflections`, reflections.hlsl) runs after the scene, so it reflects from where the water is now:
   no lag, and no reprojection to undo one. What it reflects is scaled by water's reflectance at the eye's angle
   (`WaterReflectance`, Karis' split-sum fit, F0 0.02), and added over the scene at the exposure by the
-  composite. Its roughness (`Atmosphere > Water reflections`) spreads it further.
+  composite. Its roughness is fixed at 0.05, near a mirror: the game's shader samples its cube map without one, and
+  the ripples' normal carries the variation.
 - **Shadow of a surface.** `TraceSurfaceReflections` also traces the sun for each glass and mirror pixel, into
   `g_ForwardShadow` (u97): the glass composite reads it. Water traces none and writes 1: the composite ignores the
   value at water's pixels (water takes no sun shadow; the bed under it is lit by the sun pass as the rest of the

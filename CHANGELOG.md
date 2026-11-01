@@ -9,8 +9,7 @@
   water reflects what is around it - from where it is now, not where it was a frame ago - at 0.3 of water's
   reflectance. **Caustics** light the bed under a river before the water blends over it: the sunlight its waves focus,
   from an art map, strongest just under the surface, fading with the depth and gone where the water meets the shore
-  or anything standing in it. **Atmosphere > Water caustics** sets the **Intensity**, and **Water reflections** the
-  traced reflection's **Roughness**.
+  or anything standing in it. **Atmosphere > Water caustics** sets the **Intensity**.
 
 - **Depth of field: no more jagged edges around what is in focus.** The game decided what is blurred in blocks of
   four pixels, so the blur bit into the rim of anything in focus in steps, and the lower the render size the wider

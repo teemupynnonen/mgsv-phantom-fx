@@ -24,7 +24,6 @@
 #include "features/upscaling/settings.hpp"
 #include "features/volumetric_fog/settings.hpp"
 #include "features/water_caustics/settings.hpp"
-#include "features/water_reflections/settings.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -53,7 +52,6 @@ struct Settings
     VolumetricFog volumetricFog;
     Sea sea;
     WaterCaustics waterCaustics;
-    WaterReflections waterReflections;
     DepthOfField depthOfField;
     MotionBlur motionBlur;
     PhotoMode photoMode;
@@ -83,7 +81,6 @@ template<class Visit> void forEachFeature(Settings& settings, Visit&& visit)
     visit(settings.volumetricFog);
     visit(settings.sea);
     visit(settings.waterCaustics);
-    visit(settings.waterReflections);
     visit(settings.depthOfField);
     visit(settings.motionBlur);
     visit(settings.photoMode);
