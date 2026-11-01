@@ -293,11 +293,16 @@ void setRecording(bool isOn) noexcept
 {
     if (folder.empty()) return;
 
-    std::error_code error;
     try
     {
-        if (isOn) std::ofstream(folder / RecordingMarker).flush();
-        else std::filesystem::remove(folder / RecordingMarker, error);
+        // Left as it was if the marker cannot follow: the switch would come back otherwise at the next start.
+        std::error_code error;
+        const bool isKept = isOn ? static_cast<bool>(std::ofstream(folder / RecordingMarker)) : std::filesystem::remove(folder / RecordingMarker, error) || !error;
+        if (!isKept)
+        {
+            log("Costs on file: the recording switch could not be kept in " + folder.string() + ".");
+            return;
+        }
 
         std::lock_guard lock(recordMutex);
         row = {};
@@ -374,7 +379,9 @@ void onPresent(const std::optional<performance::FrameCost>& cost) noexcept
             if (running)
             {
                 add(running->tally);
-                if (running->tally.frameTimes.size() >= running->frames)
+
+                // By the GPU's frames: with no one looking, its timing starts with the capture and comes a few frames late.
+                if (running->tally.gpuFrames.size() >= running->frames)
                 {
                     finishedCapture = std::move(running);
                     running.reset();
