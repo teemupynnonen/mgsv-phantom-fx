@@ -40,12 +40,12 @@ constexpr std::uint64_t LayerTextureParameter = 0xFB6E9826DBE6, LayerMaskTexture
 constexpr std::uint64_t URepeatParameter = 0xE544FE2CA129, VRepeatParameter = 0xE7C7FA3697B2, UShiftParameter = 0x7B8B5E0E16EB, VShiftParameter = 0x38DA962E408E;
 // The techniques known to use their layer, as no parameter tells: 58 F10 records, each mesh's technique by its pixel shader in
 // the frame's G-buffer draws, 2026-11-01. A material can name a layer its technique may not read (a white base under a black
-// layer, technique 0xC0CE81F00048, in no record): any other technique keeps its base texture. These multiply it (the pixel
-// shaders' MulLayerTexture), and these lay it in the base texture's place (BlendLayerTexture, SRGBBlendLayerTexture).
+// layer, technique 0xC0CE81F00048, in no record): any other technique keeps its base texture. By LayerBlend, in its order.
 constexpr std::array<std::uint64_t, 15> MultipliedLayerTechniques{0xE2C9B71532D1, 0xD41DF652A584, 0x74891B27D58C, 0x88C852A00C01, 0xB17EB6AEFBB4, 0xD5F0795801BA,
     0xE910A72719EF, 0x16C65FA108DD, 0xAA02EC2A2C1D, 0xC71F96A72DD9, 0x1B8D4DA0667B, 0xA83595F3456F, 0x8DF300329F91, 0x7E8ECE300722, 0x339701C2A10D};
-constexpr std::array<std::uint64_t, 14> BlendedLayerTechniques{0x3FBC9A12FB36, 0xCDDF56CB51E3, 0x4E818B32A91D, 0x7B049948758F, 0xE14611544E45, 0xEF52ACD48A68,
-    0xCB4EF239308D, 0xD1B559F90CB6, 0xC887CFC09D78, 0x54214F48645B, 0xD8DE23B18660, 0x9BF9366EE4C1, 0xE7C991D84F41, 0x203D1676BC8E};
+constexpr std::array<std::uint64_t, 6> EncodedBlendLayerTechniques{0x3FBC9A12FB36, 0xCDDF56CB51E3, 0xEF52ACD48A68, 0xD1B559F90CB6, 0xD8DE23B18660, 0x9BF9366EE4C1};
+constexpr std::array<std::uint64_t, 8> LinearBlendLayerTechniques{0x4E818B32A91D, 0x7B049948758F, 0xE14611544E45, 0xCB4EF239308D, 0xC887CFC09D78, 0x54214F48645B,
+    0xE7C991D84F41, 0x203D1676BC8E};
 // Its alpha bits' additive blend: a glow card around a lamp (four vertices), no surface.
 constexpr std::uint8_t AdditiveAlpha = 0x01;
 // A self colour times intensity below this lights nothing: the sky's dome and the moon have 1, a mesh painted black
@@ -110,6 +110,17 @@ std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isC
     }
 
     return isMainViewOnly ? MeshRole::MainViewOnly : MeshRole::Solid;
+}
+
+// How a technique lays its layer, none where it is not known to read one.
+std::optional<LayerBlend> layerBlendOf(std::uint64_t technique)
+{
+    const auto isIn = [&](const auto& techniques) { return std::ranges::find(techniques, technique) != techniques.end(); };
+    if (isIn(MultipliedLayerTechniques)) return LayerBlend::Multiply;
+    if (isIn(EncodedBlendLayerTechniques)) return LayerBlend::Encoded;
+    if (isIn(LinearBlendLayerTechniques)) return LayerBlend::Linear;
+
+    return std::nullopt;
 }
 
 std::uint32_t flagsOf(MeshRole role)
@@ -493,9 +504,8 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
 
         const bool textured = uvs && uvs->dataType == TwoHalves;
         const bool hasNormals = normals && tangents && normals->dataType == FourHalves && tangents->dataType == FourHalves;
-        const bool isLayerBlended = std::ranges::find(BlendedLayerTechniques, technique) != BlendedLayerTechniques.end();
-        const bool usesLayer = isLayerBlended || std::ranges::find(MultipliedLayerTechniques, technique) != MultipliedLayerTechniques.end();
-        const auto layer = usesLayer ? textureOf(file, *layout, materialInstance, LayerTextureParameter) : 0;
+        const auto layerBlend = layerBlendOf(technique);
+        const auto layer = layerBlend ? textureOf(file, *layout, materialInstance, LayerTextureParameter) : 0;
         const bool isLayered = layer && !isGlass && !isMirror && textured && secondUvs && secondUvs->dataType == TwoHalves;
         if (isLayered)
         {
@@ -507,7 +517,7 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
             part.layerTexture = layer;
             part.layerMaskTexture = textureOf(file, *layout, materialInstance, LayerMaskTextureParameter);
             part.layerMapping = {mappingBy(URepeatParameter, 1), mappingBy(VRepeatParameter, 1), mappingBy(UShiftParameter, 0), mappingBy(VShiftParameter, 0)};
-            part.isLayerBlended = isLayerBlended;
+            part.layerBlend = *layerBlend;
             part.layerUvs.resize(vertexCount);
         }
 
@@ -567,7 +577,8 @@ Material materialOf(const ModelPart& part, const MaterialTextures& textures)
     if (textures.layer)
     {
         material.layerTexture = *textures.layer + 1;
-        if (part.isLayerBlended) material.flags |= GI_GEOMETRY_LAYER_BLEND;
+        if (part.layerBlend != LayerBlend::Multiply) material.flags |= GI_GEOMETRY_LAYER_BLEND;
+        if (part.layerBlend == LayerBlend::Linear) material.flags |= GI_GEOMETRY_LAYER_LINEAR;
     }
 
     if (textures.layerMask) material.layerMaskTexture = *textures.layerMask + 1;

@@ -2409,10 +2409,12 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   `Layer_Tex_SRGB` (`t3`), `LayerMask_Tex_LIN` (`t4`, red, on the base's coordinates), the layer's coordinates
   (second coordinates + (`UShift_UV`, `VShift_UV`)) x (`URepeat_UV`, `VRepeat_UV`) and `lying` = mask x the layer's alpha:
   `MulLayerTexture` gives lerp(base, base x layer, lying), `BlendLayerTexture` lerp(base, layer, lying) in linear light, and
-  `SRGBBlendLayerTexture` the same on the encoded values. `LayeredAlbedo` does this on the scene's linear copies, which is the
-  shaders' multiply near enough (sRGB is close to a power) and the two blends alike where a mask is 0 or 1. No parameter
-  says what a technique does with its layer: `MultipliedLayerTechniques` (15) and `BlendedLayerTechniques` (14) come from 58
-  F10 records, each mesh's technique by its pixel shader in the frame's G-buffer draws. Any other technique keeps its base
+  `SRGBBlendLayerTexture` the same on the encoded values; the multiply is on the encoded values too, as these shaders read the
+  textures unconverted. `LayeredAlbedo` does each as its shader does: the scene's copies are viewed as sRGB, so it encodes them
+  first. Done in linear light the multiply was up to 1.82 times too bright, a material's mean on a dark layer under a soft
+  mask; the encoded blend's worst was 1.1%. No parameter says what a technique does with its layer: its `LayerBlend`
+  comes from 58 F10 records, each mesh's technique by its pixel shader in the frame's G-buffer draws (15 multiply, 6 blend on the
+  encoded values, 8 in linear light). Any other technique keeps its base
   texture, though its material may name a layer: of 104 layered meshes loaded in one session 29 had one of two techniques
   in no record, one of them with a white base under a black layer, which multiplied would turn black in the rays.
   Their real files have the second coordinates as `HitAlbedo` needs them: 104 of 104, two halves each. The shaders' sheen (`Incidence_Color`, a tenth of the colour at most on the coat, at grazing angles) and dirt

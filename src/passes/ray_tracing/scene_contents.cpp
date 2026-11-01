@@ -1018,7 +1018,7 @@ void SceneContents::dumpModels(const std::filesystem::path& folder) const
         for (const auto& part : record.geometry->parts)
             file << std::format("  mesh {} group {} first {} count {} technique {:x} alpha {:#04x} shadow {:#04x}{}{}\n", part.mesh, part.group, part.firstIndex,
                 part.indexCount, part.technique, part.alphaBits, part.shadowBits, isCutOut(part.role) ? " cut-out" : "",
-                !part.layerTexture ? "" : part.isLayerBlended ? " layer blends" : " layer multiplies");
+                !part.layerTexture ? "" : part.layerBlend == scene_description::LayerBlend::Multiply ? " layer multiplies" : " layer blends");
         for (const auto& mesh : record.geometry->dropped)
             file << std::format("  mesh {} left out, technique {:x} alpha {:#04x} shadow {:#04x}\n", mesh.mesh, mesh.technique, mesh.alphaBits, mesh.shadowBits);
     }

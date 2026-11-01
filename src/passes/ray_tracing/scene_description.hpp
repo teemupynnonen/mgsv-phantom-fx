@@ -50,6 +50,15 @@ enum class ModelFile : std::uint8_t
     Skinned
 };
 
+// How a mesh's layer lies over its base texture, by the game's pixel shaders: it multiplies the base (MulLayerTexture), or takes
+// its place on the textures' encoded values (SRGBBlendLayerTexture) or in linear light (BlendLayerTexture).
+enum class LayerBlend : std::uint8_t
+{
+    Multiply,
+    Encoded,
+    Linear
+};
+
 // A mesh of a model: its index in the model file and its mesh group, its role, its material's base
 // texture (its colour, and the alpha a cut-out mesh cuts with: the path hash of its Base_Tex_SRGB, 0
 // without) or, for a mesh with none, its mask (Mask_Tex_LIN, cutting with its alpha); glass's mask (Base_Tex_LIN, how much
@@ -62,8 +71,8 @@ enum class ModelFile : std::uint8_t
 // and tangent (four halves each, as the file has them) and a self-lit mesh's light (SelfColor x
 // SelfColorIntensity, in the game's units, none on any other). Its layer, for every hit's colour, which lies over the
 // base texture and can be all of a mesh's colour: its textures' path hashes (Layer_Tex_SRGB, LayerMask_Tex_LIN, 0
-// without or where its technique is not known to read them), its coordinates (GIGeometry::layerMapping; each vertex's second ones, packed as `uvs`), and whether it
-// takes the base's place or multiplies it.
+// without or where its technique is not known to read them), its coordinates (GIGeometry::layerMapping; each vertex's second
+// ones, packed as `uvs`), and how it lies.
 struct ModelPart
 {
     std::uint32_t mesh{};
@@ -74,7 +83,7 @@ struct ModelPart
     std::uint64_t specularTexture{}, normalTexture{};
     std::uint64_t layerTexture{}, layerMaskTexture{};
     std::array<float, 4> layerMapping{1, 1, 0, 0};
-    bool isLayerBlended{};
+    LayerBlend layerBlend{};
     std::uint32_t materialIndex{};
     std::array<float, 3> emission{};
     std::vector<Vertex> vertices;
