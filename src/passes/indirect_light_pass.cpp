@@ -505,8 +505,6 @@ void note(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         const auto* row = shader.row();
         if (!row || std::ranges::find(NotedPasses, row->pass) == std::end(NotedPasses)) return;
 
-        if (call.indexed || call.count != 3 || call.instances != 1) return;
-
         const auto composition = latch.frame();
 
         // The rays trace the main view only, one kick a frame: a smaller camera's view in a corner of the

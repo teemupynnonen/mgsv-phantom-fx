@@ -24,8 +24,6 @@ struct Parameters
     float radius, maxRadiusPixels, occlusionStrength, lightStrength, diffuseScale, padding;
 };
 
-enum class Mode : std::uint8_t { Occlusion, Light };
-
 using Target = ComputeTexture;
 
 // The march writes results[0]; the denoise passes alternate between the two, and the last writes
@@ -85,10 +83,8 @@ bool failed() noexcept;
 
 // Records the prefilter, the march and the denoise passes on `context`, within a SavedComputeState of
 // PassSlots: `parameters` in b0 and the game's `scene` constants in b1, which stay bound for a pass
-// that follows. From `depth` and `normals`, and for the light `diffuse` and `albedo`; `specular`
-// (may be null) tells foliage. The march writes results[0] and `edges`, at their size; the denoised
-// visibility or light ends in results[Result].
-void march(ID3D11DeviceContext* context, Mode mode, const Parameters& parameters, ID3D11Buffer* scene, ID3D11ShaderResourceView* depth,
-    ID3D11ShaderResourceView* normals, ID3D11ShaderResourceView* diffuse, ID3D11ShaderResourceView* albedo, ID3D11ShaderResourceView* specular,
-    std::array<Target, 2>& results, Target& edges);
+// that follows. From `depth` and `normals`; `specular` (may be null) tells foliage. The march writes
+// results[0] and `edges`, at their size; the denoised visibility ends in results[Result].
+void march(ID3D11DeviceContext* context, const Parameters& parameters, ID3D11Buffer* scene, ID3D11ShaderResourceView* depth,
+    ID3D11ShaderResourceView* normals, ID3D11ShaderResourceView* specular, std::array<Target, 2>& results, Target& edges);
 }
