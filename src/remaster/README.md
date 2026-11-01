@@ -27,7 +27,8 @@ Then work down the marks:
 5. Name it, then press **Save**. That writes `src/remaster/materials.json` in the checkout the build came from.
    Commit that file.
 
-**Rules** lists every rule, with those for other maps dimmed. **Back to original** takes a rule away.
+**Rules** lists every rule, with those whose material the game has not loaded here dimmed. **Back to original** takes a
+rule away.
 
 The rules are off with the visual enhancements (F1), and the panel waits until they are back on.
 

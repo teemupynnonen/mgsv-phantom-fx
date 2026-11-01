@@ -304,6 +304,9 @@ void refreshLoaded()
 
 void addMark()
 {
+    // A flash holds its material at zero until the next overlay, and a mark must know it by its real values.
+    endFlash();
+
     const auto vars = varsBlock();
     if (!vars) return;
 
