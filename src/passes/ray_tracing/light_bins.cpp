@@ -18,7 +18,15 @@ constexpr float BoxMargin = 0.05f;
 
 void setBit(uint4& bin, std::uint32_t light) noexcept
 {
-    (&bin.x)[light / 32] |= 1u << (light % 32);
+    const std::array words{&bin.x, &bin.y, &bin.z, &bin.w};
+    *words[light / 32] |= 1u << (light % 32);
+}
+
+// The bin along an axis of a coordinate `offset` metres past the bins' origin: past the ends, the last at that end, as
+// LightsNear in gi_common.hlsli has it.
+int binOf(float offset, int bins) noexcept
+{
+    return std::clamp(static_cast<int>(std::floor(offset / GI_LIGHT_BIN_SIZE)), 0, bins - 1);
 }
 
 // The light's bit in the bins from `low` to `high`, metres past the bins' origin.
@@ -27,11 +35,6 @@ void mark(uint4* bins, int count, std::uint32_t light, float low, float high) no
     const int last = binOf(high, count);
     for (int bin = binOf(low, count); bin <= last; ++bin) setBit(bins[bin], light);
 }
-}
-
-int binOf(float offset, int bins) noexcept
-{
-    return std::clamp(static_cast<int>(std::floor(offset / GI_LIGHT_BIN_SIZE)), 0, bins - 1);
 }
 
 void fill(gi::GIFrameConstants& constants) noexcept
@@ -49,9 +52,9 @@ void fill(gi::GIFrameConstants& constants) noexcept
     for (std::uint32_t i = 0; i < constants.localLightCount.x; ++i)
     {
         const auto& light = constants.localLights[i];
-        const float* position = &light.position.x;
-        const float* volumeLow = &light.volumeLow.x;
-        const float* volumeHigh = &light.volumeHigh.x;
+        const std::array position{light.position.x, light.position.y, light.position.z};
+        const std::array volumeLow{light.volumeLow.x, light.volumeLow.y, light.volumeLow.z};
+        const std::array volumeHigh{light.volumeHigh.x, light.volumeHigh.y, light.volumeHigh.z};
         for (int axis = 0; axis < 3; ++axis)
         {
             float low = position[axis] - light.position.w, top = position[axis] + light.position.w;

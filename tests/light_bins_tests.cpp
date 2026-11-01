@@ -1,5 +1,6 @@
 #include "passes/ray_tracing/light_bins.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <iostream>
@@ -31,18 +32,23 @@ GILocalLight pointLight(float x, float y, float z, float range)
     return light;
 }
 
+// The bin LightsNear in gi_common.hlsli takes: the shader's own rule, to catch the bins being filled by another.
+int shaderBin(float offset, int bins)
+{
+    return std::clamp(static_cast<int>(std::floor(offset / GI_LIGHT_BIN_SIZE)), 0, bins - 1);
+}
+
 // Whether the bins of `world` hold the light, as LightsNear reads them.
 bool holds(const GIFrameConstants& constants, std::uint32_t light, const std::array<float, 3>& world)
 {
     const auto& origin = constants.lightBinsOrigin;
     const auto across = static_cast<int>(GI_LIGHT_BINS_ACROSS), high = static_cast<int>(GI_LIGHT_BINS_HIGH);
-    const auto& x = constants.lightBinsX[light_bins::binOf(world[0] - origin.x, across)];
-    const auto& y = constants.lightBinsY[light_bins::binOf(world[1] - origin.y, high)];
-    const auto& z = constants.lightBinsZ[light_bins::binOf(world[2] - origin.z, across)];
-    const auto word = light / 32;
-    const auto all = (&x.x)[word] & (&y.x)[word] & (&z.x)[word];
+    const auto& x = constants.lightBinsX[shaderBin(world[0] - origin.x, across)];
+    const auto& y = constants.lightBinsY[shaderBin(world[1] - origin.y, high)];
+    const auto& z = constants.lightBinsZ[shaderBin(world[2] - origin.z, across)];
+    const std::array words{x.x & y.x & z.x, x.y & y.y & z.y, x.z & y.z & z.z, x.w & y.w & z.w};
 
-    return (all >> (light % 32) & 1u) != 0;
+    return (words[light / 32] >> (light % 32) & 1u) != 0;
 }
 
 // As LocalLightReaching gives a light any light at all, without its falloff and cone.
@@ -110,6 +116,20 @@ void aLightStaysOutOfPlacesOffItsBox()
     expect(!holds(*constants, 1, {-40, 0, 0}), "A long reach is cut to the game's volume");
 }
 
+// A box takes the bins the shader's floor gives its ends, no more: x from 4 to 6 m around the eye here is one bin.
+void aBoxEndsAtItsBinsEdges()
+{
+    auto constants = constantsAt(0, 0, 0);
+    constants->localLightCount.x = 1;
+    constants->localLights[0] = pointLight(4.6f, 0, 0, 0.5f);
+    light_bins::fill(*constants);
+
+    expect(holds(*constants, 0, {4.1f, 0, 0}), "Its bin starts at 4 m");
+    expect(holds(*constants, 0, {5.9f, 0, 0}), "And ends at 6 m");
+    expect(!holds(*constants, 0, {3.9f, 0, 0}), "Not the bin below");
+    expect(!holds(*constants, 0, {6.1f, 0, 0}), "Not the bin above");
+}
+
 // Lights past the bins share the last bin with the places past them.
 void placesPastTheBinsKeepTheLightsPastThem()
 {
@@ -129,6 +149,7 @@ int main()
     {
         everyLightThatReachesIsInItsBins();
         aLightStaysOutOfPlacesOffItsBox();
+        aBoxEndsAtItsBinsEdges();
         placesPastTheBinsKeepTheLightsPastThem();
     }
     catch (const std::exception& error)

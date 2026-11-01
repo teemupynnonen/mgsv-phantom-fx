@@ -10,10 +10,6 @@
 // random numbers it draws, stay as they were with every light walked.
 namespace phantom_fx::light_bins
 {
-// The bin along an axis of a coordinate `offset` metres past the bins' origin. Past the ends it is the last bin at that end,
-// as for LightsNear in gi_common.hlsli.
-int binOf(float offset, int bins) noexcept;
-
 // Sets `constants`' bins from its eye and its lights.
 void fill(gi::GIFrameConstants& constants) noexcept;
 }
