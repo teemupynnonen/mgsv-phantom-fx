@@ -327,16 +327,17 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
     // it - not on the bed before the water's blend, which the water's opacity hid in its deep parts. The rays'
     // reflection is added later, at the composite, so it keeps its own brightness. The game's depth test decides
     // exactly where the water drew; the pass writes no depth.
-    if (causticsEnabled && causticShader && causticBlend && causticConstants)
+    if (causticsEnabled && bed && causticShader && causticBlend && causticConstants)
     {
+        // The pass writes no depth: the game's own test decides where the water drew. A frame that cannot set it up
+        // skips the caustics - they are an addition - and the water's own draw stands.
         D3D11_DEPTH_STENCIL_DESC noWriteDesc{};
         gameDepth->GetDesc(&noWriteDesc);
         noWriteDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
         if (!noWriteDepth || std::memcmp(&noWriteDesc, &noWriteDepthDesc, sizeof(noWriteDesc)) != 0)
         {
             noWriteDepth.Reset();
-            if (FAILED(device->CreateDepthStencilState(&noWriteDesc, noWriteDepth.GetAddressOf()))) return false;
-            noWriteDepthDesc = noWriteDesc;
+            if (SUCCEEDED(device->CreateDepthStencilState(&noWriteDesc, noWriteDepth.GetAddressOf()))) noWriteDepthDesc = noWriteDesc;
         }
 
         CausticParameters parameters{};
@@ -350,26 +351,29 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
             parameters.dimensions[2] = cameras.frame;
             parameters.dimensions[3] = causticsIntensity.load();
         }
-        check(write(context, causticConstants.Get(), parameters), "Writing the caustics' constants");
-        // The game's s0, ours for the pass: the map's sampler, put back after.
+
         ComPtr<ID3D11SamplerState> gameMapSampler;
-        context->PSGetSamplers(0, 1, gameMapSampler.GetAddressOf());
-        context->PSSetShader(causticShader.Get(), nullptr, 0);
-        context->PSSetConstantBuffers(0, 1, causticConstants.GetAddressOf());
-        if (bed) context->PSSetShaderResources(0, 1, bed.GetAddressOf());
-        if (causticsView) context->PSSetShaderResources(1, 1, causticsView.GetAddressOf());
-        if (causticsSampler) context->PSSetSamplers(0, 1, causticsSampler.GetAddressOf());
-        context->OMSetBlendState(causticBlend.Get(), nullptr, 0xFFFFFFFF);
-        context->OMSetDepthStencilState(noWriteDepth.Get(), stencil);
-        drawCall(context, call);
-        context->OMSetDepthStencilState(gameDepth.Get(), stencil);
-        context->OMSetBlendState(gameBlend.Get(), factor, sampleMask);
-        context->PSSetShader(gamePixel.Get(), nullptr, 0);
-        context->PSSetConstantBuffers(0, 1, gameConstants.GetAddressOf());
-        context->PSSetSamplers(0, 1, gameMapSampler.GetAddressOf());
-        if (bed) context->PSSetShaderResources(0, 1, &gameTargets3[0]);
-        ID3D11ShaderResourceView* noMap{};
-        context->PSSetShaderResources(1, 1, &noMap);
+        if (noWriteDepth && SUCCEEDED(write(context, causticConstants.Get(), parameters)))
+        {
+            // The game's s0, ours for the pass: the map's sampler, put back after.
+            context->PSGetSamplers(0, 1, gameMapSampler.GetAddressOf());
+            context->PSSetShader(causticShader.Get(), nullptr, 0);
+            context->PSSetConstantBuffers(0, 1, causticConstants.GetAddressOf());
+            context->PSSetShaderResources(0, 1, bed.GetAddressOf());
+            if (causticsView) context->PSSetShaderResources(1, 1, causticsView.GetAddressOf());
+            if (causticsSampler) context->PSSetSamplers(0, 1, causticsSampler.GetAddressOf());
+            context->OMSetBlendState(causticBlend.Get(), nullptr, 0xFFFFFFFF);
+            context->OMSetDepthStencilState(noWriteDepth.Get(), stencil);
+            drawCall(context, call);
+            context->OMSetDepthStencilState(gameDepth.Get(), stencil);
+            context->OMSetBlendState(gameBlend.Get(), factor, sampleMask);
+            context->PSSetShader(gamePixel.Get(), nullptr, 0);
+            context->PSSetConstantBuffers(0, 1, gameConstants.GetAddressOf());
+            context->PSSetSamplers(0, 1, gameMapSampler.GetAddressOf());
+            context->PSSetShaderResources(0, 1, &gameTargets3[0]);
+            ID3D11ShaderResourceView* noMap{};
+            context->PSSetShaderResources(1, 1, &noMap);
+        }
     }
 
 
