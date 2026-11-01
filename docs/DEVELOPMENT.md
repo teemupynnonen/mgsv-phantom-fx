@@ -2009,11 +2009,16 @@ the game's lights) is left alone until it runs.
   one, and 0.3 ms the triangle and its texture. Dropping them outright is not free: 15% of the deck
   changes by over 10%. Rolling for their rays as for the moon's below saved 0.8 ms at most, and at that it visibly stirred
   the walkway around its lit windows, 1.5% of the frame over 10%, so they keep every ray.
-- **Dim sun rays** (`SunRayChance`, `gi_hit_light.hlsli`). Under Ray Reconstruction a hit whose sun or moon light would be under
-  0.5 after the exposure traces its ray only in proportion, and counts that ray for those it left out, so its light stays
-  the same on average. At night most hits spend a ray on moonlight too faint to show:
-  saved 0.26 to 0.83 ms with no change past the noise of doing nothing (0.3% darker in the jungle). A limit of 2 saved up to
-  1.72 ms but took 2% off the jungle, where the moon is all the light there is: the denoiser loses light that the estimate keeps.
+- **Dim sun rays** (`SunRayChance`, `gi_hit_light.hlsli`). Under Ray Reconstruction a matte hit, a diffuse ray's or a cache
+  cell's, whose sun or moon light would be under 0.5 after the exposure traces its ray only in proportion, and counts that ray
+  for those it left out, so its light stays the same on average. At night most hits spend a ray on moonlight too faint to show.
+  With reflections' hits rolling too, that saved 0.26 to 0.83 ms. At most 0.2% of a frame moved by over 10%, about what doing
+  nothing moves, but in Africa the worst 1% moved 2.1 to 2.5% against 0.7 to 1.6%, and the light read 0.3 to 0.4% darker. A
+  limit of 2 saved up to 1.72 ms but took 2% off the jungle, where the moon is all the light there is; the cause was not looked
+  into. Reflections' hits keep every ray. They were 0.01 to 0.10 ms of those savings (the reflections' and glass's phases), and
+  what they add up to is clamped (`BrightestHit`). A highlight that clamp holds at 4 stays 4 with every ray, but averages 4 times
+  the chance when a ray stands for those left out, and a floor does nothing for a chance above it. A matte hit has nothing there
+  to lose: the cosine it is lit by cancels the chance's, so a counted ray's light stays near 0.5 by the albedo.
 - **The sky** (`sky_capture.*`). The sky's light is nine numbers, without a horizon, clouds or the sun's glow, so a ray
   that got away reflected a smooth blur. The sky reflection map cannot stand in: `TPPSunLightReflectMap` fills it
   from baked cubes (`g_EnvSpecCubeTexture`), and the sun pass reads two levels of one rate from it. So the game's

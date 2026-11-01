@@ -451,6 +451,7 @@ struct HitMaterial
     float3 emission;      // A self-lit mesh's light
     bool isSelfLit;
     bool isLeaf;
+    bool isMatte;         // No specular light, no normal map: as the diffuse rays take it
 };
 
 HitMaterial HitMaterialOf(HashGridCache_Visibility visibility, float footprint, bool isMatte)
@@ -466,6 +467,7 @@ HitMaterial HitMaterialOf(HashGridCache_Visibility visibility, float footprint, 
     material.emission = 0.0f;
     material.isSelfLit = (t.geometry.flags & GI_GEOMETRY_EMISSIVE) != 0;
     material.isLeaf = (t.geometry.flags & GI_GEOMETRY_LEAF) != 0;
+    material.isMatte = isMatte;
     if (material.isSelfLit)
     {
         material.emission = EmissionAt(t, visibility.barycentrics);
@@ -665,13 +667,13 @@ float3 SampledEmitterLight(float3 world, float3 normal, float3 origin, float tol
 // light it lets through is scattered, which its glow here carries to what is around it.
 static const float LeafTransmittance = 0.5f;
 
-// Below this much light after the exposure, a sun or moon ray from a hit is traced only some of the time. Most hits at night
-// spend a ray on moonlight too faint to show. Past 0.5 the light fades under Ray Reconstruction, though the estimate stays
-// unbiased: 2 took 2% off the jungle at night, where the moon is all the light there is (2026-11-02).
+// Below this much light after the exposure, a sun or moon ray from a matte hit is traced only some of the time. Most hits at night
+// spend a ray on moonlight too faint to show. Higher limits fade the picture, though the estimate stays unbiased: 2 took 2% off
+// the jungle at night, where the moon is all the light there is (2026-11-02).
 static const float DimSunRayLight = 0.5f;
 
-// The chance a hit traces its ray to the sun, whose cosine there is `cosine`: 1 but for dim light under Ray Reconstruction, the only
-// denoiser that has been tried with the noise this adds.
+// The chance a matte hit traces its ray to the sun, whose cosine there is `cosine`: 1 but for dim light under Ray Reconstruction, the
+// only denoiser that has been tried with the noise this adds.
 float SunRayChance(float cosine)
 {
     if (g_Frame.reconstruction.x == 0u) return 1.0f;
@@ -680,16 +682,20 @@ float SunRayChance(float cosine)
 }
 
 // The sun as a disc of its angular size at a hit: a shadow ray to a point on it from the side it lights,
-// a leaf's far side too, counted for the hits that left it out (SunRayChance). Its light before the cosine and the albedo.
-float3 SunReaching(float3 world, float3 normal, float3 origin, float tolerance, bool leaf, inout Random random, out float3 direction)
+// a leaf's far side too. Its light before the cosine and the albedo. A matte hit may leave the ray out (SunRayChance) and count the
+// ones it traces for those: the cosine it is lit by cancels the chance's, so a counted ray stays near DimSunRayLight. A reflection's
+// hit keeps every ray: its specular and its normal map's cosine do not cancel, and what reflections clamp (BrightestHit) would keep
+// less than a counted ray stands for.
+float3 SunReaching(float3 world, float3 normal, float3 origin, float tolerance, bool leaf, bool isMatte, inout Random random, out float3 direction)
 {
     direction = g_Frame.sunDirection.xyz;
     float3 towardsSun = g_Frame.sunDirection.xyz;
     bool sunFar = leaf && dot(normal, towardsSun) < 0.0f;
     float3 sunSide = sunFar ? -normal : normal;
-    if (!(dot(sunSide, towardsSun) > 0.0f) || dot(g_Frame.sunColor.rgb, 1.0f) <= 0.0f) return 0.0f;
+    float cosine = dot(sunSide, towardsSun);
+    if (!(cosine > 0.0f) || dot(g_Frame.sunColor.rgb, 1.0f) <= 0.0f) return 0.0f;
 
-    float chance = SunRayChance(dot(sunSide, towardsSun));
+    float chance = isMatte ? SunRayChance(cosine) : 1.0f;
     if (chance < 1.0f && random.rand() >= chance) return 0.0f;
 
     direction = SunSample(random.rand2());
@@ -704,7 +710,7 @@ float3 SunReaching(float3 world, float3 normal, float3 origin, float tolerance, 
 float3 SunLight(float3 world, float3 normal, float3 origin, float tolerance, bool leaf, inout Random random)
 {
     float3 direction;
-    return SunReaching(world, normal, origin, tolerance, leaf, random, direction) * abs(dot(normal, g_Frame.sunDirection.xyz));
+    return SunReaching(world, normal, origin, tolerance, leaf, true, random, direction) * abs(dot(normal, g_Frame.sunDirection.xyz));
 }
 
 // The light a hit sends towards `toEye` from the sun, a point or spot light and a self-lit mesh: their diffuse light
@@ -714,7 +720,7 @@ float3 SunLight(float3 world, float3 normal, float3 origin, float tolerance, boo
 float3 HitOwnLight(HitMaterial material, float3 toEye, float3 origin, float tolerance, inout Random random)
 {
     float3 toSun, toLight;
-    float3 sun = SunReaching(material.world, material.geometric, origin, tolerance, material.isLeaf, random, toSun);
+    float3 sun = SunReaching(material.world, material.geometric, origin, tolerance, material.isLeaf, material.isMatte, random, toSun);
     float3 lamp = SampledLocalLightReaching(material.world, material.geometric, origin, tolerance, random, toLight);
     float sunCosine = dot(material.normal, toSun);
     float3 light = material.albedo * (sun * (material.isLeaf ? abs(sunCosine) : saturate(sunCosine)) + lamp * saturate(dot(material.normal, toLight)));
