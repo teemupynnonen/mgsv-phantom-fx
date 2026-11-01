@@ -578,8 +578,9 @@ Search takes the mission's code or title, the name in its script or the demo id.
 - **Status.** The scripts cannot call out, so while a cutscene is on its way the add-on reads
   `TppDemo.phantomFxStatus` once every 60 frames. `PhantomFX.log` gets "playing", "done" or the
   problem, and a problem also shows as a toast. A Mother Base cutscene says "playing" as the game
-  asks for it and "done" at the end of its chain. It is a field of a module because the game's `_G`
-  has a metatable that drops new globals without an error.
+  asks for it and "done" at the end of its chain. Between the two, Play is refused: leaving mid-cutscene
+  would lose the end that puts the end scripts back. It is a field of a module because the game's
+  `_G` has a metatable that drops new globals without an error.
 
 Known limits:
 

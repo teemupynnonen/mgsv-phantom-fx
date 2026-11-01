@@ -183,12 +183,20 @@ constexpr int FramesPerRead = 60;
 constexpr int NoRequest = -1;
 std::atomic<int> requested{NoRequest};
 
-// Only the game thread touches these.
+// Only the game thread touches these. Leaving mid-cutscene would lose its end, which puts the end
+// scripts back, so a second Play waits for the first's "done".
 const Cutscene* current{};
+bool isPlaying{};
 int framesToRead{};
 
 void start(const Cutscene& cutscene)
 {
+    if (isPlaying)
+    {
+        fxui::toast(fxui::Tone::Warn, "Cutscene", "Not now: one is playing.");
+        return;
+    }
+
     const auto setup = std::format("{}local missionCode, demoName, stage = {}, \"{}\", {}\nlocal place = {}\n", ListHelpers, cutscene.mission.code, cutscene.name,
         cutscene.stage, cutscene.place);
     const auto route = cutscene.mission.code == MotherBase.code ? ToMotherBase : ToMission;
@@ -210,7 +218,8 @@ void readStatus()
     if (!outcome || !outcome->ran || outcome->text.empty()) return;
 
     log(std::format("Cutscene {}: {}", labelOf(*current), outcome->text));
-    if (outcome->text == "playing") return;
+    isPlaying = outcome->text == "playing";
+    if (isPlaying) return;
 
     if (outcome->text != "done") fxui::toast(fxui::Tone::Warn, "Cutscene", outcome->text);
     current = nullptr;
