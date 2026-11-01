@@ -295,18 +295,40 @@ void HitSurface(HashGridCache_Visibility visibility, out float3 world, out float
 
 // The level of detail a hit reads a texture at: the ray cone's, `footprint` metres across there; or without one,
 // a few texels' mean: the global illumination's light varies over centimetres to metres.
-float HitLevel(Texture2D<float4> texture, SceneTriangle t, float footprint)
+float HitLevel(Texture2D<float4> texture, SceneTriangle t, float2 uv0, float2 uv1, float2 uv2, float footprint)
 {
     uint width, height, levels;
     texture.GetDimensions(0, width, height, levels);
     if (footprint <= 0.0f) return max(float(levels) - 6.0f, 0.0f);
 
-    float2 uv0 = VertexUV(t.geometry, t.indices.x), uv1 = VertexUV(t.geometry, t.indices.y), uv2 = VertexUV(t.geometry, t.indices.z);
     return clamp(TextureLod(t.v0, t.v1, t.v2, uv0, uv1, uv2, float2(width, height), footprint), 0.0f, float(levels) - 1.0f);
 }
 
+float HitLevel(Texture2D<float4> texture, SceneTriangle t, float footprint)
+{
+    return HitLevel(texture, t, VertexUV(t.geometry, t.indices.x), VertexUV(t.geometry, t.indices.y), VertexUV(t.geometry, t.indices.z), footprint);
+}
+
+// A layered mesh's colour, as its G-buffer shader lays the layer over the base texture's `base`: where the layer's mask
+// and alpha say, it multiplies the base, or with GI_GEOMETRY_LAYER_BLEND takes its place. The shaders' sheen and dirt are left out.
+float3 LayeredAlbedo(float3 base, SceneTriangle t, float2 barycentrics, float footprint)
+{
+    float2 uv0 = VertexLayerUV(t.geometry, t.indices.x), uv1 = VertexLayerUV(t.geometry, t.indices.y), uv2 = VertexLayerUV(t.geometry, t.indices.z);
+    float2 uv = (1.0f - barycentrics.x - barycentrics.y) * uv0 + barycentrics.x * uv1 + barycentrics.y * uv2;
+    Texture2D<float4> layer = g_SceneTextures[NonUniformResourceIndex(t.geometry.layerTexture - 1)];
+    float4 texel = layer.SampleLevel(g_WrapSampler, uv, HitLevel(layer, t, uv0, uv1, uv2, footprint));
+    float lying = texel.a;
+    if (t.geometry.layerMaskTexture)
+    {
+        Texture2D<float4> mask = g_SceneTextures[NonUniformResourceIndex(t.geometry.layerMaskTexture - 1)];
+        lying *= mask.SampleLevel(g_WrapSampler, TriangleUV(t.geometry, t.indices, barycentrics), HitLevel(mask, t, footprint)).r;
+    }
+
+    return lerp(base, (t.geometry.flags & GI_GEOMETRY_LAYER_BLEND) != 0 ? texel.rgb : base * texel.rgb, lying);
+}
+
 // A hit's albedo: the sea's water; none on a self-lit mesh, whose texture is its light; the G-buffer's where the
-// camera sees the hit; otherwise its mesh's albedo texture, or its mesh's mean.
+// camera sees the hit; otherwise its mesh's albedo texture under its layer, or its mesh's mean.
 float3 HitAlbedo(float3 world, HashGridCache_Visibility visibility, float footprint)
 {
     GIInstanceDesc instance = g_Instances[visibility.instanceIndex];
@@ -329,7 +351,8 @@ float3 HitAlbedo(float3 world, HashGridCache_Visibility visibility, float footpr
     if (t.geometry.texture && (t.geometry.flags & GI_GEOMETRY_MASK) == 0)
     {
         Texture2D<float4> texture = g_SceneTextures[NonUniformResourceIndex(t.geometry.texture - 1)];
-        return texture.SampleLevel(g_WrapSampler, TriangleUV(t.geometry, t.indices, visibility.barycentrics), HitLevel(texture, t, footprint)).rgb;
+        float3 base = texture.SampleLevel(g_WrapSampler, TriangleUV(t.geometry, t.indices, visibility.barycentrics), HitLevel(texture, t, footprint)).rgb;
+        return t.geometry.layerTexture ? LayeredAlbedo(base, t, visibility.barycentrics, footprint) : base;
     }
 
     uint4 learnt = g_GeometryAlbedo[t.row];

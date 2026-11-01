@@ -60,7 +60,10 @@ enum class ModelFile : std::uint8_t
 // the first lowest). For path tracing's hits: its SRM and normal textures' path hashes (SpecularMap_Tex_LIN,
 // NormalMap_Tex_NRM, 0 without), its row of the game's material table (MatParamIndex_0), each vertex's normal
 // and tangent (four halves each, as the file has them) and a self-lit mesh's light (SelfColor x
-// SelfColorIntensity, in the game's units, none on any other).
+// SelfColorIntensity, in the game's units, none on any other). Its layer, for every hit's colour, which lies over the
+// base texture and can be all of a mesh's colour: its textures' path hashes (Layer_Tex_SRGB, LayerMask_Tex_LIN, 0
+// without or where its technique is not known to read them), its coordinates (GIGeometry::layerMapping; each vertex's second ones, packed as `uvs`), and whether it
+// takes the base's place or multiplies it.
 struct ModelPart
 {
     std::uint32_t mesh{};
@@ -69,10 +72,13 @@ struct ModelPart
     std::uint64_t baseTexture{};
     bool textureIsMask{};
     std::uint64_t specularTexture{}, normalTexture{};
+    std::uint64_t layerTexture{}, layerMaskTexture{};
+    std::array<float, 4> layerMapping{1, 1, 0, 0};
+    bool isLayerBlended{};
     std::uint32_t materialIndex{};
     std::array<float, 3> emission{};
     std::vector<Vertex> vertices;
-    std::vector<std::uint32_t> uvs;
+    std::vector<std::uint32_t> uvs, layerUvs;
     std::vector<std::array<std::uint16_t, 8>> normals;
     std::vector<std::uint16_t> indices;
     std::vector<std::uint64_t> bones;
@@ -138,12 +144,13 @@ struct Material
     float alphaThreshold{};
     std::uint32_t specularTexture{}, normalTexture{}, materialIndex{};
     std::array<float, 3> emission{};
+    std::uint32_t layerTexture{}, layerMaskTexture{};
 };
 
 // The game's textures a mesh's material uses, each in the scene's textures once copied.
 struct MaterialTextures
 {
-    std::optional<std::uint32_t> base, specular, normal;
+    std::optional<std::uint32_t> base, specular, normal, layer, layerMask;
 };
 
 ModelFile fileKindOf(std::span<const std::uint8_t> file);
@@ -156,7 +163,7 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
 bool isCutOut(MeshRole role);
 
 // The mesh's material, with its textures once the game's are copied into the scene's textures: its base
-// texture's colour for the hits' albedo, a cut-out mesh's alpha for the shadow rays' test, and the SRM and
-// normal textures path tracing's hits read.
+// texture's colour and its layer for the hits' albedo, a cut-out mesh's alpha for the shadow rays' test, and the
+// SRM and normal textures path tracing's hits read.
 Material materialOf(const ModelPart& part, const MaterialTextures& textures);
 }

@@ -439,6 +439,13 @@ float2 TriangleUV(GIGeometry geometry, uint3 indices, float2 barycentrics)
         + barycentrics.y * VertexUV(geometry, indices.z);
 }
 
+// A vertex's coordinates on its mesh's layer (GIGeometry::layerMapping).
+float2 VertexLayerUV(GIGeometry geometry, uint index)
+{
+    uint packed = g_GeometryPool.Load(geometry.layerUvOffset + 4 * index);
+    return (f16tof32(uint2(packed, packed >> 16)) + geometry.layerMapping.zw) * geometry.layerMapping.xy;
+}
+
 // The level of detail at which a ray cone `footprint` metres across meets a triangle (Akenine-Moller
 // et al., "Texture Level of Detail Strategies for Real-Time Ray Tracing", Ray Tracing Gems chapter 20):
 // the texels across the footprint, from the triangle's texels per square metre.

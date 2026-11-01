@@ -33,6 +33,19 @@ constexpr std::uint64_t MaterialIndexParameter = 0xCAB8E38487FF, SelfColorParame
 // "fox3DFW_ParallaxReflection", as "HeightScale" is not its alone. Its Base_Tex_SRGB is a painted picture of the room, its mask
 // is on the second texture coordinates, which the scene does not keep, and it has no row of the material table.
 constexpr std::uint64_t GlassColorParameter = 0xBE61C83A81D, GlassMaskParameter = 0x679A3387A4DF, MirrorTechnique = 0x2EB4D1D33DF8;
+// A mesh's layer, which its G-buffer shader lays over the base texture (fox3ddf_cloth*, fox3ddf_blin_*layer* and more, 52
+// shaders): "Layer_Tex_SRGB", "LayerMask_Tex_LIN", and the layer's coordinates, (second coordinates + shift) x repeat, by
+// "URepeat_UV", "VRepeat_UV", "UShift_UV" and "VShift_UV". It can be all of a mesh's colour: the base of Kaz's beige coat is white.
+constexpr std::uint64_t LayerTextureParameter = 0xFB6E9826DBE6, LayerMaskTextureParameter = 0xD5C6F91A8B72;
+constexpr std::uint64_t URepeatParameter = 0xE544FE2CA129, VRepeatParameter = 0xE7C7FA3697B2, UShiftParameter = 0x7B8B5E0E16EB, VShiftParameter = 0x38DA962E408E;
+// The techniques known to use their layer, as no parameter tells: 58 F10 records, each mesh's technique by its pixel shader in
+// the frame's G-buffer draws, 2026-11-01. A material can name a layer its technique may not read (a white base under a black
+// layer, technique 0xC0CE81F00048, in no record): any other technique keeps its base texture. These multiply it (the pixel
+// shaders' MulLayerTexture), and these lay it in the base texture's place (BlendLayerTexture, SRGBBlendLayerTexture).
+constexpr std::array<std::uint64_t, 15> MultipliedLayerTechniques{0xE2C9B71532D1, 0xD41DF652A584, 0x74891B27D58C, 0x88C852A00C01, 0xB17EB6AEFBB4, 0xD5F0795801BA,
+    0xE910A72719EF, 0x16C65FA108DD, 0xAA02EC2A2C1D, 0xC71F96A72DD9, 0x1B8D4DA0667B, 0xA83595F3456F, 0x8DF300329F91, 0x7E8ECE300722, 0x339701C2A10D};
+constexpr std::array<std::uint64_t, 14> BlendedLayerTechniques{0x3FBC9A12FB36, 0xCDDF56CB51E3, 0x4E818B32A91D, 0x7B049948758F, 0xE14611544E45, 0xEF52ACD48A68,
+    0xCB4EF239308D, 0xD1B559F90CB6, 0xC887CFC09D78, 0x54214F48645B, 0xD8DE23B18660, 0x9BF9366EE4C1, 0xE7C991D84F41, 0x203D1676BC8E};
 // Its alpha bits' additive blend: a glow card around a lamp (four vertices), no surface.
 constexpr std::uint8_t AdditiveAlpha = 0x01;
 // A self colour times intensity below this lights nothing: the sky's dome and the moon have 1, a mesh painted black
@@ -364,7 +377,7 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
     const auto& b = layout->blocks;
     constexpr int Bones = 0, Meshes = 3, BoneGroups = 5, Assignments = 9, MeshFormats = 10, VertexFormats = 11, BufferOffsets = 14, FaceInfos = 17;
     // Vertex format usages and data types.
-    constexpr std::uint8_t Position = 0, BoneWeights = 1, Normal = 2, BoneNumbers = 7, Uv0 = 8, Tangent = 14, ThreeFloats = 1, FourHalves = 6, TwoHalves = 7,
+    constexpr std::uint8_t Position = 0, BoneWeights = 1, Normal = 2, BoneNumbers = 7, Uv0 = 8, Uv1 = 9, Tangent = 14, ThreeFloats = 1, FourHalves = 6, TwoHalves = 7,
                            FourUnorms = 8, FourBytes = 9;
     if (!b[BufferOffsets].count) return nullptr;
 
@@ -422,7 +435,7 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
             || !file.at(assignmentAt + 6, firstVertexFormat))
             return nullptr;
 
-        std::optional<Stream> positions, uvs, weights, numbers, normals, tangents;
+        std::optional<Stream> positions, uvs, secondUvs, weights, numbers, normals, tangents;
         std::uint32_t vertexFormat = firstVertexFormat;
         for (std::uint32_t i = firstMeshFormat; i < std::uint32_t{firstMeshFormat} + meshFormatCount && i < b[MeshFormats].count; ++i)
         {
@@ -442,6 +455,7 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
                 const Stream stream{layout->bufferData + buffer + offset + element, stride, dataType};
                 if (usage == Position && !positions) positions = stream;
                 if (usage == Uv0 && !uvs) uvs = stream;
+                if (usage == Uv1 && !secondUvs) secondUvs = stream;
                 if (usage == BoneWeights && !weights) weights = stream;
                 if (usage == BoneNumbers && !numbers) numbers = stream;
                 if (usage == Normal && !normals) normals = stream;
@@ -479,13 +493,32 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
 
         const bool textured = uvs && uvs->dataType == TwoHalves;
         const bool hasNormals = normals && tangents && normals->dataType == FourHalves && tangents->dataType == FourHalves;
+        const bool isLayerBlended = std::ranges::find(BlendedLayerTechniques, technique) != BlendedLayerTechniques.end();
+        const bool usesLayer = isLayerBlended || std::ranges::find(MultipliedLayerTechniques, technique) != MultipliedLayerTechniques.end();
+        const auto layer = usesLayer ? textureOf(file, *layout, materialInstance, LayerTextureParameter) : 0;
+        const bool isLayered = layer && !isGlass && !isMirror && textured && secondUvs && secondUvs->dataType == TwoHalves;
+        if (isLayered)
+        {
+            const auto mappingBy = [&](std::uint64_t parameter, float otherwise) {
+                const auto vector = vectorOf(file, *layout, materialInstance, parameter);
+                return vector ? (*vector)[0] : otherwise;
+            };
+
+            part.layerTexture = layer;
+            part.layerMaskTexture = textureOf(file, *layout, materialInstance, LayerMaskTextureParameter);
+            part.layerMapping = {mappingBy(URepeatParameter, 1), mappingBy(VRepeatParameter, 1), mappingBy(UShiftParameter, 0), mappingBy(VShiftParameter, 0)};
+            part.isLayerBlended = isLayerBlended;
+            part.layerUvs.resize(vertexCount);
+        }
+
         part.vertices.resize(vertexCount);
         if (textured) part.uvs.resize(vertexCount);
         if (hasNormals) part.normals.resize(vertexCount);
         for (std::uint32_t v = 0; v < vertexCount; ++v)
         {
             if (!file.at(positions->at + std::uint64_t{v} * positions->stride, part.vertices[v])
-                || (textured && !file.at(uvs->at + std::uint64_t{v} * uvs->stride, part.uvs[v])))
+                || (textured && !file.at(uvs->at + std::uint64_t{v} * uvs->stride, part.uvs[v]))
+                || (isLayered && !file.at(secondUvs->at + std::uint64_t{v} * secondUvs->stride, part.layerUvs[v])))
                 return nullptr;
 
             if (!hasNormals) continue;
@@ -531,6 +564,13 @@ Material materialOf(const ModelPart& part, const MaterialTextures& textures)
 
     material.texture = *textures.base + 1;
     if (part.textureIsMask) material.flags |= GI_GEOMETRY_MASK;
+    if (textures.layer)
+    {
+        material.layerTexture = *textures.layer + 1;
+        if (part.isLayerBlended) material.flags |= GI_GEOMETRY_LAYER_BLEND;
+    }
+
+    if (textures.layerMask) material.layerMaskTexture = *textures.layerMask + 1;
     if (isCutOut(part.role))
     {
         material.flags |= GI_GEOMETRY_ALPHA_TEXTURE;

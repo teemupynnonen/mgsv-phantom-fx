@@ -26,11 +26,18 @@ constexpr std::uint64_t BaseTexture = 0x41EA7BE81B61, MaskTexture = 0x3ED9B75CD4
 // (fox3DFW_ParallaxReflection).
 constexpr std::uint64_t SelfColor = 0x557B9224571E, SelfColorIntensity = 0xE40A3A2518CF, MaterialIndex = 0xCAB8E38487FF, GlassColor = 0xBE61C83A81D,
                         ParallaxReflection = 0x2EB4D1D33DF8;
+// And a layer's (Layer_Tex_SRGB, LayerMask_Tex_LIN, URepeat_UV, VRepeat_UV, UShift_UV, VShift_UV), a technique that blends it
+// (fox3ddf_blin_layer_sbl_mu's) and one that multiplies it (fox3ddf_cloth_dirty's), and the path hashes of mesh i's layer and
+// mask, LayerPath + i and LayerMaskPath + i.
+constexpr std::uint64_t LayerTexture = 0xFB6E9826DBE6, LayerMaskTexture = 0xD5C6F91A8B72, URepeat = 0xE544FE2CA129, VRepeat = 0xE7C7FA3697B2, UShift = 0x7B8B5E0E16EB,
+                        VShift = 0x38DA962E408E, BlendingTechnique = 0x3FBC9A12FB36, MultiplyingTechnique = 0xE2C9B71532D1, LayerPath = 0x6000, LayerMaskPath = 0x7000;
 
 // A mesh of a test model file: its alpha and shadow bytes, whether its vertices have texture coordinates,
 // its material's one texture parameter (BaseTexture, MaskTexture, LinearBaseTexture, or 0 for none), and with an intensity its
 // vectors: that SelfColorIntensity, a SelfColor of (1, 0.5, 0.25) and a MatParamIndex_0 of `materialRow`; a GlassColor
-// vector, or the mirror's technique.
+// vector, or the mirror's technique. With a `layerRepeat`, a layer and its mask too, repeating so often across and twice that
+// up, shifted by (0.25, 0.5), on second coordinates of its vertices unless it `lacksSecondUvs`; `blendsLayer` and `multipliesLayer` give
+// it the technique that does, and with neither its technique is one not known to read its layer.
 struct TestMesh
 {
     std::uint8_t alpha{}, shadow{};
@@ -38,6 +45,8 @@ struct TestMesh
     std::uint64_t textureParameter{};
     float selfIntensity{}, materialRow{};
     bool isGlass{}, isMirror{};
+    float layerRepeat{};
+    bool lacksSecondUvs{}, blendsLayer{}, multipliesLayer{};
 };
 
 template<class T> void put(std::vector<std::uint8_t>& bytes, T value)
@@ -88,14 +97,14 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
 
     auto& meshBlock = block(3, meshes.size(), 48);
     auto& materialInstances = block(4, meshes.size(), 16);
-    auto& textures = block(6, meshes.size(), 4);
-    auto& parameters = block(7, 5 * meshes.size(), 4);
-    auto& materials = block(8, 2, 4);
+    auto& textures = block(6, 3 * meshes.size(), 4);
+    auto& parameters = block(7, 12 * meshes.size(), 4);
+    auto& materials = block(8, 4, 4);
     auto& assignments = block(9, meshes.size(), 8);
     auto& meshFormats = block(10, 2 * meshes.size(), 8);
     auto& faceInfos = block(17, meshes.size(), 8);
-    auto& paths = block(21, meshes.size(), 8);
-    auto& names = block(22, meshes.size() + 5, 8);
+    auto& paths = block(21, 3 * meshes.size(), 8);
+    auto& names = block(22, meshes.size() + 13, 8);
     std::vector<std::uint8_t> vertexFormats;
     const auto format = [&](std::uint8_t usage, std::uint8_t dataType, std::uint16_t element) {
         put(vertexFormats, usage);
@@ -111,7 +120,8 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
         putAt<std::uint16_t>(meshBlock, 48 * i + 10, 3); // Vertices
         putAt<std::uint32_t>(meshBlock, 48 * i + 16, 3u * i);
         putAt<std::uint64_t>(meshBlock, 48 * i + 24, i); // Face info
-        putAt<std::uint16_t>(materialInstances, 16 * i + 4, mesh.isMirror ? 1 : 0); // The second material has the mirror's technique
+        // The second material has the mirror's technique, the third the blending one, the fourth the multiplying one.
+        putAt<std::uint16_t>(materialInstances, 16 * i + 4, mesh.isMirror ? 1 : mesh.blendsLayer ? 2 : mesh.multipliesLayer ? 3 : 0);
         materialInstances[16 * i + 6] = mesh.textureParameter != 0;
         putAt<std::uint16_t>(materialInstances, 16 * i + 8, i);
         // Its four vectors' parameters, after every mesh's texture parameter.
@@ -122,6 +132,38 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
         {
             putAt<std::uint16_t>(parameters, 4 * (firstVector + k), static_cast<std::uint16_t>(meshes.size() + k));
             putAt<std::uint16_t>(parameters, 4 * (firstVector + k) + 2, static_cast<std::uint16_t>(4 * i + k));
+        }
+
+        // A layered mesh's own parameters, after the others': its three textures, then its layer's four vectors.
+        const auto firstOwn = static_cast<std::uint16_t>(5 * meshes.size() + 7 * i);
+        const auto layerName = static_cast<std::uint16_t>(meshes.size() + 5);
+        if (mesh.layerRepeat > 0)
+        {
+            materialInstances[16 * i + 6] = 3;
+            putAt<std::uint16_t>(materialInstances, 16 * i + 8, firstOwn);
+            // Glass keeps its GlassColor, which makes it glass.
+            if (!mesh.isGlass)
+            {
+                materialInstances[16 * i + 7] = 4;
+                putAt<std::uint16_t>(materialInstances, 16 * i + 10, static_cast<std::uint16_t>(firstOwn + 3));
+            }
+
+            putAt<std::uint16_t>(parameters, 4 * firstOwn, i);
+            putAt<std::uint16_t>(parameters, 4 * firstOwn + 2, i);
+            for (std::uint16_t k = 0; k < 2; ++k)
+            {
+                const auto texture = static_cast<std::uint16_t>(meshes.size() + 2 * i + k);
+                putAt<std::uint16_t>(parameters, 4 * (firstOwn + 1 + k), static_cast<std::uint16_t>(layerName + k));
+                putAt<std::uint16_t>(parameters, 4 * (firstOwn + 1 + k) + 2, texture);
+                putAt<std::uint16_t>(textures, 4 * texture + 2, texture);
+                putAt<std::uint64_t>(paths, 8 * texture, (k ? LayerMaskPath : LayerPath) + i);
+            }
+
+            for (std::uint16_t k = 0; k < 4; ++k)
+            {
+                putAt<std::uint16_t>(parameters, 4 * (firstOwn + 3 + k), static_cast<std::uint16_t>(layerName + 2 + k));
+                putAt<std::uint16_t>(parameters, 4 * (firstOwn + 3 + k) + 2, static_cast<std::uint16_t>(4 * meshes.size() + 4 * i + k));
+            }
         }
 
         putAt<std::uint16_t>(textures, 4 * i + 2, i);
@@ -135,6 +177,7 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
         const auto firstFormat = static_cast<std::uint16_t>(vertexFormats.size() / 4);
         format(0, 1, 0);                  // Positions, three floats
         if (mesh.hasUvs) format(8, 7, 0); // Texture coordinates, two halves
+        if (mesh.layerRepeat > 0 && !mesh.lacksSecondUvs) format(9, 7, 8); // Second ones: the weights' bytes, a rigid mesh having no use for those
         if (isSkinned) format(7, 9, 4);   // Bone numbers, four bytes
         if (isSkinned) format(1, 8, 8);   // Weights, four unorms
 
@@ -154,7 +197,17 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
     putAt<std::uint64_t>(names, 8 * (meshes.size() + 2), MaterialIndex);
     putAt<std::uint64_t>(names, 8 * (meshes.size() + 3), GlassColor);
     putAt<std::uint64_t>(names, 8 * (meshes.size() + 4), ParallaxReflection);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 5), LayerTexture);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 6), LayerMaskTexture);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 7), URepeat);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 8), VRepeat);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 9), UShift);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 10), VShift);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 11), BlendingTechnique);
+    putAt<std::uint64_t>(names, 8 * (meshes.size() + 12), MultiplyingTechnique);
     putAt<std::uint16_t>(materials, 4 * 1 + 2, static_cast<std::uint16_t>(meshes.size() + 4));
+    putAt<std::uint16_t>(materials, 4 * 2 + 2, static_cast<std::uint16_t>(meshes.size() + 11));
+    putAt<std::uint16_t>(materials, 4 * 3 + 2, static_cast<std::uint16_t>(meshes.size() + 12));
     blocks[11] = {static_cast<std::uint16_t>(vertexFormats.size() / 4), vertexFormats};
     block(14, 1, 16); // One buffer, from the buffer data's start
 
@@ -193,6 +246,9 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
     for (const auto& mesh : meshes)
         for (const float value : {1.0f, 0.5f, 0.25f, 1.0f, mesh.selfIntensity, 0.0f, 0.0f, 0.0f, mesh.materialRow, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f})
             put(data, value);
+
+    for (const auto& mesh : meshes)
+        for (const float value : {mesh.layerRepeat, 0.0f, 0.0f, 0.0f, 2 * mesh.layerRepeat, 0.0f, 0.0f, 0.0f, 0.25f, 0.0f, 0.0f, 0.0f, 0.5f, 0.0f, 0.0f, 0.0f}) put(data, value);
 
     putAt<std::uint32_t>(file, 48, static_cast<std::uint32_t>(file.size()));
     file.insert(file.end(), data.begin(), data.end());
@@ -439,6 +495,37 @@ void selfLitMeshes()
         "An ordinary mesh keeps its role, with its row of the material table.");
 }
 
+// A mesh's layer (the white base of Kaz's beige coat, whose colour is all in its layer): what a hit needs of it, once its
+// textures are copied. Without second coordinates there is no knowing where it lies, glass reflects by its mask alone, and a
+// technique not known to read its layer keeps its base: a layer it may not read must not paint the mesh.
+void layers()
+{
+    const auto model = modelOf({{.hasUvs = true, .textureParameter = BaseTexture, .layerRepeat = 5, .multipliesLayer = true},
+                                   {.hasUvs = true, .textureParameter = BaseTexture, .layerRepeat = 5, .blendsLayer = true},
+                                   {.hasUvs = true, .textureParameter = BaseTexture, .layerRepeat = 5, .lacksSecondUvs = true, .multipliesLayer = true},
+                                   {.alpha = 16, .shadow = 5, .hasUvs = true, .textureParameter = LinearBaseTexture, .isGlass = true, .layerRepeat = 5, .multipliesLayer = true},
+                                   {.hasUvs = true, .textureParameter = BaseTexture, .multipliesLayer = true},
+                                   {.hasUvs = true, .textureParameter = BaseTexture, .layerRepeat = 5}},
+        Source::VisibilityManager);
+
+    const auto& multiplied = partOf(*model, 0);
+    expect(multiplied.layerTexture == LayerPath && multiplied.layerMaskTexture == LayerMaskPath, "A layered mesh names its layer and the layer's mask.");
+    expect(multiplied.layerMapping == std::array{5.0f, 10.0f, 0.25f, 0.5f}, "Its layer's repeat and shift are its material's.");
+    expect(multiplied.layerUvs == std::vector<std::uint32_t>(3, 0xFF), "It keeps its vertices' second coordinates.");
+    expect(!multiplied.isLayerBlended && partOf(*model, 1).isLayerBlended, "Its technique says whether the layer multiplies the base or takes its place.");
+
+    expect(partOf(*model, 2).layerTexture == 0 && partOf(*model, 2).layerUvs.empty(), "Without second coordinates a mesh has no layer.");
+    expect(partOf(*model, 3).layerTexture == 0, "Glass has none.");
+    expect(partOf(*model, 4).layerTexture == 0 && partOf(*model, 4).layerMapping == std::array{1.0f, 1.0f, 0.0f, 0.0f}, "Nor has a mesh without one.");
+    expect(partOf(*model, 5).layerTexture == 0 && partOf(*model, 5).layerUvs.empty(), "A technique not known to read its layer keeps its base texture.");
+
+    const auto material = materialOf(partOf(*model, 1), {.base = 6, .layer = 7, .layerMask = 8});
+    expect(material.layerTexture == 8 && material.layerMaskTexture == 9 && (material.flags & GI_GEOMETRY_LAYER_BLEND), "Its copies are its material's.");
+    expect(!(materialOf(multiplied, {.base = 6, .layer = 7}).flags & GI_GEOMETRY_LAYER_BLEND), "A layer that multiplies needs no flag.");
+    expect(materialOf(partOf(*model, 1), {.base = 6}).layerTexture == 0 && !(materialOf(partOf(*model, 1), {.base = 6}).flags & GI_GEOMETRY_LAYER_BLEND),
+        "Before its copy comes a mesh is its base texture.");
+}
+
 void unreadableFiles()
 {
     const auto file = modelFile({{0, 0}});
@@ -489,6 +576,7 @@ int main()
         materialPerRole();
         cutOutWaitsForTexture();
         selfLitMeshes();
+        layers();
         unreadableFiles();
         skinThroughBoneGroup();
         std::cout << "Scene description tests passed.\n";

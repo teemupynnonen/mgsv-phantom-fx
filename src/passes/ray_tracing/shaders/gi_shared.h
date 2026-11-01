@@ -43,6 +43,7 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_GEOMETRY_EMISSIVE      512u // With GI_GEOMETRY_NO_SHADOW: it gives light (GIGeometry::emission) and takes none, its texture its light's colour
 #define GI_GEOMETRY_GLASS         1024u // With GI_GEOMETRY_CUT_OUT: every ray passes it (CutOutBlocks) but a reflection's, which it reflects by its mask (TraceReflectionRay)
 #define GI_GEOMETRY_MIRROR        2048u // With GI_GEOMETRY_GLASS: it reflects all of a reflection's rays
+#define GI_GEOMETRY_LAYER_BLEND   4096u // Its layer takes the base texture's place where it lies, not multiplying it (LayeredAlbedo)
 
 // The game's textures the scene holds at most (g_SceneTextures, gi_textures.hpp).
 #define GI_MAX_TEXTURES 4096u
@@ -246,7 +247,10 @@ struct GIGeometry
     uint materialIndex;   // Its row of the game's material table (g_MaterialSpecular)
     float4 emission;      // rgb: a self-lit mesh's light (SelfColor x SelfColorIntensity), in the game's units
     uint normalOffset;    // Bytes into the pool: 16 a vertex, the normal then the tangent, four halves each; 0 without
-    uint padding[3];
+    uint layerUvOffset;   // Bytes into the pool: 4 a vertex, its second texture coordinates, two halves; 0 without
+    uint layerTexture;    // 1 + its layer's index (rgb its colour, a how much of it lies), 0 without
+    uint layerMaskTexture; // 1 + its layer's mask's index (r how much of it lies, on the first coordinates), 0 without
+    float4 layerMapping;  // The layer's coordinates: (second coordinates + zw) x xy
 };
 
 // The shadow probe: the sun ray from the screen's centre pixel, as the shadow rays trace it but
@@ -312,7 +316,7 @@ struct GIInstanceDesc
 #ifdef __cplusplus
 static_assert(sizeof(GIFrameConstants) % 16 == 0);
 static_assert(sizeof(GIInstanceDesc) == 64);
-static_assert(sizeof(GIGeometry) == 64);
+static_assert(sizeof(GIGeometry) == 80);
 }
 #endif
 

@@ -30,6 +30,9 @@ struct Geometry
     std::uint32_t specularTexture{}, normalTexture{}, materialIndex{}; // As GIGeometry
     std::array<float, 3> emission{};
     std::uint64_t normalOffset{}; // As GIGeometry
+    std::uint64_t layerUvOffset{};
+    std::uint32_t layerTexture{}, layerMaskTexture{};
+    std::array<float, 4> layerMapping{1, 1, 0, 0};
 };
 
 // How a bottom-level structure is built: once, then compacted (Static); or in place, again or refitted,

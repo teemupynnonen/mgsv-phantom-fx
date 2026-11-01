@@ -374,7 +374,9 @@ std::optional<BlasId> Scene::createBlas(Use use, const std::vector<Geometry>& ge
         const auto& geometry = geometries[i];
         GIGeometry row{static_cast<std::uint32_t>(geometry.vertexOffset), geometry.indexCount ? static_cast<std::uint32_t>(geometry.indexOffset) : GI_NO_INDICES,
             geometry.flags, geometry.texture, geometry.alphaThreshold, geometry.specularTexture, geometry.normalTexture, geometry.materialIndex,
-            {geometry.emission[0], geometry.emission[1], geometry.emission[2], 0}, static_cast<std::uint32_t>(geometry.normalOffset), {}};
+            {geometry.emission[0], geometry.emission[1], geometry.emission[2], 0}, static_cast<std::uint32_t>(geometry.normalOffset),
+            static_cast<std::uint32_t>(geometry.layerUvOffset), geometry.layerTexture, geometry.layerMaskTexture,
+            {geometry.layerMapping[0], geometry.layerMapping[1], geometry.layerMapping[2], geometry.layerMapping[3]}};
         writeRow(blas.firstGeometry + i, row);
         newRows.push_back(blas.firstGeometry + i);
     }
@@ -453,6 +455,8 @@ void Scene::setMaterial(BlasId id, std::uint32_t geometry, const scene_descripti
     row.alphaThreshold = material.alphaThreshold;
     row.specularTexture = material.specularTexture;
     row.normalTexture = material.normalTexture;
+    row.layerTexture = material.layerTexture;
+    row.layerMaskTexture = material.layerMaskTexture;
     writeRow(blas.firstGeometry + geometry, row);
 }
 
