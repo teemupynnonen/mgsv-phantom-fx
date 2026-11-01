@@ -61,7 +61,6 @@ struct Options
     int lightPixelRays{2}; // The light's rays a light pixel (a 2 x 2 of render pixels): 1, 2 or 4
     bool debugShadows{}; // Diagnostics: the shadow debug view and probe (shadowDebug, shadowProbe), with the shadows
     bool shadowStarts{}; // Diagnostics: the debug view shows where the shadow rays leave each pixel
-    bool waterFallbackNormals{}; // Diagnostics: magenta where a water pixel took the stand-in normal (reflections.hlsl)
     bool twoSidedShadows{}; // Diagnostics: every surface blocks rays towards lights from both sides, as until 2026-10-26
     gi_renderer::LightDebugView lightDebugView{}; // Diagnostics: over the image (lightDebug)
 
@@ -941,7 +940,6 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     frame.debugShadows = shadowDebug != nullptr;
     frame.shadowStarts = options.shadowStarts;
     frame.twoSidedShadows = options.twoSidedShadows;
-    frame.waterFallbackNormals = options.waterFallbackNormals;
     frame.lightDebugView = options.lightDebugView;
     frame.lightRays = static_cast<std::uint32_t>(std::clamp(options.lightPixelRays, 1, 4));
     // The lights' colours in the sun's units for the hits (gi_light.hlsl, LocalLightAt).
@@ -1056,7 +1054,6 @@ void configure(const Configuration& configuration) noexcept
         .lightPixelRays = settings.globalIllumination.raysPerLightPixel,
         .debugShadows = diagnostics.debugView == DebugView::ShadowRays || diagnostics.debugView == DebugView::ShadowStarts,
         .shadowStarts = diagnostics.debugView == DebugView::ShadowStarts,
-        .waterFallbackNormals = diagnostics.waterFallbackNormals,
         .twoSidedShadows = diagnostics.twoSidedShadows,
         .lightDebugView = diagnostics.debugView == DebugView::LightHistory      ? gi_renderer::LightDebugView::History
                           : diagnostics.debugView == DebugView::LightValidation ? gi_renderer::LightDebugView::Validation

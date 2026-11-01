@@ -9,7 +9,7 @@ namespace phantom_fx
 // detail it would add.
 struct WaterReflections
 {
-    float roughness{0.25f};
+    float roughness{0.15f};
 
     bool operator==(const WaterReflections&) const = default;
 };
