@@ -187,11 +187,23 @@ void retune(Rule& rule, std::uint64_t parameter, const Value& held, const Value&
 
 std::size_t unsavedCount(std::span<const Rule> saved, std::span<const Rule> rules)
 {
-    const auto notIn = [](std::span<const Rule> set, std::span<const Rule> other) {
-        return static_cast<std::size_t>(std::ranges::count_if(set, [&](const Rule& rule) { return std::ranges::find(other, rule) == other.end(); }));
+    // A rule matches one rule of the other set at most, so a duplicate taken out still counts.
+    const auto unmatched = [](std::span<const Rule> set, std::span<const Rule> other) {
+        std::vector<bool> isTaken(other.size());
+        std::size_t count{};
+        for (const auto& rule : set)
+        {
+            std::size_t i = 0;
+            while (i < other.size() && (isTaken[i] || other[i] != rule)) ++i;
+
+            if (i == other.size()) ++count;
+            else isTaken[i] = true;
+        }
+
+        return count;
     };
 
-    return std::max(notIn(rules, saved), notIn(saved, rules));
+    return std::max(unmatched(rules, saved), unmatched(saved, rules));
 }
 
 std::uint64_t parameterOfLowHalf(std::uint32_t lowHalf)

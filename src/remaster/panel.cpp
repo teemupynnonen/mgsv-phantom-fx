@@ -44,7 +44,8 @@ std::optional<MaterialKind> shownKind{MaterialKind::SelfLit};
 bool showsMore{};
 float tuneHeight{};
 std::array<char, 96> labelText{};
-std::uint32_t labelFor{};
+std::optional<std::uint32_t> labelFor;
+bool isCompareDrawn{};
 
 float px(float value)
 {
@@ -259,6 +260,8 @@ void drawColour(const Material& material)
 // The button and the key both hold it.
 void drawCompare(const Material& material)
 {
+    isCompareDrawn = true;
+
     const bool canCompare = hasRule(material);
     const bool isKeyHeld = ImGui::IsKeyDown(ImGuiKey_C) && !ImGui::GetIO().WantTextInput && !isMoving;
 
@@ -274,7 +277,11 @@ void drawCompare(const Material& material)
 
 void drawLabel(const Material& material)
 {
-    if (!hasRule(material)) return;
+    if (!hasRule(material))
+    {
+        labelFor.reset();
+        return;
+    }
 
     if (labelFor != material.index)
     {
@@ -594,6 +601,8 @@ void drawPanel()
     ImGui::SetNextWindowSize({width, io.DisplaySize.y});
     pushStyle();
 
+    isCompareDrawn = false;
+
     constexpr ImGuiWindowFlags Flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking
         | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav;
     if (ImGui::Begin("##remasterPanel", nullptr, Flags | (isMoving ? ImGuiWindowFlags_NoInputs : 0)))
@@ -611,6 +620,9 @@ void drawPanel()
     ImGui::End();
     ImGui::PopStyleColor(StyleColours);
     ImGui::PopStyleVar(StyleVars);
+
+    // Only the compare's own control lets it go, so without that control nothing else would.
+    if (!isCompareDrawn && isComparing()) settleTool();
 }
 
 void setOpen(bool open)

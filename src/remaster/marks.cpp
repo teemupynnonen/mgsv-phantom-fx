@@ -30,7 +30,8 @@ struct NamedLocation
 constexpr NamedLocation NamedLocations[]{{10, "Afghanistan"}, {20, "Africa"}, {50, "Mother Base"}};
 
 constexpr std::size_t MostRegisterComponents = 32;
-constexpr int SecondsInMinute = 60, MinutesInDay = 24 * 60;
+constexpr int SecondsInMinute = 60;
+constexpr float SecondsInDay = 24 * 60 * 60;
 
 std::uint16_t parsedCode(const Json& entry)
 {
@@ -149,7 +150,10 @@ std::string placeText(const Mark& mark)
 
 std::string timeText(float clock)
 {
-    const int minutes = static_cast<int>(clock) / SecondsInMinute % MinutesInDay;
+    // Within a day before the cast: a marks file can hold any number.
+    const float seconds = std::fmod(clock, SecondsInDay);
+    const int minutes = static_cast<int>(seconds < 0 ? seconds + SecondsInDay : seconds) / SecondsInMinute;
+
     return std::format("{:02}:{:02}", minutes / 60, minutes % 60);
 }
 

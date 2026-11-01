@@ -267,6 +267,7 @@ void countsUnsavedRules()
     expect(unsavedCount(std::vector{lamp}, std::vector{lamp, sign}) == 1, "A new rule is one change.");
     expect(unsavedCount(std::vector{lamp, sign}, std::vector{lamp}) == 1, "A removed rule is one change.");
     expect(unsavedCount(std::vector{lamp, sign}, std::vector{tuned}) == 2, "A retuned rule and a removed one are two.");
+    expect(unsavedCount(std::vector{lamp, lamp}, std::vector{lamp}) == 1, "One of two equal rules taken out is a change.");
 }
 
 void findsTheRulesOfAMaterial()
@@ -347,6 +348,8 @@ void saysWhenAMarkWas()
     expect(timeText(0) == "00:00", "Midnight.");
     expect(timeText(3 * 3600 + 7 * 60 + 59) == "03:07", "Seconds do not show.");
     expect(timeText(86400) == "00:00", "The day wraps.");
+    expect(timeText(1e10f) == "17:46", "A clock far past a day still reads as a time of day.");
+    expect(timeText(-60) == "23:59", "A clock before midnight reads as the day before.");
 }
 
 // A mark taken before tuning must find its material after it, and the rule must not join it to another.
