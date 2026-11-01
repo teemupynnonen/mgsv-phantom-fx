@@ -1,26 +1,27 @@
-// The remastering tool on the Developer page; only a dev build has this file (remaster.cmake).
+// The remastering tool's state and actions; only a dev build has this file (remaster.cmake).
 #include "remaster/tool.hpp"
 
 #include "fxui/fxui.hpp"
 #include "game_code.hpp"
 #include "game_loop.hpp"
-#include "remaster/game_materials.hpp"
+#include "game_lua.hpp"
+#include "game_memory.hpp"
+#include "log.hpp"
 #include "remaster/in_force.hpp"
 #include "remaster/remaster.hpp"
 #include "remaster/rule_file.hpp"
+#include "travel.hpp"
+#include "weather.hpp"
 
 #include <Windows.h>
 #include <algorithm>
-#include <array>
 #include <atomic>
-#include <cmath>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <iterator>
-#include <string_view>
+#include <unordered_map>
 #include <utility>
-#include <vector>
 
 namespace phantom_fx::remaster
 {
@@ -30,45 +31,53 @@ using fxui::Tone;
 using game_materials::Material;
 
 constexpr std::uintptr_t ReplayRva = 0x2D6310;
+// The script variables' block, and where in it vars.locationCode, missionCode, playerPosX and playerRotY are.
+constexpr std::uintptr_t VarsRva = 0x2C16920;
+constexpr std::size_t VarLocation = 0x10, VarMission = 0x12, VarPlayerPosition = 0xEC, VarPlayerRotation = 0x108;
+
 constexpr unsigned char ReplayCode[]{0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x18, 0x56, 0x57, 0x41, 0x54, 0x41, 0x56, 0x41, 0x57, 0x48, 0x83, 0xEC, 0x30};
-const game_code::Expected Checked[]{{ReplayRva, ReplayCode}};
+// Their registrations' "mov r8, [VarsRva]; add r8, offset".
+constexpr unsigned char LocationCode[]{0x4C, 0x8B, 0x05, 0xC6, 0xF9, 0x27, 0x02, 0x49, 0x83, 0xC0, 0x10};
+constexpr unsigned char MissionCode[]{0x4C, 0x8B, 0x05, 0x61, 0xF9, 0x27, 0x02, 0x49, 0x83, 0xC0, 0x12};
+constexpr unsigned char PositionCode[]{0x4C, 0x8B, 0x05, 0x0D, 0xE4, 0x27, 0x02, 0x49, 0x81, 0xC0, 0xEC, 0x00, 0x00, 0x00};
+constexpr unsigned char RotationCode[]{0x4C, 0x8B, 0x05, 0x61, 0xE2, 0x27, 0x02, 0x49, 0x81, 0xC0, 0x08, 0x01, 0x00, 0x00};
+const game_code::Expected Checked[]{{ReplayRva, ReplayCode}, {0x996F53, LocationCode}, {0x996FB8, MissionCode}, {0x99850C, PositionCode}, {0x9986B8, RotationCode}};
 
 // A draw packet's first word holds the row of its material in the low bits, all ones for none.
 constexpr std::uint64_t PacketMaterialBits = 0x7FFF;
 // Drawn within this many game frames is drawn now.
 constexpr std::uint32_t DrawnNowFrames = 60;
 constexpr int FramesBetweenRefreshes = 30;
-constexpr ULONGLONG BlinkMilliseconds = 400;
-// The page counts as closed after this many presents without it.
-constexpr std::uint64_t PresentsUnseen = 2;
+constexpr ULONGLONG FlashMilliseconds = 400;
+constexpr std::uint64_t PresentsBetweenTravelChecks = 60;
+// Long enough for the slowest loading screen and the walk out of it.
+constexpr int MostTravelChecks = 180;
 
 // What blinks: the first of these a material has, else its first parameter.
-constexpr std::uint64_t BlinkingParameters[]{SelfColorIntensityParameter, GlassColorParameter, ReflectionColorParameter};
+constexpr std::uint64_t FlashingParameters[]{SelfColorIntensityParameter, GlassColorParameter, ReflectionColorParameter};
 
-enum class Show : std::uint8_t
-{
-    SelfLit,
-    Glass,
-    All
-};
-
-constexpr fxui::Choice<Show> ShowChoices[]{{Show::SelfLit, "Self-lit"}, {Show::Glass, "Glass"}, {Show::All, "All"}};
-
-// A line of the list: a material by its row in the game's pool.
-struct Row
+// What the game has loaded of a marked material.
+struct Loaded
 {
     std::uint32_t poolRow{};
-    std::uint64_t name{};
-    float brightness{};
-    std::string text;
+    bool isTuned{};
 };
 
-// A parameter of the selected material, zeroed for the dark half of a blink.
-struct Blink
+// A parameter held at nothing for the dark half of a flash.
+struct Flash
 {
     std::uint32_t poolRow{};
     std::uint64_t parameter{};
     Value held;
+};
+
+// A trip to a mark: the warp waits for the game to be playing there.
+struct Travel
+{
+    Mark mark;
+    int consoleRuns{};
+    int checks{};
+    bool isChecking{};
 };
 
 std::array<std::atomic<std::uint32_t>, PacketMaterialBits + 1> lastDrawn{};
@@ -76,14 +85,18 @@ std::array<std::atomic<std::uint32_t>, PacketMaterialBits + 1> lastDrawn{};
 using Replay = void (*)(void* state, const std::uint64_t* packet, std::uint32_t first, std::uint32_t second);
 Replay originalReplay{};
 
-Show show{};
-bool isDrawnOnly{true}, isBlinking{true}, hasUnsavedChanges{};
-std::vector<Row> rows;
+std::vector<Mark> markList;
+std::unordered_map<std::uint64_t, Loaded> loaded;
 int framesToRefresh{};
-std::optional<Row> selected;
-std::array<char, 96> label{};
-std::optional<Blink> blink;
-std::uint64_t presents{}, lastShown{};
+std::optional<std::uint32_t> selectedRow;
+std::uint64_t selectedName{};
+std::optional<std::uint32_t> flashWanted;
+std::optional<Flash> flashing;
+std::optional<Rule> compared;
+std::optional<Travel> travelling;
+std::uint64_t presents{};
+std::vector<Rule> savedRules;
+bool hasSaveFailed{};
 
 void replayDraw(void* state, const std::uint64_t* packet, std::uint32_t first, std::uint32_t second)
 {
@@ -102,6 +115,63 @@ const std::filesystem::path& rulesFile()
     return file;
 }
 
+// Beside the add-on: a dev build's scratch, not the repository's.
+const std::filesystem::path& marksFile()
+{
+    static const std::filesystem::path file = [] {
+        HMODULE self{};
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCWSTR>(&marksFile), &self);
+
+        std::wstring path(MAX_PATH, L'\0');
+        path.resize(GetModuleFileNameW(self, path.data(), MAX_PATH));
+
+        return std::filesystem::path(path).parent_path() / "PhantomFX-marks.json";
+    }();
+
+    return file;
+}
+
+// The file whole or not at all, as an interrupted write must not cost what was there.
+bool writeFile(const std::filesystem::path& file, const std::string& text)
+{
+    auto temporary = file;
+    temporary += ".tmp";
+
+    bool isWritten{};
+    {
+        std::ofstream output(temporary, std::ios::binary);
+        output << text;
+        isWritten = output.good();
+    }
+
+    std::error_code error;
+    if (isWritten) std::filesystem::rename(temporary, file, error);
+
+    return isWritten && !error;
+}
+
+void loadMarks()
+{
+    std::ifstream file(marksFile(), std::ios::binary);
+    if (!file) return;
+
+    const std::string text(std::istreambuf_iterator<char>(file), {});
+    auto parsed = parseMarks(text);
+    if (parsed.error.empty()) markList = std::move(parsed.marks);
+    else log("Materials: the marks are not used: " + parsed.error);
+}
+
+void saveMarks()
+{
+    if (!writeFile(marksFile(), writeMarks(markList))) fxui::toast(Tone::Bad, "Marks not saved", marksFile().string());
+}
+
+std::uintptr_t varsBlock() noexcept
+{
+    const auto vars = game_memory::read<std::uintptr_t>(reinterpret_cast<std::uintptr_t>(game_code::image()) + VarsRva);
+    return vars ? *vars : 0;
+}
+
 float brightnessOf(const Material& material)
 {
     const auto intensity = valueOf(material.packed, SelfColorIntensityParameter);
@@ -111,12 +181,19 @@ float brightnessOf(const Material& material)
     return intensity[0] * (color.size() < 3 ? 1 : std::max({color[0], color[1], color[2]}));
 }
 
-bool isShown(const Material& material)
+std::array<float, 3> colorOf(const Material& material)
 {
-    if (show == Show::SelfLit) return !valueOf(material.packed, SelfColorIntensityParameter).empty();
-    if (show == Show::Glass) return !valueOf(material.packed, GlassColorParameter).empty();
+    const auto color = valueOf(material.packed, SelfColorParameter);
+    if (color.size() < 3) return {1, 1, 1};
 
-    return true;
+    return {color[0], color[1], color[2]};
+}
+
+MaterialKind kindOf(const Material& material)
+{
+    if (!valueOf(material.packed, SelfColorIntensityParameter).empty()) return MaterialKind::SelfLit;
+
+    return valueOf(material.packed, GlassColorParameter).empty() ? MaterialKind::Other : MaterialKind::Glass;
 }
 
 // The rule that made the material what it is now. Rules match by value, so another material of the
@@ -126,77 +203,322 @@ template<class Rules> auto ruleAppliedTo(const Material& material, Rules& rules)
     return std::ranges::find_if(rules, [&](const Rule& rule) { return rule.material == material.name && isAwaited(material.packed, rule, Direction::Back); });
 }
 
-std::string rowText(const Material& material, const std::vector<Rule>& rules)
+// The same, and still that rule while a compare holds the material at its original.
+const Rule* ruleOn(const Material& material, const std::vector<Rule>& rules)
 {
-    const auto rule = ruleAppliedTo(material, rules);
-    const auto tuned = rule == rules.end() ? std::string{} : "  [" + (rule->label.empty() ? "tuned" : rule->label) + "]";
-    const auto first = show == Show::SelfLit ? std::format("{:>9.0f}", brightnessOf(material)) : "technique " + hashText(material.technique);
+    const auto applied = ruleAppliedTo(material, rules);
+    if (applied != rules.end()) return &*applied;
+    if (!compared || compared->material != material.name || !isAwaited(material.packed, *compared, Direction::Forward)) return nullptr;
 
-    return std::format("{}  {}  used {}{}", first, hashText(material.name), material.uses, tuned);
+    const auto held = std::ranges::find(rules, *compared);
+
+    return held != rules.end() ? &*held : nullptr;
 }
 
-void refreshRows()
+std::uint64_t flashingParameter(const Material& material)
 {
-    if (--framesToRefresh > 0) return;
-
-    framesToRefresh = FramesBetweenRefreshes;
-    rows.clear();
-
-    const auto rules = rulesInForce();
-    game_materials::forEachMaterial([&](const Material& material) {
-        if (isShown(material) && (!isDrawnOnly || isDrawnNow(material.index)))
-            rows.push_back({material.index, material.name, brightnessOf(material), rowText(material, *rules)});
-    });
-
-    std::ranges::sort(rows, [](const Row& a, const Row& b) { return a.brightness != b.brightness ? a.brightness > b.brightness : a.name < b.name; });
-}
-
-void select(const Row& row)
-{
-    selected = row;
-    label = {};
-    framesToRefresh = 0;
-
-    const auto material = game_materials::materialAt(row.poolRow);
-    if (!material) return;
-
-    const auto rules = rulesInForce();
-    const auto rule = ruleAppliedTo(*material, *rules);
-    if (rule != rules->end()) rule->label.copy(label.data(), label.size() - 1);
-}
-
-// The selected material, while its row still holds it.
-std::optional<Material> selectedMaterial()
-{
-    const auto material = selected ? game_materials::materialAt(selected->poolRow) : std::nullopt;
-    if (material && material->name == selected->name) return material;
-
-    selected.reset();
-
-    return std::nullopt;
-}
-
-std::uint64_t blinkingParameter(const Material& material)
-{
-    for (const auto parameter : BlinkingParameters)
+    for (const auto parameter : FlashingParameters)
         if (!valueOf(material.packed, parameter).empty()) return parameter;
 
     return parameterOfLowHalf(material.packed.parameters.front());
 }
 
-void startBlink(const Material& material)
+// Waits for the game to play, wherever it is, and warps once it does.
+std::string warpScript(const Mark& mark)
 {
-    if (!isBlinking || GetTickCount64() / BlinkMilliseconds % 2) return;
-
-    const auto parameter = blinkingParameter(material);
-    blink = {material.index, parameter, valueOf(material.packed, parameter)};
-    setValue(material.packed, parameter, Value(blink->held.size(), 0));
+    return std::format(R"(local sequence = TppSequence.GetCurrentSequenceName()
+if vars.locationCode ~= {} or sequence == nil or sequence == "" or sequence == "Seq_Mission_Prepare" then return "waiting" end
+TppPlayer.Warp{{pos = {{{}, {}, {}}}, rotY = {}}}
+return "arrived")",
+        mark.location, mark.position[0], mark.position[1], mark.position[2], mark.rotation);
 }
 
-void noteChange()
+std::optional<travel::Map> mapOf(std::uint16_t location)
 {
-    hasUnsavedChanges = true;
-    framesToRefresh = 0;
+    if (location == 10) return travel::Map::Afghanistan;
+    if (location == 20) return travel::Map::Africa;
+    if (location == 50) return travel::Map::MotherBase;
+
+    return std::nullopt;
+}
+}
+
+std::optional<std::string> savedRulesText()
+{
+    std::ifstream file(rulesFile(), std::ios::binary);
+    if (!file) return std::nullopt;
+
+    return std::string(std::istreambuf_iterator<char>(file), {});
+}
+
+std::string hookTool() noexcept
+{
+    if (!game_code::matches(Checked)) return "the game's code differs";
+
+    const auto status = game_code::hookAt(game_code::image() + ReplayRva, replayDraw, originalReplay);
+    if (status != MH_OK) return MH_StatusToString(status);
+
+    registerPanel();
+    savedRules = *rulesInForce();
+    try
+    {
+        loadMarks();
+    }
+    catch (const std::exception& error)
+    {
+        log(std::string("Materials: the marks are not used: ") + error.what());
+    }
+
+    return "";
+}
+
+void endFlash() noexcept
+{
+    if (!flashing) return;
+
+    if (const auto material = game_materials::materialAt(flashing->poolRow)) setValue(material->packed, flashing->parameter, flashing->held);
+
+    flashing.reset();
+}
+
+void settleTool() noexcept
+{
+    endFlash();
+    if (compared) sweep(*compared, Direction::Forward);
+
+    compared.reset();
+}
+
+void refreshLoaded()
+{
+    if (--framesToRefresh > 0) return;
+
+    framesToRefresh = FramesBetweenRefreshes;
+    loaded.clear();
+
+    const auto rules = rulesInForce();
+    game_materials::forEachMaterial([&](const Material& material) {
+        loaded[fingerprintOf(material.packed, material.name, *rules)] = {material.index, ruleOn(material, *rules) != nullptr};
+    });
+}
+
+void addMark()
+{
+    const auto vars = varsBlock();
+    if (!vars) return;
+
+    Mark mark{.location = game_memory::read<std::uint16_t>(vars + VarLocation).value_or(0),
+        .mission = game_memory::read<std::uint16_t>(vars + VarMission).value_or(0),
+        .position = game_memory::read<std::array<float, 3>>(vars + VarPlayerPosition).value_or(std::array<float, 3>{}),
+        .rotation = game_memory::read<float>(vars + VarPlayerRotation).value_or(0),
+        .clock = weather::state().clock};
+
+    const auto rules = rulesInForce();
+    game_materials::forEachMaterial([&](const Material& material) {
+        if (isDrawnNow(material.index)) mark.materials.push_back({material.name, fingerprintOf(material.packed, material.name, *rules), kindOf(material), brightnessOf(material), material.uses});
+    });
+
+    if (mark.materials.empty())
+    {
+        fxui::toast(Tone::Warn, "Nothing to mark", "The game has drawn no materials.");
+        return;
+    }
+
+    const auto selfLit = countOf(mark, MaterialKind::SelfLit);
+    markList.push_back(std::move(mark));
+    saveMarks();
+    fxui::toast(Tone::Ok, std::format("Mark {}", markList.size()), std::format("{} self-lit. F7 opens the marks.", selfLit));
+}
+
+const std::vector<Mark>& marks()
+{
+    return markList;
+}
+
+void removeMark(std::size_t index)
+{
+    if (index >= markList.size()) return;
+
+    markList.erase(markList.begin() + static_cast<std::ptrdiff_t>(index));
+    saveMarks();
+}
+
+std::size_t tunedCount(const Mark& mark)
+{
+    return static_cast<std::size_t>(std::ranges::count_if(mark.materials, [](const MarkedMaterial& material) {
+        const auto found = loaded.find(material.fingerprint);
+        return found != loaded.end() && found->second.isTuned;
+    }));
+}
+
+std::size_t countOf(const Mark& mark, MaterialKind kind)
+{
+    return static_cast<std::size_t>(std::ranges::count(mark.materials, kind, &MarkedMaterial::kind));
+}
+
+bool canGoTo(const Mark& mark)
+{
+    return game_lua::isSupported() && mapOf(mark.location).has_value();
+}
+
+bool isGoing() noexcept
+{
+    return travelling.has_value();
+}
+
+void goTo(const Mark& mark)
+{
+    const auto vars = varsBlock();
+    const auto location = vars ? game_memory::read<std::uint16_t>(vars + VarLocation) : std::nullopt;
+    const auto map = mapOf(mark.location);
+    if (!map) return;
+
+    if (location != mark.location) travel::go(*map);
+
+    travelling = Travel{.mark = mark};
+}
+
+void followTravel()
+{
+    if (!travelling || ++presents % PresentsBetweenTravelChecks) return;
+
+    const auto console = game_lua::console();
+    if (console.waiting) return;
+
+    if (travelling->isChecking && console.last && console.last->text == "arrived")
+    {
+        weather::setClock(travelling->mark.clock);
+        travelling.reset();
+        return;
+    }
+
+    if (++travelling->checks > MostTravelChecks)
+    {
+        fxui::toast(Tone::Bad, "Could not go there", "See the Lua console on the Developer page.");
+        travelling.reset();
+        return;
+    }
+
+    game_lua::submit(warpScript(travelling->mark));
+    travelling->isChecking = true;
+}
+
+std::vector<MaterialRow> rowsOf(const Mark& mark, std::optional<MaterialKind> kind)
+{
+    std::vector<const MarkedMaterial*> chosen;
+    for (const auto& marked : mark.materials)
+        if (!kind || marked.kind == *kind) chosen.push_back(&marked);
+
+    // By their value at the mark: live, a row would jump under the slider moving it.
+    std::ranges::sort(chosen, [](const MarkedMaterial* a, const MarkedMaterial* b) { return a->brightness != b->brightness ? a->brightness > b->brightness : a->name < b->name; });
+
+    std::vector<MaterialRow> rows;
+    const auto rules = rulesInForce();
+    for (const auto* markedRow : chosen)
+    {
+        const auto& marked = *markedRow;
+        MaterialRow row{.name = marked.name, .kind = marked.kind, .brightness = marked.brightness, .uses = marked.uses};
+        const auto found = loaded.find(marked.fingerprint);
+        const auto material = found != loaded.end() ? game_materials::materialAt(found->second.poolRow) : std::nullopt;
+        if (material && material->name == marked.name)
+        {
+            row.poolRow = material->index;
+            row.brightness = brightnessOf(*material);
+            row.color = colorOf(*material);
+            row.uses = material->uses;
+
+            const auto* rule = ruleOn(*material, *rules);
+            row.isTuned = rule != nullptr;
+            if (rule) row.label = rule->label;
+        }
+
+        rows.push_back(std::move(row));
+    }
+
+    return rows;
+}
+
+std::vector<RuleRow> ruleRows()
+{
+    std::vector<RuleRow> rows;
+    const auto rules = rulesInForce();
+    for (const auto& rule : *rules)
+    {
+        // What the rule says, until a loaded material says more.
+        MaterialRow row{.name = rule.material, .label = rule.label};
+        const auto intensity = std::ranges::find(rule.changes, SelfColorIntensityParameter, &Change::parameter);
+        if (intensity != rule.changes.end())
+        {
+            row.kind = MaterialKind::SelfLit;
+            row.brightness = intensity->to[0];
+        }
+
+        rows.push_back({rule, std::move(row)});
+    }
+
+    game_materials::forEachMaterial([&](const Material& material) {
+        for (auto& row : rows)
+        {
+            if (row.material.poolRow || row.rule.material != material.name || !isAwaited(material.packed, row.rule, Direction::Back)) continue;
+
+            row.material.poolRow = material.index;
+            row.material.kind = kindOf(material);
+            row.material.brightness = brightnessOf(material);
+            row.material.color = colorOf(material);
+        }
+    });
+
+    return rows;
+}
+
+void select(std::uint32_t poolRow, std::uint64_t name)
+{
+    selectedRow = poolRow;
+    selectedName = name;
+}
+
+void clearSelection()
+{
+    selectedRow.reset();
+}
+
+std::optional<Material> selectedMaterial()
+{
+    const auto material = selectedRow ? game_materials::materialAt(*selectedRow) : std::nullopt;
+    if (material && material->name == selectedName) return material;
+
+    selectedRow.reset();
+
+    return std::nullopt;
+}
+
+void flash(std::uint32_t poolRow)
+{
+    flashWanted = poolRow;
+}
+
+void startFlash()
+{
+    const auto wanted = std::exchange(flashWanted, std::nullopt);
+    if (!wanted || compared || GetTickCount64() / FlashMilliseconds % 2) return;
+
+    const auto material = game_materials::materialAt(*wanted);
+    if (!material) return;
+
+    const auto parameter = flashingParameter(*material);
+    flashing = Flash{*wanted, parameter, valueOf(material->packed, parameter)};
+    setValue(material->packed, parameter, Value(flashing->held.size(), 0));
+}
+
+Value originalOf(const Material& material, std::uint64_t parameter, const Value& value)
+{
+    const auto rules = rulesInForce();
+    const auto* rule = ruleOn(material, *rules);
+    if (!rule) return value;
+
+    const auto change = std::ranges::find(rule->changes, parameter, &Change::parameter);
+
+    return change == rule->changes.end() ? value : change->from;
 }
 
 // The parameter of the material goes to `value`: the materials under the rule on it come back and go
@@ -217,181 +539,108 @@ void edit(const Material& material, std::uint64_t parameter, const Value& value)
     sweep(after, Direction::Forward);
     sortRules(rules);
     putInForce(std::move(rules));
-    noteChange();
+    framesToRefresh = 0;
 }
 
-void save()
+std::string labelOf(const Material& material)
 {
-    auto temporary = rulesFile();
-    temporary += ".tmp";
+    const auto rules = rulesInForce();
+    const auto* rule = ruleOn(material, *rules);
 
-    bool isWritten{};
+    return rule ? rule->label : std::string{};
+}
+
+void setLabel(const Material& material, const std::string& label)
+{
+    auto rules = *rulesInForce();
+    const auto rule = ruleAppliedTo(material, rules);
+    if (rule == rules.end()) return;
+
+    rule->label = label;
+    putInForce(std::move(rules));
+}
+
+void removeRule(const Rule& rule)
+{
+    auto rules = *rulesInForce();
+    const auto found = std::ranges::find(rules, rule);
+    if (found == rules.end()) return;
+
+    sweep(rule, Direction::Back);
+    rules.erase(found);
+    putInForce(std::move(rules));
+    framesToRefresh = 0;
+}
+
+void removeRuleOn(const Material& material)
+{
+    const auto rules = rulesInForce();
+    const auto rule = ruleAppliedTo(material, *rules);
+    if (rule != rules->end()) removeRule(Rule{*rule});
+}
+
+bool hasRule(const Material& material)
+{
+    const auto rules = rulesInForce();
+    return ruleOn(material, *rules) != nullptr;
+}
+
+void holdOriginal(const Material& material, bool isHeld)
+{
+    if (isHeld == compared.has_value()) return;
+
+    if (!isHeld)
     {
-        std::ofstream output(temporary, std::ios::binary);
-        output << writeRules(*rulesInForce());
-        isWritten = output.good();
+        settleTool();
+        return;
     }
 
-    std::error_code error;
-    if (isWritten) std::filesystem::rename(temporary, rulesFile(), error);
-    if (!isWritten || error)
+    const auto rules = rulesInForce();
+    const auto rule = ruleAppliedTo(material, *rules);
+    if (rule == rules->end()) return;
+
+    compared = *rule;
+    sweep(*compared, Direction::Back);
+}
+
+bool isComparing() noexcept
+{
+    return compared.has_value();
+}
+
+std::size_t unsavedRules()
+{
+    return unsavedCount(savedRules, *rulesInForce());
+}
+
+void saveRules()
+{
+    const auto rules = rulesInForce();
+    hasSaveFailed = !writeFile(rulesFile(), writeRules(*rules));
+    if (hasSaveFailed)
     {
         fxui::toast(Tone::Bad, "Materials not saved", rulesFile().string());
         return;
     }
 
-    hasUnsavedChanges = false;
+    savedRules = *rules;
     fxui::toast(Tone::Ok, "Materials saved", rulesFile().string());
 }
 
-// What a slider moves through for a component that started at `original`: wide values by ratio, as a
-// lamp's intensity goes from hundreds to hundreds of thousands.
-fxui::SliderSpec sliderFor(float original)
+bool didSaveFail()
 {
-    const float size = std::abs(original);
-    if (size >= 10) return {.min = size / 1000, .max = size * 4, .standard = original, .format = "%.0f", .logarithmic = true};
-
-    return {.min = std::min(0.0f, original * 4), .max = std::max(1.0f, size * 4), .standard = original, .format = "%.3f"};
-}
-
-// What the rule on the material found in the parameter, or what it holds under no rule.
-Value originalOf(const Material& material, std::uint64_t parameter, const Value& value)
-{
-    const auto rules = rulesInForce();
-    const auto rule = ruleAppliedTo(material, *rules);
-    if (rule == rules->end()) return value;
-
-    const auto change = std::ranges::find(rule->changes, parameter, &Change::parameter);
-
-    return change == rule->changes.end() ? value : change->from;
-}
-
-void drawParameter(const Material& material, std::uint64_t parameter)
-{
-    auto value = valueOf(material.packed, parameter);
-    if (value.empty()) return;
-
-    const auto original = originalOf(material, parameter, value);
-    const auto name = parameterText(parameter);
-    bool isChanged{};
-    for (std::size_t component = 0; component < value.size(); ++component)
-    {
-        const auto text = value.size() == 1 ? name : std::format("{}.{}", name, "xyzw"[component]);
-        isChanged |= fxui::slider(text.c_str(), value[component], sliderFor(component < original.size() ? original[component] : value[component]));
-    }
-
-    if (value != original && original[0] != 0) fxui::hint(std::format("{:.3g} times the game's value", value[0] / original[0]));
-    if (isChanged) edit(material, parameter, value);
-}
-
-void drawSelected(const Material& material)
-{
-    fxui::gap(4);
-    fxui::fact("Name", hashText(material.name));
-    fxui::fact("Technique", hashText(material.technique));
-    fxui::fact("In use", std::format("{} times", material.uses));
-    fxui::checkbox("Blink on screen", isBlinking, "Shows which material this is: its first parameter goes to nothing and back.");
-
-    fxui::subheading("Parameters");
-    for (const auto lowHalf : material.packed.parameters) drawParameter(material, parameterOfLowHalf(lowHalf));
-
-    auto rules = *rulesInForce();
-    const auto rule = ruleAppliedTo(material, rules);
-    if (rule == rules.end()) return;
-
-    fxui::subheading("Label");
-    fxui::textBox("##remasterLabel", label, 1);
-    if (const std::string_view text = label.data(); text != rule->label)
-    {
-        rule->label = text;
-        putInForce(std::move(rules));
-        noteChange();
-    }
-}
-
-void drawList()
-{
-    if (fxui::segmented("Show", show, ShowChoices)) framesToRefresh = 0;
-    if (fxui::checkbox("Drawn now", isDrawnOnly, "Only materials the game drew in the last second, so what is around you and not all it has loaded.")) framesToRefresh = 0;
-
-    refreshRows();
-
-    std::vector<std::string_view> names;
-    names.reserve(rows.size());
-    std::optional<std::size_t> shownRow;
-    for (std::size_t i = 0; i < rows.size(); ++i)
-    {
-        names.push_back(rows[i].text);
-        if (selected && rows[i].poolRow == selected->poolRow) shownRow = i;
-    }
-
-    const auto preview = selected ? selected->text : std::format("{} materials", rows.size());
-    if (const auto picked = fxui::searchCombo("Material", preview.c_str(), names, shownRow, "Brightest first on Self-lit. Type to search.")) select(rows[*picked]);
-}
-}
-
-std::optional<std::string> savedRulesText()
-{
-    std::ifstream file(rulesFile(), std::ios::binary);
-    if (!file) return std::nullopt;
-
-    return std::string(std::istreambuf_iterator<char>(file), {});
-}
-
-std::string hookTool() noexcept
-{
-    if (!game_code::matches(Checked)) return "the game's code differs";
-
-    const auto status = game_code::hookAt(game_code::image() + ReplayRva, replayDraw, originalReplay);
-
-    return status == MH_OK ? "" : MH_StatusToString(status);
-}
-
-void endBlink() noexcept
-{
-    if (!blink) return;
-
-    if (const auto material = game_materials::materialAt(blink->poolRow)) setValue(material->packed, blink->parameter, blink->held);
-
-    blink.reset();
-}
-
-void presentTool() noexcept
-{
-    ++presents;
-
-    // A material must not stay dark once the tool is no longer drawn.
-    if (presents - lastShown > PresentsUnseen) endBlink();
+    return hasSaveFailed;
 }
 
 void drawTool()
 {
-    lastShown = presents;
-    endBlink();
-
     const fxui::Item item({.id = "remaster",
         .name = "Materials",
-        .summary = "Tunes the game's materials and saves the rules into the repository.",
-        .keywords = "remaster material lamp self-lit bright emission glass tune rule"});
+        .summary = "F6 marks what is on screen while you play. F7 opens the marks, to tune them over the game.",
+        .keywords = "remaster material lamp self-lit bright emission glass tune rule mark"});
     if (!item) return;
 
-    // With the rules off, what a material holds is not what a rule made it.
-    if (!areRulesOn())
-    {
-        fxui::note(Tone::Dim, "The rules are off while the visual enhancements are off.");
-        return;
-    }
-
-    fxui::fact("Rules", std::format("{}{}", rulesInForce()->size(), hasUnsavedChanges ? ", not saved" : ""));
-
-    drawList();
-
-    const auto material = selectedMaterial();
-    if (material) drawSelected(*material);
-
-    fxui::gap(6);
-    if (fxui::button("Save", "Writes the rules into src/remaster/materials.json in the checkout this build came from.", hasUnsavedChanges)) save();
-
-    if (material) startBlink(*material);
+    fxui::fact("Marks", std::to_string(markList.size()));
+    fxui::fact("Rules", std::to_string(rulesInForce()->size()));
 }
 }

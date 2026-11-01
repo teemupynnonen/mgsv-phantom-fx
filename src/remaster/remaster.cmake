@@ -22,12 +22,12 @@ install(FILES "${NLOHMANN_JSON_DIR}/LICENSE.MIT" DESTINATION PhantomFX RENAME nl
 
 # The tool itself only in a dev build, which saves into this checkout.
 if(PHANTOM_FX_DEV_TOOLS)
-    target_sources(phantom_fx PRIVATE src/remaster/tool.cpp)
+    target_sources(phantom_fx PRIVATE src/remaster/tool.cpp src/remaster/panel.cpp src/remaster/marks.cpp)
     set_source_files_properties(src/remaster/tool.cpp PROPERTIES COMPILE_DEFINITIONS "PHANTOM_FX_MATERIALS_FILE=\"${MATERIALS_FILE}\"")
 endif()
 
 if(BUILD_TESTING)
-    add_executable(remaster_tests tests/remaster_tests.cpp src/remaster/rules.cpp src/remaster/rule_file.cpp)
+    add_executable(remaster_tests tests/remaster_tests.cpp src/remaster/rules.cpp src/remaster/rule_file.cpp src/remaster/marks.cpp)
     target_include_directories(remaster_tests PRIVATE src)
     target_include_directories(remaster_tests SYSTEM PRIVATE "${NLOHMANN_JSON_DIR}/include")
     target_compile_features(remaster_tests PRIVATE cxx_std_20)

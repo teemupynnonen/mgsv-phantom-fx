@@ -185,6 +185,15 @@ void retune(Rule& rule, std::uint64_t parameter, const Value& held, const Value&
     if (change->to == change->from) rule.changes.erase(change);
 }
 
+std::size_t unsavedCount(std::span<const Rule> saved, std::span<const Rule> rules)
+{
+    const auto notIn = [](std::span<const Rule> set, std::span<const Rule> other) {
+        return static_cast<std::size_t>(std::ranges::count_if(set, [&](const Rule& rule) { return std::ranges::find(other, rule) == other.end(); }));
+    };
+
+    return std::max(notIn(rules, saved), notIn(saved, rules));
+}
+
 std::uint64_t parameterOfLowHalf(std::uint32_t lowHalf)
 {
     const auto known = std::ranges::find(KnownParameters, lowHalf, [](const KnownParameter& parameter) { return static_cast<std::uint32_t>(parameter.hash); });

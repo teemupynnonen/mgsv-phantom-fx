@@ -7,19 +7,29 @@ Game facts behind it: `docs/DEVELOPMENT.md`, "Materials".
 
 ## Using it
 
-In a dev build, open the overlay, then **Developer** > **Materials**.
+In a dev build, two keys, with no ReShade window involved:
 
-1. **Show** picks the kind of material. **Self-lit** lists brightest first.
-2. **Drawn now** keeps the list to what the game drew in the last second.
-3. Pick a material. It blinks on screen, so you can see it is the right one. Press **Blink on screen** to stop.
-4. Move its sliders. The change shows on the next frame. A slider's reset button takes that value back,
-   and a rule with nothing left goes.
-5. Give it a label, then press **Save**. That writes `src/remaster/materials.json` in the checkout the
-   build came from. Commit that file.
+- **F6** while playing: a mark. It keeps the map, your position, the time of day and every material drawn in the last
+  second. Nothing stops, so mark and keep walking.
+- **F7**: the panel at the right edge. The game keeps running. Hold the right mouse button to walk and look
+  around with it open. **Esc** or **F7** closes it.
 
-The rules are off with the visual enhancements (F1), and the tool waits until they are back on.
+Then work down the marks:
 
-A dev build reads that file at start. Other builds read the copy built into the add-on.
+1. Pick a mark. **Go there** warps you back and sets the time of day, travelling first if it is another map. A story
+   mission comes back as that place in its map's free roam. **Done** takes the mark off the list.
+2. Hover a material: it flashes in the game. Click it to tune it.
+3. Drag **Brightness**, or roll the wheel over it. **Colour** opens a picker, and **More parameters** shows the rest.
+4. Hold **C** or **Hold for original** to see the game's value for this material alone.
+5. Name it, then press **Save**. That writes `src/remaster/materials.json` in the checkout the build came from.
+   Commit that file.
+
+**Rules** lists every rule, with those for other maps dimmed. **Back to original** takes a rule away.
+
+The rules are off with the visual enhancements (F1), and the panel waits until they are back on.
+
+A dev build reads that file at start. Other builds read the copy built into the add-on. Marks are scratch: they stay
+in `PhantomFX-marks.json` beside the add-on, not in the repository.
 
 ## Rules
 

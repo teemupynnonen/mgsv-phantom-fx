@@ -116,14 +116,9 @@ void configure(const Configuration& configuration) noexcept
     const bool isTurnedOn = configuration.areEnhancementsOn;
     if (isOn.exchange(isTurnedOn) == isTurnedOn) return;
 
-    if constexpr (DevTools) endBlink();
+    if constexpr (DevTools) settleTool();
 
     sweep(*inForce.load(), isTurnedOn ? Direction::Forward : Direction::Back);
-}
-
-void present() noexcept
-{
-    if constexpr (DevTools) presentTool();
 }
 
 void tuneFileSelfLight(std::uint64_t material, std::array<float, 4>& color, std::array<float, 4>& intensity)

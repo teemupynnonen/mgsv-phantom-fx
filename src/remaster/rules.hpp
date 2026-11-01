@@ -24,6 +24,8 @@ struct Change
 {
     std::uint64_t parameter{};
     Value from, to;
+
+    bool operator==(const Change&) const = default;
 };
 
 // The changes to the materials of one name (a StrCode64). Names are not unique, and `from` tells apart
@@ -33,6 +35,8 @@ struct Rule
     std::string label;
     std::uint64_t material{};
     std::vector<Change> changes;
+
+    bool operator==(const Rule&) const = default;
 };
 
 // A material's values as the game holds them. A technique packs its parameters into registers:
@@ -87,6 +91,9 @@ Value valueOf(const PackedMaterial& material, std::uint64_t parameter);
 // The rule now takes the parameter to `value`, the material holding `held` there. A new change starts
 // from `held`, a change back where it started goes, and only the components `value` has move.
 void retune(Rule& rule, std::uint64_t parameter, const Value& held, const Value& value);
+
+// How many rules differ between two sets: one for each added, removed or changed.
+std::size_t unsavedCount(std::span<const Rule> saved, std::span<const Rule> rules);
 
 // A technique keeps only the low half of a name: the whole hash where the name is known.
 std::uint64_t parameterOfLowHalf(std::uint32_t lowHalf);

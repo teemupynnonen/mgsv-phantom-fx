@@ -20,13 +20,12 @@ std::string hook() noexcept;
 
 // Takes the rules off the game's materials while the enhancements switch (F1) is off.
 void configure(const Configuration& configuration) noexcept;
-void present() noexcept;
 
 // A self-lit material's values as a model file gives them, as the rules make them: the ray-traced scene
 // reads the file, not the game's materials. A file already read keeps what it had, so a change in the
 // tool reaches the rays at the next start.
 void tuneFileSelfLight(std::uint64_t material, std::array<float, 4>& color, std::array<float, 4>& intensity);
 
-// The tool's item on the Developer page; only a dev build has it.
+// The tool's line on the Developer page, saying how to reach it; only a dev build has it.
 void drawTool();
 }

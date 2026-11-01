@@ -47,7 +47,8 @@ only feeds them (`DiagnosticLog` in `src/log.hpp`, tested with `if constexpr`):
 Its log's first line says "with the diagnostic log". Builds for in-game checks use this preset.
 It also sets `PHANTOM_FX_DEV_TOOLS` (`DevTools` in `src/dev_tools.hpp`), which adds the overlay's
 **Developer** page, below Diagnostics: **Travel** (see "Travel"), the **Lua console** (see "Game
-Lua"), **Materials** (`src/remaster/README.md`) and the log switch above.
+Lua"), a line on the remastering tool (**F6** marks, **F7** opens its panel: `src/remaster/README.md`) and the log switch
+above.
 
 `cmake --install build/release --component addon --prefix <dir>` collects the add-on, its DLLs,
 player documentation and licenses for distribution. The DLLs are at the install root;
@@ -233,7 +234,7 @@ what draws it, when that is the feature's own.
 | `src/dev_tools.hpp` | Whether the build has the Developer page (the dev preset) |
 | `src/game_lua.cpp`, `src/game_lua.hpp` | Lua in the game's script state, and the Developer page's console (see "Game Lua") |
 | `src/travel.cpp`, `src/travel.hpp` | The Developer page's travel: free roam in another map (see "Travel") |
-| `src/remaster/` | The remastering tool: rules that change the game's materials as they are made, saved in `materials.json` and built into the add-on, and the Developer page item that tunes them (see its `README.md`, and "Materials") |
+| `src/remaster/` | The remastering tool: rules that change the game's materials as they are made, saved in `materials.json` and built into the add-on, and a dev build's marks and the panel that tunes them (see its `README.md`, and "Materials") |
 | `src/frame_log.cpp`, `src/frame_log.hpp` | Development diagnostics, off by default: shader log, F10 frame record, constant and texture dumps |
 | `src/resource_dump.cpp`, `src/resource_dump.hpp` | Format names, constant rows, DDS saving for the dumps |
 | `src/shader_bytecode.cpp`, `src/shader_bytecode.hpp` | DXBC checksum (bytes 4 to 20 of the container), the instruction walk, the output saturation patch, the dither patch |
@@ -1223,6 +1224,8 @@ those lamps throw on the walls stayed, as it is a game light of its own (2026-11
   and a row's uses can span model files: a lamp type is one row. Changing a material at run time is `0x1CA1B0` (a
   row of its own, cloned if shared), the write, `0x1C8960` again; `0x276B70` is that for one vector, with hundreds of
   callers. A row's hash is only for this merge: a write that leaves it stale makes the next equal build a row of its own.
+- **Where the player is.** The script variables' block (`[0x2C16920]`) holds `vars.locationCode` at `+0x10`, `missionCode` at
+  `+0x12`, `playerPosX` to `Z` at `+0xEC` and `playerRotY` at `+0x108`, each a read away, without Lua.
 - **Files share vectors.** 322 of 707 loaded files have a material vector that two materials read, so a value cannot
   be changed by writing it in the file. Names are not unique either: 734 names over 1332 material instances;
   `ca117249330f` had three lamps of 221182, 100000 and 600 in one mission.
