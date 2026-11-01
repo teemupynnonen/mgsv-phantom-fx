@@ -1,0 +1,2 @@
+// The saved rules, inside the add-on (MaterialsResource in remaster.cpp).
+1 RCDATA "@MATERIALS_FILE@"

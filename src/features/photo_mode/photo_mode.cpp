@@ -1,12 +1,13 @@
 #include "features/photo_mode/photo_mode.hpp"
 
 #include "clock.hpp"
+#include "dev/game_lua.hpp"
+#include "dev/held_camera.hpp"
 #include "dev_tools.hpp"
 #include "device_check.hpp"
 #include "features/photo_mode/focus.hpp"
 #include "fxui/fxui.hpp"
 #include "game_code.hpp"
-#include "game_lua.hpp"
 #include "log.hpp"
 
 #include <Windows.h>
@@ -17,6 +18,7 @@
 #include <cstdint>
 #include <cstring>
 #include <format>
+#include <mutex>
 #include <string>
 #include <utility>
 
@@ -120,15 +122,10 @@ std::atomic<bool> teleportRequested{};
 FreeCamera freeCamera;
 LONGLONG lastStep{};
 
-// Where the last Enter sends the player: the free camera's position and yaw, taken at the selector update
-// it arrives on, and the warp run at a frame start after leaving photo mode has let the game's time run.
-// The dev build only.
-struct Warp
-{
-    float position[3]{};
-    float yaw{};
-};
-Warp warp;
+// Where the last Enter sends the player: the free camera's pose, taken at the selector update it arrives
+// on, and the warp run at a frame start after leaving photo mode has let the game's time run. The dev
+// build only.
+Pose warp;
 bool warpPending{};
 
 enum Key : std::uint8_t { Forward = 1, Back = 2, Left = 4, Right = 8, Up = 16, Down = 32, Fast = 64, Slow = 128 };
@@ -173,8 +170,26 @@ FreeCamera fromGame(const CameraState& game)
         std::clamp(std::asin(std::clamp(forward[1], -1.0f, 1.0f)), -MaxPitch, MaxPitch), game.focusDistance};
 }
 
+void place(FreeCamera& camera, const Pose& pose)
+{
+    std::memcpy(camera.position, pose.position, sizeof(camera.position));
+    camera.yaw = pose.yaw;
+    camera.pitch = std::clamp(pose.pitch, -MaxPitch, MaxPitch);
+}
+
+[[maybe_unused]] Pose poseOf(const FreeCamera& camera)
+{
+    Pose pose;
+    std::memcpy(pose.position, camera.position, sizeof(pose.position));
+    pose.yaw = camera.yaw;
+    pose.pitch = camera.pitch;
+
+    return pose;
+}
+
+
 // The rotation is the yaw about +y after the pitch about +x; looking up is a negative turn about +x.
-CameraState photoState(const FreeCamera& camera, const CameraState& game)
+CameraState photoState(const FreeCamera& camera, const CameraState& game, bool isSharp)
 {
     const float sy = std::sin(camera.yaw / 2), cy = std::cos(camera.yaw / 2);
     const float sp = std::sin(-camera.pitch / 2), cp = std::cos(-camera.pitch / 2);
@@ -184,7 +199,7 @@ CameraState photoState(const FreeCamera& camera, const CameraState& game)
     std::memcpy(state.transform, rotation, sizeof(rotation));
     std::memcpy(state.transform + 4, camera.position, sizeof(camera.position));
     state.focusDistance = camera.focusDistance;
-    state.aperture = blur ? fNumber.load() : SharpAperture;
+    state.aperture = blur && !isSharp ? fNumber.load() : SharpAperture;
     state.anyAperture = 1;
 
     return state;
@@ -253,6 +268,9 @@ double secondsSince(LONGLONG& last)
 void selectorUpdate(std::uint8_t* selector)
 {
     auto* camera = activeCamera(selector);
+    std::optional<Pose> heldCamera;
+    if constexpr (DevTools) heldCamera = held_camera::next();
+
     // Enter asks for the player to go where the free camera is. The warp waits for the game's time, so
     // the request also leaves photo mode: the unpause below is in this same call, and the next frame
     // start runs the warp with the game running.
@@ -264,8 +282,8 @@ void selectorUpdate(std::uint8_t* selector)
         requested = false;
     }
 
-    const bool wanted = requested;
-    // Without a camera (a loading screen) the request lapses.
+    const bool wanted = requested || heldCamera;
+    // Without a camera (a loading screen) the request lapses; a held camera waits for one.
     if (wanted && !flying && !camera) requested = false;
     else if (wanted && !flying)
     {
@@ -287,6 +305,11 @@ void selectorUpdate(std::uint8_t* selector)
     if (!flying || !camera)
     {
         originalSelectorUpdate(selector);
+        if constexpr (DevTools)
+        {
+            if (camera) held_camera::remember(poseOf(fromGame(stateOf(camera))));
+        }
+
         return;
     }
 
@@ -294,14 +317,19 @@ void selectorUpdate(std::uint8_t* selector)
     const int turnX = mouseX.exchange(0), turnY = mouseY.exchange(0);
     const std::uint8_t keys = heldKeys;
     const auto game = stateOf(camera);
-    fly(freeCamera, keys, turnX, turnY, seconds);
-    if (const float target = focus::distance(); target > 0)
-        freeCamera.focusDistance += (target - freeCamera.focusDistance) * (1 - std::exp(-seconds / FocusTime));
+    if (heldCamera) place(freeCamera, *heldCamera);
+    else
+    {
+        fly(freeCamera, keys, turnX, turnY, seconds);
+        if (const float target = focus::distance(); target > 0)
+            freeCamera.focusDistance += (target - freeCamera.focusDistance) * (1 - std::exp(-seconds / FocusTime));
+    }
 
     // Only this update sees the free camera; the game's camera keeps its own.
-    apply(camera, photoState(freeCamera, game));
+    apply(camera, photoState(freeCamera, game, static_cast<bool>(heldCamera)));
     originalSelectorUpdate(selector);
     apply(camera, game);
+    if constexpr (DevTools) held_camera::remember(poseOf(freeCamera));
 }
 
 // In photo mode the mouse turns the free camera and the game gets no presses. Releases still reach
@@ -401,13 +429,14 @@ void teleport() noexcept
 
 void onFrameStart() noexcept
 {
-    if constexpr (!DevTools) return;
+    if constexpr (DevTools)
+    {
+        // A dev build alone links the game's Lua; this body is not odr-used in a release build.
+        if (!std::exchange(warpPending, false)) return;
 
-    if (!std::exchange(warpPending, false)) return;
-
-    // The game's own warp, as Infinite Heaven's InfTppUtil.Warp sends it: WarpAndWaitBlock for the player
-    // (object 0), SetPosition for the vehicle or walker gear the player is in. rotY takes radians.
-    const auto script = std::format(R"(
+        // The game's own warp, as Infinite Heaven's InfTppUtil.Warp sends it: WarpAndWaitBlock for the player
+        // (object 0), SetPosition for the vehicle or walker gear the player is in. rotY takes radians.
+        const auto script = std::format(R"(
 if not (vars and GameObject and TppGameObject) then return "The game's scripts are not ready." end
 local kind = math.floor(vars.missionCode / 10000)
 if kind ~= 1 and kind ~= 3 then return "Only in a mission or free roam." end
@@ -426,33 +455,36 @@ else
   return "The player is not on foot, in a vehicle or on walker gear."
 end
 )",
-        warp.yaw, warp.position[0], warp.position[1], warp.position[2]);
+            warp.yaw, warp.position[0], warp.position[1], warp.position[2]);
 
-    const auto outcome = game_lua::run(script, "=PhantomFX photo mode teleport");
-    if (!outcome)
-    {
-        fxui::toast(fxui::Tone::Warn, "Teleport", "The game's scripts are not running yet.");
-        return;
+        const auto outcome = game_lua::run(script, "=PhantomFX photo mode teleport");
+        if (!outcome)
+        {
+            fxui::toast(fxui::Tone::Warn, "Teleport", "The game's scripts are not running yet.");
+            return;
+        }
+
+        if (!outcome->ran)
+        {
+            log("Photo mode's teleport failed: " + outcome->text);
+            fxui::toast(fxui::Tone::Bad, "Teleport failed", "See PhantomFX.log.");
+            return;
+        }
+
+        if (!outcome->text.empty())
+        {
+            fxui::toast(fxui::Tone::Warn, "Teleport", outcome->text);
+            return;
+        }
+
+        log(std::format("Photo mode: the player warped to {:.3f}, {:.3f}, {:.3f}.", warp.position[0], warp.position[1], warp.position[2]));
     }
-
-    if (!outcome->ran)
-    {
-        log("Photo mode's teleport failed: " + outcome->text);
-        fxui::toast(fxui::Tone::Bad, "Teleport failed", "See PhantomFX.log.");
-        return;
-    }
-
-    if (!outcome->text.empty())
-    {
-        fxui::toast(fxui::Tone::Warn, "Teleport", outcome->text);
-        return;
-    }
-
-    log(std::format("Photo mode: the player warped to {:.3f}, {:.3f}, {:.3f}.", warp.position[0], warp.position[1], warp.position[2]));
 }
 
 void leave() noexcept
 {
+    if constexpr (DevTools) held_camera::release();
+
     requested = false;
     flying = false;
     teleportRequested = false;
@@ -460,4 +492,5 @@ void leave() noexcept
     pause(false);
     focus::setActive(false);
 }
+
 }

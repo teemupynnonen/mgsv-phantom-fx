@@ -13,9 +13,10 @@ namespace
 // An FMDL mesh's shadow bits (its second byte): bit 0, drawn in the main view only, never into the
 // shadow maps; bit 1, drawn into the shadow maps only, a stand-in for what the main view shows.
 constexpr std::uint8_t CastsNoShadow = 0x01, ShadowMapsOnly = 0x02;
-// Its alpha bits (its first byte): glass, cut out (the shadow pass tests its alpha), translucent (never
-// drawn into the shadow maps) and decals (cast or not by the material's technique).
-constexpr std::uint8_t GlassAlpha = 0x10, CutOutAlpha = 0x20, TranslucentAlpha = 0x40, DecalAlpha = 0x80;
+// Its alpha bits (its first byte): drawn forward, after the G-buffer (glass, and most of all fox3DFW_ConstantSRGB), cut out
+// (the shadow pass tests its alpha), translucent (never drawn into the shadow maps) and decals (cast or not by the
+// material's technique).
+constexpr std::uint8_t ForwardAlpha = 0x10, CutOutAlpha = 0x20, TranslucentAlpha = 0x40, DecalAlpha = 0x80;
 // The StrCode64s of a material's texture parameters "Base_Tex_SRGB" (the colour, and a cut-out mesh's
 // alpha) and "Mask_Tex_LIN" (a shadow-only mesh's mask, its only texture, often the visible mesh's
 // colour: the shadow pass cuts by its alpha, as ModelForward_Shadow's pixel shader samples t0.w):
@@ -27,6 +28,63 @@ constexpr std::uint64_t BaseTextureParameter = 0x41EA7BE81B61, MaskTextureParame
 // "SelfColorIntensity" (fox3dfw_constant*: the texture times the colour times the intensity's x).
 constexpr std::uint64_t SpecularTextureParameter = 0x104D6B98B10E, NormalTextureParameter = 0xCC4305511AE0;
 constexpr std::uint64_t MaterialIndexParameter = 0xCAB8E38487FF, SelfColorParameter = 0x557B9224571E, SelfColorIntensityParameter = 0xE40A3A2518CF;
+// Glass: "GlassColor", which every glass technique's material gives and no other's (the game's files, 2026-10-31), and
+// "Base_Tex_LIN" (the game's t0, how much of the surface reflects). A mirror is known by its technique,
+// "fox3DFW_ParallaxReflection", as "HeightScale" is not its alone. Its Base_Tex_SRGB is a painted picture of the room, its mask
+// is on the second texture coordinates, which the scene does not keep, and it has no row of the material table.
+constexpr std::uint64_t GlassColorParameter = 0xBE61C83A81D, GlassMaskParameter = 0x679A3387A4DF, MirrorTechnique = 0x2EB4D1D33DF8;
+// A mesh's layer, which its G-buffer shader lays over the base texture (fox3ddf_cloth*, fox3ddf_blin_*layer* and more, 52
+// shaders): "Layer_Tex_SRGB", "LayerMask_Tex_LIN", and the layer's coordinates, (second coordinates + shift) x repeat, by
+// "URepeat_UV", "VRepeat_UV", "UShift_UV" and "VShift_UV". It can be all of a mesh's colour: the base of Kaz's beige coat is white.
+constexpr std::uint64_t LayerTextureParameter = 0xFB6E9826DBE6, LayerMaskTextureParameter = 0xD5C6F91A8B72;
+constexpr std::uint64_t URepeatParameter = 0xE544FE2CA129, VRepeatParameter = 0xE7C7FA3697B2, UShiftParameter = 0x7B8B5E0E16EB, VShiftParameter = 0x38DA962E408E;
+// How a technique's pixel shader reads a mesh's layer: how it lies, the vertices' coordinates its mask lies on (TEXCOORD0, the
+// base texture's, to TEXCOORD3) and whether its mask is in the blue channel, not the red.
+struct LayerTechnique
+{
+    std::uint64_t hash{};
+    LayerBlend blend{};
+    std::uint8_t maskUvSet{};
+    bool isMaskInBlue{};
+};
+
+// The techniques known to use their layer, as no parameter tells: 59 F10 records, each mesh's technique by its pixel shader in
+// the frame's G-buffer draws, each row from that shader's disassembly, 2026-11-01. A material can name a layer its technique may
+// not read (a white base under a black layer, technique 0xC0CE81F00048, in no record): any other technique keeps its base texture.
+constexpr LayerTechnique LayerTechniques[]{
+    {0xE2C9B71532D1, LayerBlend::Multiply},                  // fox3ddf_cloth_dirty
+    {0x1B8D4DA0667B, LayerBlend::Multiply},                  // fox3ddf_cloth
+    {0x276F029CDBA2, LayerBlend::Multiply},                  // fox3ddf_cloth_nc
+    {0x339701C2A10D, LayerBlend::Multiply},                  // fox3ddf_skin_layer_dirty_nu, no mask
+    {0xD41DF652A584, LayerBlend::Multiply},                  // fox3ddf_blin_layer_mul_dirty
+    {0xD5F0795801BA, LayerBlend::Multiply},                  // fox3ddf_blin_layer_mul
+    {0x74891B27D58C, LayerBlend::Multiply},                  // fox3ddf_blin_ic_lym_sbn_dirty
+    {0x16C65FA108DD, LayerBlend::Multiply},                  // fox3ddf_blin_ic_lym_3mt_dirty
+    {0x7E8ECE300722, LayerBlend::Multiply},                  // fox3ddf_blin_ic_lym_4mt_dirty_vr
+    {0x88C852A00C01, LayerBlend::Multiply},                  // fox3ddf_blin_lym_subnm_nu
+    {0xA83595F3456F, LayerBlend::Multiply},                  // fox3ddf_blin_lym_subnm_dirty
+    {0xC71F96A72DD9, LayerBlend::Multiply},                  // fox3ddf_blin_2mt_layerm
+    {0xB17EB6AEFBB4, LayerBlend::Multiply},                  // fox3ddf_blin_3mt_layerm
+    {0x8DF300329F91, LayerBlend::Multiply},                  // fox3ddf_blin_4mt_layerm
+    {0xE910A72719EF, LayerBlend::Multiply},                  // tpp3ddf_blin_lym_rustdirty
+    {0xAA02EC2A2C1D, LayerBlend::Multiply, 0, true},         // fox3ddf_blin_ly_mul_2subnorm
+    {0x3FBC9A12FB36, LayerBlend::BlendEncoded, 2},           // fox3ddf_blin_layer_sbl_mu
+    {0xD1B559F90CB6, LayerBlend::BlendEncoded, 2},           // fox3ddf_blin_layer_sbl_mu
+    {0x9BF9366EE4C1, LayerBlend::BlendEncoded, 2},           // fox3ddf_blin_layersb_subnm_mu
+    {0xCDDF56CB51E3, LayerBlend::BlendEncoded, 2, true},     // fox3ddf_blin_ly_sbl_2snm_nu
+    {0xEF52ACD48A68, LayerBlend::BlendEncoded, 2, true},     // fox3ddf_blin_ly_sbl_2snm_nu
+    {0xD8DE23B18660, LayerBlend::BlendEncoded, 1},           // fox3ddf_blin_layersb_snm_nlmu
+    {0xCB4EF239308D, LayerBlend::BlendLinear},               // fox3ddf_blin_3mt_layerb
+    {0x203D1676BC8E, LayerBlend::BlendLinear},               // fox3ddf_blin_ic_lyb_4mt_dirty
+    {0x54214F48645B, LayerBlend::BlendLinear},               // fox3ddf_blin_layer_bl
+    {0xE7C991D84F41, LayerBlend::BlendLinear},               // fox3ddf_blin_layer_bl
+    {0x975741EC6B0A, LayerBlend::BlendLinear, 0, true},      // fox3ddf_blin_layer_bl_2snm
+    {0xE14611544E45, LayerBlend::BlendLinear, 2},            // fox3ddf_blin_layer_bl_mu
+    {0x4E818B32A91D, LayerBlend::BlendLinear, 2},            // fox3ddf_blin_layerb_subnm_mu
+    {0xC887CFC09D78, LayerBlend::BlendLinear, 2},            // fox3ddf_blin_layerb_subnm_mu
+    {0x7B049948758F, LayerBlend::BlendLinear, 2, true},      // fox3ddf_blin_layer_bl_2snm_nu
+    {0xECC9C23CA8E4, LayerBlend::BlendLinear, 3},            // fox3ddf_blin_layer_bl_mu_nu
+};
 // Its alpha bits' additive blend: a glow card around a lamp (four vertices), no surface.
 constexpr std::uint8_t AdditiveAlpha = 0x01;
 // A self colour times intensity below this lights nothing: the sky's dome and the moon have 1, a mesh painted black
@@ -42,7 +100,8 @@ constexpr float CutOutThreshold = 0.5f;
 // meshes the game draws, in its main view or its shadow maps, as its draws showed them mesh by mesh
 // (docs/DEVELOPMENT.md, "Scene objects", "Ray-traced scene"; the cases measured are
 // tests/scene_description_tests.cpp's):
-// - Glass the main view alone shows is dropped: the game never casts it.
+// - Glass and mirrors are taken for their material, whatever their bytes, for the reflections: every other ray passes them.
+// - Any other mesh drawn forward that the main view alone shows is dropped: the game never casts it.
 // - A character is taken as the main view shows it: its stand-ins dropped, its see-through meshes cut
 //   out by their alpha, and those the game never casts with, its hair, let light through in part.
 // - A rigid model is taken as the game casts: see-through meshes are dropped, and cut-out ones and
@@ -59,16 +118,18 @@ constexpr float CutOutThreshold = 0.5f;
 //   shadows").
 // - The object brush's bushes and grass cast no shadow in the game: their meshes are taken as leaves
 //   all the same, for the rays' shadows; the brush's props are solid.
-// - A self-lit mesh is taken for its light, its glass flag or not, but for an additive glow card, which is no surface.
-std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isCharacter, bool isVegetation, bool areMainViewCutOutsDropped, bool isSelfLit)
+// - A self-lit mesh is taken for its light, whatever else it is, but for an additive glow card, which is no surface.
+std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isCharacter, bool isVegetation, bool areMainViewCutOutsDropped, bool isSelfLit,
+    std::optional<MeshRole> materialRole)
 {
     if (isSelfLit && !(alpha & AdditiveAlpha)) return MeshRole::Emissive;
+    if (materialRole) return materialRole;
 
     const bool isCutOut = (alpha & (CutOutAlpha | DecalAlpha)) != 0;
     const bool isSeeThrough = (alpha & TranslucentAlpha) != 0;
     const bool isMainViewOnly = (shadow & CastsNoShadow) && !isVegetation;
     const bool isStandIn = (shadow & ShadowMapsOnly) != 0;
-    if (isMainViewOnly && (alpha & GlassAlpha)) return std::nullopt;
+    if (isMainViewOnly && (alpha & ForwardAlpha)) return std::nullopt;
 
     if (isCharacter)
     {
@@ -90,6 +151,13 @@ std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isC
     return isMainViewOnly ? MeshRole::MainViewOnly : MeshRole::Solid;
 }
 
+// How a technique reads its layer, none where it is not known to read one.
+std::optional<LayerTechnique> layerTechniqueOf(std::uint64_t technique)
+{
+    const auto found = std::ranges::find(LayerTechniques, technique, &LayerTechnique::hash);
+    return found != std::ranges::end(LayerTechniques) ? std::optional{*found} : std::nullopt;
+}
+
 std::uint32_t flagsOf(MeshRole role)
 {
     switch (role)
@@ -100,6 +168,10 @@ std::uint32_t flagsOf(MeshRole role)
         return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_LEAF;
     case MeshRole::Hair:
         return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_HAIR;
+    case MeshRole::Glass:
+        return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_GLASS;
+    case MeshRole::Mirror:
+        return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_GLASS | GI_GEOMETRY_MIRROR;
     case MeshRole::MainViewOnly:
         return GI_GEOMETRY_NO_SHADOW;
     case MeshRole::Emissive:
@@ -187,6 +259,12 @@ struct Stream
     std::uint8_t dataType{};
 };
 
+// Vertex format usages and data types.
+constexpr std::uint8_t Position = 0, BoneWeights = 1, Normal = 2, BoneNumbers = 7, Uv0 = 8, Tangent = 14, ThreeFloats = 1, FourHalves = 6, TwoHalves = 7,
+                       FourUnorms = 8, FourBytes = 9;
+// A mesh's sets of texture coordinates, by TEXCOORD: usages Uv0 and on.
+using UvSets = std::array<std::optional<Stream>, 4>;
+
 // Each mesh's group (block 2, 32 bytes: the group at +4, the count of its meshes at +6, the first at +8).
 std::optional<std::vector<std::uint32_t>> meshGroupsOf(const FileReader& file, const FileLayout& layout)
 {
@@ -263,15 +341,34 @@ std::optional<std::array<float, 4>> vectorOf(const FileReader& file, const FileL
     return std::nullopt;
 }
 
-// A self-lit mesh's light in the game's units; all zero on any other mesh (LeastEmission).
-std::array<float, 3> emissionOf(const FileReader& file, const FileLayout& layout, std::uint16_t materialInstance)
+// A material instance's name (block 4 at +0, an index into block 22), 0 when the file does not say.
+std::uint64_t materialNameOf(const FileReader& file, const FileLayout& layout, std::uint16_t materialInstance)
 {
-    const auto color = vectorOf(file, layout, materialInstance, SelfColorParameter);
-    const auto intensity = vectorOf(file, layout, materialInstance, SelfColorIntensityParameter);
+    const auto& b = layout.blocks;
+    constexpr int MaterialInstances = 4, StrCodes = 22;
+    std::uint16_t name{};
+    std::uint64_t hash{};
+    if (materialInstance >= b[MaterialInstances].count || !file.at(b[MaterialInstances].offset + 16ull * materialInstance, name) || name >= b[StrCodes].count
+        || !file.at(b[StrCodes].offset + 8ull * name, hash))
+        return 0;
+
+    return hash;
+}
+
+// A self-lit mesh's light in the game's units, as `selfLight` leaves it; all zero on any other mesh
+// (LeastEmission, which goes by the file's own values).
+std::array<float, 3> emissionOf(const FileReader& file, const FileLayout& layout, std::uint16_t materialInstance, SelfLightFilter selfLight = nullptr)
+{
+    auto color = vectorOf(file, layout, materialInstance, SelfColorParameter);
+    auto intensity = vectorOf(file, layout, materialInstance, SelfColorIntensityParameter);
     if (!color || !intensity) return {};
 
-    const std::array emission{(*color)[0] * (*intensity)[0], (*color)[1] * (*intensity)[0], (*color)[2] * (*intensity)[0]};
-    return std::max({emission[0], emission[1], emission[2]}) >= LeastEmission ? emission : std::array<float, 3>{};
+    const auto emission = [&] { return std::array{(*color)[0] * (*intensity)[0], (*color)[1] * (*intensity)[0], (*color)[2] * (*intensity)[0]}; };
+    if (const auto light = emission(); std::max({light[0], light[1], light[2]}) < LeastEmission) return {};
+
+    if (selfLight) selfLight(materialNameOf(file, layout, materialInstance), *color, *intensity);
+
+    return emission();
 }
 
 // Diagnostics: the StrCode64 of a mesh's material's technique (as fox3DDF_Blin_NC): its material
@@ -329,6 +426,44 @@ bool readSkin(const FileReader& file, const Block& boneGroups, std::uint64_t mes
 
     return true;
 }
+
+bool readUvs(const FileReader& file, const Stream& stream, std::uint32_t vertices, std::vector<std::uint32_t>& uvs)
+{
+    uvs.resize(vertices);
+    for (std::uint32_t v = 0; v < vertices; ++v)
+        if (!file.at(stream.at + std::uint64_t{v} * stream.stride, uvs[v])) return false;
+
+    return true;
+}
+
+// A mesh's layer (ModelPart::layer): none unless it names one, its technique is known to read it and its vertices have the
+// coordinates that takes, as two halves each.
+bool readLayer(const FileReader& file, const FileLayout& layout, std::uint16_t materialInstance, std::uint64_t technique, const UvSets& uvSets,
+    std::uint32_t vertices, ModelPart& part)
+{
+    const auto known = layerTechniqueOf(technique);
+    if (!known) return true;
+
+    const auto texture = textureOf(file, layout, materialInstance, LayerTextureParameter);
+    const auto maskTexture = textureOf(file, layout, materialInstance, LayerMaskTextureParameter);
+    const auto hasUvs = [&](std::uint8_t set) { return uvSets[set] && uvSets[set]->dataType == TwoHalves; };
+    if (!texture || !hasUvs(0) || !hasUvs(1) || (maskTexture && !hasUvs(known->maskUvSet))) return true;
+
+    const auto scalarOf = [&](std::uint64_t parameter, float otherwise) {
+        const auto vector = vectorOf(file, layout, materialInstance, parameter);
+        return vector ? (*vector)[0] : otherwise;
+    };
+
+    auto& layer = part.layer.emplace();
+    layer.texture = texture;
+    layer.maskTexture = maskTexture;
+    layer.mapping = {scalarOf(URepeatParameter, 1), scalarOf(VRepeatParameter, 1), scalarOf(UShiftParameter, 0), scalarOf(VShiftParameter, 0)};
+    layer.blend = known->blend;
+    layer.isMaskInBlue = known->isMaskInBlue;
+    if (maskTexture && known->maskUvSet && !readUvs(file, *uvSets[known->maskUvSet], vertices, layer.maskUvs)) return false;
+
+    return readUvs(file, *uvSets[1], vertices, layer.uvs);
+}
 }
 
 ModelFile fileKindOf(std::span<const std::uint8_t> file)
@@ -342,7 +477,7 @@ ModelFile fileKindOf(std::span<const std::uint8_t> file)
 // Each mesh the scene takes (roleOf) with its vertices and their texture coordinates, its mesh group,
 // and the indices of its most detailed triangles, as the game keeps them; a skinned model's vertices
 // also with their bones (readSkin).
-std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const std::uint8_t> bytes, Source source)
+std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const std::uint8_t> bytes, Source source, bool keepsDropped, SelfLightFilter selfLight)
 {
     const FileReader file{bytes};
     const auto layout = layoutOf(file);
@@ -350,9 +485,6 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
 
     const auto& b = layout->blocks;
     constexpr int Bones = 0, Meshes = 3, BoneGroups = 5, Assignments = 9, MeshFormats = 10, VertexFormats = 11, BufferOffsets = 14, FaceInfos = 17;
-    // Vertex format usages and data types.
-    constexpr std::uint8_t Position = 0, BoneWeights = 1, Normal = 2, BoneNumbers = 7, Uv0 = 8, Tangent = 14, ThreeFloats = 1, FourHalves = 6, TwoHalves = 7,
-                           FourUnorms = 8, FourBytes = 9;
     if (!b[BufferOffsets].count) return nullptr;
 
     std::uint32_t facesOffset{};
@@ -388,11 +520,19 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
 
         const auto emission = emissionOf(file, *layout, materialInstance);
         const bool isSelfLit = emission != std::array<float, 3>{};
-        const auto role = roleOf(alpha, shadow, model->bones != 0, isVegetation, areMainViewCutOutsDropped, isSelfLit);
-        if (!role)
+        const auto technique = techniqueOf(file, *layout, materialInstance);
+        std::optional<MeshRole> materialRole;
+        if (technique == MirrorTechnique) materialRole = MeshRole::Mirror;
+        else if (vectorOf(file, *layout, materialInstance, GlassColorParameter)) materialRole = MeshRole::Glass;
+
+        auto role = roleOf(alpha, shadow, model->bones != 0, isVegetation, areMainViewCutOutsDropped, isSelfLit, materialRole);
+        const bool isDropped = !role;
+        if (isDropped)
         {
-            model->dropped.push_back({mesh, alpha, shadow, techniqueOf(file, *layout, materialInstance)});
-            continue;
+            model->dropped.push_back({mesh, alpha, shadow, technique});
+            if (!keepsDropped) continue;
+
+            role = MeshRole::Solid;
         }
 
         // The mesh's streams: its mesh formats in order, each followed by as many of its vertex
@@ -404,7 +544,8 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
             || !file.at(assignmentAt + 6, firstVertexFormat))
             return nullptr;
 
-        std::optional<Stream> positions, uvs, weights, numbers, normals, tangents;
+        std::optional<Stream> positions, weights, numbers, normals, tangents;
+        UvSets uvSets;
         std::uint32_t vertexFormat = firstVertexFormat;
         for (std::uint32_t i = firstMeshFormat; i < std::uint32_t{firstMeshFormat} + meshFormatCount && i < b[MeshFormats].count; ++i)
         {
@@ -423,7 +564,7 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
 
                 const Stream stream{layout->bufferData + buffer + offset + element, stride, dataType};
                 if (usage == Position && !positions) positions = stream;
-                if (usage == Uv0 && !uvs) uvs = stream;
+                if (usage >= Uv0 && usage < Uv0 + uvSets.size() && !uvSets[usage - Uv0]) uvSets[usage - Uv0] = stream;
                 if (usage == BoneWeights && !weights) weights = stream;
                 if (usage == BoneNumbers && !numbers) numbers = stream;
                 if (usage == Normal && !normals) normals = stream;
@@ -442,11 +583,13 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
         part.mesh = mesh;
         part.group = (*meshGroups)[mesh];
         part.role = *role;
+        part.isDropped = isDropped;
         part.alphaBits = alpha;
         part.shadowBits = shadow;
-        part.technique = techniqueOf(file, *layout, materialInstance);
-        part.baseTexture = textureOf(file, *layout, materialInstance, BaseTextureParameter);
-        if (!part.baseTexture)
+        part.technique = technique;
+        const bool isGlass = *role == MeshRole::Glass, isMirror = *role == MeshRole::Mirror;
+        part.baseTexture = isMirror ? 0 : textureOf(file, *layout, materialInstance, isGlass ? GlassMaskParameter : BaseTextureParameter);
+        if (!part.baseTexture && !isGlass && !isMirror)
         {
             part.baseTexture = textureOf(file, *layout, materialInstance, MaskTextureParameter);
             part.textureIsMask = part.baseTexture != 0;
@@ -456,10 +599,13 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
         part.normalTexture = textureOf(file, *layout, materialInstance, NormalTextureParameter);
         if (const auto index = vectorOf(file, *layout, materialInstance, MaterialIndexParameter))
             part.materialIndex = static_cast<std::uint32_t>(std::clamp((*index)[0], 0.0f, 255.0f));
-        part.emission = emission;
+        part.emission = emissionOf(file, *layout, materialInstance, selfLight);
 
+        const auto& uvs = uvSets[0];
         const bool textured = uvs && uvs->dataType == TwoHalves;
         const bool hasNormals = normals && tangents && normals->dataType == FourHalves && tangents->dataType == FourHalves;
+        if (!isGlass && !isMirror && !readLayer(file, *layout, materialInstance, technique, uvSets, vertexCount, part)) return nullptr;
+
         part.vertices.resize(vertexCount);
         if (textured) part.uvs.resize(vertexCount);
         if (hasNormals) part.normals.resize(vertexCount);
@@ -501,6 +647,12 @@ bool isCutOut(MeshRole role)
     return role == MeshRole::CutOut || role == MeshRole::Leaf || role == MeshRole::Hair;
 }
 
+std::array<std::uint64_t, 5> texturePathsOf(const ModelPart& part)
+{
+    const auto layer = part.layer ? part.layer->texture : 0, layerMask = part.layer ? part.layer->maskTexture : 0;
+    return {part.baseTexture, part.specularTexture, part.normalTexture, layer, layerMask};
+}
+
 Material materialOf(const ModelPart& part, const MaterialTextures& textures)
 {
     Material material{.flags = flagsOf(part.role) | (part.uvs.empty() ? 0u : GI_GEOMETRY_UV), .materialIndex = part.materialIndex, .emission = part.emission};
@@ -517,6 +669,16 @@ Material materialOf(const ModelPart& part, const MaterialTextures& textures)
         material.flags |= GI_GEOMETRY_ALPHA_TEXTURE;
         material.alphaThreshold = CutOutThreshold;
     }
+
+    // Before its mask's copy comes a layer would lie on all of the mesh.
+    const auto& layer = part.layer;
+    if (!layer || !textures.layer || (layer->maskTexture && !textures.layerMask)) return material;
+
+    material.layerTexture = *textures.layer + 1;
+    if (textures.layerMask) material.layerMaskTexture = *textures.layerMask + 1;
+    if (layer->blend != LayerBlend::Multiply) material.flags |= GI_GEOMETRY_LAYER_BLEND;
+    if (layer->blend == LayerBlend::BlendLinear) material.flags |= GI_GEOMETRY_LAYER_LINEAR;
+    if (layer->isMaskInBlue) material.flags |= GI_GEOMETRY_LAYER_MASK_BLUE;
 
     return material;
 }

@@ -12,7 +12,7 @@ void describe(MotionBlur& blur, SettingVisitor& visit)
     visit.feature(blur.on,
         {.menuId = "motionBlur",
             .iniKey = "motion_blur",
-            .section = Section::Display,
+            .section = Section::Camera,
             .name = "Motion blur",
             .tip = "The game's own motion blur, drawn by the engine at the speed and radius its graphics setting asks for, with the upscaler on "
                    "too. Off leaves it out whatever the game's setting says.",

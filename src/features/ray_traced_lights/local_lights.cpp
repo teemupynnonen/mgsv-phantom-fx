@@ -4,7 +4,10 @@
 #include "command_list_notes.hpp"
 #include "constant_capture.hpp"
 #include "d3d11_helpers.hpp"
+#include "dev/perf_record.hpp"
+#include "dev_tools.hpp"
 #include "features/path_tracing/path_tracing.hpp"
+#include "features/ray_traced_lights/lamp_shadow_rays.hpp"
 #include "frame_log.hpp"
 #include "game_lights.hpp"
 #include "game_shaders.hpp"
@@ -540,7 +543,7 @@ void drawAgain(const Light& light)
     const auto [width, height] = sizeOf(light.targets[0].Get());
     if (!width || !height) return;
 
-    ID3D11ShaderResourceView* share = light.traced ? ray_tracing::localLightShadow(width, height) : nullptr;
+    ID3D11ShaderResourceView* share = light.traced ? lamp_shadow_rays::share(width, height) : nullptr;
     ++(share ? drawnShadowed : drawnUnshadowed);
 
     const auto& volume = light.volume;
@@ -703,7 +706,7 @@ void saveForRecord(const std::filesystem::path& folder, int batch, const char* w
     if (std::string(when) != "before") return;
 
     const auto [width, height] = sizeOf(first.targets[0].Get());
-    save(ray_tracing::localLightShadow(width, height), DXGI_FORMAT_R16_FLOAT, "share");
+    save(lamp_shadow_rays::share(width, height), DXGI_FORMAT_R16_FLOAT, "share");
     save(first.resources[DepthSlot].Get(), DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS, "depth");
 
     std::ofstream list(folder / (prefix + "lights.txt"), std::ios::trunc);
@@ -1004,6 +1007,7 @@ std::vector<TracedLight> takeForTrace(const SceneConstants& camera) noexcept
             const auto choice = light_choice::choose(drawn, camera);
             otherFrame += choice.otherFrame;
             overCap += choice.overCap;
+            if constexpr (DevTools) perf_record::onLights(choice.taken.size(), choice.overCap);
             for (const auto index : choice.taken)
             {
                 auto& light = *untraced[index];

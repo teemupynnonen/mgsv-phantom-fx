@@ -12,6 +12,7 @@ namespace phantom_fx::gi
 using uint = std::uint32_t;
 struct uint2 { uint x, y; };
 struct uint4 { uint x, y, z, w; };
+struct float3 { float x, y, z; };
 struct float4 { float x, y, z, w; };
 struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine's matrices are
 #define GI_ROW_MAJOR
@@ -41,6 +42,11 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_GEOMETRY_SHADOW_ONLY   128u // The game draws it into its shadow maps only (a tarp's stand-in): only rays towards lights meet it (StopsRay)
 #define GI_GEOMETRY_SUN_ONLY      256u // With GI_GEOMETRY_SHADOW_ONLY (a building's stand-in): of the rays towards lights, only the sun's meet it (StopsShadowRay)
 #define GI_GEOMETRY_EMISSIVE      512u // With GI_GEOMETRY_NO_SHADOW: it gives light (GIGeometry::emission) and takes none, its texture its light's colour
+#define GI_GEOMETRY_GLASS         1024u // With GI_GEOMETRY_CUT_OUT: every ray passes it (CutOutBlocks) but a reflection's, which it reflects by its mask (TraceReflectionRay)
+#define GI_GEOMETRY_MIRROR        2048u // With GI_GEOMETRY_GLASS: it reflects all of a reflection's rays
+#define GI_GEOMETRY_LAYER_BLEND   4096u // Its layer takes the base texture's place where it lies, not multiplying it (LayeredAlbedo)
+#define GI_GEOMETRY_LAYER_LINEAR  8192u // With GI_GEOMETRY_LAYER_BLEND: in linear light, not on the encoded values
+#define GI_GEOMETRY_LAYER_MASK_BLUE 16384u // Its layer's mask is in the texture's blue channel, not the red
 
 // The game's textures the scene holds at most (g_SceneTextures, gi_textures.hpp).
 #define GI_MAX_TEXTURES 4096u
@@ -113,6 +119,12 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 // The point and spot lights a frame's shadows can hold (TraceLocalLightShadows in gi_shadow.hlsl). A base
 // at night drew about 100.
 #define GI_MAX_LOCAL_LIGHTS 128u
+// Which lights can reach a place (light_bins.hpp): bins this wide in metres, around the eye, so many along x and z and along y.
+#define GI_LIGHT_BIN_SIZE 2.0f
+#define GI_LIGHT_BINS_ACROSS 128u
+#define GI_LIGHT_BINS_HIGH 64u
+// How far past the game's volume for it a light still gives light, metres (LocalLightReaching).
+#define GI_LIGHT_VOLUME_MARGIN 0.02f
 
 // A point or spot light as its shadow rays and the global illumination's hits need it: a point in the
 // world whose light falls off as the game's light shaders have it (LocalLightAt in gi_light.hlsl), cut
@@ -181,7 +193,7 @@ struct GIFrameConstants
     float4 shadowRange;  // The game's shadow map range (cPSLight): x: centre depth (c8.x); y: start distance (c8.y); z: fade rate (c6.x); w: 1 once known
     float4 shadowParams; // x: tangent of the sun's angular radius (SunSample); y: how much sun an alpha-tested mesh blocks; z: ray length; w: 1 on a fresh start
     uint4 objectMotion;  // x: 1 when g_ObjectVelocity (gi_common.hlsli) holds this frame's velocity of the game's moving meshes
-    uint4 shadowDiagnostics; // x: 1 for every surface casting from both sides (ShadowRayTowards); y: 1 for the debug view of where the shadow rays leave (ShadowStartColor)
+    uint4 shadowDiagnostics; // x: 1 for every surface casting from both sides (ShadowRayTowards); y: 1 for the debug view of where the shadow rays leave (ShadowStartColor); zw: the pixel the probes read
     uint4 lightDiagnostics;  // z: the light's debug view into g_LightDebug (CompositeLight), GI_LIGHT_DEBUG_*
     // x: 1 while DLSS Ray Reconstruction denoises (ray_reconstruction.hpp): the light takes a sample a render
     // pixel and goes out without its denoiser (gi_light.hlsl, PerRenderPixel), the sun's and the lights' shadows
@@ -206,6 +218,11 @@ struct GIFrameConstants
     // The point and spot lights' shadows (TraceLocalLightShadows): x the frame's lights, y rays a pixel.
     uint4 localLightCount;
     GILocalLight localLights[GI_MAX_LOCAL_LIGHTS];
+    // Which of them can reach a place (light_bins.hpp): a bit a light, along each axis from the origin.
+    float4 lightBinsOrigin;
+    uint4 lightBinsX[GI_LIGHT_BINS_ACROSS];
+    uint4 lightBinsY[GI_LIGHT_BINS_HIGH];
+    uint4 lightBinsZ[GI_LIGHT_BINS_ACROSS];
     // Self-lit meshes: x their light's scale from the game's units (the menu's strength times the light scale); y the
     // most radiance one lights others with, so scaled. And those the rays aim at: x how many.
     float4 emission;
@@ -242,9 +259,13 @@ struct GIGeometry
     uint specularTexture; // 1 + its SRM texture's index (r the specular rate, g the roughness), 0 without
     uint normalTexture;   // 1 + its normal map's index (a x, g y), 0 without
     uint materialIndex;   // Its row of the game's material table (g_MaterialSpecular)
-    float4 emission;      // rgb: a self-lit mesh's light (SelfColor x SelfColorIntensity), in the game's units
+    float3 emission;      // A self-lit mesh's light (SelfColor x SelfColorIntensity), in the game's units
+    uint layerMaskUvOffset; // Bytes into the pool: 4 a vertex, its layer's mask's coordinates, two halves; 0 on its first coordinates
     uint normalOffset;    // Bytes into the pool: 16 a vertex, the normal then the tangent, four halves each; 0 without
-    uint padding[3];
+    uint layerUvOffset;   // Bytes into the pool: 4 a vertex, its second texture coordinates, two halves; 0 without
+    uint layerTexture;    // 1 + its layer's index (rgb its colour, a how much of it lies), 0 without
+    uint layerMaskTexture; // 1 + its layer's mask's index (how much of it lies), 0 without
+    float4 layerMapping;  // The layer's coordinates: (second coordinates + zw) x xy
 };
 
 // The shadow probe: the sun ray from the screen's centre pixel, as the shadow rays trace it but
@@ -310,7 +331,7 @@ struct GIInstanceDesc
 #ifdef __cplusplus
 static_assert(sizeof(GIFrameConstants) % 16 == 0);
 static_assert(sizeof(GIInstanceDesc) == 64);
-static_assert(sizeof(GIGeometry) == 64);
+static_assert(sizeof(GIGeometry) == 80);
 }
 #endif
 

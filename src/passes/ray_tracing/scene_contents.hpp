@@ -61,6 +61,7 @@ struct InstancedModel
     std::array<float, 3> position{};
     std::uint64_t character{};    // A character's id (CharacterInstance::id); 0 for a placed model
     std::uint64_t hiddenGroups{}; // A placed model's (ModelInstance::hiddenGroups)
+    scene_description::Rejection rejection{}; // Why only a revealed scene holds it
 };
 
 // The frame's instance `instance` of one of the game's models in `instanced` (by instance), or null.
@@ -110,6 +111,10 @@ public:
     // A hit a probe lists (GIShadowProbe::lightNearest) as text: what it hit, which side, how far; its
     // frame's instances `instanced` say what each instance is.
     std::string describeHit(std::span<const InstancedModel> instanced, const uint4& hit) const;
+    // What a hit met, without where: geometry `geometry` of instance `instance`, of the kind GI_INSTANCE_*.
+    std::string describeMesh(std::span<const InstancedModel> instanced, std::uint32_t instance, std::uint32_t geometry, std::uint32_t kind) const;
+    // What is yet to be made: the models and characters waiting for room or their structures.
+    std::uint32_t waitingWork() const { return modelsWaiting + charactersWaiting; }
     // Every character the game has within 2 cm of `position` (a character's parts share one place),
     // each with all its model's meshes.
     std::string charactersAt(const std::array<float, 3>& position) const;
@@ -174,6 +179,7 @@ private:
         Transform transform{};
         bool isTraced{};
         std::uint32_t built{};
+        scene_description::Rejection rejection{};
     };
 
     // A ring of the terrain: its vertices in the pool and its structure, kept while the scene runs.

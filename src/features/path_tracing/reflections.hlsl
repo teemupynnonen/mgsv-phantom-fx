@@ -8,6 +8,7 @@
 // specular albedo (the Ray Reconstruction guide) and the exposure, for the resolve to add to the game's specular
 // light, and the first hit's distance goes to Ray Reconstruction to move the reflection with what it reflects. A ray
 // that hit something also writes the game's reflection map, which its blend reads as it reads the screen-space one's.
+// Glass and mirrors have their own pass, once the game has drawn them (TraceSurfaceReflections).
 #include "gi_hit_light.hlsli"
 
 Texture2D<float4> g_Guide_NormalRoughness : register(t18); // The world-space normal, the roughness in w (ray_tracing::ReconstructionGuides)
@@ -15,7 +16,26 @@ Texture2D<float4> g_Guide_SpecularAlbedo : register(t19);  // The share of light
 RWTexture2D<float4> g_Reflection : register(u93);          // The reflected light times the specular albedo and the exposure; a: how far across the screen its hit is
 RWTexture2D<float> g_ReflectionDistance : register(u94);   // The ray's hit distance; FP16's largest where it got away
 RWTexture2D<float4> g_ReflectionMap : register(u98);       // The hit as the game's reflection map holds it (ReflectionBlend): rgb its light, a how much it blends
+Texture2D<float> g_SurfaceDepth : register(t26);           // The nearest glass, mirror or water the game drew at each pixel (forward_surfaces.hpp); 0 without
+Texture2D<float4> g_SurfaceNormal : register(t27);         // Its world-space normal, its roughness in w; water's w is negative
+RWTexture2D<float4> g_SurfaceReflection : register(u99);   // What it reflects, times the exposure; a: the ray's hit distance
 
+// Water's reflectance (F0 0.02) at the eye's angle over GGX's lobe: Karis' fit of the split sum ("Physically
+// Based Shading on Mobile", 2014), as the sea's guides use it. A water surface with its ripples' roughness,
+// not a perfect mirror's.
+float WaterReflectance(float toEyeN, float roughness)
+{
+    const float4 c0 = float4(-1, -0.0275, -0.572, 0.022);
+    const float4 c1 = float4(1, 0.0425, 1.04, -0.04);
+    float4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * toEyeN)) * r.x + r.y;
+    float2 ab = float2(-1.04, 1.04) * a004 + r.zw;
+    return 0.02 * ab.x + ab.y;
+}
+
+// A river's or a liquid's, near a mirror as the game's shader samples its cube map: the ripples' normal does the rest.
+// The guides take the same (surface_shaders.hpp, ReconstructionGuides).
+static const float WaterRoughness = 0.05f;
 // FP16's largest, which Ray Reconstruction takes as the sky.
 static const float SkyHitDistance = 65504.0f;
 
@@ -51,6 +71,8 @@ static const float MostReflectingRoughness = 0.9f, LeastGameFresnel = 0.1f, Game
 static const float BrightestHit = 4.0f;
 // Past the blend's reach however far that is (ReflectionBlend).
 static const float BehindTheEye = 1000.0f;
+// The panes a ray goes on past at most: the two sides of a helicopter, a window behind a window.
+static const uint MostPanes = 4;
 
 // Where a specular ray goes from a surface: GGX's visible normals of `alpha`, around `normal`, seen from `toEye`;
 // `cosineToEye` is the chosen one's with the eye, for its Fresnel.
@@ -124,6 +146,32 @@ bool CachedLight(float3 position, float3 direction, float hitDistance, out float
     return true;
 }
 
+// The closest hit along a specular ray, past glass (GI_GEOMETRY_GLASS). A pane reflects the ray by chance, as much of it
+// as HitMaterialOf says, and lets it through otherwise: `origin`, `normal`, `tolerance` and `direction` are left as the
+// ray goes on from the last pane, and `travelled` grows by the way to it.
+SceneHit TraceReflectionRay(inout float3 origin, inout float3 normal, inout float tolerance, inout float3 direction, float2 cone, inout float travelled, inout Random random)
+{
+    SceneHit hit;
+    for (uint pane = 0; pane <= MostPanes; ++pane)
+    {
+        uint copies;
+        hit = TraceFromSurface(origin, normal, tolerance, direction, MAX_HIT_DISTANCE, GI_MASK_SCENE, true, LightCone(origin), RayAlongReflection, copies);
+        if (!hit.hit || !(g_Geometries[FirstGeometry(g_Instances[hit.instance]) + hit.geometry].flags & GI_GEOMETRY_GLASS)) return hit;
+
+        travelled += hit.distance;
+        HitMaterial glass = HitMaterialOf(VisibilityOf(hit, direction), cone.x + travelled * cone.y, false);
+        bool isReflected = random.rand() < luminance(glass.specularColor);
+        normal = isReflected ? glass.geometric : -glass.geometric;
+        if (isReflected) direction = reflect(direction, glass.normal);
+        origin = OffsetFromTriangle(glass.world, normal);
+        // Going on, a wall behind the pane is no copy of it: a mirror's would be skipped, and the room behind it shown.
+        tolerance = isReflected ? CopyTolerance(glass.world) : 0.0f;
+    }
+
+    hit.hit = false;
+    return hit;
+}
+
 // The light along a ray from a surface: at each hit its own light (HitOwnLight), and what it reflects: its
 // specular lobe's ray, or its diffuse lobe's, which ends at the sky's light or the cache as it stands. From a rough
 // surface (`isRough`) the first hit's light comes from the cache where it has any. `cone` as PixelCone gives it, which
@@ -135,11 +183,11 @@ float3 ReflectedLight(float3 origin, float3 normal, float tolerance, float3 dire
     float travelled = 0.0f;
     for (uint ray = 1; ray <= SpecularRays; ++ray)
     {
-        SceneHit hit = TraceFromSurface(origin, normal, tolerance, direction, MAX_HIT_DISTANCE);
+        SceneHit hit = TraceReflectionRay(origin, normal, tolerance, direction, cone, travelled, random);
         if (!hit.hit) return light + throughput * SkySeen(direction);
 
-        if (ray == 1) hitDistance = min(hit.distance, SkyHitDistance);
         travelled += hit.distance;
+        if (ray == 1) hitDistance = min(travelled, SkyHitDistance);
         uint hitFlags = g_Geometries[FirstGeometry(g_Instances[hit.instance]) + hit.geometry].flags;
         float3 cached;
         if (ray == 1 && isRough && !(hitFlags & GI_GEOMETRY_EMISSIVE) && CachedLight(origin + hit.distance * direction, direction, hit.distance, cached)) return cached;
@@ -230,4 +278,37 @@ void TraceReflections(uint2 did : SV_DispatchThreadID)
     g_Reflection[did] = float4(exposed * specularAlbedo.rgb, isGameBlended ? ScreenTravel(world, origin + hitDistance * direction) : BehindTheEye);
     g_ReflectionMap[did] = isGameBlended ? float4(min(exposed, BrightestHit) * fresnel, GameReflectionFade(world, normal, direction, normalRoughness.w, fresnel)) : 0.0f;
     g_ReflectionDistance[did] = hitDistance;
+}
+
+// What glass, mirrors and water reflect, from the surfaces the game drew in front of the rest (forward_surfaces.hpp): as a mirror does, spread
+// by the material's roughness, a ray a pixel. Nothing to the game's blend or to the resolve: their weights are the game's
+// own, in the surface's draw, and this frame's scene is built.
+[numthreads(8, 8, 1)]
+void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
+{
+    if (any(did >= g_BufferDimensions)) return;
+
+    float depth = g_SurfaceDepth.Load(int3(did, 0));
+    if (depth <= 0.0f) return;
+
+    float4 normalRoughness = g_SurfaceNormal.Load(int3(did, 0));
+    // A river or a liquid (WaterSurface, surface_shaders.hpp) marks itself with a negative w.
+    const bool isWater = normalRoughness.w < 0.0f;
+    if (isWater) normalRoughness.w = WaterRoughness;
+    float3 normal = normalize(normalRoughness.xyz);
+    float alpha = max(normalRoughness.w * normalRoughness.w, 1e-3f);
+    float3 world = DepthPosition(did, depth);
+    float3 toEye = normalize(g_Frame.eye.xyz - world);
+
+    // Apart from the rays from the surface behind it (TraceReflections).
+    Random random = MakeRandom(did.x + did.y * g_BufferDimensions.x + 2 * g_BufferDimensions.x * g_BufferDimensions.y, g_FrameIndex);
+    float cosineToEye;
+    float3 direction = SpecularDirection(normal, toEye, alpha, random.rand2(), cosineToEye);
+    float3 origin = OffsetFromScreenSurface(world, normal);
+    float hitDistance;
+    bool isRough = normalRoughness.w >= RoughSurface;
+    float3 light = ReflectedLight(origin, normal, CopyTolerance(world), direction, PixelCone(world, g_Frame.rayCone.x + alpha), isRough, random, hitDistance);
+    // Water reflects as water does: its reflectance at the eye's angle. Glass's is in its weights, from the game's own shader.
+    if (isWater) light *= WaterReflectance(saturate(dot(normal, toEye)), normalRoughness.w);
+    g_SurfaceReflection[did] = float4(min(RemoveNaNs(light) * g_Frame.nearFar.w, BrightestHit), hitDistance);
 }

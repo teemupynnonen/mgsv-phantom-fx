@@ -4,6 +4,25 @@
 
 - **Photo mode crawls with C.** Holding C moves the free camera at 0.5 m/s, next to Shift's 25 m/s, for
   lining up a close shot.
+- **Path tracing is faster where many lights burn.** Each pixel and each ray's hit now looks only at the lights that can
+  reach it, not at every light in the frame. At Mother Base at night that saves 4.4 ms of a 32 ms frame, about 31 to 36 fps,
+  and the picture stays the same.
+- **Rivers and liquids take the rays' reflections, and a river's bed takes the caustics.** Under path tracing the water
+  reflects what is around it, from where it is now and not where it was a frame ago, with the game's own ripples and the
+  rain's rings on it. It fades at the shore and behind the fog as the water itself does. It no longer takes the shadow map's
+  shadow where the rays replaced it on the ground: the bed's shadow stays in the light under it. **Caustics** put the
+  sunlight the waves focus on the bed, strongest just under the surface, fading with the depth, gone where the water meets
+  the shore or anything standing in it, in the shade, and as the sun leaves. They need no ray tracing.
+  **Atmosphere > Water caustics** has the switch and the **Intensity**.
+
+- **Depth of field: no more jagged edges around what is in focus.** The game decided what is blurred in blocks of
+  four pixels, so the blur bit into the rim of anything in focus in steps, and the lower the render size the wider
+  the steps: DLSS and Ray Reconstruction kept them as detail. Each pixel's own depth now decides, so in-focus edges
+  stay as clean as any other edge at every upscaling mode.
+- **Depth of field: a lens's blur for the background.** A new **Depth of field** item on the Camera page sets
+  **Background blur**. **Lens**, the default, spreads each point over a smooth disc, as a real lens does. **MGSV**
+  keeps the game's softer blur. What is in front of the focus keeps the game's blur with either.
+- **Motion blur moves to the Camera page.**
 - **The sea.** A new **Sea** switch under atmosphere replaces the sea around Mother Base: waves from a real
   ocean spectrum that rise and roll with the wind, bigger in rain, with foam where their crests break. It is
   lit like the rest of the world, so it reflects the sky, the sun and the platforms and takes their shadows;
@@ -11,7 +30,7 @@
   water instead of the sky. A **Waves** slider sets the wind against the weather's. It costs about 0.3 ms.
 - **Path tracing.** A new **Path tracing** switch under lighting, with DLSS Ray Reconstruction and the
   global illumination on: reflections are traced on every surface, sharp on smooth ones and spread on
-  rough ones, in place of the game's screen-space and sky reflections (water and glass keep the game's;
+  rough ones, in place of the game's screen-space and sky reflections (water keeps the game's;
   in rain, wet surfaces take the traced ones), and the sun and every lamp and flashlight light the scene
   from the path tracer, each light with its own soft shadow where lights overlap, keeping the game's own
   highlights on its materials. Each surface reflects
@@ -20,6 +39,13 @@
   so shiny things stay shiny in reflections and reflections show other reflections. Glowing bulbs and signs
   light what is around them, with a **Self-lit surfaces** slider. Reflections of the sky show the game's real
   sky, with its horizon, clouds, sun glow and weather.
+- **Glass and mirrors reflect.** With path tracing, windows, vehicle glass, glasses, visors and mirrors show what is
+  really around them, at the strength the game gives each, in place of its small cube maps and the mirrors' painted
+  pictures. The rays see them too: light comes through, and they show in reflections.
+- **Rays see clothes and other layered materials in their real colours.** Many of the game's materials get their colour
+  from a second texture, and rays only read the first: Kaz's beige coat was white in a window's reflection, and the
+  light bouncing off such surfaces took the wrong colour. Reflections and the global illumination now see them as the
+  camera does.
 - **DLSS Ray Reconstruction.** A new **Ray Reconstruction** switch under the upscaler, for NVIDIA RTX GPUs,
   shown while a ray-traced effect is on: NVIDIA's model cleans up the ray-traced global illumination,
   shadows and lights and upscales in one step, in place of DLSS and the add-on's own denoisers, with a
@@ -46,6 +72,10 @@
 - **Ray tracing: the helicopter's cabin has its walls.** Between missions the rays passed through the cabin's
   walls, as it is held apart from the rest of the game's models: sunlight flooded in, and with path tracing the
   cabin was about four times as bright as the game's own. It is now dark inside, with daylight through its windows.
+- **Path tracing: no ghost image after changing the upscaling mode.** In places without sunlight, such as
+  the hospital, changing the mode and going back left a frozen picture of the earlier view over the scene
+  until the game restarted. The reflections and lamps now always read the current frame's materials, and
+  keep them at any upscaling mode.
 - **Ray-traced shadows: no lit halo around sunlit characters.** A character in the sun in front of a
   shaded wall left a lit band on the wall along their outline, wider the lower the render scale. The
   shadow denoiser no longer mixes a pixel's shadow with what lies in front of or behind it.

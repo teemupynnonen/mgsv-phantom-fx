@@ -3,6 +3,7 @@
 #include "effects.hpp"
 #include "features/ambient_occlusion/settings.hpp"
 #include "features/contact_shadow_shape/settings.hpp"
+#include "features/depth_of_field/settings.hpp"
 #include "features/frame_generation/settings.hpp"
 #include "features/frame_rate/settings.hpp"
 #include "features/global_illumination/settings.hpp"
@@ -22,6 +23,7 @@
 #include "features/sun_contact_shadows/settings.hpp"
 #include "features/upscaling/settings.hpp"
 #include "features/volumetric_fog/settings.hpp"
+#include "features/water_caustics/settings.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -49,10 +51,12 @@ struct Settings
     IndirectLight indirectLight;
     VolumetricFog volumetricFog;
     Sea sea;
+    WaterCaustics waterCaustics;
+    DepthOfField depthOfField;
+    MotionBlur motionBlur;
     PhotoMode photoMode;
     Hdr hdr;
     FrameRate frameRate;
-    MotionBlur motionBlur;
 
     bool operator==(const Settings&) const = default;
 };
@@ -76,10 +80,12 @@ template<class Visit> void forEachFeature(Settings& settings, Visit&& visit)
     visit(settings.indirectLight);
     visit(settings.volumetricFog);
     visit(settings.sea);
+    visit(settings.waterCaustics);
+    visit(settings.depthOfField);
+    visit(settings.motionBlur);
     visit(settings.photoMode);
     visit(settings.hdr);
     visit(settings.frameRate);
-    visit(settings.motionBlur);
 }
 
 void describe(Settings& settings, SettingVisitor& visit);
@@ -200,10 +206,15 @@ struct Configuration
     const Diagnostics& diagnostics;
     LeftOut leftOut; // By a cost measurement's step: what the plan does not cover
     bool supportedBuild{};
+    bool areEnhancementsOn{}; // The enhancements switch (F1)
     EffectPlan effects;
 };
 
 // A missing file gives the first launch's settings; invalid fields keep their defaults; I/O failures throw.
 Settings loadSettings(const std::filesystem::path& path);
 void saveSettings(const std::filesystem::path& path, const Settings& settings);
+// `settings` with one line of PhantomFX.ini applied; an unknown key or an invalid value changes nothing.
+Settings withLine(Settings settings, std::string_view key, std::string_view value);
+// The lines PhantomFX.ini holds for `settings`, which that file has only once they settle.
+std::string iniText(const Settings& settings);
 }

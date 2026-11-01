@@ -24,6 +24,9 @@ namespace phantom_fx::upscaler::shaders
 // the previous one without. The object motion is the cell, less the jitter; the camera motion
 // clamped into it keeps full precision where a character does not move.
 //
+// With DLSS Ray Reconstruction, the depth of glass that dominates a pixel takes the place of the scene's, and its motion
+// with it: most glass draws no depth, so its cracks and dirt would move as what is behind them (forward_surfaces::guideReconstruction).
+//
 // With DLSS Ray Reconstruction on a frame the game's depth of field drew, also its depth of field guide:
 // how much the depth of field changed each pixel's light, luminance(after - before) by NVIDIA's luminance
 // (DLSS-RR Integration Guide, "Depth of Field Guide"). Ray Reconstruction runs after the depth of field,
@@ -43,6 +46,7 @@ Texture2D<float4> SceneColor : register(t0);
 Texture2D<float> SceneDepth : register(t1);
 Texture2D<float4> Velocity : register(t2);
 Texture2D<float4> SceneBeforeDof : register(t3);
+Texture2D<float> GlassDepth : register(t4);
 RWTexture2D<float4> OutColor : register(u0);
 RWTexture2D<float> OutDepth : register(u1);
 RWTexture2D<float2> OutMotion : register(u2);
@@ -57,7 +61,9 @@ void main(uint2 pixel : SV_DispatchThreadID)
 
     float2 toPixels = float2(0.5, -0.5) * RenderSize;
     float2 ndc = (pixel + 0.5) / toPixels + float2(-1, 1) - JitterNdc;
-    float depth = SceneDepth[pixel];
+    const float glassDepth = GlassDepth[pixel];
+    const bool isGlass = glassDepth > 0;
+    float depth = isGlass ? glassDepth : SceneDepth[pixel];
     float4 position = float4(ndc, depth, 1);
     float4 previous = float4(dot(PreviousFromCurrent[0], position), dot(PreviousFromCurrent[1], position),
         dot(PreviousFromCurrent[2], position), dot(PreviousFromCurrent[3], position));
@@ -67,7 +73,7 @@ void main(uint2 pixel : SV_DispatchThreadID)
     // The engine clamps its velocity to 64 pixels; beyond that only the camera motion is known.
     float4 velocity = Velocity[pixel];
     float2 stored = (velocity.ba * 2 - 1) * 64;
-    if (ObjectMotion && velocity.r > 0.5 && length(stored) < 63)
+    if (!isGlass && ObjectMotion && velocity.r > 0.5 && length(stored) < 63)
     {
         float2 moved = stored - JitterNdc * toPixels;
         motion = clamp(motion, -moved - HalfCell, -moved + HalfCell);

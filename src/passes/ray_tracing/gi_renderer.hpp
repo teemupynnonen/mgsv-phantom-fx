@@ -1,6 +1,7 @@
 #pragma once
 
 #include "features/ray_traced_lights/light_choice.hpp"
+#include "passes/ray_tracing/kick_traces.hpp"
 #include "passes/ray_tracing/scene_description.hpp"
 #include "passes/ray_tracing/scene_memory.hpp"
 #include "passes/ray_tracing/shaders/gi_shared.h"
@@ -39,7 +40,6 @@ struct Textures
     // gi_common.hlsli), as the game's view reads it; null when this frame's did not come before the kick.
     ID3D11Texture2D* velocity{};
     DXGI_FORMAT velocityFormat{};
-    ID3D11Texture2D* localLightShadow{}; // R16_FLOAT, the share of the point and spot lights' light that reaches; null without lights
     ID3D11Texture2D* lightDebug{}; // R8G8B8A8_UNORM, the light's debug view (CompositeLight, LightDebugView); null while off
     // Path tracing (reflections.hlsl): Ray Reconstruction's guides (ray_tracing::ReconstructionGuides), the reflected light
     // (R16G16B16A16_FLOAT, times the specular albedo and the exposure), its hit distance (R16_FLOAT) and the game's
@@ -63,6 +63,11 @@ struct Textures
     // R16G16B16A16_FLOAT), and the sky from every side (sky_capture.hpp), null until captured.
     ID3D11Texture2D* materialSpecular{};
     ID3D11Texture2D* skyCube{};
+    // And glass and mirrors (forward_surfaces.hpp), which traceSurfaces traces: the nearest one's depth (R32_FLOAT) and normal with its
+    // roughness (R16G16B16A16_FLOAT) at each pixel, what it reflects (R16G16B16A16_FLOAT); null while off.
+    ID3D11Texture2D* surfaceDepth{};
+    ID3D11Texture2D* surfaceNormal{};
+    ID3D11Texture2D* surfaceReflection{};
 };
 
 using Matrix = std::array<float, 16>; // Rows applied as dot(row, v), as the engine's
@@ -112,19 +117,13 @@ struct Frame
     std::optional<Terrain> terrain; // Absent until the game's terrain draws give its inputs
     std::optional<float> seaLevel;  // The sea's (sea::level); absent in a frame without the add-on's sea
     std::uint32_t frameIndex{};
+    kick_traces::KickTraces traces; // The one answer to what runs; a texture a trace needs is there when it runs
     bool showScene{}; // The output shows the traced scene instead of the light
     bool logOften{};  // Diagnostics: the light's statistics logged every few frames (as each readback returns), not every ten seconds
-    bool traceLight = true; // A cost measurement leaves the light out: the scene is still built
-    // DLSS Ray Reconstruction denoises: the light takes a sample a render pixel and skips its denoiser, and
-    // the sun's and the lights' shadows go out as their rays found them (GIFrameConstants::reconstruction).
-    bool forReconstruction{};
-    // With it, path tracing: the reflections and the point and spot lights traced (path_tracing_rays.hpp).
-    bool isPathTraced{};
     // Self-lit meshes' light: its scale from the game's units, and the most radiance one lights others with, so scaled.
     float emissionScale{}, emissionCap{};
-    // The sun's ray-traced shadow into textures.shadow; the game's shadow map range (cPSLight c8.x,
-    // c8.y, c6.x, and 1 once known) and the tangent of the sun's angular radius.
-    bool traceShadows{};
+    // The game's shadow map range (cPSLight c8.x, c8.y, c6.x, and 1 once known) and the tangent of the sun's
+    // angular radius.
     std::array<float, 4> shadowRange{};
     float sunTangent{};
     // Diagnostics, with the shadows: the debug view into textures.shadowDebug, and the probe at the
@@ -134,11 +133,12 @@ struct Frame
     bool twoSidedShadows{};  // Diagnostics: rays towards lights blocked by every surface from both sides, as until 2026-10-26
     LightDebugView lightDebugView{}; // Diagnostics, with textures.lightDebug
     std::uint32_t lightRays{2}; // The light's rays a light pixel, 1 to 4 (TraceLight)
-    // The point and spot lights whose shadows go into textures.localLightShadow, at most GI_MAX_LOCAL_LIGHTS,
-    // and the rays a pixel they take.
+    // The chosen lights, at most GI_MAX_LOCAL_LIGHTS, and the shadow rays a pixel they take.
     std::vector<LocalLight> localLights;
     std::uint32_t localLightRays{1};
-    bool probeLights{}; // Diagnostics: the lamp probe at the screen's centre (lightProbe), sun or none
+    bool probeLights{}; // Diagnostics: the lamp probe at the screen's centre (lamp_shadow_rays::probe), sun or none
+    // Diagnostics: the pixel the probes read in place of the screen's centre.
+    std::optional<std::array<std::uint32_t, 2>> probePixel;
     std::uint64_t waitValue{}, signalValue{}; // On the shared fence
 };
 
@@ -158,12 +158,16 @@ bool started() noexcept;
 // frame.signalValue when the output is written. Throws on Direct3D 12 errors.
 Result render(const Frame& frame);
 
+// After the game drew this frame's glass and mirrors: their reflections, on the scene render built. Waits for `waitValue` on
+// the shared fence and signals `signalValue` when they are written. False, with nothing submitted, when the last render
+// traced no reflections. Throws on Direct3D 12 errors.
+bool traceSurfaces(std::uint64_t waitValue, std::uint64_t signalValue);
+
 // For the overlay: instances, triangles and memory in use.
 std::string status();
+// Diagnostics: what the scene has yet to make.
+std::uint32_t waitingWork();
 // For the overlay: the latest shadow probe as text, a few frames old; empty while the debug view is
 // off. Logged by itself whenever what blocks the probe's sun ray changes.
 std::string shadowProbe();
-// The same of the lamp probe: the strongest point and spot lights at the screen's centre and what blocks
-// each; logged whenever those change.
-std::string lightProbe();
 }

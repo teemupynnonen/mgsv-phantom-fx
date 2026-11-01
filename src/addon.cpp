@@ -11,6 +11,7 @@
 #include "constant_capture.hpp"
 #include "core.hpp"
 #include "d3d12_helpers.hpp"
+#include "dev/dev.hpp"
 #include "dev_tools.hpp"
 #include "device_check.hpp"
 #include "features/frame_generation/fsr_frame_generation.hpp"
@@ -18,7 +19,10 @@
 #include "features/frame_rate/frame_rate.hpp"
 #include "features/hdr/hdr.hpp"
 #include "features/lamp_contact_shadows/lamp_contact_shadows.hpp"
+#include "features/depth_of_field/depth_of_field.hpp"
 #include "features/motion_blur/motion_blur.hpp"
+#include "features/path_tracing/forward_surfaces.hpp"
+#include "features/path_tracing/glass.hpp"
 #include "features/path_tracing/path_tracing.hpp"
 #include "features/path_tracing/sky_capture.hpp"
 #include "features/photo_mode/photo_mode.hpp"
@@ -36,12 +40,14 @@
 #include "log.hpp"
 #include "menu.hpp"
 #include "modules.hpp"
+#include "passes/forward_water_pass.hpp"
 #include "passes/indirect_light_pass.hpp"
 #include "passes/local_light_pass.hpp"
 #include "passes/ray_tracing/engine_scene.hpp"
 #include "passes/ray_tracing/ray_tracing.hpp"
 #include "passes/sun_light_pass.hpp"
 #include "performance.hpp"
+#include "remaster/remaster.hpp"
 #include "render_scale.hpp"
 #include "sun_movement.hpp"
 #include "weather.hpp"
@@ -231,6 +237,7 @@ bool onDraw(command_list* list, uint32_t vertices, uint32_t instances, uint32_t 
     atmosphere::note(context, call, shader);
     indirect_light_pass::note(context, call, shader);
     path_tracing::note(context, call, shader);
+    forward_surfaces::note(context, shader);
     sea::note(context, call, shader);
 
     // 2. While upscaling, the game's grading draws at the output size, whoever draws it.
@@ -246,7 +253,7 @@ bool onDraw(command_list* list, uint32_t vertices, uint32_t instances, uint32_t 
     // does not matter.
     const bool drawn = atmosphere::draw(context, call, shader) || indirect_light_pass::draw(context, call, shader)
         || sun_light_pass::draw(context, call, shader) || path_tracing::draw(context, call, shader) || sea::draw(context, call, shader)
-        || hdr::draw(context, call, shader) || upscaler::draw(context, call, shader);
+        || hdr::draw(context, call, shader) || depth_of_field::draw(context, call, shader) || upscaler::draw(context, call, shader);
 
     // The game's sky, then again for the rays; the physical sky's own draw does the same (atmosphere.cpp).
     if (!drawn && sky_capture::isWanted())
@@ -276,7 +283,7 @@ bool onDrawIndexed(command_list* list, uint32_t indices, uint32_t instances, uin
     // The one order among the owners that matters: a point or spot light's draws have two, and the
     // ray-traced lights come first, so the local light pass never draws a light the rays shadow.
     if (hiddenUi(list) || local_lights::draw(context, call, shader) || local_light_pass::draw(context, call, shader) || sea::draw(context, call, shader)
-        || upscaler::draw(context, call, shader))
+        || forward_water_pass::draw(context, call, shader) || glass::draw(context, call, shader) || upscaler::draw(context, call, shader))
         return true;
 
     // The sky's dome and clouds, then again for the rays.
@@ -309,8 +316,10 @@ bool onClearDepthStencil(command_list* list, resource_view view, const float* de
 
 void onBindRenderTargets(command_list* list, uint32_t count, const resource_view* targets, resource_view depth)
 {
-    sea::targetsBound(native(list), count, reinterpret_cast<ID3D11RenderTargetView* const*>(targets),
-        reinterpret_cast<ID3D11DepthStencilView*>(depth.handle));
+    auto* const views = reinterpret_cast<ID3D11RenderTargetView* const*>(targets);
+    auto* const depthView = reinterpret_cast<ID3D11DepthStencilView*>(depth.handle);
+    sea::targetsBound(native(list), count, views, depthView);
+    indirect_light_pass::targetsBound(count, views, depthView);
 }
 
 void onBindPipeline(command_list* list, pipeline_stage stages, pipeline pipeline)
@@ -509,6 +518,7 @@ void onExecuteSecondary(command_list* list, command_list* secondary)
         ray_tracing::executing(native(list), secondary->get_native());
         // After the global illumination's wait: the point and spot lights read their shadows.
         local_lights::executing(native(list), secondary->get_native());
+        forward_surfaces::executing(native(list), secondary->get_native());
         return;
     }
 
@@ -520,6 +530,7 @@ void onExecuteSecondary(command_list* list, command_list* secondary)
     ray_tracing::recorded(list->get_native(), secondary->get_native());
     local_lights::recorded(list->get_native(), secondary->get_native());
     sea::recorded(list->get_native(), secondary->get_native());
+    forward_surfaces::recorded(list->get_native(), secondary->get_native());
     ui_redirect::contextFinished(native(secondary));
     sun_contact_shadows::contextFinished(native(secondary));
     lamp_contact_shadows::contextFinished(native(secondary));
@@ -532,12 +543,16 @@ void onDestroyCommandList(command_list* list)
     ray_tracing::forget(list->get_native());
     local_lights::forget(list->get_native());
     sea::forget(list->get_native());
+    forward_surfaces::forget(list->get_native());
 }
 
 // With frame generation the game's swap chain is the presenter's stand-in, whose Present follows.
-void onPresent(command_queue* queue, swapchain*, const rect*, const rect*, uint32_t, const rect*)
+void onPresent(command_queue* queue, swapchain* swapChain, const rect*, const rect*, uint32_t, const rect*)
 {
     if (queue->get_immediate_command_list() != immediateList) return;
+
+    if constexpr (DevTools)
+        dev::onPresent(native(queue->get_immediate_command_list()), reinterpret_cast<ID3D11Resource*>(swapChain->get_current_back_buffer().handle));
 
     const bool generating = presenter::active();
     upscaler::setFrameGeneration(generating);
@@ -583,11 +598,14 @@ void onReshadePresent(effect_runtime* runtime)
     if (runtime->is_key_pressed(VK_F2)) photo_mode::toggle();
     if (runtime->is_key_pressed(VK_F3)) photo_mode::toggleUi();
     if (runtime->is_key_pressed(VK_F4)) photo_mode::toggleBlur();
+    if constexpr (DevTools)
+    {
+        if (runtime->is_key_pressed(VK_F9)) dev::onCaseKey();
+        // Enter teleports the player to the free camera (photo_mode.cpp); the overlay's own Enter is left alone.
+        if (!overlayOpen && runtime->is_key_pressed(VK_RETURN)) photo_mode::teleport();
+    }
 
     const auto down = [runtime](uint32_t key) { return !overlayOpen && runtime->is_key_down(key); };
-    if constexpr (DevTools)
-        if (!overlayOpen && runtime->is_key_pressed(VK_RETURN)) photo_mode::teleport();
-
     photo_mode::setControls({down('W'), down('S'), down('A'), down('D'), down(VK_SPACE), down(VK_CONTROL), down(VK_SHIFT), down('C')});
 }
 }
@@ -612,11 +630,13 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshadeMo
     log(photo_mode::hook());
     log(game_loop::hook());
     log(engine_scene::hook());
+    log(remaster::hook());
     log(character::allowFobCharacters());
     log(sun_movement::makeSmooth());
     if (isSupportedGameBuild() && !weather::supported()) log("The weather manager has unexpected code; the weather menu is unavailable.");
 
     frame_log::install(directory);
+    if constexpr (DevTools) dev::install(directory);
     upscaler::initialize(directory);
     core::initialize(directory, isSupportedGameBuild());
     // The game makes its swap chain and targets next, so the float scene and HDR are decided now.

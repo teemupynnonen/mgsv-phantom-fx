@@ -3,16 +3,19 @@
 
 #include "camera.hpp"
 #include "clock.hpp"
+#include "dev/perf_record.hpp"
+#include "dev_tools.hpp"
 #include "features/global_illumination/gi_light.hpp"
 #include "features/path_tracing/path_tracing_rays.hpp"
-#include "features/ray_traced_lights/light_shadow_rays.hpp"
 #include "features/ray_traced_shadows/gi_shadow.hpp"
 #include "frame_log.hpp"
 #include "log.hpp"
 #include "passes/ray_tracing/gi_d3d12.hpp"
 #include "passes/ray_tracing/gi_scene.hpp"
+#include "passes/ray_tracing/light_bins.hpp"
 #include "passes/ray_tracing/scene_contents.hpp"
 #include "passes/ray_tracing/shaders/gi_shared.h"
+#include "passes/ray_tracing/trace.hpp"
 
 #include <Windows.h>
 #include <d3d12.h>
@@ -32,34 +35,8 @@
 #include <string>
 #include <utility>
 
-// The kernels, compiled by DXC at build time (CMakeLists.txt).
-#include "ClassifyShadowTiles.h"
-#include "ClearCounters.h"
-#include "ClearNewGeometries.h"
-#include "CompositeLight.h"
-#include "DebugScene.h"
-#include "DebugShadows.h"
-#include "FilterLocalLightShadows.h"
-#include "FilterShadows.h"
-#include "GenerateDispatch.h"
-#include "LearnAlbedo.h"
-#include "PopulateCells.h"
-#include "PopulateMultibounceCells.h"
-#include "PrepareGuides.h"
-#include "ProbeLocalLights.h"
-#include "ProbeShadows.h"
-#include "PurgeTiles.h"
-#include "ResolveLight.h"
-#include "Skin.h"
-#include "TerrainGrid.h"
-#include "TraceLampLight.h"
-#include "TraceLight.h"
-#include "TraceLocalLightShadows.h"
-#include "TraceReflections.h"
-#include "TraceSunShadows.h"
-#include "UpdateFoliageMemory.h"
-#include "UpdateMultibounceCells.h"
-#include "UpdateTiles.h"
+// The kernels' DXIL, in gi_d3d12::Kernel's order (CMakeLists.txt).
+#include "gi_kernel_bytecode.h"
 
 namespace phantom_fx::gi_renderer
 {
@@ -87,18 +64,18 @@ constexpr float AlphaTestedBlocking = 0.5f, ShadowRayLength = 5000;
 // Diagnostics: the most phases a frame's list times.
 constexpr std::uint32_t MaxMarks = 32;
 
-// The kernels' DXIL in gi_d3d12::Kernel's order.
-constexpr std::span<const unsigned char> Bytecode[]{GI_ClearNewGeometries, GI_DebugScene, GI_TerrainGrid, GI_Skin,
-    GI_ClearCounters, GI_GenerateDispatch, GI_PrepareGuides, GI_TraceLight, GI_LearnAlbedo, GI_PurgeTiles, GI_PopulateMultibounceCells,
-    GI_PopulateCells, GI_UpdateTiles, GI_UpdateMultibounceCells, GI_ResolveLight, GI_UpdateFoliageMemory, GI_CompositeLight, GI_TraceSunShadows, GI_ClassifyShadowTiles,
-    GI_FilterShadows, GI_DebugShadows, GI_ProbeShadows, GI_TraceLocalLightShadows, GI_FilterLocalLightShadows, GI_ProbeLocalLights, GI_TraceReflections, GI_TraceLampLight};
-static_assert(std::size(Bytecode) == static_cast<std::size_t>(Kernel::Count));
-
 using Shared = OpenedTexture;
 
 // Diagnostics: the steps of a frame's CPU time.
 enum CpuStep { WaitStep, ProbeStep, ContentsStep, RecordStep, CpuSteps };
 constexpr const char* CpuStepNames[CpuSteps]{"waiting for the GPU", "the probe", "the scene's contents", "recording"};
+
+// What a frame's lists bind.
+struct FrameBinding
+{
+    D3D12_GPU_VIRTUAL_ADDRESS constants{}, topLevel{};
+    D3D12_GPU_DESCRIPTOR_HANDLE srvs{}, uavs{}, textures{};
+};
 
 struct State
 {
@@ -109,6 +86,17 @@ struct State
     std::array<ComPtr<ID3D12CommandAllocator>, FramesInFlight> allocators;
     std::array<std::uint64_t, FramesInFlight> submitted{};
     ComPtr<ID3D12GraphicsCommandList4> list;
+    // Glass and mirrors' list (traceSurfaces), after the frame's, in the same slot.
+    std::array<ComPtr<ID3D12CommandAllocator>, FramesInFlight> surfaceAllocators;
+    ComPtr<ID3D12GraphicsCommandList4> surfaceList;
+    // What that list binds and writes, from the last render that traced reflections, until it runs.
+    struct SurfaceTrace
+    {
+        std::uint32_t slot{}, width{}, height{};
+        FrameBinding binding;
+        ID3D12Resource* reflection{};
+    };
+    std::optional<SurfaceTrace> surfaceTrace;
     HANDLE event{};
     std::uint64_t frames{};
 
@@ -129,21 +117,12 @@ struct State
 
     std::unique_ptr<gi_light::Light> light;
     std::unique_ptr<gi_shadow::Shadows> shadows;
-    // The point and spot lights' shadows before and between the filter's passes (TraceLocalLightShadows,
-    // FilterLocalLightShadows), R16G16_FLOAT at the render size.
-    ComPtr<ID3D12Resource> localShadowRays, localShadowFirst;
-    UINT localShadowWidth{}, localShadowHeight{};
     // Diagnostics (the shadow debug view and probe): the probe, read back when the frame's slot comes
     // round again, and each frame's instances of the game's models.
     ComPtr<ID3D12Resource> probe;
     std::array<ComPtr<ID3D12Resource>, FramesInFlight> probeReadback;
     std::array<bool, FramesInFlight> probeWritten{};
     std::array<std::vector<InstancedModel>, FramesInFlight> instancedModels; // Each slot's frame's, by instance
-    // And the lamp probe, with each slot's frame's lights, which it lists by index.
-    ComPtr<ID3D12Resource> lightProbe;
-    std::array<ComPtr<ID3D12Resource>, FramesInFlight> lightProbeReadback;
-    std::array<bool, FramesInFlight> lightProbeWritten{};
-    std::array<std::vector<LocalLight>, FramesInFlight> probedLights;
 
     // GPU timestamps between the named phases of each frame's list (Recorder::mark), read when the
     // frame's slot comes round again: into the settings window's costs, by pass. The scene's, the light's
@@ -161,7 +140,7 @@ struct State
     double sceneMilliseconds{}, lightMilliseconds{}, shadowMilliseconds{};
     struct Tally
     {
-        std::vector<std::pair<const char*, double>> phases; // Milliseconds, in the order they first ran
+        performance::PhaseTimes phases;
         std::uint32_t timedFrames{}, frames{}, builds{}, mostBuilds{}, waiting{}, compactions{};
         std::uint64_t builtTriangles{};
         double cpuMilliseconds{}, mostCpuMilliseconds{};
@@ -171,10 +150,14 @@ struct State
 
     // Diagnostics: a copy of the output every ten seconds, read once the GPU is past it.
     ComPtr<ID3D12Resource> statsReadback, statsCounters;
+    // For DevTools: each slot's frame's counters, while the costs are kept on file.
+    std::array<ComPtr<ID3D12Resource>, FramesInFlight> countersReadback;
+    std::array<bool, FramesInFlight> countersWritten{};
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT statsFootprint{};
     std::uint64_t statsFence{}, lastStats{};
-    Shared depth, normal, albedo, output, shadow, shadowDebug, velocity, terrainPages, terrainHeights, localLightShadow, lightDebug, materialSpecular, skyCube, guideNormals,
-        guideSpecular, reflection, reflectionDistance, reflectionMap, guideMaterial, guideLobe, specularTable, lampMasks, lampDiffuse, lampSpecular;
+    Shared depth, normal, albedo, output, shadow, shadowDebug, velocity, terrainPages, terrainHeights, lightDebug, materialSpecular, skyCube, guideNormals,
+        guideSpecular, reflection, reflectionDistance, reflectionMap, guideMaterial, guideLobe, specularTable, lampMasks, lampDiffuse, lampSpecular, surfaceDepth,
+        surfaceNormal, surfaceReflection;
 
     ~State()
     {
@@ -183,14 +166,16 @@ struct State
 };
 std::unique_ptr<State> state;
 
+#if PHANTOM_FX_DEV_TOOLS
+// Diagnostics, for the thread that runs the commands.
+std::atomic<std::uint32_t> workWaiting{};
+#endif
+
 // The latest shadow probe as text, for the overlay (another thread) and the log; kept apart from
 // the state so stopping does not race the overlay.
 std::mutex probeMutex;
 std::string probeText, lastProbeKey;
 std::uint64_t lastProbeLog{};
-// The same of the lamp probe, under probeMutex.
-std::string lightProbeText, lastLightProbeKey;
-std::uint64_t lastLightProbeLog{};
 
 ComPtr<ID3D12Resource> openShared(State& s, Shared& shared, ID3D11Texture2D* texture, const char* what)
 {
@@ -287,10 +272,6 @@ void createResources(State& s)
     for (auto& readback : s.probeReadback)
         readback = createBuffer(device, sizeof(GIShadowProbe), D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_NONE,
             "Creating the shadow probe's readback");
-    s.lightProbe = createStorage(device, sizeof(GILightProbe), "Creating the lamp probe");
-    for (auto& readback : s.lightProbeReadback)
-        readback = createBuffer(device, sizeof(GILightProbe), D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_NONE,
-            "Creating the lamp probe's readback");
     s.dispatchArguments = createStorage(device, GI_DISPATCH_SLOTS * 16, "Creating the dispatch arguments");
 
     for (std::uint32_t slot = 0; slot < FramesInFlight; ++slot)
@@ -414,6 +395,7 @@ GIFrameConstants constantsOf(const Frame& frame, std::uint32_t newGeometries, st
             {light.maskTile, 0, 0, 0}};
     }
     constants.localLightCount = {static_cast<std::uint32_t>(localLights), frame.localLightRays, 0, 0};
+    light_bins::fill(constants);
 
     return constants;
 }
@@ -469,6 +451,14 @@ void start(ID3D11Device* device11, HANDLE sharedFence)
 
     const D3D12_COMMAND_QUEUE_DESC queue{D3D12_COMMAND_LIST_TYPE_COMPUTE};
     check(s->device->CreateCommandQueue(&queue, IID_PPV_ARGS(&s->queue)), "Creating the Direct3D 12 queue");
+
+    for (auto& allocator : s->surfaceAllocators)
+        check(s->device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COMPUTE, IID_PPV_ARGS(&allocator)), "Creating a command allocator");
+
+    check(s->device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COMPUTE, s->surfaceAllocators[0].Get(), nullptr, IID_PPV_ARGS(&s->surfaceList)),
+        "Creating the command list");
+    check(s->surfaceList->Close(), "Closing the command list");
+
     for (auto& allocator : s->allocators)
         check(s->device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COMPUTE, IID_PPV_ARGS(&allocator)), "Creating a command allocator");
 
@@ -499,6 +489,8 @@ void stop() noexcept
         log(error.what());
     }
 
+    for (auto* each : trace::inOrder()) each->release();
+
     state.reset();
     log("Global illumination stopped.");
 }
@@ -506,6 +498,32 @@ void stop() noexcept
 bool started() noexcept
 {
     return state != nullptr;
+}
+
+// The counters as they stand into `readback`, made the first time.
+void copyCounters(State& s, Recorder& recorder, ComPtr<ID3D12Resource>& readback)
+{
+    if (!readback)
+        readback = createBuffer(s.device.Get(), GI_COUNTER_COUNT * 4, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_NONE,
+            "Creating the counters' readback");
+
+    recorder.transition(s.counters.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    s.list->CopyBufferRegion(readback.Get(), 0, s.counters.Get(), 0, GI_COUNTER_COUNT * 4);
+    recorder.transition(s.counters.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+}
+
+// What a copy of the counters holds, once the GPU is past it.
+std::optional<std::array<std::uint32_t, GI_COUNTER_COUNT>> readCounters(ID3D12Resource* readback)
+{
+    void* mapped{};
+    if (FAILED(readback->Map(0, nullptr, &mapped))) return std::nullopt;
+
+    std::array<std::uint32_t, GI_COUNTER_COUNT> counters{};
+    std::memcpy(counters.data(), mapped, sizeof(counters));
+    const D3D12_RANGE none{};
+    readback->Unmap(0, &none);
+
+    return counters;
 }
 
 // Diagnostics: every ten seconds, a copy of the output and the counters for logStats.
@@ -521,14 +539,8 @@ void copyStats(State& s, Recorder& recorder, ID3D12Resource* output, const Frame
     if (!s.statsReadback || s.statsReadback->GetDesc().Width < bytes)
         s.statsReadback = createBuffer(s.device.Get(), bytes, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST,
             D3D12_RESOURCE_FLAG_NONE, "Creating the light's readback");
-    if (!s.statsCounters)
-        s.statsCounters = createBuffer(s.device.Get(), GI_COUNTER_COUNT * 4, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST,
-            D3D12_RESOURCE_FLAG_NONE, "Creating the counters' readback");
 
-    recorder.transition(s.counters.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    s.list->CopyBufferRegion(s.statsCounters.Get(), 0, s.counters.Get(), 0, GI_COUNTER_COUNT * 4);
-    recorder.transition(s.counters.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-
+    copyCounters(s, recorder, s.statsCounters);
     recorder.transition(output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
     D3D12_TEXTURE_COPY_LOCATION from{output, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
     from.SubresourceIndex = 0;
@@ -586,13 +598,10 @@ void logStats(State& s)
         + at(0.99) + ", max " + at(1.0) + "; mean rgb " + std::to_string(sum[0] / count) + " " + std::to_string(sum[1] / count) + " "
         + std::to_string(sum[2] / count) + ".");
 
-    void* mapped{};
-    if (FAILED(s.statsCounters->Map(0, nullptr, &mapped))) return;
+    const auto counters = readCounters(s.statsCounters.Get());
+    if (!counters) return;
 
-    std::uint32_t counters[GI_COUNTER_COUNT]{};
-    std::memcpy(counters, mapped, sizeof(counters));
-    s.statsCounters->Unmap(0, nullptr);
-    const auto value = [&](std::uint32_t counter) { return std::to_string(counters[counter]); };
+    const auto value = [&](std::uint32_t counter) { return std::to_string((*counters)[counter]); };
     log("Global illumination's rays: " + value(GI_COUNTER_HITS) + " hits (" + value(GI_COUNTER_NEAR_HITS) + " within 25 cm), "
         + value(GI_COUNTER_BOUNCE_HITS) + " bounces that hit (" + value(GI_COUNTER_VISIBILITY0) + " into the cache, " + value(GI_COUNTER_FULL_BUCKETS)
         + " without room in it), " + value(GI_COUNTER_VISIBILITY1) + " multibounce rays kept (" + value(GI_COUNTER_MULTIBOUNCE_AWAY)
@@ -604,7 +613,7 @@ void logStats(State& s)
         "a multibounce", "a ray's light", "a denoised light pixel", "a render pixel"};
     std::string maxima;
     for (std::uint32_t i = 0; i < GI_COUNTER_MAXIMA; ++i)
-        maxima += std::string(i ? ", " : "") + MaximumNames[i] + " " + std::to_string(std::bit_cast<float>(counters[GI_COUNTER_MAXIMA_FIRST + i]));
+        maxima += std::string(i ? ", " : "") + MaximumNames[i] + " " + std::to_string(std::bit_cast<float>((*counters)[GI_COUNTER_MAXIMA_FIRST + i]));
     log("Global illumination's largest values in that frame (before the exposure; the lights line gives the sun's and sky's): " + maxima + ".");
 }
 
@@ -621,20 +630,23 @@ void readTimes(State& s, std::uint32_t slot)
     const auto* ticks = reinterpret_cast<const std::uint64_t*>(static_cast<const std::uint8_t*>(data) + range.Begin);
     const double toMilliseconds = 1000.0 / static_cast<double>(s.timestampFrequency);
     performance::Milliseconds passes{};
+    performance::PhaseTimes phaseTimes; // For DevTools
     for (std::size_t i = 0; i + 1 < marks.size(); ++i)
     {
+        // From the frame's list's end to the next list's start: the game's own work.
+        if (!*marks[i].phase) continue;
+
         const double milliseconds = ticks[i + 1] >= ticks[i] ? static_cast<double>(ticks[i + 1] - ticks[i]) * toMilliseconds : 0.0;
         if (const auto pass = marks[i].pass) passes[static_cast<std::size_t>(*pass)] += static_cast<float>(milliseconds);
-        auto& phases = s.tally.phases;
-        const auto found = std::find_if(phases.begin(), phases.end(), [&](const auto& phase) { return std::strcmp(phase.first, marks[i].phase) == 0; });
-        if (found != phases.end()) found->second += milliseconds;
-        else phases.emplace_back(marks[i].phase, milliseconds);
+        performance::addPhase(s.tally.phases, marks[i].phase, milliseconds);
+        if constexpr (DevTools) phaseTimes.emplace_back(marks[i].phase, milliseconds);
     }
 
     const D3D12_RANGE none{};
     s.timestampReadback->Unmap(0, &none);
     marks.clear();
     performance::timedOnDirect3D12(passes);
+    if constexpr (DevTools) perf_record::onPhases(phaseTimes);
 
     using enum performance::Pass;
     const auto sum = [&](std::initializer_list<performance::Pass> of) {
@@ -763,97 +775,6 @@ void readProbe(State& s, std::uint32_t slot)
     }
 }
 
-// The lamp probe as text, and a key that changes when which lights reach the centre pixel, or what
-// blocks them, changes.
-std::pair<std::string, std::string> describeLightProbe(const State& s, std::span<const InstancedModel> instancedModels,
-    std::span<const LocalLight> lights, const GILightProbe& probe)
-{
-    if (probe.receiver.w <= 0) return {"lamps: the centre pixel is the sky", "sky"};
-
-    const auto& p = probe.receiver;
-    std::string text = std::format("lamps at the centre pixel, its surface {:.1f} m away at ({:.1f} {:.1f} {:.1f}): {} of the frame's {} lights light "
-        "it; the rays to their centres let {:.0f}% of their light through, the filtered share they are drawn with {:.2f}\n",
-        p.w, p.x, p.y, p.z, static_cast<int>(probe.share.w), lights.size(), probe.share.x * 100, probe.share.y);
-    const auto& start = probe.start;
-    const float offset = std::sqrt(start.x * start.x + start.y * start.y + start.z * start.z) * 1000.0f;
-    text += start.w > 0.5f ? std::format("the rays leave the scene's own surface, {:.1f} mm from the depth's point: {}\n", offset,
-                                 s.contents->describeHit(instancedModels, probe.startHit))
-                           : std::string("the rays leave the depth's point: the scene has no surface there\n");
-    text += std::format("the camera's ray (the scene view's): {}\n", s.contents->describeHit(instancedModels, probe.view));
-
-    // A character the rays leave, or the strongest light's blocker: every mesh of it.
-    const auto characterOf = [&](const uint4& hit) {
-        return hit.x && (hit.z & GI_INSTANCE_CHARACTER) ? instancedAt(instancedModels, hit.x - 1) : nullptr;
-    };
-    const auto* character = characterOf(probe.startHit);
-    if (!character) character = characterOf(probe.hits[0]);
-    if (character) text += std::format("the character's meshes:{}\n", s.contents->charactersAt(character->position));
-
-    std::string key;
-    for (std::uint32_t i = 0; i < GI_PROBE_LIGHTS; ++i)
-    {
-        const auto& entry = probe.lights[i];
-        if (entry.x < 1) break;
-
-        const auto index = static_cast<std::size_t>(entry.x) - 1;
-        std::string what = "light " + std::to_string(index);
-        if (index < lights.size())
-        {
-            const auto& light = lights[index];
-            const bool spot = light.cosOuter >= -1;
-            what += std::format(" ({} at ({:.1f} {:.1f} {:.1f}){}, reach {:.1f} m{})", spot ? "spot" : "point", light.position[0], light.position[1],
-                light.position[2], spot ? std::format(" towards ({:.2f} {:.2f} {:.2f})", light.axis[0], light.axis[1], light.axis[2]) : "", light.range,
-                light.shadowStart > 0 ? std::format(", the game's shadow map from {:.2f} m", light.shadowStart) : "");
-        }
-
-        // The ray met something (w: how far along) that blocked it, or hair that let some of the light through.
-        const float through = probe.through[i].x;
-        const auto outcome = entry.w < 0 ? std::string("reaches it") : through <= 0 ? std::string("blocked") : std::format("{:.0f}% gets past hair", through * 100);
-        text += std::format("{}: {:.0f}% of their light, {:.1f} m away, {}\n", what, probe.share.z > 0 ? entry.y / probe.share.z * 100 : 0.0f, entry.z, outcome);
-        // Each hit on the way to the light, and how far short of it.
-        for (std::uint32_t h = 0; h < GI_PROBE_LIGHT_HITS; ++h)
-        {
-            const auto& hit = probe.hits[i * GI_PROBE_LIGHT_HITS + h];
-            if (!hit.x) break;
-
-            text += std::format("  {:.2f} m short of the light: {}\n", entry.z - std::bit_cast<float>(hit.w), s.contents->describeHit(instancedModels, hit));
-        }
-
-        key += std::format("{}:{}:{}|", index, outcome, probe.hits[i * GI_PROBE_LIGHT_HITS].x);
-    }
-
-    return {text, key};
-}
-
-// The lamp probe the slot's last frame wrote, as readProbe does the shadow probe's.
-void readLightProbe(State& s, std::uint32_t slot)
-{
-    if (!s.lightProbeWritten[slot]) return;
-
-    s.lightProbeWritten[slot] = false;
-    void* data{};
-    if (FAILED(s.lightProbeReadback[slot]->Map(0, nullptr, &data))) return;
-
-    GILightProbe probe{};
-    std::memcpy(&probe, data, sizeof(probe));
-    const D3D12_RANGE none{};
-    s.lightProbeReadback[slot]->Unmap(0, &none);
-
-    auto [text, key] = describeLightProbe(s, s.instancedModels[slot], s.probedLights[slot], probe);
-    const auto now = GetTickCount64();
-    std::lock_guard lock(probeMutex);
-    lightProbeText = text;
-    if constexpr (DiagnosticLog)
-    {
-        if (key != lastLightProbeKey && now - lastLightProbeLog >= 200)
-        {
-            lastLightProbeKey = key;
-            lastLightProbeLog = now;
-            log("Lamp probe:\n" + text);
-        }
-    }
-}
-
 // Diagnostics: every ten seconds, what a frame cost on average.
 void logTally(State& s)
 {
@@ -888,6 +809,33 @@ void logTally(State& s)
     t.since = now;
 }
 
+namespace
+{
+void bindFrame(State& s, ID3D12GraphicsCommandList4& list, const FrameBinding& frame)
+{
+    ID3D12DescriptorHeap* heaps[]{s.heap.Get()};
+    list.SetDescriptorHeaps(1, heaps);
+    list.SetComputeRootSignature(s.rootSignature.Get());
+    list.SetComputeRootConstantBufferView(0, frame.constants);
+    list.SetComputeRootDescriptorTable(2, frame.srvs);
+    list.SetComputeRootDescriptorTable(3, frame.uavs);
+    list.SetComputeRootShaderResourceView(4, frame.topLevel);
+    list.SetComputeRootDescriptorTable(5, frame.textures);
+}
+
+// A timestamp in `list` at each of a Recorder's marks, into the slot's.
+std::function<void(const char*, std::optional<performance::Pass>)> timestampMarker(State& s, ID3D12GraphicsCommandList4& list, std::uint32_t slot)
+{
+    return [&s, &list, slot](const char* phase, std::optional<performance::Pass> pass) {
+        auto& marks = s.marks[slot];
+        if (marks.size() >= MaxMarks) return;
+
+        list.EndQuery(s.timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * MaxMarks + static_cast<UINT>(marks.size()));
+        marks.push_back({phase ? phase : "", pass});
+    };
+}
+}
+
 Result render(const Frame& frame)
 {
     auto& s = *state;
@@ -900,6 +848,8 @@ Result render(const Frame& frame)
     };
 
     Result result;
+    const auto& traces = frame.traces;
+    s.surfaceTrace.reset();
     const auto slot = static_cast<std::uint32_t>(s.frames++ % FramesInFlight);
     waitFor(s, s.submitted[slot]);
     lap(WaitStep);
@@ -908,7 +858,15 @@ Result render(const Frame& frame)
     if constexpr (DiagnosticLog) logStats(s);
     readTimes(s, slot);
     readProbe(s, slot);
-    readLightProbe(s, slot);
+    if constexpr (DevTools)
+    {
+        if (std::exchange(s.countersWritten[slot], false))
+            if (const auto counters = readCounters(s.countersReadback[slot].Get())) perf_record::onCounters(*counters);
+    }
+
+    const std::function<void()> waitForAll = [&] { waitFor(s, *std::max_element(s.submitted.begin(), s.submitted.end())); };
+    const trace::TraceFrame traceFrame{frame, s.device.Get(), waitForAll, *s.contents, s.instancedModels[slot], slot};
+    for (auto* each : trace::inOrder()) each->prepare(traceFrame);
     lap(ProbeStep);
     if constexpr (DiagnosticLog)
     {
@@ -923,57 +881,33 @@ Result render(const Frame& frame)
 
     // A new render size starts the light and the shadows over. Each has memory only once traced;
     // the shadows give theirs back when turned off.
-    const auto waitForAll = [&] { waitFor(s, *std::max_element(s.submitted.begin(), s.submitted.end())); };
     // Ray Reconstruction coming or going changes the light's grid, a sample a render pixel or a 2 x 2.
-    if (frame.traceLight
-        && (!s.light || s.light->width() != frame.width || s.light->height() != frame.height || s.light->isPerRenderPixel() != frame.forReconstruction))
+    if (traces.tracesLight
+        && (!s.light || s.light->width() != frame.width || s.light->height() != frame.height || s.light->isPerRenderPixel() != traces.isForReconstruction))
     {
         waitForAll();
         s.light.reset();
-        s.light = std::make_unique<gi_light::Light>(s.device.Get(), frame.width, frame.height, frame.forReconstruction);
+        s.light = std::make_unique<gi_light::Light>(s.device.Get(), frame.width, frame.height, traces.isForReconstruction);
         log("Global illumination's light at " + std::to_string(frame.width) + "x" + std::to_string(frame.height)
-            + (frame.forReconstruction ? ", a sample a render pixel for Ray Reconstruction." : "."));
+            + (traces.isForReconstruction ? ", a sample a render pixel for Ray Reconstruction." : "."));
     }
 
-    if (frame.traceShadows && (!s.shadows || s.shadows->width() != frame.width || s.shadows->height() != frame.height))
+    if (traces.tracesSun && (!s.shadows || s.shadows->width() != frame.width || s.shadows->height() != frame.height))
     {
         waitForAll();
         s.shadows.reset();
         s.shadows = std::make_unique<gi_shadow::Shadows>(s.device.Get(), frame.width, frame.height);
         log("Ray-traced shadows at " + std::to_string(frame.width) + "x" + std::to_string(frame.height) + ".");
     }
-    else if (!frame.traceShadows && s.shadows)
+    else if (!traces.tracesSun && s.shadows)
     {
         waitForAll();
         s.shadows.reset();
     }
 
-    const bool traceLight = frame.traceLight && s.light;
-    const bool traceShadows = frame.traceShadows && s.shadows && frame.textures.shadow;
-    const bool debugShadows = traceShadows && frame.debugShadows && frame.textures.shadowDebug;
-    const bool traceLocalLights = !frame.localLights.empty() && frame.textures.localLightShadow;
-    // Path tracing lights the point and spot lights itself (direct_light.hlsl), with Ray Reconstruction's guides.
-    const bool traceLamps = frame.isPathTraced && !frame.localLights.empty() && frame.textures.lampDiffuse && frame.textures.lampSpecular
-        && frame.textures.guideNormals && frame.textures.guideMaterial && frame.textures.guideLobe;
-    // The reflections read the light's cache.
-    const bool traceReflections = frame.isPathTraced && traceLight && !frame.showScene && frame.textures.reflection
-        && frame.textures.reflectionDistance && frame.textures.reflectionMap && frame.textures.guideNormals && frame.textures.guideSpecular;
-    if (traceLocalLights && (s.localShadowWidth != frame.width || s.localShadowHeight != frame.height))
-    {
-        waitForAll();
-        const auto texture = [&](const char* what) {
-            return createTexture(s.device.Get(), frame.width, frame.height, DXGI_FORMAT_R16G16_FLOAT, 1, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, what);
-        };
-        s.localShadowRays = texture("Creating the lights' shadow rays");
-        s.localShadowFirst = texture("Creating the lights' shadow filter");
-        s.localShadowWidth = frame.width;
-        s.localShadowHeight = frame.height;
-    }
-    const bool probeLights = traceLocalLights && frame.probeLights;
     {
         std::lock_guard lock(probeMutex);
-        if (!debugShadows) probeText.clear();
-        if (!probeLights) lightProbeText.clear();
+        if (!frame.debugShadows) probeText.clear();
     }
 
     // ---- The scene's contents: the game's models, textures, characters and terrain, then the frame's
@@ -988,7 +922,8 @@ Result render(const Frame& frame)
         .newTextures = frame.newTextures,
         .terrainEye = terrain ? std::optional(frame.eye) : std::nullopt,
         .seaCentre = frame.seaLevel ? std::optional(std::array{frame.eye[0], *frame.seaLevel, frame.eye[2]}) : std::nullopt,
-        .shouldListInstances = debugShadows || probeLights};
+        .shouldListInstances = frame.debugShadows || std::ranges::any_of(trace::inOrder(), [&](const auto* each) { return each->listsInstances(frame); })};
+    std::optional<State::SurfaceTrace> surfaceTrace;
     auto update = s.contents->update(game);
     s.instancedModels[slot] = std::move(update.instanced);
     result.releasedModels = std::move(update.releasedModels);
@@ -1004,35 +939,40 @@ Result render(const Frame& frame)
     check(s.allocators[slot]->Reset(), "Resetting a command allocator");
     check(s.list->Reset(s.allocators[slot].Get(), nullptr), "Resetting the command list");
     auto& list = *s.list.Get();
+    Descriptors descriptors(s.device.Get(), s.heap.Get(), s.descriptorSize, slot);
+    shared_textures::SharedBindings tracesTextures(s.device.Get(), descriptors);
     try
     {
         auto* depth = openShared(s, s.depth, frame.textures.depth, "Opening the depth").Get();
         auto* normal = openShared(s, s.normal, frame.textures.normal, "Opening the normals").Get();
         auto* albedo = openShared(s, s.albedo, frame.textures.albedo, "Opening the albedo").Get();
         auto* output = openShared(s, s.output, frame.textures.output, "Opening the output").Get();
-        auto* shadow = traceShadows ? openShared(s, s.shadow, frame.textures.shadow, "Opening the shadow").Get() : nullptr;
-        auto* shadowDebug = debugShadows ? openShared(s, s.shadowDebug, frame.textures.shadowDebug, "Opening the shadow debug view").Get() : nullptr;
+        auto* shadow = traces.tracesSun ? openShared(s, s.shadow, frame.textures.shadow, "Opening the shadow").Get() : nullptr;
+        auto* shadowDebug = frame.debugShadows ? openShared(s, s.shadowDebug, frame.textures.shadowDebug, "Opening the shadow debug view").Get() : nullptr;
         // The light's debug views are its denoiser's.
-        auto* lightDebug = traceLight && !frame.forReconstruction && frame.textures.lightDebug
+        auto* lightDebug = traces.tracesLight && !traces.isForReconstruction && frame.textures.lightDebug
             ? openShared(s, s.lightDebug, frame.textures.lightDebug, "Opening the light's debug view").Get()
             : nullptr;
-        auto* velocity = (traceShadows || traceLight) && frame.textures.velocity
+        auto* velocity = (traces.tracesSun || traces.tracesLight) && frame.textures.velocity
             ? openShared(s, s.velocity, frame.textures.velocity, "Opening the velocity").Get()
-            : nullptr;
-        auto* localLightShadow = traceLocalLights
-            ? openShared(s, s.localLightShadow, frame.textures.localLightShadow, "Opening the lights' shadow").Get()
             : nullptr;
         // Path tracing's: Ray Reconstruction's guides, the reflections' and the lamps' (path_tracing_rays.hpp).
         path_tracing_rays::Textures traced;
-        if (traceReflections || traceLamps) traced.guideNormals = openShared(s, s.guideNormals, frame.textures.guideNormals, "Opening the normals guide").Get();
-        if (traceReflections)
+        if (traces.tracesReflections || traces.tracesLampLight) traced.guideNormals = openShared(s, s.guideNormals, frame.textures.guideNormals, "Opening the normals guide").Get();
+        if (traces.tracesReflections)
         {
             traced.guideSpecular = openShared(s, s.guideSpecular, frame.textures.guideSpecular, "Opening the specular albedo guide").Get();
             traced.reflection = openShared(s, s.reflection, frame.textures.reflection, "Opening the reflections").Get();
             traced.reflectionDistance = openShared(s, s.reflectionDistance, frame.textures.reflectionDistance, "Opening the reflections' hit distance").Get();
             traced.reflectionMap = openShared(s, s.reflectionMap, frame.textures.reflectionMap, "Opening the reflection map").Get();
+            if (traces.tracesGlass)
+            {
+                traced.surfaceDepth = openShared(s, s.surfaceDepth, frame.textures.surfaceDepth, "Opening the glass's depth").Get();
+                traced.surfaceNormal = openShared(s, s.surfaceNormal, frame.textures.surfaceNormal, "Opening the glass's normals").Get();
+                traced.surfaceReflection = openShared(s, s.surfaceReflection, frame.textures.surfaceReflection, "Opening the glass's reflections").Get();
+            }
         }
-        if (traceLamps)
+        if (traces.tracesLampLight)
         {
             traced.guideMaterial = openShared(s, s.guideMaterial, frame.textures.guideMaterial, "Opening the material guide").Get();
             traced.guideLobe = openShared(s, s.guideLobe, frame.textures.guideLobe, "Opening the lobe guide").Get();
@@ -1041,10 +981,10 @@ Result render(const Frame& frame)
             traced.lampDiffuse = openShared(s, s.lampDiffuse, frame.textures.lampDiffuse, "Opening the lamps' diffuse light").Get();
             traced.lampSpecular = openShared(s, s.lampSpecular, frame.textures.lampSpecular, "Opening the lamps' specular light").Get();
         }
-        auto* materialSpecular = frame.isPathTraced && frame.textures.materialSpecular
+        auto* materialSpecular = traces.isPathTraced
             ? openShared(s, s.materialSpecular, frame.textures.materialSpecular, "Opening the materials' specular colours").Get()
             : nullptr;
-        auto* skyCube = frame.isPathTraced && frame.textures.skyCube ? openShared(s, s.skyCube, frame.textures.skyCube, "Opening the sky's cube").Get() : nullptr;
+        auto* skyCube = frame.textures.skyCube ? openShared(s, s.skyCube, frame.textures.skyCube, "Opening the sky's cube").Get() : nullptr;
         auto* terrainPages = terrain ? openShared(s, s.terrainPages, frame.terrain->pages, "Opening the terrain's page table").Get() : nullptr;
         auto* terrainHeights = terrain ? openShared(s, s.terrainHeights, frame.terrain->heights, "Opening the terrain's heights").Get() : nullptr;
 
@@ -1079,14 +1019,16 @@ Result render(const Frame& frame)
                 (&constants.terrainRingOffsets.x)[r] = static_cast<std::uint32_t>(ring.poolOffset);
             }
         }
-        if (traceLight) s.light->fill(constants, frame.verticalFov, parity);
-        if (traceShadows) s.shadows->fill(constants);
+        if (traces.tracesLight) s.light->fill(constants, frame.verticalFov, parity);
+        if (traces.tracesSun) s.shadows->fill(constants);
         constants.objectMotion = {velocity ? 1u : 0u, 0, 0, 0};
-        constants.shadowDiagnostics = {frame.twoSidedShadows ? 1u : 0u, frame.shadowStarts ? 1u : 0u, 0, 0};
+        const auto probePixel = frame.probePixel.value_or(std::array{frame.width / 2, frame.height / 2});
+        constants.shadowDiagnostics = {frame.twoSidedShadows ? 1u : 0u, frame.shadowStarts ? 1u : 0u, std::min(probePixel[0], frame.width - 1),
+            std::min(probePixel[1], frame.height - 1)};
         constants.lightDiagnostics = {0, 0, lightDebug ? static_cast<std::uint32_t>(frame.lightDebugView) : 0u, 0};
-        constants.reconstruction = {frame.forReconstruction ? 1u : 0u, materialSpecular ? 1u : 0u, skyCube ? 1u : 0u, 0};
+        constants.reconstruction = {traces.isForReconstruction ? 1u : 0u, materialSpecular ? 1u : 0u, skyCube ? 1u : 0u, 0};
         constants.emission = {frame.emissionScale, frame.emissionCap, 0, 0};
-        if (frame.isPathTraced)
+        if (traces.isPathTraced)
         {
             const auto emitters = std::min<std::size_t>(update.emitters.size(), GI_MAX_EMITTERS);
             std::copy_n(update.emitters.begin(), emitters, constants.emitters);
@@ -1095,80 +1037,63 @@ Result render(const Frame& frame)
 
         // A ray a render pixel for Ray Reconstruction, whatever the ray quality: as many rays as High's four a
         // 2 x 2, the most a sample can take apart.
-        constants.lightRays = {frame.forReconstruction ? 1u : frame.lightRays, 0, 0, 0};
-        std::memcpy(uploads.data + constantsOffset, &constants, sizeof(constants));
+        constants.lightRays = {traces.isForReconstruction ? 1u : frame.lightRays, 0, 0, 0};
 
         // ---- Descriptors ----
-        Descriptors descriptors(s.device.Get(), s.heap.Get(), s.descriptorSize, slot);
-        descriptors.texture(0, depth, DXGI_FORMAT_R32_FLOAT);
-        descriptors.texture(1, normal, DXGI_FORMAT_R10G10B10A2_UNORM);
-        descriptors.texture(2, albedo, DXGI_FORMAT_R8G8B8A8_UNORM);
-        descriptors.buffer(4, s.upload[slot].Get(), newGeometriesOffset, 4, newGeometryCount);
-        descriptors.buffer(12, s.upload[slot].Get(), skinOffset, sizeof(GISkinRecord), skinCount);
-        descriptors.buffer(13, s.upload[slot].Get(), paletteOffset, 16, paletteRows);
-        descriptors.buffer(5, scene.instanceBuffer(), 0, sizeof(GIInstanceDesc), instanceCount);
-        descriptors.rawBuffer(6, scene.pool(), gi_scene::Scene::PoolBytes);
-        descriptors.buffer(16, scene.geometryTable(), 0, sizeof(GIGeometry), MaxGeometries);
-        descriptors.outputTexture(0, output, DXGI_FORMAT_R16G16B16A16_FLOAT);
-        descriptors.outputRawBuffer(1, scene.pool(), gi_scene::Scene::PoolBytes);
-        descriptors.outputBuffer(4, s.counters.Get(), 4, GI_COUNTER_COUNT);
-        descriptors.outputBuffer(5, s.dispatchArguments.Get(), 16, GI_DISPATCH_SLOTS);
-        descriptors.outputBuffer(6, s.geometryAlbedo.Get(), 16, MaxGeometries);
+        descriptors.texture(binding::Depth, depth, DXGI_FORMAT_R32_FLOAT);
+        descriptors.texture(binding::Normal, normal, DXGI_FORMAT_R10G10B10A2_UNORM);
+        descriptors.texture(binding::Albedo, albedo, DXGI_FORMAT_R8G8B8A8_UNORM);
+        descriptors.buffer(binding::NewGeometries, s.upload[slot].Get(), newGeometriesOffset, 4, newGeometryCount);
+        descriptors.buffer(binding::SkinRecords, s.upload[slot].Get(), skinOffset, sizeof(GISkinRecord), skinCount);
+        descriptors.buffer(binding::Palettes, s.upload[slot].Get(), paletteOffset, 16, paletteRows);
+        descriptors.buffer(binding::Instances, scene.instanceBuffer(), 0, sizeof(GIInstanceDesc), instanceCount);
+        descriptors.rawBuffer(binding::GeometryPool, scene.pool(), gi_scene::Scene::PoolBytes);
+        descriptors.buffer(binding::Geometries, scene.geometryTable(), 0, sizeof(GIGeometry), MaxGeometries);
+        descriptors.outputTexture(binding::Output, output, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        descriptors.outputRawBuffer(binding::GeometryPoolOut, scene.pool(), gi_scene::Scene::PoolBytes);
+        descriptors.outputBuffer(binding::Counters, s.counters.Get(), 4, GI_COUNTER_COUNT);
+        descriptors.outputBuffer(binding::DispatchArgs, s.dispatchArguments.Get(), 16, GI_DISPATCH_SLOTS);
+        descriptors.outputBuffer(binding::GeometryAlbedo, s.geometryAlbedo.Get(), 16, MaxGeometries);
         if (terrain)
         {
-            descriptors.texture(14, terrainPages, frame.terrain->pagesFormat);
-            descriptors.texture(15, terrainHeights, frame.terrain->heightsFormat);
+            descriptors.texture(binding::TerrainPages, terrainPages, frame.terrain->pagesFormat);
+            descriptors.texture(binding::TerrainHeights, terrainHeights, frame.terrain->heightsFormat);
         }
-        if (velocity) descriptors.texture(17, velocity, frame.textures.velocityFormat);
-        if (materialSpecular) descriptors.texture(23, materialSpecular, DXGI_FORMAT_R16G16B16A16_FLOAT);
-        if (skyCube) descriptors.cube(24, skyCube, DXGI_FORMAT_R16G16B16A16_FLOAT);
-        if (debugShadows)
+        if (velocity) descriptors.texture(binding::ObjectVelocity, velocity, frame.textures.velocityFormat);
+        if (materialSpecular) descriptors.texture(binding::MaterialSpecular, materialSpecular, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        if (skyCube) descriptors.cube(binding::SkyCube, skyCube, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        if (frame.debugShadows)
         {
-            descriptors.outputBuffer(77, s.probe.Get(), sizeof(GIShadowProbe), 1);
-            descriptors.outputTexture(78, shadowDebug, DXGI_FORMAT_R8G8B8A8_UNORM);
+            descriptors.outputBuffer(binding::ShadowProbe, s.probe.Get(), sizeof(GIShadowProbe), 1);
+            descriptors.outputTexture(binding::ShadowDebug, shadowDebug, DXGI_FORMAT_R8G8B8A8_UNORM);
         }
-        if (lightDebug) descriptors.outputTexture(79, lightDebug, DXGI_FORMAT_R8G8B8A8_UNORM);
-        if (traceReflections || traceLamps) path_tracing_rays::describe(descriptors, traced);
-        if (traceLight) s.light->describe(descriptors, parity);
-        if (traceShadows) s.shadows->describe(descriptors, parity, shadow);
-        if (traceLocalLights)
-        {
-            descriptors.outputTexture(89, localLightShadow, DXGI_FORMAT_R16_FLOAT);
-            descriptors.outputTexture(90, s.localShadowRays.Get(), DXGI_FORMAT_R16G16_FLOAT);
-            descriptors.outputTexture(91, s.localShadowFirst.Get(), DXGI_FORMAT_R16G16_FLOAT);
-            if (probeLights) descriptors.outputBuffer(92, s.lightProbe.Get(), sizeof(GILightProbe), 1);
-        }
+        if (lightDebug) descriptors.outputTexture(binding::LightDebug, lightDebug, DXGI_FORMAT_R8G8B8A8_UNORM);
+        if (traces.tracesReflections || traces.tracesLampLight) path_tracing_rays::describe(descriptors, traced);
+        if (traces.tracesLight) s.light->describe(descriptors, parity);
+        if (traces.tracesSun) s.shadows->describe(descriptors, parity, shadow);
+        trace::TraceBindings bindings{constants, descriptors, tracesTextures};
+        for (auto* each : trace::inOrder())
+            if (each->runsIn(traces)) each->bind(traceFrame, bindings);
 
-        ID3D12DescriptorHeap* heaps[]{s.heap.Get()};
+        std::memcpy(uploads.data + constantsOffset, &constants, sizeof(constants));
+
         // The game's textures stay in the common state between frames: the shaders' reads promote them.
         auto textureRange = s.heap->GetGPUDescriptorHandleForHeapStart();
         textureRange.ptr += std::uint64_t{TableSize} * FramesInFlight * s.descriptorSize;
-        const auto bind = [&] {
-            list.SetDescriptorHeaps(1, heaps);
-            list.SetComputeRootSignature(s.rootSignature.Get());
-            list.SetComputeRootConstantBufferView(0, uploads.address + constantsOffset);
-            list.SetComputeRootDescriptorTable(2, descriptors.srvTable());
-            list.SetComputeRootDescriptorTable(3, descriptors.uavTable());
-            list.SetComputeRootShaderResourceView(4, scene.topLevel()->GetGPUVirtualAddress());
-            list.SetComputeRootDescriptorTable(5, textureRange);
-        };
+        const FrameBinding frameBinding{uploads.address + constantsOffset, scene.topLevel()->GetGPUVirtualAddress(), descriptors.srvTable(), descriptors.uavTable(), textureRange};
+        const auto bind = [&] { bindFrame(s, list, frameBinding); };
         bind();
         Recorder recorder(list, s.pipelines, s.dispatchSignature.Get(), s.dispatchArguments.Get());
         auto& marks = s.marks[slot];
         marks.clear();
         recorder.rebinder = bind;
-        recorder.marker = [&](const char* phase, std::optional<performance::Pass> pass) {
-            if (marks.size() >= MaxMarks) return;
-
-            list.EndQuery(s.timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * MaxMarks + static_cast<UINT>(marks.size()));
-            marks.push_back({phase ? phase : "", pass});
-        };
+        recorder.marker = timestampMarker(s, list, slot);
 
         // The shared textures, in the state the passes use each in: they leave the common state first and go
         // back to it after. Those the frame does not use are null.
         constexpr auto Read = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, Write = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
         const std::pair<ID3D12Resource*, D3D12_RESOURCE_STATES> shared[]{{depth, Read}, {normal, Read}, {albedo, Read}, {output, Write},
-            {shadow, Write}, {shadowDebug, Write}, {lightDebug, Write}, {velocity, Read}, {localLightShadow, Write}, {terrainPages, Read},
+            {shadow, Write}, {shadowDebug, Write}, {lightDebug, Write}, {velocity, Read}, {terrainPages, Read},
             {terrainHeights, Read}, {traced.guideNormals, Read}, {traced.guideSpecular, Read}, {traced.reflection, Write}, {traced.reflectionDistance, Write}, {traced.reflectionMap, Write},
             {traced.guideMaterial, Read}, {traced.guideLobe, Read}, {traced.specularTable, Read}, {traced.lampMasks, Read}, {traced.lampDiffuse, Write}, {traced.lampSpecular, Write}};
         const auto transitionShared = [&](bool toCommon) {
@@ -1178,6 +1103,7 @@ Result render(const Frame& frame)
                 if (resource)
                     barriers.push_back(toCommon ? transition(resource, inUse, D3D12_RESOURCE_STATE_COMMON)
                                                 : transition(resource, D3D12_RESOURCE_STATE_COMMON, inUse));
+            tracesTextures.addTransitions(barriers, toCommon);
             list.ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
         };
 
@@ -1203,23 +1129,12 @@ Result render(const Frame& frame)
         scene.recordTopLevel(list);
 
         // ---- The shadows, then the light or the debug view ----
-        if (traceLocalLights)
-        {
-            light_shadow_rays::record(recorder, frame.width, frame.height, frame.forReconstruction);
-            if (probeLights)
-            {
-                recorder.dispatch(Kernel::ProbeLocalLights, 1, 1);
-                recorder.barrier();
-                recorder.transition(s.lightProbe.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-                list.CopyBufferRegion(s.lightProbeReadback[slot].Get(), 0, s.lightProbe.Get(), 0, sizeof(GILightProbe));
-                recorder.transition(s.lightProbe.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                s.lightProbeWritten[slot] = true;
-                s.probedLights[slot] = frame.localLights;
-            }
-        }
-        if (traceLamps) path_tracing_rays::recordLamps(recorder, frame.width, frame.height);
-        if (traceShadows) s.shadows->record(recorder, frame.forReconstruction);
-        if (debugShadows)
+        for (auto* each : trace::inOrder())
+            if (each->runsIn(traces)) each->record(traceFrame, recorder);
+
+        if (traces.tracesLampLight) path_tracing_rays::recordLamps(recorder, frame.width, frame.height);
+        if (traces.tracesSun) s.shadows->record(recorder, traces.isForReconstruction);
+        if (frame.debugShadows)
         {
             recorder.mark("debug view and probe");
             recorder.dispatch(Kernel::DebugShadows, groups(frame.width, 8), groups(frame.height, 8));
@@ -1230,18 +1145,30 @@ Result render(const Frame& frame)
             recorder.transition(s.probe.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             s.probeWritten[slot] = true;
         }
+
         if (frame.showScene)
         {
             recorder.mark("scene view");
             recorder.dispatch(Kernel::DebugScene, groups(frame.width, 8), groups(frame.height, 8));
         }
-        else if (traceLight) s.light->record(recorder, parity, denoiserCamera(frame), slot, lightDebug && frame.lightDebugView == LightDebugView::Validation);
+        else if (traces.tracesLight) s.light->record(recorder, parity, denoiserCamera(frame), slot, lightDebug && frame.lightDebugView == LightDebugView::Validation);
 
-        if (traceReflections) path_tracing_rays::recordReflections(recorder, frame.width, frame.height);
+        if (traces.tracesReflections) path_tracing_rays::recordReflections(recorder, frame.width, frame.height);
+
+        if (traces.tracesGlass) surfaceTrace = State::SurfaceTrace{slot, frame.width, frame.height, frameBinding, traced.surfaceReflection};
 
         if constexpr (DiagnosticLog)
         {
-            if (traceLight && !frame.showScene) copyStats(s, recorder, output, frame);
+            if (traces.tracesLight && !frame.showScene) copyStats(s, recorder, output, frame);
+        }
+
+        if constexpr (DevTools)
+        {
+            if (traces.tracesLight && !frame.showScene && perf_record::isKeepingCosts())
+            {
+                copyCounters(s, recorder, s.countersReadback[slot]);
+                s.countersWritten[slot] = true;
+            }
         }
 
         transitionShared(true);
@@ -1262,7 +1189,9 @@ Result render(const Frame& frame)
     s.queue->ExecuteCommandLists(1, lists);
     check(s.queue->Signal(s.fence.Get(), frame.signalValue), "Signalling the global illumination");
     s.submitted[slot] = frame.signalValue;
+    tracesTextures.markWritten();
     lap(RecordStep);
+    s.surfaceTrace = surfaceTrace;
 
     const double cpu = clock::millisecondsOf(clock::ticksNow() - started);
     const auto stats = scene.stats();
@@ -1275,20 +1204,67 @@ Result render(const Frame& frame)
     t.builtTriangles += stats.builtTriangles;
     t.waiting += stats.waiting;
     t.compactions += stats.compactedThisFrame;
+    if constexpr (DevTools)
+        perf_record::onKick({frame.width, frame.height, instanceCount, static_cast<std::uint32_t>(update.skins.size()), stats.builtThisFrame, s.triangles, stats.builtTriangles});
+#if PHANTOM_FX_DEV_TOOLS
+    workWaiting = stats.waiting + s.contents->waitingWork();
+#endif
 
     return result;
+}
+
+#if PHANTOM_FX_DEV_TOOLS
+std::uint32_t waitingWork()
+{
+    return workWaiting;
+}
+#endif
+
+bool traceSurfaces(std::uint64_t waitValue, std::uint64_t signalValue)
+{
+    if (!state || !state->surfaceTrace) return false;
+
+    auto& s = *state;
+    const auto trace = *std::exchange(s.surfaceTrace, std::nullopt);
+    check(s.surfaceAllocators[trace.slot]->Reset(), "Resetting a command allocator");
+    check(s.surfaceList->Reset(s.surfaceAllocators[trace.slot].Get(), nullptr), "Resetting the command list");
+    auto& list = *s.surfaceList.Get();
+    try
+    {
+        bindFrame(s, list, trace.binding);
+        Recorder recorder(list, s.pipelines, s.dispatchSignature.Get(), s.dispatchArguments.Get());
+        auto& marks = s.marks[trace.slot];
+        const auto firstMark = static_cast<UINT>(marks.size());
+        recorder.marker = timestampMarker(s, list, trace.slot);
+        recorder.transition(trace.reflection, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        path_tracing_rays::recordSurfaceReflections(recorder, trace.width, trace.height);
+        recorder.transition(trace.reflection, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
+        recorder.mark(nullptr);
+        const auto marked = static_cast<UINT>(marks.size()) - firstMark;
+        list.ResolveQueryData(s.timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, trace.slot * MaxMarks + firstMark, marked, s.timestampReadback.Get(),
+            (std::uint64_t{trace.slot} * MaxMarks + firstMark) * 8);
+        check(list.Close(), "Recording the glass's reflections");
+    }
+    catch (...)
+    {
+        // The next trace resets the list, which it can only once closed.
+        list.Close();
+        throw;
+    }
+
+    check(s.queue->Wait(s.fence.Get(), waitValue), "Waiting for the glass");
+    ID3D12CommandList* lists[]{s.surfaceList.Get()};
+    s.queue->ExecuteCommandLists(1, lists);
+    check(s.queue->Signal(s.fence.Get(), signalValue), "Signalling the glass's reflections");
+    s.submitted[trace.slot] = signalValue;
+
+    return true;
 }
 
 std::string shadowProbe()
 {
     std::lock_guard lock(probeMutex);
     return probeText;
-}
-
-std::string lightProbe()
-{
-    std::lock_guard lock(probeMutex);
-    return lightProbeText;
 }
 
 std::string status()
