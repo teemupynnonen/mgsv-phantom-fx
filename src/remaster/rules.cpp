@@ -4,6 +4,7 @@
 #include <charconv>
 #include <format>
 #include <ranges>
+#include <tuple>
 
 namespace phantom_fx::remaster
 {
@@ -98,7 +99,9 @@ void sortRules(std::vector<Rule>& rules)
     std::ranges::sort(rules, [](const Rule& a, const Rule& b) {
         if (a.material != b.material) return a.material < b.material;
 
-        return std::ranges::lexicographical_compare(a.changes, b.changes, {}, &Change::from, &Change::from);
+        const auto keyOf = [](const Change& change) { return std::tie(change.parameter, change.from, change.to); };
+
+        return std::ranges::lexicographical_compare(a.changes, b.changes, {}, keyOf, keyOf);
     });
 }
 
@@ -176,9 +179,8 @@ Value valueOf(const PackedMaterial& material, std::uint64_t parameter)
 void retune(Rule& rule, std::uint64_t parameter, const Value& held, const Value& value)
 {
     auto change = std::ranges::find(rule.changes, parameter, &Change::parameter);
-    if (change == rule.changes.end()) change = rule.changes.insert(rule.changes.end(), Change{parameter, held, {}});
+    if (change == rule.changes.end()) change = rule.changes.insert(rule.changes.end(), Change{parameter, held, held});
 
-    change->to = change->from;
     std::ranges::copy(value | std::views::take(change->to.size()), change->to.begin());
     if (change->to == change->from) rule.changes.erase(change);
 }

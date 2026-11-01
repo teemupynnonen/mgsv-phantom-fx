@@ -70,6 +70,8 @@ void refusesABrokenFile()
         R"({ "materials": [{ "material": "e45333b9516f", "parameters": { "SelfColor": { "from": [], "to": [] } } }] })",
         R"({ "materials": [{ "material": "e45333b9516f", "parameters": { "SelfColor": { "from": [1, 2, 3, 4, 5], "to": [1, 2, 3, 4, 5] } } }] })",
         R"({ "materials": [{ "material": "e45333b9516f", "parameters": { "SelfColor": { "from": ["a"], "to": [2] } } }] })",
+        R"({ "materials": [{ "material": "e45333b9516f", "parameters": { "SelfColor": { "from": [1], "to": [1e39] } } }] })",
+        R"({ "materials": [{ "material": "e45333b9516f", "parameters": { "SelfColor": { "from": [1], "to": [-1e40] } } }] })",
     };
 
     for (const auto* text : Broken)
@@ -108,6 +110,10 @@ void writesTheSameFileInAnyOrder()
     const Rule third{.material = 2, .changes = {{.parameter = SelfColor, .from = {1}, .to = {2}}}};
 
     expect(writeRules({first, second, third}) == writeRules({third, second, first}), "The order of the rules does not show.");
+
+    const Rule color{.material = 1, .changes = {{.parameter = SelfColor, .from = {1}, .to = {2}}}};
+    const Rule intensity{.material = 1, .changes = {{.parameter = SelfColorIntensity, .from = {1}, .to = {2}}}};
+    expect(writeRules({color, intensity}) == writeRules({intensity, color}), "Nor when two rules change different parameters from one value.");
 }
 
 // What a save wrote reads back to the bit: a rule's `from` must equal what the game holds.
@@ -240,6 +246,11 @@ void retuningKeepsAHandWrittenChangesSize()
     retune(longer, SelfColorIntensity, {300}, {150});
 
     expect(longer.changes[0].to == Value{150, 7}, "What the material does not hold stays as it was.");
+
+    Rule moved{.material = 1, .changes = {{.parameter = SelfColorIntensity, .from = {600, 7}, .to = {300, 9}}}};
+    retune(moved, SelfColorIntensity, {300}, {150});
+
+    expect(moved.changes[0].to == Value{150, 9}, "A component the file changed and the material does not hold keeps the file's value.");
 }
 
 void findsTheRulesOfAMaterial()

@@ -62,7 +62,7 @@ bool isAwaited(const PackedMaterial& material, const Rule& rule, Direction direc
 // passes, and so does a material already done. True when it replaced them.
 bool applyRule(const PackedMaterial& material, const Rule& rule, Direction direction);
 
-// Rules by material, then by what they change from: the order rulesOf and the file have.
+// Rules by material, then by what they change: the order rulesOf and the file have.
 void sortRules(std::vector<Rule>& rules);
 
 // The rules of a material, in rules that sortRules has ordered.
@@ -85,7 +85,7 @@ std::optional<std::uint64_t> parameterOf(std::string_view text);
 Value valueOf(const PackedMaterial& material, std::uint64_t parameter);
 
 // The rule now takes the parameter to `value`, the material holding `held` there. A new change starts
-// from `held`, a change back where it started goes, and a change keeps the components its `from` has.
+// from `held`, a change back where it started goes, and only the components `value` has move.
 void retune(Rule& rule, std::uint64_t parameter, const Value& held, const Value& value);
 
 // A technique keeps only the low half of a name: the whole hash where the name is known.
