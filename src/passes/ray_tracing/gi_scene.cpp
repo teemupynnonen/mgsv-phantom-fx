@@ -28,6 +28,7 @@ void applyMaterial(GIGeometry& row, const scene_description::Material& material)
     row.flags = (row.flags & GI_GEOMETRY_CUT_OUT) | (material.flags & ~GI_GEOMETRY_CUT_OUT);
     row.texture = material.texture;
     row.alphaThreshold = material.alphaThreshold;
+    row.texelsPerMetre = material.texelsPerMetre;
     row.specularTexture = material.specularTexture;
     row.normalTexture = material.normalTexture;
     row.materialIndex = material.materialIndex;

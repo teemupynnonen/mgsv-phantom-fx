@@ -48,6 +48,7 @@ struct SceneTexture
     ID3D11Texture2D* texture{};
     DXGI_FORMAT viewFormat{};
     std::uint32_t mips{};
+    std::uint32_t width{}, height{};
 };
 
 class SceneMemory

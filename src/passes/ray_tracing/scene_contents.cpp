@@ -163,7 +163,10 @@ scene_description::Material SceneContents::materialOf(const ModelPart& part) con
     };
 
     const auto [base, specular, normal, layer, layerMask] = texturePathsOf(part);
-    return scene_description::materialOf(part, {slotOf(base), slotOf(specular), slotOf(normal), slotOf(layer), slotOf(layerMask)});
+    const auto baseTexture = textures.find(base);
+    const float baseTexelsAcross = baseTexture != textures.end() ? baseTexture->second.texelsAcross : 0.0f;
+
+    return scene_description::materialOf(part, {slotOf(base), slotOf(specular), slotOf(normal), slotOf(layer), slotOf(layerMask), baseTexelsAcross});
 }
 
 // The model's meshes laid out from `poolOffset` into `bytes`, and their geometries; a skinned model's
@@ -257,6 +260,7 @@ void SceneContents::updateTextures(const GameScene& frame)
         else ++texturesHeld;
 
         record.slot = slot;
+        record.texelsAcross = std::sqrt(static_cast<float>(made.width) * static_cast<float>(made.height));
         for (const auto user : record.users)
         {
             const auto model = models.find(user);

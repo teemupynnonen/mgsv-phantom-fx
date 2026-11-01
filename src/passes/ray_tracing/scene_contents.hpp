@@ -198,6 +198,7 @@ private:
     {
         std::optional<std::uint32_t> slot;
         std::unordered_set<std::uint64_t> users;
+        float texelsAcross{};
     };
 
     scene_description::Material materialOf(const ModelPart& part) const;

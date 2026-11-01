@@ -3,6 +3,7 @@
 
 #include "game_code.hpp"
 #include "game_memory.hpp"
+#include "passes/ray_tracing/half_float.hpp"
 
 #include <MinHook.h>
 #include <algorithm>
@@ -121,14 +122,6 @@ std::uintptr_t detour(std::uintptr_t self, std::uintptr_t argument)
 
 constexpr Function Detours[]{&detour<0>, &detour<1>, &detour<2>, &detour<3>, &detour<4>, &detour<5>, &detour<6>};
 static_assert(std::size(Detours) == std::size(Functions));
-
-float halfToFloat(std::uint16_t h)
-{
-    const std::uint32_t sign = (h & 0x8000u) << 16, exponent = (h >> 10) & 31, mantissa = h & 1023;
-    if (exponent == 0) return (sign ? -1.0f : 1.0f) * std::ldexp(static_cast<float>(mantissa), -24);
-    if (exponent == 31) return std::bit_cast<float>(sign | 0x7F800000u | (mantissa << 13));
-    return std::bit_cast<float>(sign | ((exponent + 112) << 23) | (mantissa << 13));
-}
 
 // A placement's transform: the rotation's rows times the scale, the position last.
 scene_description::Transform transformOf(float x, float y, float z, const float q[4], float scale)

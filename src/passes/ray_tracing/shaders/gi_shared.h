@@ -266,6 +266,8 @@ struct GIGeometry
     uint layerTexture;    // 1 + its layer's index (rgb its colour, a how much of it lies), 0 without
     uint layerMaskTexture; // 1 + its layer's mask's index (how much of it lies), 0 without
     float4 layerMapping;  // The layer's coordinates: (second coordinates + zw) x xy
+    float texelsPerMetre; // With GI_GEOMETRY_ALPHA_TEXTURE: its texture's texels along a metre of its surface, on average
+    float3 unused;
 };
 
 // The shadow probe: the sun ray from the screen's centre pixel, as the shadow rays trace it but
@@ -331,7 +333,7 @@ struct GIInstanceDesc
 #ifdef __cplusplus
 static_assert(sizeof(GIFrameConstants) % 16 == 0);
 static_assert(sizeof(GIInstanceDesc) == 64);
-static_assert(sizeof(GIGeometry) == 80);
+static_assert(sizeof(GIGeometry) == 96);
 }
 #endif
 

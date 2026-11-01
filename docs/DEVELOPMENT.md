@@ -2624,7 +2624,7 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
 - **Geometry table** (`GIGeometry`, `t16`). A row per geometry, a structure's rows contiguous and in its
   order: the vertices' and indices' offsets, `GI_GEOMETRY_CUT_OUT`, `GI_GEOMETRY_UV`, its base texture
   (1 + its index in `g_SceneTextures`) and, for cut-out geometry with one (`GI_GEOMETRY_ALPHA_TEXTURE`),
-  the alpha below which light passes. The CPU keeps the table and copies the rows changed each frame.
+  the alpha below which light passes and the texels of its texture along a metre of it. The CPU keeps the table and copies the rows changed each frame.
   The learnt mean albedo (`LearnAlbedo`) is kept by row, for geometry without a texture, and starts
   over for each new row (`ClearNewGeometries`).
 - **Textures** (added 2026-10-23; draws no longer involved). A model mesh's base texture is its material
@@ -2694,12 +2694,18 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   mapped per draw); the G-buffer below `m_param.w` times a dither averaging a half. Measured at the draws
   (the 64-byte buffer's Map): `m_param` is (0, 0, 0, 1) on cut-out meshes' shadow draws and (0, 0, 0, 0)
   where nothing is tested. The rays test a cut-out geometry's alpha
-  against `CutOutThreshold` (0.5) at the level of detail its ray cone meets (`TextureLod`: Akenine-Moller
+  against `CutOutThreshold` (0.5) at the level of detail its ray cone meets (Akenine-Moller
   et al., Ray Tracing Gems chapter 20; the cone a pixel wide at the receiver, not spreading: rays to the
   sun run parallel, and its disc comes from the rays' spread over it). Spreading the cone as the sun's
   disc as well, as first built, read coarse levels of detail far from the receiver: at the default
   0.53 degrees a pylon's thin bars 20 to 40 m up fell under the threshold and its shadow broke into the
   bars' joints (2026-10-23).
+  The level comes from the mesh's average texels a metre (`GIGeometry::texelsPerMetre`, worked out when its texture
+  arrives), not its triangle's: a jungle frame runs about 20 million of these tests, and reading each candidate's vertices and
+  transform for it took 2 ms there, 0.8 to 1.1 ms elsewhere (2026-11-02). A placement's scale is left out too: it cost 0.3 ms more and
+  changed nothing. On one frozen frame the stored level and the worked-out one differ by no more than two frames of either.
+  Compare such things within one run: plants sway on the wind, so frames from two runs differ in their leaves and in the
+  moonlight through them, 2% of the jungle's frame by over 10%, with nothing changed.
   Reading `b0` back at the kick, as the first alpha copies did, gave the last draw's constants (0, so every
   texel blocked: the pylon's solid shadow).
 - **Instances.** The frame's `D3D12_RAYTRACING_INSTANCE_DESC`s (up to 131,072) are both the top

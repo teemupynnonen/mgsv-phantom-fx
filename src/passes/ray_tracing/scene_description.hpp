@@ -173,6 +173,7 @@ struct Material
 {
     std::uint32_t flags{}, texture{};
     float alphaThreshold{};
+    float texelsPerMetre{}; // Where its alpha is tested: the texture's texels along a metre of the mesh, on average
     std::uint32_t specularTexture{}, normalTexture{}, materialIndex{};
     std::array<float, 3> emission{};
     std::uint32_t layerTexture{}, layerMaskTexture{};
@@ -182,6 +183,7 @@ struct Material
 struct MaterialTextures
 {
     std::optional<std::uint32_t> base, specular, normal, layer, layerMask;
+    float baseTexelsAcross{}; // The square root of the base texture's copy's texels
 };
 
 ModelFile fileKindOf(std::span<const std::uint8_t> file);
