@@ -2,6 +2,8 @@
 
 #include "constant_capture.hpp"
 #include "d3d11_helpers.hpp"
+#include "dev/game_shadow.hpp"
+#include "dev_tools.hpp"
 #include "features/upscaling/upscaler.hpp"
 #include "features/sun_contact_shadows/sun_contact_shadows.hpp"
 #include "frame_latch.hpp"
@@ -68,6 +70,7 @@ ComPtr<ID3D11Device> device;
 // (pathTracedOf).
 std::array<ComPtr<ID3D11PixelShader>, 6> replacements;
 ComPtr<ID3D11Buffer> optionsBuffer;
+
 
 std::size_t replacementOf(bool isShadowMapped, bool reflectsSky)
 {
@@ -196,6 +199,19 @@ bool drawSun(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, co
     context->PSSetShaderResources(ContactShadowSlot, 1, &contactShadow);
     context->PSSetShaderResources(RayTracedSlot, 1, &rayTraced);
     context->PSSetConstantBuffers(OptionsSlot, 1, optionsBuffer.GetAddressOf());
+    if constexpr (DevTools)
+    {
+        if (game_shadow::isKept() && sun.isShadowMapped && depth && viewportFillsTarget(context))
+        {
+            const auto size = contact_shadow_trace::depthSize(depth.Get());
+            if (SUCCEEDED(write(context, optionsBuffer.Get(), ShaderOptions{})))
+                game_shadow::draw(device.Get(), context, call, static_cast<UINT>(size[0]), static_cast<UINT>(size[1]));
+
+            context->PSSetShader(replacements[replacement].Get(), nullptr, 0);
+            writeOptions(context, composition, contactShadow != nullptr, rayTraced != nullptr);
+        }
+    }
+
     performance::Timed timed(context, performance::Pass::SunLight);
     context->DrawInstanced(call.count, call.instances, call.first, call.firstInstance);
     timed.end();
@@ -224,6 +240,8 @@ void detach() noexcept
     std::lock_guard lock(resourceMutex);
     for (auto& replacement : replacements) replacement.Reset();
     optionsBuffer.Reset();
+    if constexpr (DevTools) game_shadow::detach();
+
     device.Reset();
     pipelineFailed = false;
 }

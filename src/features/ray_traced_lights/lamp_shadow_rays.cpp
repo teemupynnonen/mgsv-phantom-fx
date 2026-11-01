@@ -104,6 +104,8 @@ class LampShadowRays final : public trace::Trace
 public:
     bool runsIn(const KickTraces& traces) const override { return traces.tracesLampShadows; }
 
+    bool listsInstances(const Frame& frame) const override { return isProbedIn(frame); }
+
     void gather(const trace::Kick& kick) override
     {
         output.clearWritten();

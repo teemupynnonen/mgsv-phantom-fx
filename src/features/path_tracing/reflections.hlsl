@@ -16,7 +16,7 @@ Texture2D<float4> g_Guide_SpecularAlbedo : register(t19);  // The share of light
 // The forward pass's rivers and liquids (forward_shadows), one frame old: where one drew, the trace below is
 // its own surface, not the riverbed's behind it.
 // The sun's shadow on a surface itself, for the forward pass's multiply and the glass composite.
-RWTexture2D<float> g_ForwardShadow : register(u97);
+RWTexture2D<float> g_ForwardShadow : register(u100);
 RWTexture2D<float4> g_Reflection : register(u93);          // The reflected light times the specular albedo and the exposure; a: how far across the screen its hit is
 RWTexture2D<float> g_ReflectionDistance : register(u94);   // The ray's hit distance; FP16's largest where it got away
 RWTexture2D<float4> g_ReflectionMap : register(u98);       // The hit as the game's reflection map holds it (ReflectionBlend): rgb its light, a how much it blends

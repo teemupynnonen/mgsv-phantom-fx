@@ -6,6 +6,7 @@
 #include "command_list_notes.hpp"
 #include "constant_capture.hpp"
 #include "d3d11_helpers.hpp"
+#include "dev_tools.hpp"
 #include "features/global_illumination/gi_lighting.hpp"
 #include "features/forward_shadows/forward_shadows.hpp"
 #include "features/path_tracing/forward_surfaces.hpp"
@@ -26,6 +27,7 @@
 #include "passes/ray_tracing/shaders/gi_shared.h"
 #include "passes/ray_tracing/trace.hpp"
 #include "performance.hpp"
+#include "resource_dump.hpp"
 
 #include <Windows.h>
 #include <d3d11_4.h>
@@ -35,6 +37,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <format>
 #include <mutex>
 #include <optional>
@@ -360,6 +363,10 @@ ComPtr<ID3D11Texture2D> terrainPages, terrainHeights;
 SharedTexture depthOut, normalOut, albedoOut;
 std::string failure;
 std::atomic<std::uint64_t> lastKick{}; // GetTickCount64 of the last frame lit
+#if PHANTOM_FX_DEV_TOOLS
+// Diagnostics: a debug case's pixel for the probes, as x << 32 | y + 1 (0 for the screen's centre).
+std::atomic<std::uint64_t> probePixel{};
+#endif
 // Diagnostics: the kicks' CPU time in performance counter ticks, and the kicks, since the last log.
 std::atomic<std::int64_t> kickTicks{};
 std::atomic<std::uint64_t> kicksSinceLog{};
@@ -812,9 +819,12 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         for (const auto& part : model->parts)
         {
             const bool isGlass = part.role == scene_description::MeshRole::Glass;
-            gi_textures::want(part.baseTexture, isGlass ? gi_textures::Use::Data : scene_description::isCutOut(part.role) ? gi_textures::Use::CutOut : gi_textures::Use::Colour);
-            gi_textures::want(part.specularTexture, gi_textures::Use::Data);
-            gi_textures::want(part.normalTexture, gi_textures::Use::Data);
+            const auto [base, specular, normal, layer, layerMask] = scene_description::texturePathsOf(part);
+            gi_textures::want(base, isGlass ? gi_textures::Use::Data : scene_description::isCutOut(part.role) ? gi_textures::Use::CutOut : gi_textures::Use::Colour);
+            gi_textures::want(specular, gi_textures::Use::Data);
+            gi_textures::want(normal, gi_textures::Use::Data);
+            gi_textures::want(layer, gi_textures::Use::Colour);
+            gi_textures::want(layerMask, gi_textures::Use::Data);
         }
     endStep(ModelsStep);
     gi_textures::update(device.Get(), immediate.Get(), frame.newTextures);
@@ -940,6 +950,10 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     frame.localLights = std::move(localLightsToTrace);
     frame.localLightRays = static_cast<std::uint32_t>(options.lightRays);
     frame.probeLights = options.debugShadows;
+#if PHANTOM_FX_DEV_TOOLS
+    if (const auto pixel = probePixel.load(std::memory_order_relaxed))
+        frame.probePixel = std::array{static_cast<std::uint32_t>(pixel >> 32), static_cast<std::uint32_t>(pixel) - 1};
+#endif
     frame.waitValue = inputsReady;
     frame.signalValue = ++fenceValue;
     const auto result = gi_renderer::render(frame);
@@ -1256,6 +1270,40 @@ ID3D11ShaderResourceView* lightDebug(UINT width, UINT height) noexcept
     const bool fits = lightDebugWritten && lightDebugOutput.width == width && lightDebugOutput.height == height;
     return fits ? lightDebugOutput.view.Get() : nullptr;
 }
+
+#if PHANTOM_FX_DEV_TOOLS
+void probeAt(std::uint32_t x, std::uint32_t y) noexcept
+{
+    probePixel = std::uint64_t{x} << 32 | (y + 1);
+}
+
+void clearProbe() noexcept
+{
+    probePixel = 0;
+}
+
+void saveTextures(ID3D11DeviceContext* context, const std::filesystem::path& folder) noexcept
+{
+    try
+    {
+        std::scoped_lock lock(executionMutex, lightMutex);
+        // Its trace hands out only a view, and only of what it wrote.
+        ComPtr<ID3D11Resource> lampShadow;
+        if (auto* share = lamp_shadow_rays::share(depthOut.width, depthOut.height)) share->GetResource(lampShadow.GetAddressOf());
+
+        const std::pair<const char*, ID3D11Resource*> textures[]{{"depth", depthOut.texture.Get()}, {"normal", normalOut.texture.Get()},
+            {"albedo", albedoOut.texture.Get()}, {"light", output.texture.Get()}, {"sun-shadow", shadowOutput.texture.Get()},
+            {"lamp-shadow", lampShadow.Get()}, {"reflection", reflectionOutput.texture.Get()}, {"lamp-diffuse", lampDiffuseOutput.texture.Get()},
+            {"lamp-specular", lampSpecularOutput.texture.Get()}};
+        for (const auto& [name, texture] : textures)
+            if (texture) saveTexture(context, texture, DXGI_FORMAT_UNKNOWN, folder / (std::string(name) + ".dds"));
+    }
+    catch (const std::exception& error)
+    {
+        log(std::string("Saving the ray tracing's textures failed: ") + error.what());
+    }
+}
+#endif
 
 std::string shadowProbe()
 {

@@ -1,11 +1,13 @@
 #include "passes/ray_tracing/engine_scene.hpp"
 
+#include "dev_tools.hpp"
 #include "device_check.hpp"
 #include "game_code.hpp"
 #include "game_memory.hpp"
 #include "game_loop.hpp"
 #include "passes/ray_tracing/engine_brush.hpp"
 #include "passes/ray_tracing/scene_description.hpp"
+#include "remaster/remaster.hpp"
 
 #include <Windows.h>
 #include <MinHook.h>
@@ -29,6 +31,7 @@ using game_memory::read;
 using game_memory::readRaw;
 using scene_description::MaxBones;
 using scene_description::ModelFile;
+using scene_description::Rejection;
 using scene_description::Source;
 
 // The model visibility tests, called from the job threads with the visibility manager in rcx, once a
@@ -141,6 +144,23 @@ std::mutex publishMutex;
 std::vector<scene_description::ModelInstance> latestInstances;
 std::vector<scene_description::CharacterInstance> latestCharacters;
 bool latestFresh{};
+
+// What the snapshots and the takes reveal (setReveal): nothing outside dev builds.
+#if PHANTOM_FX_DEV_TOOLS
+std::mutex revealMutex;
+Reveal revealed;
+
+Reveal currentReveal()
+{
+    std::lock_guard lock(revealMutex);
+    return revealed;
+}
+#else
+Reveal currentReveal()
+{
+    return {};
+}
+#endif
 
 // The skinned models parsed, for their meshes' index ranges and bone groups (take); render thread.
 std::unordered_map<std::uint64_t, std::shared_ptr<const scene_description::Model>> skinnedModels;
@@ -292,9 +312,10 @@ std::optional<std::uint64_t> rigidModel(std::uintptr_t model)
 }
 
 // The game's characters: every skinned model on the object registry's model list the game shows,
-// in its pose this frame (docs/DEVELOPMENT.md, "Every model", "Characters"), each rigid model on the
-// list it shows handed to `listedRigid`; false without the list.
-bool collectCharacters(std::vector<scene_description::CharacterInstance>& characters, std::uint32_t& listed, const std::function<void(std::uintptr_t model)>& listedRigid)
+// in its pose this frame (docs/DEVELOPMENT.md, "Every model", "Characters"), each rigid model on the list
+// handed to `listedRigid`; false without the list. A revealed scene also takes the hidden ones.
+bool collectCharacters(std::vector<scene_description::CharacterInstance>& characters, std::uint32_t& listed, const Reveal& reveal,
+    const std::function<void(std::uintptr_t model, bool isHidden)>& listedRigid)
 {
     const auto registry = read<std::uintptr_t>(base + RegistryGlobal);
     const auto type = read<std::uint32_t>(base + ModelTypeGlobal);
@@ -311,7 +332,9 @@ bool collectCharacters(std::vector<scene_description::CharacterInstance>& charac
 
         node = read<std::uintptr_t>(model + ObjectNext);
         if (!node) break;
-        if (read<std::uint32_t>(model + ModelHiddenPasses) == HiddenFromEveryPass) continue;
+
+        const bool isHidden = read<std::uint32_t>(model + ModelHiddenPasses) == HiddenFromEveryPass;
+        if (isHidden && !reveal.isAny()) continue;
         if (read<std::uint32_t>(model + ModelLayer).value_or(0) & MarkerSilhouetteLayer) continue;
 
         // The file is queued last: a model that is no character (most of the list's are rigid) has its
@@ -324,23 +347,24 @@ bool collectCharacters(std::vector<scene_description::CharacterInstance>& charac
         float matrix[16]{};
         if (!bones || !*bones || *bones > MaxBones || !palette || !*palette || !groups || !states || !readRaw(matrix, model + ModelMatrix, sizeof(matrix)))
         {
-            listedRigid(model);
+            listedRigid(model, isHidden);
             continue;
         }
 
         const auto transform = transformOf(matrix);
         const auto resource = transform ? read<std::uintptr_t>(model + ModelResource) : std::nullopt;
         const auto hash = resource ? modelResource(*resource, ModelFile::Skinned, Source::ModelList) : std::nullopt;
-        if (!hash) continue;
+        if (!hash || (isHidden && !reveal.has(*hash))) continue;
 
         scene_description::CharacterInstance character{model, *hash, *transform, std::vector<float>(std::size_t{*bones} * 12), {}};
+        character.rejection = isHidden ? Rejection::HiddenFromEveryPass : Rejection::None;
         std::vector<std::uint8_t> groupStates(*groups);
         if (!readRaw(character.palette.data(), *palette, character.palette.size() * sizeof(float))
             || (*groups && (!*states || !readRaw(groupStates.data(), *states, groupStates.size()))))
             continue;
 
         character.shownGroups.resize(*groups);
-        for (std::size_t g = 0; g < groupStates.size(); ++g) character.shownGroups[g] = (groupStates[g] & HiddenGroupBits) == 0;
+        for (std::size_t g = 0; g < groupStates.size(); ++g) character.shownGroups[g] = (groupStates[g] & HiddenGroupBits) == 0 || reveal.has(*hash);
         character.groupStates = std::move(groupStates);
         characters.push_back(std::move(character));
     }
@@ -351,6 +375,7 @@ bool collectCharacters(std::vector<scene_description::CharacterInstance>& charac
 // Every record in use of the managers seen, their owners' instances, published; with snapshotMutex.
 void snapshot()
 {
+    const auto reveal = currentReveal();
     std::vector<std::uintptr_t> owners;
     for (auto& slot : seenManagers)
     {
@@ -391,7 +416,7 @@ void snapshot()
 
     std::vector<scene_description::ModelInstance> instances;
     std::uint32_t others{}, leftOut{}, hidden{}, fadedOutModels{}, hidingGroups{}, listedOnly{};
-    const auto place = [&](std::uint64_t hash, const float* matrix, std::uint64_t hiddenGroups) {
+    const auto place = [&](std::uint64_t hash, const float* matrix, std::uint64_t hiddenGroups, Rejection rejection) {
         const auto transform = transformOf(matrix);
         if (!transform)
         {
@@ -400,7 +425,13 @@ void snapshot()
         }
 
         if (hiddenGroups) ++hidingGroups;
-        instances.push_back({hash, *transform, hiddenGroups});
+        if (hiddenGroups && reveal.has(hash))
+        {
+            hiddenGroups = 0;
+            if (rejection == Rejection::None) rejection = Rejection::MeshGroupsHidden;
+        }
+
+        instances.push_back({hash, *transform, hiddenGroups, rejection});
     };
 
     for (const auto owner : owners)
@@ -425,25 +456,31 @@ void snapshot()
             if (!readRaw(matrixBuffer.data(), *begin, *end - *begin)) continue;
 
             const auto hiddenGroups = hiddenGroupsOf(*model);
-            for (std::size_t i = 0; i < matrixBuffer.size(); i += 16) place(*hash, matrixBuffer.data() + i, hiddenGroups);
+            for (std::size_t i = 0; i < matrixBuffer.size(); i += 16) place(*hash, matrixBuffer.data() + i, hiddenGroups, Rejection::None);
         }
         else if (*vtable == base + ModelVtable)
         {
+            auto rejection = Rejection::None;
             if (read<std::uint32_t>(owner + ModelHiddenPasses) == HiddenFromEveryPass)
             {
                 ++hidden;
-                continue;
+                rejection = Rejection::HiddenFromEveryPass;
             }
-
-            if (fadedOut(owner))
+            else if (fadedOut(owner))
             {
                 ++fadedOutModels;
-                continue;
+                rejection = Rejection::FadedOut;
+            }
+
+            if (rejection != Rejection::None)
+            {
+                const auto rejected = reveal.isAny() ? rigidModel(owner) : std::nullopt;
+                if (!rejected || !reveal.has(*rejected)) continue;
             }
 
             float matrix[16]{};
             const auto hash = rigidModel(owner);
-            if (hash && readRaw(matrix, owner + ModelMatrix, sizeof(matrix))) place(*hash, matrix, hiddenGroupsOf(owner));
+            if (hash && readRaw(matrix, owner + ModelMatrix, sizeof(matrix))) place(*hash, matrix, hiddenGroupsOf(owner), rejection);
             else ++leftOut;
         }
         else
@@ -456,21 +493,22 @@ void snapshot()
             for (const auto& transform : transforms) instances.push_back({*hash, transform, 0});
     });
 
-    // A rigid model no visibility manager holds; those it holds are placed above.
-    const auto listedRigid = [&](std::uintptr_t model) {
+    // A rigid model no visibility manager holds, those it holds being placed above: the helicopter's cabin, 71%
+    // of the frame there, which left the rays no walls (2026-10-30, a debug case's revealed scene).
+    const auto listedRigid = [&](std::uintptr_t model, bool isHidden) {
         if (std::binary_search(owners.begin(), owners.end(), model)) return;
 
         float matrix[16]{};
         const auto hash = rigidModel(model);
-        if (!hash || !readRaw(matrix, model + ModelMatrix, sizeof(matrix))) return;
+        if (!hash || (isHidden && !reveal.has(*hash)) || !readRaw(matrix, model + ModelMatrix, sizeof(matrix))) return;
 
         ++listedOnly;
-        place(*hash, matrix, hiddenGroupsOf(model));
+        place(*hash, matrix, hiddenGroupsOf(model), isHidden ? Rejection::HiddenFromEveryPass : Rejection::None);
     };
 
     std::vector<scene_description::CharacterInstance> characters;
     std::uint32_t listed{};
-    modelListFound = collectCharacters(characters, listed, listedRigid);
+    modelListFound = collectCharacters(characters, listed, reveal, listedRigid);
 
     ++snapshots;
     lastInstances = static_cast<std::uint32_t>(instances.size());
@@ -536,6 +574,25 @@ void visibilityTest(std::uintptr_t a1, std::uintptr_t a2, std::uintptr_t a3, std
 
 constexpr VisibilityTest Detours[]{&visibilityTest<0>, &visibilityTest<1>};
 }
+
+bool Reveal::has(std::uint64_t hash) const
+{
+    return everything || std::ranges::find(hashes, hash) != hashes.end();
+}
+
+#if PHANTOM_FX_DEV_TOOLS
+void setReveal(Reveal reveal)
+{
+    std::lock_guard lock(revealMutex);
+    revealed = std::move(reveal);
+}
+
+std::size_t waitingFiles()
+{
+    std::lock_guard lock(publishMutex);
+    return pendingFiles.size();
+}
+#endif
 
 std::string hook() noexcept
 {
@@ -660,9 +717,10 @@ void take(Snapshot& snapshot, const std::vector<gi_inputs::DrawnBones>& drawn)
             }
     }
 
+    const auto reveal = currentReveal();
     for (const auto& file : files)
     {
-        auto parsed = scene_description::describeModel(file.hash, file.bytes, file.source);
+        auto parsed = scene_description::describeModel(file.hash, file.bytes, file.source, reveal.has(file.hash), remaster::tuneFileSelfLight);
         if (!parsed)
         {
             ++parseFailures;

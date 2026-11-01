@@ -26,6 +26,7 @@
 #include "passes/ray_tracing/ray_tracing.hpp"
 #include "passes/sun_light_pass.hpp"
 #include "passes/visibility_bitmask.hpp"
+#include "remaster/remaster.hpp"
 
 namespace phantom_fx::modules
 {
@@ -79,6 +80,7 @@ constexpr Module Modules[]{
     {.configure = frame_rate::configure},
     {.configure = photo_mode::configure},
     {.detach = focus::detach},
+    {.configure = remaster::configure},
 };
 }
 

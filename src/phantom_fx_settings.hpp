@@ -206,10 +206,13 @@ struct Configuration
     const Diagnostics& diagnostics;
     LeftOut leftOut; // By a cost measurement's step: what the plan does not cover
     bool supportedBuild{};
+    bool areEnhancementsOn{}; // The enhancements switch (F1)
     EffectPlan effects;
 };
 
 // A missing file gives the first launch's settings; invalid fields keep their defaults; I/O failures throw.
 Settings loadSettings(const std::filesystem::path& path);
 void saveSettings(const std::filesystem::path& path, const Settings& settings);
+// `settings` with one line of PhantomFX.ini applied; an unknown key or an invalid value changes nothing.
+Settings withLine(Settings settings, std::string_view key, std::string_view value);
 }

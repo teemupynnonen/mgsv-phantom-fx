@@ -3,6 +3,7 @@
 
 #include "camera.hpp"
 #include "clock.hpp"
+#include "dev_tools.hpp"
 #include "features/global_illumination/gi_light.hpp"
 #include "features/path_tracing/path_tracing_rays.hpp"
 #include "features/ray_traced_shadows/gi_shadow.hpp"
@@ -159,6 +160,11 @@ struct State
     }
 };
 std::unique_ptr<State> state;
+
+#if PHANTOM_FX_DEV_TOOLS
+// Diagnostics, for the thread that runs the commands.
+std::atomic<std::uint32_t> workWaiting{};
+#endif
 
 // The latest shadow probe as text, for the overlay (another thread) and the log; kept apart from
 // the state so stopping does not race the overlay.
@@ -870,7 +876,6 @@ Result render(const Frame& frame)
         s.shadows.reset();
     }
 
-    const bool probeLights = traces.tracesLampShadows && frame.probeLights;
     {
         std::lock_guard lock(probeMutex);
         if (!frame.debugShadows) probeText.clear();
@@ -888,7 +893,7 @@ Result render(const Frame& frame)
         .newTextures = frame.newTextures,
         .terrainEye = terrain ? std::optional(frame.eye) : std::nullopt,
         .seaCentre = frame.seaLevel ? std::optional(std::array{frame.eye[0], *frame.seaLevel, frame.eye[2]}) : std::nullopt,
-        .shouldListInstances = frame.debugShadows || probeLights};
+        .shouldListInstances = frame.debugShadows || std::ranges::any_of(trace::inOrder(), [&](const auto* each) { return each->listsInstances(frame); })};
     std::optional<State::SurfaceTrace> surfaceTrace;
     auto update = s.contents->update(game);
     s.instancedModels[slot] = std::move(update.instanced);
@@ -991,7 +996,9 @@ Result render(const Frame& frame)
         if (traces.tracesLight) s.light->fill(constants, frame.verticalFov, parity);
         if (traces.tracesSun) s.shadows->fill(constants);
         constants.objectMotion = {velocity ? 1u : 0u, 0, 0, 0};
-        constants.shadowDiagnostics = {frame.twoSidedShadows ? 1u : 0u, frame.shadowStarts ? 1u : 0u, 0, 0};
+        const auto probePixel = frame.probePixel.value_or(std::array{frame.width / 2, frame.height / 2});
+        constants.shadowDiagnostics = {frame.twoSidedShadows ? 1u : 0u, frame.shadowStarts ? 1u : 0u, std::min(probePixel[0], frame.width - 1),
+            std::min(probePixel[1], frame.height - 1)};
         constants.lightDiagnostics = {0, 0, lightDebug ? static_cast<std::uint32_t>(frame.lightDebugView) : 0u, 0};
         constants.reconstruction = {traces.isForReconstruction ? 1u : 0u, materialSpecular ? 1u : 0u, skyCube ? 1u : 0u, 0};
         constants.emission = {frame.emissionScale, frame.emissionCap, 0, 0};
@@ -1113,6 +1120,7 @@ Result render(const Frame& frame)
             recorder.transition(s.probe.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             s.probeWritten[slot] = true;
         }
+
         if (frame.showScene)
         {
             recorder.mark("scene view");
@@ -1162,9 +1170,19 @@ Result render(const Frame& frame)
     t.builtTriangles += stats.builtTriangles;
     t.waiting += stats.waiting;
     t.compactions += stats.compactedThisFrame;
+#if PHANTOM_FX_DEV_TOOLS
+    workWaiting = stats.waiting + s.contents->waitingWork();
+#endif
 
     return result;
 }
+
+#if PHANTOM_FX_DEV_TOOLS
+std::uint32_t waitingWork()
+{
+    return workWaiting;
+}
+#endif
 
 bool traceSurfaces(std::uint64_t waitValue, std::uint64_t signalValue)
 {

@@ -10,9 +10,9 @@ cmake --preset release
 cmake --build --preset release
 ```
 
-CMake downloads MinHook, the DLSS SDK v310.9.1 headers, loader, `nvngx_dlss.dll` and `nvngx_dlssd.dll`, and the
-ReShade 6.8.0 add-on headers with the Dear ImGui header, each pinned by commit and checked by
-SHA-256. Frame generation needs the Streamline SDK 2.14.1, which only its release archive carries:
+CMake downloads MinHook, the DLSS SDK v310.9.1 headers, loader, `nvngx_dlss.dll` and `nvngx_dlssd.dll`, the
+ReShade 6.8.0 add-on headers with the Dear ImGui header, and the nlohmann/json 3.12.0 header, each pinned by commit
+and checked by SHA-256. Frame generation needs the Streamline SDK 2.14.1, which only its release archive carries:
 the first configure downloads it once (about 280 MB, checked by SHA-256) and keeps the headers,
 license and x64 runtime files. FSR needs the AMD FSR SDK 2.3.0's API headers and AMD's signed
 Direct3D 12 DLLs, pinned by commit and checked by SHA-256 like the rest (about 66 MB). The add-on is
@@ -46,8 +46,14 @@ only feeds them (`DiagnosticLog` in `src/log.hpp`, tested with `if constexpr`):
 
 Its log's first line says "with the diagnostic log". Builds for in-game checks use this preset.
 It also sets `PHANTOM_FX_DEV_TOOLS` (`DevTools` in `src/dev_tools.hpp`), which adds the overlay's
-**Developer** page, below Diagnostics: **Travel** (see "Travel"), the **Lua console** (see "Game
-Lua") and the log switch above.
+**Developer** page, below Diagnostics: **Travel** (see "Travel"), **Cutscenes** (see "Cutscenes"),
+the **Lua console** (see "Game Lua"), a line on the remastering tool (**F6** marks, **F7** opens its panel:
+`src/remaster/README.md`) and the log switch above, and the debug cases (see "Debug cases"). All of it lives in `src/dev/`, whose README says how the core reaches it and how to detach it.
+It is left out of a release build altogether, not just switched off: CMake drops the folder's files
+and the `InspectPixels` kernel, and the little the core keeps for it stands behind `DevTools` or
+`#if PHANTOM_FX_DEV_TOOLS`. Those files hook the system's file calls, patch Steam's interfaces and
+run what they are told, which security software rightly flags.
+`tools/automation/check_release.py` looks through a built add-on for the tools' known markers.
 
 `cmake --install build/release --component addon --prefix <dir>` collects the add-on, its DLLs,
 player documentation and licenses for distribution. The DLLs are at the install root;
@@ -72,11 +78,12 @@ writes and only at their size, and each effect keeps only what it reads.
 `tests/scene_description_tests.cpp`: what the ray-traced scene takes of a model file, from small FMDL
 files it writes: the mesh roles of each case measured in the game (a tarp's stand-in, a pylon's
 lattice, glass, sky domes, inner walls, decals, hair, bushes), what each role gives its rays, a
-cut-out mesh's texture, unreadable files and skins. `tests/scene_contents_tests.cpp`: the scene
-contents over a fake scene memory with room limits: when models, variants, characters and textures are
-let go, waiting for room, a variant without room (never traced, as today), texture copies arriving and
-replacing one another, characters built, refitted and made again, the palette budget, frames without a
-newer list, the instance cap's order and the terrain rings' remaking. `tests/light_choice_tests.cpp`:
+cut-out mesh's texture, a mesh's layer and how its technique reads the mask, unreadable files and skins.
+`tests/scene_contents_tests.cpp`: the scene contents over a fake scene memory with room limits: when
+models, variants, characters and textures are let go, waiting for room, a variant without room (never
+traced, as today), texture copies arriving and replacing one another, a layered mesh's coordinates in the
+pool, characters built, refitted and made again, the palette budget, frames without a newer list, the
+instance cap's order and the terrain rings' remaking. `tests/light_choice_tests.cpp`:
 which lights a kick gives the rays: the most pixels first, then the nearest, the light cap's edge, the
 same choice whatever order the lights come in, a
 light drawn from another eye left and counted, one reaching no pixel left out; a light's reach (around
@@ -121,7 +128,7 @@ This produces `build/release/PhantomFX-<version>.zip` and its `.sha256` checksum
 | `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`, `sl.reflex.dll`, `sl.pcl.dll`, `nvngx_dlssg.dll` | NVIDIA Streamline and the frame generation model |
 | `amd_fidelityfx_loader_dx12.dll`, `amd_fidelityfx_upscaler_dx12.dll`, `amd_fidelityfx_framegeneration_dx12.dll` | AMD FSR upscaling and frame generation |
 | `PhantomFX/README.md`, `CHANGELOG.md`, `LICENSE` | Player documentation and the add-on's license |
-| `PhantomFX/*-LICENSE.txt` | NVIDIA DLSS, NVIDIA Streamline, NVIDIA NRD (global illumination's denoiser), AMD FSR SDK, MinHook, ReShade, Dear ImGui, AMD FidelityFX (RCAS), Bend Studio (screen-space shadows), three-gtvbao and Intel XeGTAO (GTVBAO), AMD Capsaicin (global illumination) |
+| `PhantomFX/*-LICENSE.txt` | NVIDIA DLSS, NVIDIA Streamline, NVIDIA NRD (global illumination's denoiser), AMD FSR SDK, MinHook, ReShade, Dear ImGui, nlohmann/json (the material rules), AMD FidelityFX (RCAS), Bend Studio (screen-space shadows), three-gtvbao and Intel XeGTAO (GTVBAO), AMD Capsaicin (global illumination) |
 
 CPack packages only the `addon` component, so SDK headers, static libraries, tests, debug symbols
 and local settings are left out. ReShade is installed separately by the player.
@@ -231,9 +238,19 @@ what draws it, when that is the feature's own.
 | `src/sun_movement.cpp`, `src/sun_movement.hpp` | The sun and moon move every frame instead of in the game's steps (see "Sun movement") |
 | `src/game_dither.cpp`, `src/game_dither.hpp` | The game's colour dither taken out of its shaders as they are made (see "Dither") |
 | `src/dev_tools.hpp` | Whether the build has the Developer page (the dev preset) |
-| `src/game_lua.cpp`, `src/game_lua.hpp` | Lua in the game's script state, and the Developer page's console (see "Game Lua") |
-| `src/travel.cpp`, `src/travel.hpp` | The Developer page's travel: free roam in another map (see "Travel") |
+| `src/dev/` | The development tools, in a dev build alone; its README says how to detach them. `dev.*`: the core's one door to them, and the Developer page |
+| `src/dev/game_lua.cpp`, `src/dev/game_lua.hpp` | Lua in the game's script state, and the Developer page's console (see "Game Lua") |
+| `src/dev/travel.cpp`, `src/dev/travel.hpp` | The Developer page's travel: free roam in another map, and the way the page's tools leave a mission (see "Travel") |
+| `src/dev/cutscenes.cpp`, `src/dev/cutscenes.hpp`, `src/dev/cutscene_list.hpp` | The Developer page's cutscene player and its list (see "Cutscenes") |
+| `src/remaster/` | The remastering rules: they change the game's materials as they are made, saved in `materials.json` and built into the add-on (see its `README.md`, and "Materials") |
+| `src/dev/remaster/` | The remastering tool that writes them: a dev build's marks, and the panel that tunes them |
 | `src/frame_log.cpp`, `src/frame_log.hpp` | Development diagnostics, off by default: shader log, F10 frame record, constant and texture dumps |
+| `src/dev/automation.cpp`, `src/dev/automation.hpp` | Dev builds: commands from files into the running game, F9's debug cases (see "Debug cases") |
+| `src/dev/inspect_trace.cpp`, `src/dev/inspect_trace.hpp`, `src/dev/inspect.hlsl`, `src/dev/inspect_shared.h` | A debug case's record of every pixel, a trace of its own |
+| `src/dev/game_shadow.cpp`, `src/dev/game_shadow.hpp` | A debug case's reference: the game's shadow per pixel, drawn at the sun pass |
+| `src/dev/held_camera.cpp`, `src/dev/held_camera.hpp` | A debug case's camera, which photo mode's camera update takes |
+| `src/dev/save_redirect.cpp`, `src/dev/save_redirect.hpp` | The automation copy of the game: its saves, backups and display settings kept apart from the player's |
+| `tools/automation/` | Dev builds: `fx.py` talks to the running game, `case.py` reports a debug case, `install.ps1` and `launch.ps1` run the automation copy; `check_release.py` fails if any of it reached a release build |
 | `src/resource_dump.cpp`, `src/resource_dump.hpp` | Format names, constant rows, DDS saving for the dumps |
 | `src/shader_bytecode.cpp`, `src/shader_bytecode.hpp` | DXBC checksum (bytes 4 to 20 of the container), the instruction walk, the output saturation patch, the dither patch |
 | `src/log.cpp`, `src/log.hpp` | `PhantomFX.log` beside the add-on, one per game session |
@@ -395,6 +412,64 @@ layer for that denoiser (see "Global illumination", "Denoiser"), jitter off, the
 ready), and the frame, fallback and reset counts. All are off by default and not saved. Every 1800
 frames with DLSS on, `PhantomFX.log` gets a status line with the same counts.
 
+### Debug cases
+
+So lighting faults can be looked into without anyone sending pictures or numbers back and forth; the skill
+`.agents/skills/mgsv-automation` tells agents how to work with it. Dev builds only:
+**F9** freezes the game where it is and records a case; F9 again lets it go. The game stays frozen in between, so
+more can be asked of the same frame. Aim the screen's centre at the fault first if there is one spot to look at.
+
+- **What a case holds** (`PhantomFX-automation/cases/<time>/`): the frame as traced and as the game draws it, from
+  the same frozen camera and world (`traced.dds`, `vanilla.dds`); the ray tracing's textures (depth, normals,
+  albedo, the light, the sun's and lamps' shadows, reflections, the lamps' light); what the game's shadow map
+  alone says of each pixel (`game-shadow.dds`, 1 lit, 0 blocked, -1 no answer: `SHADOW_MAP` with `GAME_SHADOW` in
+  `sun_light_pass_shaders.hpp`, drawn after the sun pass with its inputs as bound); what the scene is at
+  (`state.txt`), the settings; and two records of every pixel.
+- **A record** (`scene.bin`, `revealed.bin`: `GIInspectPixel`, `InspectPixels` in `src/dev/inspect.hlsl`) has what the
+  camera's ray meets first, what the scene has within a tolerance of the game's surface, what blocks the ray to the
+  sun, and the game's distance. The `.tsv` beside it names every hit as the probes do.
+- **The revealed scene** answers what the scene lacks. The record is taken again with everything the scene leaves
+  out in it (`engine_scene::Reveal`): models hidden from every pass or faded out, hidden mesh groups, hidden
+  characters, and the meshes the mesh rules drop, each marked with why. A
+  camera ray that finds nothing in the scene at the game's surface finds it here, and a ray to the sun finds what
+  the game cast with. Taken as the scene restarts through the enhancements switch, as model files are read again
+  with their dropped meshes.
+- **The report** (`tools/automation/case.py`, `report.md`, with `scene-check.png`, `sun-check.png` and
+  `light-ratio.png`) compares three things with what the game itself says of the same frame: the scene with the
+  game's surfaces, the rays' shadow with its shadow map, the traced light with its own. Each finding is a region
+  with a pixel to probe and, from the revealed scene, what is there and why it was left out. Run it with
+  `uv run --with numpy --with pillow --with scipy python tools/automation/case.py`.
+
+The running game takes commands from files (`src/dev/automation.hpp` lists them, `tools/automation/fx.py` sends them):
+the probes at any pixel (`probe <x> <y>`), the camera anywhere while frozen, settings and debug views, the Lua
+console, and `reveal <hash>`, which tries the scene with a model in it: a fix for a left-out model can be seen
+working before it is written. `fx.py case` records a case without the key.
+
+**Automation copy.** `tools/automation/install.ps1` makes a copy of the game from hard links with this build in it,
+`launch.ps1` runs it off-screen, `fx.py --copy boot` steps it from launch to free roam in about 40 seconds, and
+`fx.py --copy acc` goes on into the helicopter's cabin (`TppMission.ReserveMissionClear` for mission 40050). The title
+screen shows the same cabin but moves on by itself: a freeze there lands in a loading screen, which stalls under the pause
+and renders nothing. It reads
+and writes its own saves (`PhantomFX-automation/saves`, `src/dev/save_redirect.hpp`), and `launch.ps1` checks the player's
+files are unchanged afterwards. Never run it beside the player's game: `launch.ps1` would put back saves the
+player's game wrote meanwhile.
+
+**Back to a case.** `fx.py replay [<case>]` takes a case of either game, the latest by default, and installs the
+checkout's build into a fresh copy with the case's settings; then it goes to the case's map and the player's
+place, sets its time and weather, freezes its camera, records the case again as `<case>-replay` and says how nearly
+the view matches. It takes about a minute, so a fix is checked against the player's frame after every rebuild. The cabin
+is reached as above. A story mission or a cutscene comes back as that place in the map's free roam, without what it
+put there.
+
+**Scenarios.** Spots that have looked wrong, or matter most, are kept in `tools/automation/scenarios.json`: each one's
+place, why it is there and the numbers its report gave, what to expect from then on. `fx.py scenario <name> "<why>" [<case>]`
+makes one from a case; `fx.py scenarios` takes a fresh copy with this checkout's build and the player's settings through
+them all, in about a minute each, and says what got worse, past what runs of one spot differ by (`WORSE_*` in `case.py`). Each
+run leaves `before-after.png` beside its report. After a change meant to show, `--accept` takes the run as the new
+expectation. A scenario's `via` names a free roam to go through first, where the way in changes the frame. Each scenario's
+picture and depth stay in `mgsv-automation/baselines`, out of the repository: they are the game's images. The numbers depend on
+the settings, so a run under others is a reason to accept, not a fault.
+
 ### Costs
 
 Diagnostics ends with what the add-on's passes cost on the GPU (`src/performance.cpp`): one row
@@ -469,7 +544,7 @@ the state back there for the overlay. Nothing is saved.
 
 ### Game Lua
 
-`src/game_lua.cpp` runs Lua in the game's own script state, on the game thread at the main loop's
+`src/dev/game_lua.cpp` runs Lua in the game's own script state, on the game thread at the main loop's
 frame start, the way the game's own calls into it run. The dev build's Developer page has a **Lua
 console** on it: Ctrl+Enter or Run runs the box's code at the next frame start, and the output box
 shows what it printed and returned, or its error with the stack.
@@ -494,7 +569,7 @@ shows what it printed and returned, or its error with the stack.
 
 ### Travel
 
-The dev build's Developer page has **Travel** (`src/travel.cpp`): Afghanistan, Africa or Mother
+The dev build's Developer page has **Travel** (`src/dev/travel.cpp`): Afghanistan, Africa or Mother
 Base free roam from any free roam, after one loading screen, without the helicopter and the sortie
 screens. It runs a chunk through Game Lua, and a toast says whether the game left or why not.
 
@@ -515,6 +590,89 @@ screens. It runs a chunk through Game Lua, and a toast says whether the game lef
   Base (9.12, 8.75, -42.43), the Command platform's first helipad (landing point
   `cl00pl0_mb_fndt_plnt_heli_30050` in `mbdvc_map_mbstage_parameter.lua`, the same in every
   layout).
+- **Shared.** The leaving and the arrival on foot are Lua helpers in `src/dev/travel.cpp`, which
+  `travel::depart` puts ahead of a chunk. The cutscene player leaves the same way.
+
+### Cutscenes
+
+The dev build's Developer page has **Cutscenes** (`src/dev/cutscenes.cpp`): a searchable list of the
+game's cutscenes and a Play button, for free roam and the ACC. The game calls a cutscene a demo.
+Search takes the mission's code or title, the name in its script or the demo id.
+
+- **List.** `src/dev/cutscene_list.hpp` holds 198 cutscenes: each mission's `demoList` (157, without the
+  names that repeat a demo id and the placeholders that are not cutscenes) and 41 of the 47 in
+  `TppDefine.MB_FREEPLAY_DEMO_PRIORITY_LIST`. Only the running mission's list is in memory, so the
+  file is written out from the game's `s*_demo.lua` scripts.
+- **Story missions.** The chunk clears free roam or the ACC with Travel's Lua (`travel::depart`),
+  with the cutscene's mission next. That starts the player on foot, and a wrap of
+  `TppSequence.SaveMissionStartSequence` adds a sequence of ours and makes it the mission's
+  start. Its name starts `Seq_Demo`, so the game takes it for a cutscene start: no mission title, no
+  fade-in. It loads the cutscene's demo block when the mission's `demoBlockList` has one, then calls
+  `TppDemo.ReserveInTheBackGround`, which moves the player and `StageBlockCurrentPositionSetter`
+  to the cutscene's start, and `TppDemo.Play` with `waitTextureLoadOnDemoPlay`, which holds 10 s
+  under the cutscene's first camera. The name is looked up again through `dem_invDemoList`: the game
+  files a demo id under one name only, and calls `onEnd` under that one.
+- **Stages.** A mission can reload part way through to other packs, at times in another location
+  (`TppMission.Reload`, `TppMissionList.missionPackTable`). A demo block holds the cutscene, but the
+  actors and the set can be in those packs: Hellbound's `Demo_MotherBase` on the mission's first
+  stage is Huey alone in fog, over a map that has no Mother Base. So the list gives such a cutscene
+  its stage, as the fields `TppMission.Reload` takes, and the sequence reloads there first, keeping
+  the `SaveMissionStartSequence` wrap for the second start. The game takes that reload for a mission
+  start (`TppMission.IsMissionStart`) and puts the mission's preloaded demo block back, so the
+  cutscene's block has to load after it. The start position goes first, in both of its copies
+  (`TppPlayer.ResetInitialPosition` and `ResetMissionStartPosition`). Coming from the ACC the
+  player has the mission's `NO_HELICOPTER_MISSION_START_POSITION`, the reload copies
+  `gvars.ply_missionStartPos` back over the initial one, and on another location nothing exists
+  there: `Mission.CanStart` stays false and `Seq_Mission_Prepare` never ends.
+- **Placing.** Some cutscenes are placed by the mission's script
+  (`DemoDaemon.SetDemoTransform`, mostly `MotherBaseStage.GetDemoCenter`). The list gives those a Lua
+  function, which runs as the demo starts (`onInit`). `s10040`'s two stay unplaced: the script only
+  moves them on some of the mission's routes.
+- **The way out.** `TppMission.AbortForRideOnHelicopter`, the menu's abort, back to the ACC of the
+  location: Afghanistan's for any location but Africa and Mother Base. No mission is cleared, so the
+  story and the score stay as they are. It runs when the cutscene ends or is skipped, and when 60 s
+  pass without it starting. A cutscene's start wait turns a soldier into Snake and its end turns them
+  back, so the 60 s path puts `mvars.dem_tempPlayerInfo` back itself. A mission that starts on a
+  cutscene is not in game until the cutscene ends (`mis_missionStateIsNotInGame`), and
+  `TppMission.Update` leaves an abort waiting until it is, so the sequence calls
+  `TppMission.EnableInGameFlag` first.
+- **Mother Base.** These use the game's queue (`TppDemo.SetNextMBDemo`), since
+  `TppMbFreeDemo.PlayMtbsEventDemo` and the `f30050` sequences set up the cluster, the time, the
+  weather and the buddy. Arriving from the ACC, `missionPackTable[30050]` fills the queue itself
+  (`TppDemo.UpdateMBDemo`), so that is wrapped to put the pick back, until the game plays it. The end
+  of a cutscene runs `demoOptions[name].OnEnd`, which can start story events, change the buddy or
+  end the mission, and sets `gvars.mbFreeDemoPlayedFlag`. All of that lands in the save, also with an
+  abort's `isNoSave`, which still writes the `gvars`. So the chosen cutscene and those it leads to
+  (`GetNextDemoNameOrNil`) run without `OnEnd`, and their flags go back. `NuclearEliminationCeremony`
+  ends in the credits and a mission clear, which give heroism and write the save, so the last of its
+  chain clears `mvars.f30050_demoName` and the sequence ends as any other. If the game plays another
+  cutscene than the pick, the wraps go, that one runs as usual and the status says so. The player
+  stays in Mother Base free roam afterwards.
+- **Status.** The scripts cannot call out, so while a cutscene is on its way the add-on reads
+  `TppDemo.phantomFxStatus` once every 60 frames. `PhantomFX.log` gets "playing", "done" or the
+  problem, and a problem also shows as a toast. A Mother Base cutscene says "playing" as the game
+  asks for it and "done" at the end of its chain. Between the two, Play is refused: leaving mid-cutscene
+  would lose the end that puts the end scripts back. It is a field of a module because the game's
+  `_G` has a metatable that drops new globals without an error.
+
+Known limits:
+
+- A cutscene runs in the mission's time and weather. The sequence that plays it in the story often
+  sets its own (`TppClock.SetTime`, `TppWeather.ForceRequestWeather`).
+- `DdogGoWithMe` and `QuietWishGoMission` are not in the list. They start when the player leaves
+  Mother Base by helicopter (`TppDefine.MB_FREEPLAY_RIDEONHELI_DEMO`, `Seq_Demo_Play_Sortie`), and
+  their `OnEnd` is what ends the mission, so they cannot run without it.
+- `DevelopedBattleGear1`, `2`, `4` and `5` are not in the list. The queue only opens the hangar
+  (`TppDemo.IsBattleHangerDemo`): `Seq_Demo_BattleHanger` picks the cutscene from
+  `TppStory.GetBattleGearDevelopLevel`, and the hangar's pack too, so only the save's level can play,
+  and at level -1 the pack does not exist. Forcing the level could leave a save in a hangar on a
+  level it has not reached.
+- The five cutscenes of `f30010` do not load: four are in a side op's pack and `Demo_RecoverVolgin`
+  needs the `recoverVolginDemo` label. Their labels say so, and the 60 s limit ends them in the ACC,
+  with a toast.
+- The 60 s limit starts in our sequence. A hang before that, in `Seq_Mission_Prepare`, stays on the
+  black screen until the game is killed.
+- Mother Base cutscenes have no time limit. If the game never asks for the pick, no toast says so.
 
 ## How Fox Engine renders
 
@@ -1189,6 +1347,47 @@ level at Camp Omega's cliffs. No names in the exe: the class names here are desc
   forward, not glass: most of those are `fox3DFW_ConstantSRGB`. One with shadow bit 0 the game never casts,
   and the scene leaves it out for every model. Glass is known by its material instead (see "Path tracing",
   "Glass and mirrors"): taken as solid, a helicopter's windows kept the sun out of its cabin (2026-10-25).
+
+### Materials
+
+The pixel shaders' `cPSMaterial` (`b4`, `float4 m_materials[8]`) has no copy on the GPU: it comes from a pool in main
+memory at every draw, so a write to the pool shows at the next one. Zeroing the self-lit materials from outside
+the running game put out a floodlight panel and a wall lamp's bulb and they came back with the values; the light
+those lamps throw on the walls stayed, as it is a game light of its own (2026-11-01). The remastering tool
+(`src/remaster`, `src/dev/remaster`) stands on this.
+
+- **The pool.** At `[0x2B743B0]`: its rows at `+0x8`, their number at `+0x10` (5248), those in use at `+0x14`, a slot
+  for each row at `+0x20` (12 bytes: the next in its hash bucket at `+2`, its uses at `+4`, its state at `+8`). A handle
+  is the row << 17 with what it is a handle to in the low bits, 7 for a material.
+- **A material.** 0xD0 bytes: its name's StrCode64 at `+0x8` (48 bits), a hash of the rest at `+0x18`, its technique's
+  handle at `+0x20` (kind 4 on model materials; 2 and 12 for others), the registers it uses at `+0x24`, its textures in
+  the low 4 bits of `+0x25`, the eight registers at `+0x30`, the textures' handles at `+0xB0`.
+- **A technique.** Pool at `[0x2B743A8]`, rows of 0x50 bytes: its name's StrCode64 at `+0x8`; at `+0x28` a list of its
+  parameters (their number, then at `+8` a pointer to the low 32 bits of their names); at `+0x30` an object whose `+8`
+  points at the packing, a byte for each register component: parameter << 2 | which of its components. So
+  `SelfColor` fills register 0 of the self-lit techniques and `SelfColorIntensity` is x of register 1. The game's own
+  setter by name is `0x27A1C0`.
+- **Self-lit shaders.** `fox3dfw_constant*`: texture x `cb4[0]` x `cb4[1].x` x the exposure (`cb2[23].z`), linear.
+- **A draw.** The replay `0x2D6310` takes the material's row from the low 15 bits of the packet's first word (all ones
+  for none), `0x2D6A60` copies its registers into constant slot 4 (`0x2C5F30`), and `0x2C5A10` maps the buffer
+  `WRITE_DISCARD` and copies them in. Each slot holds its buffer, its source in main memory at `+8` and its size at `+0x18`.
+- **Making one.** A model's first build is `0x26B1D0`, in the order of the file's material instances; `0x26C750` makes
+  a model's materials again from its file, and `0x1CDC70` is the game's own call of it. A model's materials: `[model +
+  0x188]`, their number at `+0x58`, their handles at `+0x60`. Values go in raw, but for `MatParamIndex_0` to `3`, which
+  `0x269D30` scales. `0x27AD70` looks a builder's hash up, else makes a row and calls `0x1C8960`.
+- **Merging.** `0x1C8960` takes a handle, hashes the material (`0x27AC10`: name, technique, counts, textures, registers),
+  and if an equal one is in the pool (`0x279FA0`, the same fields) drops it and returns that one. So a row is one look
+  and a row's uses can span model files: a lamp type is one row. Changing a material at run time is `0x1CA1B0` (a
+  row of its own, cloned if shared), the write, `0x1C8960` again; `0x276B70` is that for one vector, with hundreds of
+  callers. A row's hash is only for this merge: a write that leaves it stale makes the next equal build a row of its own.
+- **Where the player is.** The script variables' block (`[0x2C16920]`) holds `vars.locationCode` at `+0x10`, `missionCode` at
+  `+0x12`, `playerPosX` to `Z` at `+0xEC` and `playerRotY` at `+0x108`, each a read away, without Lua.
+- **Files share vectors.** 322 of 707 loaded files have a material vector that two materials read, so a value cannot
+  be changed by writing it in the file. Names are not unique either: 734 names over 1332 material instances;
+  `ca117249330f` had three lamps of 221182, 100000 and 600 in one mission.
+- **The values.** Mission 10070 had 21 self-lit material instances of at least 10: 61 to 341,182, median 20,000, the sun
+  about 20,000. Of 2670 rows 15 use all eight registers. Most materials carry only `MatParamIndex_0`, UV repeats,
+  `Incidence_Color`, the glass parameters or the self-lit ones: a surface's colour and roughness are its textures'.
 
 ## What the add-on changes
 
@@ -2306,12 +2505,12 @@ in Direct3D 12, puts it in the frame's tables, moves it out of the common state 
 and marks a `SharedOutput` written once the frame is submitted. A `SharedOutput` keeps its own lock, since the kick
 and the threads recording the next frame use it at the same time.
 
-So far the lamps' shadow rays are a trace (`lamp_shadow_rays.*`); the others are recorded by `gi_renderer` itself.
+So far the lamps' shadow rays are a trace (`lamp_shadow_rays.*`), and so is a dev build's record of a debug case (`src/dev/inspect_trace.*`); the others are recorded by `gi_renderer` itself.
 
 ### Kernels and their slots
 
 A kernel's HLSL is the one home of its slots: the `register()` lines, each in the file of the trace that owns it. A
-kernel's one home is its `add_gi_kernels` line in `CMakeLists.txt`. The build reads the rest from the compiled kernels,
+kernel's one home is its `add_gi_kernels` line in `CMakeLists.txt` (`src/dev/dev.cmake` for a dev build's). The build reads the rest from the compiled kernels,
 so nothing is typed twice.
 
 `tools/kernel_bindings` reflects each kernel's DXIL with DXC's own reflection (`dxcompiler.dll`, beside `dxc.exe`) and
@@ -2399,6 +2598,46 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   after the signal, so a terrain ring made again could read the heightmap's copy while Direct3D 11 still
   wrote it: in game the shadow probe showed one pixel's sun ray blocked by the terrain, then by nothing,
   flipping every two seconds or so with the camera still, the rings' refresh.
+- **Layers** (2026-11-01). The base texture is not always a mesh's colour: 52 of the game's pixel shaders lay a second
+  texture over it, cloth (`fox3ddf_cloth*`) among them. `HitAlbedo` read the base alone, so Kaz Miller's beige coat was
+  white in a pane's reflection, where the rays see his front and no G-buffer pixel: its base (`156862373e7f0bd0`)
+  averages 251, 251, 251, and all its beige is its layer's, whose 134, 117, 97 is the G-buffer's 134, 116, 97. Read from
+  the frame and the textures (F10 frame-116245, the textures from the game's archives): the reflection's blue-white is
+  the blue lamp before him at 1:1.3:2, on a surface that took nothing from it; every mesh of his model was drawn, so no
+  hidden mesh is at work, and his row's F0 of 0.016 rules out a highlight.
+
+  From the shaders' disassembly, `coverage` being the mask x the layer's alpha: `MulLayerTexture` gives lerp(base,
+  base x layer, coverage), `BlendLayerTexture` lerp(base, layer, coverage) in linear light, and `SRGBBlendLayerTexture`
+  the same on the encoded values; the multiply is on the encoded values too, as these shaders read the textures
+  unconverted. `LayeredAlbedo` does each as its shader does: the scene's copies are viewed as sRGB, so it encodes them
+  first. Done in linear light the multiply was up to 1.82 times too bright, a material's mean on a dark layer under a
+  soft mask; the encoded blend's worst was 1.1%. The layer's coordinates are (second coordinates + (`UShift_UV`,
+  `VShift_UV`)) x (`URepeat_UV`, `VRepeat_UV`) in every one of them (cloth's vertex shaders have no shift, and no cloth
+  material names one). The mask (`LayerMask_Tex_LIN`) is not read alike:
+
+  | Shaders | Channel | Coordinates |
+  |---|---|---|
+  | Most | Red | The first, the base's |
+  | `ly_mul_2subnorm`, `layer_bl_2snm` | Blue | The first |
+  | `*_mu` | Red | The third |
+  | `*_2snm_nu` | Blue | The third |
+  | `layer_bl_mu_nu` | Red | The fourth |
+  | `layersb_snm_nlmu` | Red | The second, unmapped |
+
+  No parameter says what a technique does with its layer: `LayerTechniques` has a row for each of 32, from 59 F10
+  records, each mesh's technique by its pixel shader in the frame's G-buffer draws, each row from that shader's
+  disassembly. The game's files agree: the meshes of the techniques needing third coordinates have them (but one of 92
+  on `layer_bl_mu`, which keeps its base texture), and only `layer_bl_mu_nu`'s have fourth ones. Any other technique
+  keeps its base texture, though its material may name a layer: 86 of the 1,468 layered meshes in the game's packs,
+  of 16 techniques in no record. Of 104 layered meshes loaded in one session 29 had one of two such techniques, one
+  of them with a white base under a black layer, which multiplied would turn black in the rays.
+
+  A mesh waits for its layer's mask as for its layer: until the copy comes the layer would lie on all of it. The second
+  coordinates are in the file as `HitAlbedo` needs them (104 of 104 meshes read from the game, two halves each). The
+  shaders' sheen (`Incidence_Color`, a tenth of the colour at most on the coat, at grazing angles) and dirt (by the
+  vertices' colours, which the scene does not keep) are left out. The second coordinates, and a mask's where they are
+  its own, are in the pool after the mesh's other bytes (`GIGeometry::layerUvOffset`, `layerMaskUvOffset`), and a
+  character keeps them there as its posed vertices move: they do not change.
 - **Alpha test.** The game's shadow pass (`ModelForward_Shadow`) discards where the base texture's alpha is
   below `m_param.w x 0.5`, `m_param` being the pixel shaders' per-draw system constants (`cPSSystem`, `b0`,
   mapped per draw); the G-buffer below `m_param.w` times a dither averaging a half. Measured at the draws
@@ -3359,7 +3598,7 @@ Two halves, one mechanism:
   composite. Its roughness is fixed at 0.05, near a mirror: the game's shader samples its cube map without one, and
   the ripples' normal carries the variation.
 - **Shadow of a surface.** `TraceSurfaceReflections` also traces the sun for each glass and mirror pixel, into
-  `g_ForwardShadow` (u97): the glass composite reads it. Water traces none and writes 1: the composite ignores the
+  `g_ForwardShadow` (u100): the glass composite reads it. Water traces none and writes 1: the composite ignores the
   value at water's pixels (water takes no sun shadow; the bed under it is lit by the sun pass as the rest of the
   scene is).
 

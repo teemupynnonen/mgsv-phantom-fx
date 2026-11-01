@@ -1,6 +1,8 @@
 #include "features/photo_mode/photo_mode.hpp"
 
 #include "clock.hpp"
+#include "dev/held_camera.hpp"
+#include "dev_tools.hpp"
 #include "device_check.hpp"
 #include "features/photo_mode/focus.hpp"
 #include "game_code.hpp"
@@ -13,6 +15,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <string>
 
 namespace phantom_fx::photo_mode
@@ -156,8 +159,26 @@ FreeCamera fromGame(const CameraState& game)
         std::clamp(std::asin(std::clamp(forward[1], -1.0f, 1.0f)), -MaxPitch, MaxPitch), game.focusDistance};
 }
 
+void place(FreeCamera& camera, const Pose& pose)
+{
+    std::memcpy(camera.position, pose.position, sizeof(camera.position));
+    camera.yaw = pose.yaw;
+    camera.pitch = std::clamp(pose.pitch, -MaxPitch, MaxPitch);
+}
+
+[[maybe_unused]] Pose poseOf(const FreeCamera& camera)
+{
+    Pose pose;
+    std::memcpy(pose.position, camera.position, sizeof(pose.position));
+    pose.yaw = camera.yaw;
+    pose.pitch = camera.pitch;
+
+    return pose;
+}
+
+
 // The rotation is the yaw about +y after the pitch about +x; looking up is a negative turn about +x.
-CameraState photoState(const FreeCamera& camera, const CameraState& game)
+CameraState photoState(const FreeCamera& camera, const CameraState& game, bool isSharp)
 {
     const float sy = std::sin(camera.yaw / 2), cy = std::cos(camera.yaw / 2);
     const float sp = std::sin(-camera.pitch / 2), cp = std::cos(-camera.pitch / 2);
@@ -167,7 +188,7 @@ CameraState photoState(const FreeCamera& camera, const CameraState& game)
     std::memcpy(state.transform, rotation, sizeof(rotation));
     std::memcpy(state.transform + 4, camera.position, sizeof(camera.position));
     state.focusDistance = camera.focusDistance;
-    state.aperture = blur ? fNumber.load() : SharpAperture;
+    state.aperture = blur && !isSharp ? fNumber.load() : SharpAperture;
     state.anyAperture = 1;
 
     return state;
@@ -235,8 +256,11 @@ double secondsSince(LONGLONG& last)
 void selectorUpdate(std::uint8_t* selector)
 {
     auto* camera = activeCamera(selector);
-    const bool wanted = requested;
-    // Without a camera (a loading screen) the request lapses.
+    std::optional<Pose> heldCamera;
+    if constexpr (DevTools) heldCamera = held_camera::next();
+
+    const bool wanted = requested || heldCamera;
+    // Without a camera (a loading screen) the request lapses; a held camera waits for one.
     if (wanted && !flying && !camera) requested = false;
     else if (wanted && !flying)
     {
@@ -258,6 +282,11 @@ void selectorUpdate(std::uint8_t* selector)
     if (!flying || !camera)
     {
         originalSelectorUpdate(selector);
+        if constexpr (DevTools)
+        {
+            if (camera) held_camera::remember(poseOf(fromGame(stateOf(camera))));
+        }
+
         return;
     }
 
@@ -265,14 +294,19 @@ void selectorUpdate(std::uint8_t* selector)
     const int turnX = mouseX.exchange(0), turnY = mouseY.exchange(0);
     const std::uint8_t keys = heldKeys;
     const auto game = stateOf(camera);
-    fly(freeCamera, keys, turnX, turnY, seconds);
-    if (const float target = focus::distance(); target > 0)
-        freeCamera.focusDistance += (target - freeCamera.focusDistance) * (1 - std::exp(-seconds / FocusTime));
+    if (heldCamera) place(freeCamera, *heldCamera);
+    else
+    {
+        fly(freeCamera, keys, turnX, turnY, seconds);
+        if (const float target = focus::distance(); target > 0)
+            freeCamera.focusDistance += (target - freeCamera.focusDistance) * (1 - std::exp(-seconds / FocusTime));
+    }
 
     // Only this update sees the free camera; the game's camera keeps its own.
-    apply(camera, photoState(freeCamera, game));
+    apply(camera, photoState(freeCamera, game, static_cast<bool>(heldCamera)));
     originalSelectorUpdate(selector);
     apply(camera, game);
+    if constexpr (DevTools) held_camera::remember(poseOf(freeCamera));
 }
 
 // In photo mode the mouse turns the free camera and the game gets no presses. Releases still reach
@@ -366,9 +400,12 @@ bool uiHidden() noexcept
 
 void leave() noexcept
 {
+    if constexpr (DevTools) held_camera::release();
+
     requested = false;
     flying = false;
     pause(false);
     focus::setActive(false);
 }
+
 }

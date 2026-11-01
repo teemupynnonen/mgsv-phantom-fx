@@ -1,12 +1,11 @@
 #include "game_loop.hpp"
 
 #include "character.hpp"
+#include "dev/dev.hpp"
 #include "dev_tools.hpp"
 #include "device_check.hpp"
 #include "features/frame_generation/frame_generation.hpp"
 #include "game_code.hpp"
-#include "game_lua.hpp"
-#include "travel.hpp"
 #include "weather.hpp"
 
 #include <Windows.h>
@@ -46,11 +45,7 @@ void frameStart(std::uint8_t* loop, void* argument)
     frame_generation::beginSimulation(frame);
     weather::onFrameStart();
     character::onFrameStart();
-    if constexpr (DevTools)
-    {
-        travel::onFrameStart();
-        game_lua::onFrameStart();
-    }
+    if constexpr (DevTools) dev::onFrameStart();
     originalFrameStart(loop, argument);
     current = frame;
 }
