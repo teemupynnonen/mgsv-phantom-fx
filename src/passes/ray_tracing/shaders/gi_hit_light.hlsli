@@ -543,15 +543,16 @@ bool HitIsLeaf(HashGridCache_Visibility visibility)
 }
 
 // The light at a hit from one of the frame's point and spot lights, chosen by its light here without
-// shadows (weighted reservoir sampling, a candidate a light), through a shadow ray to it: its light before
-// the cosine, over the chance it was chosen.
+// shadows (weighted reservoir sampling, a candidate a light that can reach it), through a shadow ray to it:
+// its light before the cosine, over the chance it was chosen.
 float3 SampledLocalLightReaching(float3 world, float3 normal, float3 origin, float tolerance, inout Random random, out float3 towardsLight)
 {
     towardsLight = normal;
     float total = 0.0f, chosenWeight = 0.0f;
     float3 chosenLight = 0.0f, chosenDirection = 0.0f;
     float chosenDistance = 0.0f, chosenClearance = 0.0f;
-    for (uint i = 0; i < g_Frame.localLightCount.x; ++i)
+    uint4 nearby = LightsNear(world);
+    for (uint i = NextLight(nearby, 0u); i < GI_MAX_LOCAL_LIGHTS; i = NextLight(nearby, i + 1u))
     {
         GILocalLight candidate = g_Frame.localLights[i];
         float3 toLight;

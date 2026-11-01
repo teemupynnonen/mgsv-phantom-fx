@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Path tracing is faster where many lights burn.** Each pixel and each ray's hit now looks only at the lights that can
+  reach it, not at every light in the frame. At Mother Base at night that saves 4.4 ms of a 32 ms frame, about 31 to 36 fps,
+  and the picture stays the same.
 - **Rivers and liquids take the rays' reflections, and a river's bed takes the caustics.** Under path tracing the water
   reflects what is around it, from where it is now and not where it was a frame ago, with the game's own ripples and the
   rain's rings on it. It fades at the shore and behind the fog as the water itself does. It no longer takes the shadow map's

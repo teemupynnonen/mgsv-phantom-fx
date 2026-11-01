@@ -11,6 +11,7 @@
 #include "log.hpp"
 #include "passes/ray_tracing/gi_d3d12.hpp"
 #include "passes/ray_tracing/gi_scene.hpp"
+#include "passes/ray_tracing/light_bins.hpp"
 #include "passes/ray_tracing/scene_contents.hpp"
 #include "passes/ray_tracing/shaders/gi_shared.h"
 #include "passes/ray_tracing/trace.hpp"
@@ -390,6 +391,7 @@ GIFrameConstants constantsOf(const Frame& frame, std::uint32_t newGeometries, st
             {light.maskTile, 0, 0, 0}};
     }
     constants.localLightCount = {static_cast<std::uint32_t>(localLights), frame.localLightRays, 0, 0};
+    light_bins::fill(constants);
 
     return constants;
 }
