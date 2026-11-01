@@ -543,8 +543,8 @@ bool HitIsLeaf(HashGridCache_Visibility visibility)
 }
 
 // The light at a hit from one of the frame's point and spot lights, chosen by its light here without
-// shadows (weighted reservoir sampling, a candidate a light), through a shadow ray to it: its light before
-// the cosine, over the chance it was chosen.
+// shadows (weighted reservoir sampling, a candidate a light that can reach it), through a shadow ray to it:
+// its light before the cosine, over the chance it was chosen.
 float3 SampledLocalLightReaching(float3 world, float3 normal, float3 origin, float tolerance, inout Random random, out float3 towardsLight)
 {
     towardsLight = normal;
@@ -552,26 +552,25 @@ float3 SampledLocalLightReaching(float3 world, float3 normal, float3 origin, flo
     float3 chosenLight = 0.0f, chosenDirection = 0.0f;
     float chosenDistance = 0.0f, chosenClearance = 0.0f;
     uint4 nearby = LightsNear(world);
-    for (uint word = 0; word < 4u; ++word)
-        for (uint bits = nearby[word]; bits != 0u; bits &= bits - 1u)
-        {
-            GILocalLight candidate = g_Frame.localLights[word * 32u + firstbitlow(bits)];
-            float3 toLight;
-            float lightDistance;
-            float3 reaching = LocalLightReaching(candidate, world, toLight, lightDistance);
-            float weight = luminance(reaching) * dot(normal, toLight);
-            if (!(weight > 0.0f)) continue;
+    for (uint i = NextLight(nearby, 0u); i < GI_MAX_LOCAL_LIGHTS; i = NextLight(nearby, i + 1u))
+    {
+        GILocalLight candidate = g_Frame.localLights[i];
+        float3 toLight;
+        float lightDistance;
+        float3 reaching = LocalLightReaching(candidate, world, toLight, lightDistance);
+        float weight = luminance(reaching) * dot(normal, toLight);
+        if (!(weight > 0.0f)) continue;
 
-            total += weight;
-            if (random.rand() * total < weight)
-            {
-                chosenWeight = weight;
-                chosenLight = reaching;
-                chosenDirection = toLight;
-                chosenDistance = lightDistance;
-                chosenClearance = ClearanceTowards(candidate, toLight);
-            }
+        total += weight;
+        if (random.rand() * total < weight)
+        {
+            chosenWeight = weight;
+            chosenLight = reaching;
+            chosenDirection = toLight;
+            chosenDistance = lightDistance;
+            chosenClearance = ClearanceTowards(candidate, toLight);
         }
+    }
 
     if (!(chosenWeight > 0.0f)) return 0.0f;
 

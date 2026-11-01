@@ -3,7 +3,7 @@
 // game's light shaders. Each light's light as those shaders work it out (its falloff, a spot's cone and
 // mask, the game's volume for it, its diffuse and specular scales, the foliage's light through its leaves,
 // its specular table). A pixel picks lights in proportion to their light there without shadows (weighted
-// reservoir sampling over all of them, white noise) and traces a shadow ray to a point on each picked light:
+// reservoir sampling over those that can reach it, white noise) and traces a shadow ray to a point on each picked light:
 // an unbiased estimate of all their shadowed light, which Ray Reconstruction denoises. The light goes out
 // times the exposure, for the game's light targets.
 #include "gi_shadow.hlsli"
@@ -135,22 +135,20 @@ void TraceLampLight(uint2 did : SV_DispatchThreadID)
     }
 
     uint4 nearby = LightsNear(surface.world);
-    for (uint word = 0; word < 4u; ++word)
-        for (uint bits = nearby[word]; bits != 0u; bits &= bits - 1u)
-        {
-            uint i = word * 32u + firstbitlow(bits);
-            float3 diffuse, specular, toLight;
-            if (!LampLightAt(g_Frame.localLights[i], surface, diffuse, specular, toLight)) continue;
+    for (uint i = NextLight(nearby, 0u); i < GI_MAX_LOCAL_LIGHTS; i = NextLight(nearby, i + 1u))
+    {
+        float3 diffuse, specular, toLight;
+        if (!LampLightAt(g_Frame.localLights[i], surface, diffuse, specular, toLight)) continue;
 
-            float weight = luminance(diffuse + specular);
-            total += weight;
-            [unroll] for (uint k = 0; k < PickedLights; ++k)
-                if (random.rand() * total < weight)
-                {
-                    picked[k] = i;
-                    pickedWeight[k] = weight;
-                }
-        }
+        float weight = luminance(diffuse + specular);
+        total += weight;
+        [unroll] for (uint k = 0; k < PickedLights; ++k)
+            if (random.rand() * total < weight)
+            {
+                picked[k] = i;
+                pickedWeight[k] = weight;
+            }
+    }
 
     float3 diffuseLight = 0.0f, specularLight = 0.0f;
     if (total > 0.0f)

@@ -123,6 +123,8 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_LIGHT_BIN_SIZE 2.0f
 #define GI_LIGHT_BINS_ACROSS 128u
 #define GI_LIGHT_BINS_HIGH 64u
+// How far past the game's volume for it a light still gives light, metres (LocalLightReaching).
+#define GI_LIGHT_VOLUME_MARGIN 0.02f
 
 // A point or spot light as its shadow rays and the global illumination's hits need it: a point in the
 // world whose light falls off as the game's light shaders have it (LocalLightAt in gi_light.hlsl), cut

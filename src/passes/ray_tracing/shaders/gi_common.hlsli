@@ -638,7 +638,7 @@ float3 LocalLightReaching(GILocalLight light, float3 world, out float3 toLight, 
     if (lightDistance >= light.position.w) return 0.0f;
 
     // The game lights only within the light's volume: a fill light's box keeps its 200 m of reach to its room.
-    const float margin = 0.02f;
+    const float margin = GI_LIGHT_VOLUME_MARGIN;
     if (light.volumeLow.w > 0.0f && (any(world < light.volumeLow.xyz - margin) || any(world > light.volumeHigh.xyz + margin))) return 0.0f;
 
     // A point's distance is at least its least, plus its added; a spot's is as it is.
@@ -662,6 +662,22 @@ uint4 LightsNear(float3 world)
     bin = clamp(bin, int3(0, 0, 0), int3(GI_LIGHT_BINS_ACROSS, GI_LIGHT_BINS_HIGH, GI_LIGHT_BINS_ACROSS) - 1);
 
     return g_Frame.lightBinsX[bin.x] & g_Frame.lightBinsY[bin.y] & g_Frame.lightBinsZ[bin.z];
+}
+
+// The first of `lights`, as LightsNear gives them, from the light `from` on; GI_MAX_LOCAL_LIGHTS past the last. A walk from 0
+// keeps the order of g_Frame.localLights.
+uint NextLight(uint4 lights, uint from)
+{
+    uint bitsFrom = ~0u << (from % 32u);
+    for (uint word = from / 32u; word < 4u; ++word)
+    {
+        uint bits = lights[word] & bitsFrom;
+        if (bits != 0u) return word * 32u + firstbitlow(bits);
+
+        bitsFrom = ~0u;
+    }
+
+    return GI_MAX_LOCAL_LIGHTS;
 }
 
 // Its diffuse light at a surface of `normal`.

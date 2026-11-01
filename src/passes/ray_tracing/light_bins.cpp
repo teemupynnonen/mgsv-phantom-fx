@@ -13,8 +13,9 @@ using gi::uint4;
 
 static_assert(GI_MAX_LOCAL_LIGHTS == 4 * 32, "A bin holds four words of a bit a light.");
 
-// Past a light's box: a place the shaders put on a bin's edge may not land in the same bin here.
-constexpr float BoxMargin = 0.05f;
+// Past a light's box, metres: what LocalLightReaching gives past its volume, and room for each side's rounding, as a place the
+// shaders put on a bin's edge may not land in the same bin here.
+constexpr float BoxMargin = GI_LIGHT_VOLUME_MARGIN + 0.03f;
 
 void setBit(uint4& bin, std::uint32_t light) noexcept
 {
@@ -23,10 +24,14 @@ void setBit(uint4& bin, std::uint32_t light) noexcept
 }
 
 // The bin along an axis of a coordinate `offset` metres past the bins' origin: past the ends, the last at that end, as
-// LightsNear in gi_common.hlsli has it.
+// LightsNear in gi_common.hlsli has it. Kept to the bins before it turns into an int: a reach past an int's bins, about 4,300,000 km,
+// comes out of the cast as the lowest int, the first bin, and its light would go dark.
 int binOf(float offset, int bins) noexcept
 {
-    return std::clamp(static_cast<int>(std::floor(offset / GI_LIGHT_BIN_SIZE)), 0, bins - 1);
+    const float bin = std::floor(offset / GI_LIGHT_BIN_SIZE);
+    if (!(bin > 0)) return 0;
+
+    return bin < bins ? static_cast<int>(bin) : bins - 1;
 }
 
 // The light's bit in the bins from `low` to `high`, metres past the bins' origin.

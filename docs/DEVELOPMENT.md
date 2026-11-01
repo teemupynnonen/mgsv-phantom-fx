@@ -108,7 +108,7 @@ read until written, the same size keeping what it holds, a new size or a replace
 `tests/d3d12_host_tests.cpp`: Direct3D 12 work at a point of the immediate context, on WARP devices: each side reads what
 the other just wrote, frame after frame as the lists come round, and a failed evaluation leaves the next one fine.
 `tests/light_bins_tests.cpp`: a light that reaches a place is in that place's bins, wherever the light, the place and
-the eye are, in the bins or past them, and stays out of places off its box.
+the eye are, in the bins or past them, however far it reaches, and stays out of places off its box.
 `tests/kernel_table_tests.cpp`: what the build makes of the compiled kernels: each kind of binding its own type,
 what the root signature binds left out, a slot with two names, a name with two shapes and a kernel without
 bindings failing.
@@ -2027,7 +2027,7 @@ the game's lights) is left alone until it runs.
   specular as the sun's: the game's tables, towards the light as a disc of its size (`c4.w`). Until the first sun
   pass has given those tables, the game's shaders draw the lights, as a session can start where no sun shines. A
   pixel picks two lights in proportion to their light there without shadows (weighted
-  reservoir sampling over all the frame's lights, white noise) and traces a shadow ray to a point on each
+  reservoir sampling over the lights that can reach it, see "Light bins", white noise) and traces a shadow ray to a point on each
   one's disc, as the ray-traced lights' rays leave (hair's share, the faces that cast); every light is
   shadowed in full, as the ray-traced lights shadow them. At the draw point (`path_tracing::addLampLight`,
   from `local_lights.cpp`) one full-screen draw adds their diffuse and specular light to the light
@@ -3217,11 +3217,12 @@ asks 6.5 million places, and of the 128 lights only 3.2 can reach one on average
 `src/passes/ray_tracing/light_bins.cpp` keeps three tables in the frame's constants, one for each world axis: 2 m bins around
 the eye, 128 along x and z and 64 along y, each with a bit for every light whose bounding box crosses it. `LightsNear`
 ANDs the three bins of a place. A box is a run of bins along each axis, so this is as sharp as a grid of every cell, which would
-take 16 MB a frame where these take 5 KB. A light's box is its reach, cut to the game's volume for it where that is known.
+take 16 MB a frame where these take 5 KB. A light's box is its reach, cut to the game's volume for it where that is known, and
+5 cm more each way: the 2 cm a light gives past its volume, and room for rounding.
 
 Places and lights past the bins take the last bin at that end, so a far light is still found at its place, only with less
-culling. The bins only ever hold too much: a light left out gives that place no light, and the walk keeps the lights'
-order, so the light, and the random numbers it draws, stay as they were. A test run with a count of every light that
+culling. The bins only ever hold too much: a light left out gives that place no light, and the walk (`NextLight`) keeps the
+lights' order, so the light, and the random numbers it draws, stay as they were. A test run with a count of every light that
 reached a place outside its bins read 0 over 6.5 million places a frame.
 
 | Frozen frame, 2228 x 1254, night | Lights | Walked a place | GPU frame |

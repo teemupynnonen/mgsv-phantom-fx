@@ -11,7 +11,7 @@
 namespace
 {
 using namespace phantom_fx;
-using gi::float4, gi::GIFrameConstants, gi::GILocalLight;
+using gi::GIFrameConstants, gi::GILocalLight;
 
 void expect(bool condition, const char* message)
 {
@@ -39,7 +39,7 @@ int shaderBin(float offset, int bins)
 }
 
 // Whether the bins of `world` hold the light, as LightsNear reads them.
-bool holds(const GIFrameConstants& constants, std::uint32_t light, const std::array<float, 3>& world)
+bool isInBins(const GIFrameConstants& constants, std::uint32_t light, const std::array<float, 3>& world)
 {
     const auto& origin = constants.lightBinsOrigin;
     const auto across = static_cast<int>(GI_LIGHT_BINS_ACROSS), high = static_cast<int>(GI_LIGHT_BINS_HIGH);
@@ -52,13 +52,14 @@ bool holds(const GIFrameConstants& constants, std::uint32_t light, const std::ar
 }
 
 // As LocalLightReaching gives a light any light at all, without its falloff and cone.
-bool reaches(const GILocalLight& light, const std::array<float, 3>& world)
+bool canReach(const GILocalLight& light, const std::array<float, 3>& world)
 {
     const float offset[]{world[0] - light.position.x, world[1] - light.position.y, world[2] - light.position.z};
     if (std::sqrt(offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]) >= light.position.w) return false;
     if (light.volumeLow.w <= 0.0f) return true;
 
-    const float margin = 0.02f;
+    const float margin = GI_LIGHT_VOLUME_MARGIN;
+
     return world[0] >= light.volumeLow.x - margin && world[0] <= light.volumeHigh.x + margin && world[1] >= light.volumeLow.y - margin
         && world[1] <= light.volumeHigh.y + margin && world[2] >= light.volumeLow.z - margin && world[2] <= light.volumeHigh.z + margin;
 }
@@ -92,7 +93,7 @@ void everyLightThatReachesIsInItsBins()
             const auto& light = constants->localLights[sample % GI_MAX_LOCAL_LIGHTS];
             const float reach = light.position.w;
             const std::array world{light.position.x + place(random) * reach, light.position.y + place(random) * reach, light.position.z + place(random) * reach};
-            if (reaches(light, world)) expect(holds(*constants, sample % GI_MAX_LOCAL_LIGHTS, world), "A light that reaches a place is in its bins");
+            if (canReach(light, world)) expect(isInBins(*constants, sample % GI_MAX_LOCAL_LIGHTS, world), "A light that reaches a place is in its bins");
         }
     }
 }
@@ -108,12 +109,12 @@ void aLightStaysOutOfPlacesOffItsBox()
     constants->localLights[1].volumeHigh = {-18, 2, 2, 0};
     light_bins::fill(*constants);
 
-    expect(holds(*constants, 0, {10, 0, 10}), "The light is in the bins of its own place");
-    expect(!holds(*constants, 0, {-10, 0, 10}), "Not along x");
-    expect(!holds(*constants, 0, {10, 12, 10}), "Not along y");
-    expect(!holds(*constants, 0, {10, 0, -10}), "Not along z");
-    expect(holds(*constants, 1, {-20, 0, 0}), "A long reach is in the bins of its box");
-    expect(!holds(*constants, 1, {-40, 0, 0}), "A long reach is cut to the game's volume");
+    expect(isInBins(*constants, 0, {10, 0, 10}), "The light is in the bins of its own place");
+    expect(!isInBins(*constants, 0, {-10, 0, 10}), "Not along x");
+    expect(!isInBins(*constants, 0, {10, 12, 10}), "Not along y");
+    expect(!isInBins(*constants, 0, {10, 0, -10}), "Not along z");
+    expect(isInBins(*constants, 1, {-20, 0, 0}), "A long reach is in the bins of its box");
+    expect(!isInBins(*constants, 1, {-40, 0, 0}), "A long reach is cut to the game's volume");
 }
 
 // A box takes the bins the shader's floor gives its ends, no more: x from 4 to 6 m around the eye here is one bin.
@@ -124,10 +125,28 @@ void aBoxEndsAtItsBinsEdges()
     constants->localLights[0] = pointLight(4.6f, 0, 0, 0.5f);
     light_bins::fill(*constants);
 
-    expect(holds(*constants, 0, {4.1f, 0, 0}), "Its bin starts at 4 m");
-    expect(holds(*constants, 0, {5.9f, 0, 0}), "And ends at 6 m");
-    expect(!holds(*constants, 0, {3.9f, 0, 0}), "Not the bin below");
-    expect(!holds(*constants, 0, {6.1f, 0, 0}), "Not the bin above");
+    expect(isInBins(*constants, 0, {4.1f, 0, 0}), "Its bin starts at 4 m");
+    expect(isInBins(*constants, 0, {5.9f, 0, 0}), "And ends at 6 m");
+    expect(!isInBins(*constants, 0, {3.9f, 0, 0}), "Not the bin below");
+    expect(!isInBins(*constants, 0, {6.1f, 0, 0}), "Not the bin above");
+}
+
+// A light gives light a little past its volume, so where its volume ends just short of a bin's edge it reaches the next bin.
+void aVolumesMarginReachesTheNextBin()
+{
+    auto constants = constantsAt(0, 0, 0);
+    constants->localLightCount.x = 1;
+    auto& light = constants->localLights[0];
+    light = pointLight(5, 0, 0, 100);
+    light.volumeLow = {4.01f, -1, -1, 1};
+    light.volumeHigh = {5.99f, 1, 1, 0};
+    light_bins::fill(*constants);
+
+    const std::array<float, 3> belowBin{3.995f, 0, 0}, aboveBin{6.005f, 0, 0};
+    expect(canReach(light, belowBin), "It reaches past its volume");
+    expect(isInBins(*constants, 0, belowBin), "So it is in the bin below");
+    expect(canReach(light, aboveBin), "And past the other end");
+    expect(isInBins(*constants, 0, aboveBin), "And in the bin above");
 }
 
 // Lights past the bins share the last bin with the places past them.
@@ -138,8 +157,20 @@ void placesPastTheBinsKeepTheLightsPastThem()
     constants->localLights[0] = pointLight(5000, 0, 0, 10);
     light_bins::fill(*constants);
 
-    expect(holds(*constants, 0, {5000, 0, 0}), "A far light is found at its place");
-    expect(!holds(*constants, 0, {0, 0, 0}), "And not around the eye");
+    expect(isInBins(*constants, 0, {5000, 0, 0}), "A far light is found at its place");
+    expect(!isInBins(*constants, 0, {0, 0, 0}), "And not around the eye");
+}
+
+// A reach past what an int counts in bins is one past the bins, not one that wraps to the first of them.
+void aReachPastAnIntIsInEveryBin()
+{
+    auto constants = constantsAt(0, 0, 0);
+    constants->localLightCount.x = 1;
+    constants->localLights[0] = pointLight(0, 0, 0, 1e10f);
+    light_bins::fill(*constants);
+
+    expect(isInBins(*constants, 0, {0, 0, 0}), "Around the eye");
+    expect(isInBins(*constants, 0, {300, 100, -300}), "And past the bins");
 }
 }
 
@@ -150,7 +181,9 @@ int main()
         everyLightThatReachesIsInItsBins();
         aLightStaysOutOfPlacesOffItsBox();
         aBoxEndsAtItsBinsEdges();
+        aVolumesMarginReachesTheNextBin();
         placesPastTheBinsKeepTheLightsPastThem();
+        aReachPastAnIntIsInEveryBin();
     }
     catch (const std::exception& error)
     {
