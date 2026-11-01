@@ -190,9 +190,12 @@ void main(uint3 tid : SV_DispatchThreadID)
                 const float f = (k + 0.5) / visibilitySteps;
                 const int2 q = int2(round(float2(centre) + rayPixels * f));
                 const float surface = abs(signedDistanceAt(q, f * pixelLength));
-                const float ray = length(P + direction * (f * distance));
-                const float thickness = clamp(0.12 * ray, 0.02, max(radiusWorld, 0.02));
-                if (surface < ray - thickness)
+                // The prefiltered distances are view depths, so the ray is compared by its view depth
+                // too: its Euclidean length off the centre runs longer by sqrt(1 + x^2 + y^2), up to a
+                // fifth at the corners, which would read as occluders.
+                const float rayDepth = -(P + direction * (f * distance)).z;
+                const float thickness = clamp(0.12 * rayDepth, 0.02, max(radiusWorld, 0.02));
+                if (surface < rayDepth - thickness)
                 {
                     blocked = true;
                     break;
