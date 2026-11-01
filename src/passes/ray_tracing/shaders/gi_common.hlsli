@@ -531,8 +531,11 @@ float PaneTransmittance(uint row, uint primitive, float2 barycentrics, float foo
         lod = TextureLod(v0, v1, v2, uv0, uv1, uv2, size, footprint);
     }
 
+    // What the mask covers, alone: the pane's own table row is the specular's, and read here it left a pane whose row is
+    // empty or unread (its F0 0) casting no shadow at all, its light as clean as a hidden pane's. Glass's dirt and frost
+    // are its cover, and the sun does not get past them.
     float cover = GlassCover(texture.SampleLevel(g_WrapSampler, uv, lod));
-    return saturate(1.0f - luminance(cover * g_MaterialSpecular.Load(int3(geometry.materialIndex, 0, 0)).rgb));
+    return saturate(1.0f - cover);
 }
 
 // Every ray's flags. The terrain is one-sided, as the game draws it: where its heightmap runs across a
@@ -841,6 +844,17 @@ bool DimsThroughGlass(uint row, uint towards)
     return (towards == RayTowardsSun || towards == RayTowardsLamp) && (g_Geometries[row].flags & GI_GEOMETRY_GLASS) != 0;
 }
 
+// How wide a patch of a pane a ray towards a light reads its mask over. One fixed width, whatever the camera and the
+// distance: read at the camera's pixel, the mask's detail came and went with the camera, and each frame's point on the
+// sun's disc crossed a sharper level at another texel, so a pane's dirt's shadow appeared in patches and boiled near.
+// The width is the sun's disc at a room's distance (2 x tan of its radius x 2 m), soft enough to hold still.
+static const float PaneShadowBlur = 0.02f;
+
+float PaneFootprint(float footprint, float distance, uint towards)
+{
+    return towards == RayTowardsSurface || towards == RayAlongReflection ? footprint : PaneShadowBlur;
+}
+
 // The closest hit of a ray leaving a surface of `normal` from `origin`, past copies of the surface, and
 // in `copies` how many it skipped; `alphaTest` as TraceClosest. Past what does not stop it too (StopsRay:
 // by what it goes `towards`). With `throughHair`, past hair too, which takes its share of
@@ -941,8 +955,8 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
         {
             if (StopsRay(query.CandidateInstanceIndex(), query.CandidateGeometryIndex(), query.CandidateTriangleFrontFace(), towards))
             {
-                transmittance *= PaneTransmittance(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), footprint,
-                    query.CandidateObjectToWorld3x4());
+                transmittance *= PaneTransmittance(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(),
+                    PaneFootprint(footprint, query.CandidateTriangleRayT(), towards), query.CandidateObjectToWorld3x4());
                 nearestHair = min(nearestHair, query.CandidateTriangleRayT());
             }
             continue;
@@ -977,8 +991,8 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
         float footprint = cone.x + every.CandidateTriangleRayT() * cone.y;
         if (DimsThroughGlass(row, towards))
         {
-            transmittance *= PaneTransmittance(row, every.CandidatePrimitiveIndex(), every.CandidateTriangleBarycentrics(), footprint,
-                every.CandidateObjectToWorld3x4());
+            transmittance *= PaneTransmittance(row, every.CandidatePrimitiveIndex(), every.CandidateTriangleBarycentrics(),
+                PaneFootprint(footprint, every.CandidateTriangleRayT(), towards), every.CandidateObjectToWorld3x4());
             nearestHair = min(nearestHair, every.CandidateTriangleRayT());
             continue;
         }

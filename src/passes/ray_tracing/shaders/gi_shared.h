@@ -294,6 +294,10 @@ struct GIShadowProbe
     uint4 startHit;  // On the scene's own surface, its triangle: x its instance + 1, y its geometry, z its primitive; w the
                      // primitive of the whole ray's first hit (hits.w)
     uint4 crossed;   // The first thing between the lifted start and the surface, from the start, as lightNearest; zeros for none
+    // The pane the sun's ray crosses there, if any: what its mask covers and what reaches the start through it.
+    float4 glass;    // x: the pane's cover (GlassCover), y: what it lets through (PaneTransmittance), z: the pane's geometry row,
+                     // w: 1 on a pane met against its face, 0 with none
+    uint4 glassHit;  // x its instance + 1, y its geometry, z its primitive; w its mask texture's id, 0 without one
 };
 
 // The lamp probe: the point and spot lights at the screen's centre pixel, each with a ray from there to
