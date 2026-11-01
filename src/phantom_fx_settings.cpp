@@ -294,7 +294,7 @@ EffectPlan planEffects(const Settings& settings, const EffectConditions& conditi
 }
 
 Configuration::Configuration(const Settings& settings, const Diagnostics& diagnostics, const EffectConditions& conditions)
-    : settings(settings), diagnostics(diagnostics), leftOut(conditions.leftOut), supportedBuild(conditions.supportedBuild),
+    : settings(settings), diagnostics(diagnostics), leftOut(conditions.leftOut), supportedBuild(conditions.supportedBuild), areEnhancementsOn(conditions.enhancements),
       effects(planEffects(settings, conditions))
 {
 }

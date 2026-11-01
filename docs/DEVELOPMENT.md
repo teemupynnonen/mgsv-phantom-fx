@@ -10,9 +10,9 @@ cmake --preset release
 cmake --build --preset release
 ```
 
-CMake downloads MinHook, the DLSS SDK v310.9.1 headers, loader, `nvngx_dlss.dll` and `nvngx_dlssd.dll`, and the
-ReShade 6.8.0 add-on headers with the Dear ImGui header, each pinned by commit and checked by
-SHA-256. Frame generation needs the Streamline SDK 2.14.1, which only its release archive carries:
+CMake downloads MinHook, the DLSS SDK v310.9.1 headers, loader, `nvngx_dlss.dll` and `nvngx_dlssd.dll`, the
+ReShade 6.8.0 add-on headers with the Dear ImGui header, and the nlohmann/json 3.12.0 header, each pinned by commit
+and checked by SHA-256. Frame generation needs the Streamline SDK 2.14.1, which only its release archive carries:
 the first configure downloads it once (about 280 MB, checked by SHA-256) and keeps the headers,
 license and x64 runtime files. FSR needs the AMD FSR SDK 2.3.0's API headers and AMD's signed
 Direct3D 12 DLLs, pinned by commit and checked by SHA-256 like the rest (about 66 MB). The add-on is
@@ -47,8 +47,8 @@ only feeds them (`DiagnosticLog` in `src/log.hpp`, tested with `if constexpr`):
 Its log's first line says "with the diagnostic log". Builds for in-game checks use this preset.
 It also sets `PHANTOM_FX_DEV_TOOLS` (`DevTools` in `src/dev_tools.hpp`), which adds the overlay's
 **Developer** page, below Diagnostics: **Travel** (see "Travel"), **Cutscenes** (see "Cutscenes"),
-the **Lua console** (see "Game Lua") and the log switch above, and the debug cases (see "Debug
-cases"). All of it lives in `src/dev/`, whose README says how the core reaches it and how to detach it.
+the **Lua console** (see "Game Lua"), a line on the remastering tool (**F6** marks, **F7** opens its panel:
+`src/remaster/README.md`) and the log switch above, and the debug cases (see "Debug cases"). All of it lives in `src/dev/`, whose README says how the core reaches it and how to detach it.
 It is left out of a release build altogether, not just switched off: CMake drops the folder's files
 and the `InspectPixels` kernel, and the little the core keeps for it stands behind `DevTools` or
 `#if PHANTOM_FX_DEV_TOOLS`. Those files hook the system's file calls, patch Steam's interfaces and
@@ -128,7 +128,7 @@ This produces `build/release/PhantomFX-<version>.zip` and its `.sha256` checksum
 | `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`, `sl.reflex.dll`, `sl.pcl.dll`, `nvngx_dlssg.dll` | NVIDIA Streamline and the frame generation model |
 | `amd_fidelityfx_loader_dx12.dll`, `amd_fidelityfx_upscaler_dx12.dll`, `amd_fidelityfx_framegeneration_dx12.dll` | AMD FSR upscaling and frame generation |
 | `PhantomFX/README.md`, `CHANGELOG.md`, `LICENSE` | Player documentation and the add-on's license |
-| `PhantomFX/*-LICENSE.txt` | NVIDIA DLSS, NVIDIA Streamline, NVIDIA NRD (global illumination's denoiser), AMD FSR SDK, MinHook, ReShade, Dear ImGui, AMD FidelityFX (RCAS), Bend Studio (screen-space shadows), three-gtvbao and Intel XeGTAO (GTVBAO), AMD Capsaicin (global illumination) |
+| `PhantomFX/*-LICENSE.txt` | NVIDIA DLSS, NVIDIA Streamline, NVIDIA NRD (global illumination's denoiser), AMD FSR SDK, MinHook, ReShade, Dear ImGui, nlohmann/json (the material rules), AMD FidelityFX (RCAS), Bend Studio (screen-space shadows), three-gtvbao and Intel XeGTAO (GTVBAO), AMD Capsaicin (global illumination) |
 
 CPack packages only the `addon` component, so SDK headers, static libraries, tests, debug symbols
 and local settings are left out. ReShade is installed separately by the player.
@@ -242,6 +242,8 @@ what draws it, when that is the feature's own.
 | `src/dev/game_lua.cpp`, `src/dev/game_lua.hpp` | Lua in the game's script state, and the Developer page's console (see "Game Lua") |
 | `src/dev/travel.cpp`, `src/dev/travel.hpp` | The Developer page's travel: free roam in another map, and the way the page's tools leave a mission (see "Travel") |
 | `src/dev/cutscenes.cpp`, `src/dev/cutscenes.hpp`, `src/dev/cutscene_list.hpp` | The Developer page's cutscene player and its list (see "Cutscenes") |
+| `src/remaster/` | The remastering rules: they change the game's materials as they are made, saved in `materials.json` and built into the add-on (see its `README.md`, and "Materials") |
+| `src/dev/remaster/` | The remastering tool that writes them: a dev build's marks, and the panel that tunes them |
 | `src/frame_log.cpp`, `src/frame_log.hpp` | Development diagnostics, off by default: shader log, F10 frame record, constant and texture dumps |
 | `src/dev/automation.cpp`, `src/dev/automation.hpp` | Dev builds: commands from files into the running game, F9's debug cases (see "Debug cases") |
 | `src/dev/inspect_trace.cpp`, `src/dev/inspect_trace.hpp`, `src/dev/inspect.hlsl`, `src/dev/inspect_shared.h` | A debug case's record of every pixel, a trace of its own |
@@ -1345,6 +1347,47 @@ level at Camp Omega's cliffs. No names in the exe: the class names here are desc
   forward, not glass: most of those are `fox3DFW_ConstantSRGB`. One with shadow bit 0 the game never casts,
   and the scene leaves it out for every model. Glass is known by its material instead (see "Path tracing",
   "Glass and mirrors"): taken as solid, a helicopter's windows kept the sun out of its cabin (2026-10-25).
+
+### Materials
+
+The pixel shaders' `cPSMaterial` (`b4`, `float4 m_materials[8]`) has no copy on the GPU: it comes from a pool in main
+memory at every draw, so a write to the pool shows at the next one. Zeroing the self-lit materials from outside
+the running game put out a floodlight panel and a wall lamp's bulb and they came back with the values; the light
+those lamps throw on the walls stayed, as it is a game light of its own (2026-11-01). The remastering tool
+(`src/remaster`, `src/dev/remaster`) stands on this.
+
+- **The pool.** At `[0x2B743B0]`: its rows at `+0x8`, their number at `+0x10` (5248), those in use at `+0x14`, a slot
+  for each row at `+0x20` (12 bytes: the next in its hash bucket at `+2`, its uses at `+4`, its state at `+8`). A handle
+  is the row << 17 with what it is a handle to in the low bits, 7 for a material.
+- **A material.** 0xD0 bytes: its name's StrCode64 at `+0x8` (48 bits), a hash of the rest at `+0x18`, its technique's
+  handle at `+0x20` (kind 4 on model materials; 2 and 12 for others), the registers it uses at `+0x24`, its textures in
+  the low 4 bits of `+0x25`, the eight registers at `+0x30`, the textures' handles at `+0xB0`.
+- **A technique.** Pool at `[0x2B743A8]`, rows of 0x50 bytes: its name's StrCode64 at `+0x8`; at `+0x28` a list of its
+  parameters (their number, then at `+8` a pointer to the low 32 bits of their names); at `+0x30` an object whose `+8`
+  points at the packing, a byte for each register component: parameter << 2 | which of its components. So
+  `SelfColor` fills register 0 of the self-lit techniques and `SelfColorIntensity` is x of register 1. The game's own
+  setter by name is `0x27A1C0`.
+- **Self-lit shaders.** `fox3dfw_constant*`: texture x `cb4[0]` x `cb4[1].x` x the exposure (`cb2[23].z`), linear.
+- **A draw.** The replay `0x2D6310` takes the material's row from the low 15 bits of the packet's first word (all ones
+  for none), `0x2D6A60` copies its registers into constant slot 4 (`0x2C5F30`), and `0x2C5A10` maps the buffer
+  `WRITE_DISCARD` and copies them in. Each slot holds its buffer, its source in main memory at `+8` and its size at `+0x18`.
+- **Making one.** A model's first build is `0x26B1D0`, in the order of the file's material instances; `0x26C750` makes
+  a model's materials again from its file, and `0x1CDC70` is the game's own call of it. A model's materials: `[model +
+  0x188]`, their number at `+0x58`, their handles at `+0x60`. Values go in raw, but for `MatParamIndex_0` to `3`, which
+  `0x269D30` scales. `0x27AD70` looks a builder's hash up, else makes a row and calls `0x1C8960`.
+- **Merging.** `0x1C8960` takes a handle, hashes the material (`0x27AC10`: name, technique, counts, textures, registers),
+  and if an equal one is in the pool (`0x279FA0`, the same fields) drops it and returns that one. So a row is one look
+  and a row's uses can span model files: a lamp type is one row. Changing a material at run time is `0x1CA1B0` (a
+  row of its own, cloned if shared), the write, `0x1C8960` again; `0x276B70` is that for one vector, with hundreds of
+  callers. A row's hash is only for this merge: a write that leaves it stale makes the next equal build a row of its own.
+- **Where the player is.** The script variables' block (`[0x2C16920]`) holds `vars.locationCode` at `+0x10`, `missionCode` at
+  `+0x12`, `playerPosX` to `Z` at `+0xEC` and `playerRotY` at `+0x108`, each a read away, without Lua.
+- **Files share vectors.** 322 of 707 loaded files have a material vector that two materials read, so a value cannot
+  be changed by writing it in the file. Names are not unique either: 734 names over 1332 material instances;
+  `ca117249330f` had three lamps of 221182, 100000 and 600 in one mission.
+- **The values.** Mission 10070 had 21 self-lit material instances of at least 10: 61 to 341,182, median 20,000, the sun
+  about 20,000. Of 2670 rows 15 use all eight registers. Most materials carry only `MatParamIndex_0`, UV repeats,
+  `Incidence_Color`, the glass parameters or the self-lit ones: a surface's colour and roughness are its textures'.
 
 ## What the add-on changes
 

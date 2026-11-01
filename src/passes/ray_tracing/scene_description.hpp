@@ -186,10 +186,15 @@ struct MaterialTextures
 
 ModelFile fileKindOf(std::span<const std::uint8_t> file);
 
+// What the caller makes of a self-lit material's SelfColor and SelfColorIntensity, the material by its
+// name's StrCode64: the mesh's light (ModelPart::emission) follows, its role does not.
+using SelfLightFilter = void (*)(std::uint64_t material, std::array<float, 4>& color, std::array<float, 4>& intensity);
+
 // The model in `file` as the scene takes it, found at `source`; null when the bytes are no FMDL 2.0x
 // the scene reads. With `keepsDropped`, for a revealed scene, the meshes the scene drops are kept as
 // solid ones, marked ModelPart::isDropped.
-std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const std::uint8_t> file, Source source, bool keepsDropped = false);
+std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const std::uint8_t> file, Source source, bool keepsDropped = false,
+    SelfLightFilter selfLight = nullptr);
 
 // Cut-out, leaf and hair meshes: the rays test their texture's alpha.
 bool isCutOut(MeshRole role);

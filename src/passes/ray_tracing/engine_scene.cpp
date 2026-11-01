@@ -7,6 +7,7 @@
 #include "game_loop.hpp"
 #include "passes/ray_tracing/engine_brush.hpp"
 #include "passes/ray_tracing/scene_description.hpp"
+#include "remaster/remaster.hpp"
 
 #include <Windows.h>
 #include <MinHook.h>
@@ -719,7 +720,7 @@ void take(Snapshot& snapshot, const std::vector<gi_inputs::DrawnBones>& drawn)
     const auto reveal = currentReveal();
     for (const auto& file : files)
     {
-        auto parsed = scene_description::describeModel(file.hash, file.bytes, file.source, reveal.has(file.hash));
+        auto parsed = scene_description::describeModel(file.hash, file.bytes, file.source, reveal.has(file.hash), remaster::tuneFileSelfLight);
         if (!parsed)
         {
             ++parseFailures;

@@ -4,6 +4,7 @@
 #include "dev/automation.hpp"
 #include "dev/cutscenes.hpp"
 #include "dev/game_lua.hpp"
+#include "dev/remaster/tool.hpp"
 #include "dev/travel.hpp"
 #include "fxui/fxui.hpp"
 #include "log.hpp"
@@ -132,6 +133,7 @@ void drawPage()
     drawTravel();
     drawCutscenes();
     drawLuaConsole();
+    remaster::drawTool();
     if constexpr (DiagnosticLog)
     {
         auto options = core::currentDiagnostics();

@@ -51,6 +51,7 @@ struct TestMesh
     std::uint64_t textureParameter{};
     float selfIntensity{}, materialRow{};
     bool isGlass{}, isMirror{};
+    std::uint64_t materialName{};
     float layerRepeat{};
     std::uint64_t layerTechnique{};
     bool hasSecondUvs = true;
@@ -116,7 +117,7 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
     auto& meshFormats = block(10, 2 * meshes.size(), 8);
     auto& faceInfos = block(17, meshes.size(), 8);
     auto& paths = block(21, 3 * meshes.size(), 8);
-    auto& names = block(22, 2 * meshes.size() + 11, 8);
+    auto& names = block(22, 3 * meshes.size() + 11, 8);
     std::vector<std::uint8_t> vertexFormats;
     const auto format = [&](std::uint8_t usage, std::uint8_t dataType, std::uint16_t element) {
         put(vertexFormats, usage);
@@ -132,6 +133,8 @@ std::vector<std::uint8_t> modelFile(const std::vector<TestMesh>& meshes, bool is
         putAt<std::uint16_t>(meshBlock, 48 * i + 10, 3); // Vertices
         putAt<std::uint32_t>(meshBlock, 48 * i + 16, 3u * i);
         putAt<std::uint64_t>(meshBlock, 48 * i + 24, i); // Face info
+        putAt<std::uint16_t>(materialInstances, 16 * i, static_cast<std::uint16_t>(2 * meshes.size() + 11 + i)); // Its name, after the layers' techniques
+        putAt<std::uint64_t>(names, 8 * (2 * meshes.size() + 11 + i), mesh.materialName);
         // The material after the first has the mirror's technique, and each mesh has its own after that for its layer's.
         putAt<std::uint16_t>(materialInstances, 16 * i + 4, static_cast<std::uint16_t>(mesh.isMirror ? 1 : mesh.layerTechnique ? 2 + i : 0));
         materialInstances[16 * i + 6] = mesh.textureParameter != 0;
@@ -509,6 +512,35 @@ void selfLitMeshes()
         "An ordinary mesh keeps its role, with its row of the material table.");
 }
 
+// A self-lit material another part of the add-on tunes: the scene's light follows, by the material's name, and however dim
+// it gets the mesh stays what the file makes it.
+void tunedSelfLight()
+{
+    constexpr std::uint64_t Lamp = 0xE45333B9516F;
+    const auto file = modelFile({{.alpha = 0x10, .shadow = 0x25, .hasUvs = true, .textureParameter = BaseTexture, .selfIntensity = 80, .materialName = Lamp}});
+
+    static float intensityWanted{};
+    const SelfLightFilter tuneLamp = [](std::uint64_t material, std::array<float, 4>& color, std::array<float, 4>& intensity) {
+        if (material != Lamp) return;
+
+        color[2] = 0;
+        intensity[0] = intensityWanted;
+    };
+
+    intensityWanted = 10;
+    const auto tuned = describeModel(1, file, Source::VisibilityManager, false, tuneLamp);
+    expect(tuned && partOf(*tuned, 0).emission == std::array{10.0f, 5.0f, 0.0f}, "The light is what the filter leaves of its colour and intensity.");
+
+    intensityWanted = 0;
+    const auto dark = describeModel(1, file, Source::VisibilityManager, false, tuneLamp);
+    expect(dark && partOf(*dark, 0).role == MeshRole::Emissive, "A lamp tuned to nothing is still a lamp.");
+    expect(partOf(*dark, 0).emission == std::array{0.0f, 0.0f, 0.0f}, "It gives no light.");
+
+    const auto other = modelFile({{.alpha = 0x10, .shadow = 0x25, .hasUvs = true, .textureParameter = BaseTexture, .selfIntensity = 80, .materialName = 1}});
+    const auto untuned = describeModel(1, other, Source::VisibilityManager, false, tuneLamp);
+    expect(untuned && partOf(*untuned, 0).emission == std::array{80.0f, 40.0f, 20.0f}, "Another material's name is no match.");
+}
+
 // A mesh's layer (the white base of Kaz's beige coat, whose colour is all in its layer): what a hit needs of it, once its
 // textures are copied. Without second coordinates there is no knowing where it lies, glass reflects by its mask alone, and a
 // technique not known to read its layer keeps its base: a layer it may not read must not paint the mesh.
@@ -637,6 +669,7 @@ int main()
         materialPerRole();
         cutOutWaitsForTexture();
         selfLitMeshes();
+        tunedSelfLight();
         layers();
         unreadableFiles();
         skinThroughBoneGroup();
