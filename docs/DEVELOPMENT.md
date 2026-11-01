@@ -530,6 +530,7 @@ every player's PhantomFX.ini. With it off and no capture running, the recorder a
 - `perf.py log` reads a session by stretch of the same place, then its worst seconds.
 - The `perf <file> [<frames>]` line takes the same over a set number of the GPU's frames into a file of its own, recording
   or not. A debug case takes one before anything else, as `perf.json`.
+  With no one timing, it takes a few presents more while the timing starts, all of the same frozen frame.
 - `perf.py ab <test> ...` compares changes on the frame as it stands: base, test, base, test, base, each after settling,
   so a GPU that drifts as it warms shows up. Judge a difference only against the drift it reports. If a line fails it stops
   without a table. `--images` also saves each frame and says how far it moved from the base.
