@@ -42,6 +42,12 @@ RWStructuredBuffer<uint4> g_GeometryAlbedo : register(u6); // Sums of linear alb
 // (docs/DEVELOPMENT.md, "Velocity"). It carries the frame's jitter, as the camera's motion does here.
 Texture2D<float4> g_ObjectVelocity : register(t17);
 
+// Path tracing's hits (gi_hit_light.hlsli): each row of the game's material table as its specular colour at normal
+// incidence (the guides' pass, ray_tracing.cpp); and the sky as the game draws it, from every side (sky_capture.hpp),
+// in the same units as the sky's light.
+Texture2D<float4> g_MaterialSpecular : register(t23);
+TextureCube<float4> g_SkyCube : register(t24);
+
 SamplerState g_PointSampler : register(s0);
 SamplerState g_LinearSampler : register(s1);
 SamplerState g_WrapSampler : register(s2);
@@ -308,6 +314,15 @@ float3 SkyRadiance(float3 direction)
     return max(radiance, 0.0f);
 }
 
+// The sky a reflection sees in a world direction: the one the game draws, with its horizon, clouds and sun's glow, once
+// captured. Diffuse rays keep the sky's light (SkyRadiance): it is what the game's ambient is tuned to.
+float3 SkySeen(float3 direction)
+{
+    if (g_Frame.reconstruction.z) return g_SkyCube.SampleLevel(g_LinearSampler, direction, 0.0f).rgb;
+
+    return SkyRadiance(direction);
+}
+
 float3 DecodeNormal(float4 encoded)
 {
     return normalize(2.0f * encoded.xyz - 1.0f);
@@ -369,6 +384,20 @@ float3 ToWorld(GIInstanceDesc instance, float3 position)
     return float3(dot(instance.transform[0], p), dot(instance.transform[1], p), dot(instance.transform[2], p));
 }
 
+// A direction under an instance's transform, not normalised.
+float3 ToWorldDirection(GIInstanceDesc instance, float3 direction)
+{
+    return float3(dot(instance.transform[0].xyz, direction), dot(instance.transform[1].xyz, direction), dot(instance.transform[2].xyz, direction));
+}
+
+// A vertex's normal and tangent, w the binormal's side (GIGeometry::normalOffset).
+void VertexFrame(GIGeometry geometry, uint index, out float3 normal, out float4 tangent)
+{
+    uint4 words = g_GeometryPool.Load4(geometry.normalOffset + 16 * index);
+    normal = float3(f16tof32(words.x), f16tof32(words.x >> 16), f16tof32(words.y));
+    tangent = float4(f16tof32(words.z), f16tof32(words.z >> 16), f16tof32(words.w), f16tof32(words.w >> 16));
+}
+
 // A triangle of an instance's geometry: its corners in world space, and the texture coordinates
 // where the ray crossed it (with GI_GEOMETRY_UV).
 struct SceneTriangle
@@ -420,12 +449,14 @@ float TextureLod(float3 v0, float3 v1, float3 v2, float2 uv0, float2 uv1, float2
     return log2(max(footprint * sqrt(texelArea / max(worldArea, 1e-12f)), 1e-6f));
 }
 
-// Whether a cut-out geometry (the only non-opaque one) stops a ray where the ray crosses it: with its
+// Whether a cut-out geometry (non-opaque, as glass is) stops a ray where the ray crosses it: with its
 // texture, where the texture's alpha is at least the game's threshold at the level of detail the ray's
-// cone (`footprint` metres across there) meets; without, as `untextured` says.
+// cone (`footprint` metres across there) meets; without, as `untextured` says. Glass never does: the sun's and
+// a lamp's light come through it, and only a reflection's rays meet it (TraceClosest's `canMeetGlass`).
 bool CutOutBlocks(uint row, uint primitive, float2 barycentrics, bool untextured, float footprint, float3x4 objectToWorld)
 {
     GIGeometry geometry = g_Geometries[row];
+    if (geometry.flags & GI_GEOMETRY_GLASS) return false;
     if ((geometry.flags & GI_GEOMETRY_ALPHA_TEXTURE) == 0) return untextured;
 
     uint3 i = TriangleIndices(geometry, primitive);
@@ -482,8 +513,9 @@ float2 LightCone(float3 origin)
 // `untextured` says; the ray's cone (`cone`: its width at the origin and its growth a metre, metres)
 // picks the texture's level of detail. Without, every triangle is opaque. Every ray tests alpha: the
 // global illumination's rays once took every triangle as opaque, and a bank of grass, a heap of solid
-// cards to them, went dark (2026-10-23).
-SceneHit TraceClosest(float3 origin, float3 direction, float minDistance, float maxDistance, uint mask, bool alphaTest, bool untextured, float2 cone)
+// cards to them, went dark (2026-10-23). With `canMeetGlass`, glass stops it (GI_GEOMETRY_GLASS).
+SceneHit TraceClosest(float3 origin, float3 direction, float minDistance, float maxDistance, uint mask, bool alphaTest, bool untextured, float2 cone,
+    bool canMeetGlass = false)
 {
     RayDesc ray;
     ray.Origin = origin;
@@ -500,7 +532,8 @@ SceneHit TraceClosest(float3 origin, float3 direction, float minDistance, float 
         {
             uint row = query.CandidateInstanceContributionToHitGroupIndex() + query.CandidateGeometryIndex();
             float footprint = cone.x + query.CandidateTriangleRayT() * cone.y;
-            if (CutOutBlocks(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), untextured, footprint, query.CandidateObjectToWorld3x4()))
+            bool isGlassHit = canMeetGlass && (g_Geometries[row].flags & GI_GEOMETRY_GLASS) != 0;
+            if (isGlassHit || CutOutBlocks(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), untextured, footprint, query.CandidateObjectToWorld3x4()))
                 query.CommitNonOpaqueTriangleHit();
         }
 
@@ -661,6 +694,7 @@ bool StopsShadowRay(uint instance, uint geometry, bool dxrFrontFace, bool isTowa
 static const uint RayTowardsSurface = 0u; // The camera's and the global illumination's rays
 static const uint RayTowardsSun = 1u;
 static const uint RayTowardsLamp = 2u;
+static const uint RayAlongReflection = 3u; // Towards a surface too, and it meets glass (TraceReflectionRay)
 
 // Rays towards a light take the game's shadow maps' faces (StopsShadowRay), unless the diagnostics ask
 // for every surface from both sides, as until 2026-10-26 (shadowDiagnostics.x): they are then taken as
@@ -672,7 +706,8 @@ uint ShadowRayTowards(uint light)
 
 // Whether a hit stops a ray: one towards a light as the game's shadow maps would have it
 // (StopsShadowRay); any other ray passes what the game draws into its shadow maps alone (a stand-in,
-// GI_GEOMETRY_SHADOW_ONLY), as the camera never sees it.
+// GI_GEOMETRY_SHADOW_ONLY), as the camera never sees it, and a self-lit mesh while those give no light
+// (g_Frame.emission.x: without path tracing, or with its slider at 0): it would be a black hit.
 bool IsShadowOnly(uint instance, uint geometry)
 {
     GIInstanceDesc desc = g_Instances[instance];
@@ -681,9 +716,17 @@ bool IsShadowOnly(uint instance, uint geometry)
     return (g_Geometries[FirstGeometry(desc) + geometry].flags & GI_GEOMETRY_SHADOW_ONLY) != 0;
 }
 
+bool IsDarkSelfLit(uint instance, uint geometry)
+{
+    GIInstanceDesc desc = g_Instances[instance];
+    if (g_Frame.emission.x > 0.0f || !(InstanceKind(desc) & GI_INSTANCE_MODEL)) return false;
+
+    return (g_Geometries[FirstGeometry(desc) + geometry].flags & GI_GEOMETRY_EMISSIVE) != 0;
+}
+
 bool StopsRay(uint instance, uint geometry, bool dxrFrontFace, uint towards)
 {
-    if (towards == RayTowardsSurface) return !IsShadowOnly(instance, geometry);
+    if (towards == RayTowardsSurface || towards == RayAlongReflection) return !IsShadowOnly(instance, geometry) && !IsDarkSelfLit(instance, geometry);
 
     return StopsShadowRay(instance, geometry, dxrFrontFace, towards == RayTowardsLamp);
 }
@@ -720,7 +763,7 @@ SceneHit TraceFromSurface(float3 origin, float3 normal, float tolerance, float3 
     SceneHit hit;
     for (uint attempt = 0; attempt < 6; ++attempt)
     {
-        hit = TraceClosest(origin, direction, start, maxDistance, mask, alphaTest, false, cone);
+        hit = TraceClosest(origin, direction, start, maxDistance, mask, alphaTest, false, cone, towards == RayAlongReflection);
         bool copy = hit.hit && IsCopyOfSurface(hit, normal, direction, tolerance);
         CountDiagnostic(GI_COUNTER_COPIES, copy);
         bool passed = copy || (hit.hit && !StopsRay(hit.instance, hit.geometry, hit.frontFace, towards));

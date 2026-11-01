@@ -10,9 +10,7 @@ namespace phantom_fx::sun_light_pass::shaders
 // shadow map, the screen-space shadow in t7 multiplies the sun's shadow, and the ray-traced shadow in
 // t6 takes the place of the game's. With all off they give the game's output bit for bit (checked on
 // WARP with random inputs). For path tracing (PATH_TRACED 1, path_tracing.hpp), the rays' shadow alone,
-// the clouds' inside the shadow range (CLOUD_SHADOW 1), and GGX's specular (GgxSpecular, ggx_specular.hlsli,
-// which goes before this source), as the traced reflections and Ray Reconstruction's guides have it. Split
-// into literals, as MSVC limits each to 16 KB.
+// and the clouds' inside the shadow range (CLOUD_SHADOW 1). Split into literals, as MSVC limits each to 16 KB.
 inline constexpr char SunLight[] = R"(
 cbuffer cPSScene : register(b2)
 {
@@ -365,10 +363,6 @@ void main(float4 position : SV_Position, float4 clipPosition : TEXCOORD0, float4
     lutValue *= lutValue;
     float specularPower = saturate(LN * 4) * (lutValue.x / lutValue.y * lookupFresnel);
     float3 specular = specularPower * (lightColor.xyz * specularColor);
-#if PATH_TRACED
-    float3 normalSpecular = specularColor * g_lut1.Sample(g_samplerLinear_Clamp, float2(1, F0)).x;
-    specular = GgxSpecular(lightColor.xyz, normal, toEye, discDirection, roughness, normalSpecular);
-#endif
     float3 diffuse = lightColor.xyz * (LNTranslucent * 1 * 1);
 
 #if SKY_REFLECTION

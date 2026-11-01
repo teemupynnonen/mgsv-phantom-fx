@@ -3,6 +3,7 @@
 #include "effects.hpp"
 #include "features/ambient_occlusion/settings.hpp"
 #include "features/contact_shadow_shape/settings.hpp"
+#include "features/depth_of_field/settings.hpp"
 #include "features/frame_generation/settings.hpp"
 #include "features/frame_rate/settings.hpp"
 #include "features/global_illumination/settings.hpp"
@@ -49,10 +50,11 @@ struct Settings
     IndirectLight indirectLight;
     VolumetricFog volumetricFog;
     Sea sea;
+    DepthOfField depthOfField;
+    MotionBlur motionBlur;
     PhotoMode photoMode;
     Hdr hdr;
     FrameRate frameRate;
-    MotionBlur motionBlur;
 
     bool operator==(const Settings&) const = default;
 };
@@ -76,10 +78,11 @@ template<class Visit> void forEachFeature(Settings& settings, Visit&& visit)
     visit(settings.indirectLight);
     visit(settings.volumetricFog);
     visit(settings.sea);
+    visit(settings.depthOfField);
+    visit(settings.motionBlur);
     visit(settings.photoMode);
     visit(settings.hdr);
     visit(settings.frameRate);
-    visit(settings.motionBlur);
 }
 
 void describe(Settings& settings, SettingVisitor& visit);

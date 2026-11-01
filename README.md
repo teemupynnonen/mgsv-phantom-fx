@@ -55,7 +55,7 @@ Needs DXR 1.1.
 - **Ray-traced shadows** for the sun
 - **Ray-traced lights:** shadows for every lamp, spot light and flashlight
 - **Ray-traced global illumination** (NVIDIA NRD denoiser)
-- **Path tracing:** traced reflections, sunlight and lamplight, with DLSS Ray Reconstruction
+- **Path tracing:** traced reflections, sunlight and lamplight with real materials, glowing surfaces that light the scene and the game's own sky in every reflection, with DLSS Ray Reconstruction
 
 ### Lighting and atmosphere
 

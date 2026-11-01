@@ -77,7 +77,7 @@ public:
     // false when the frame's scratch has no room: not built again, it is not traced until it is.
     bool rebuild(BlasId id) override;
     bool refit(BlasId id) override;
-    // A geometry's material: its flags but GI_GEOMETRY_CUT_OUT (its structure has it), texture and threshold.
+    // A geometry's material: its flags but GI_GEOMETRY_CUT_OUT (its structure has it), textures and threshold.
     void setMaterial(BlasId id, std::uint32_t geometry, const scene_description::Material& material) override;
 
     // Traced this frame: built, or built in this frame's list (planBuilds).

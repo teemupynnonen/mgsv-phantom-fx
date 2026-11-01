@@ -1,6 +1,5 @@
-// GGX's specular for path tracing (docs/DEVELOPMENT.md, "Path tracing"), one function for its sun and its
-// point and spot lights: DXC includes it into direct_light.hlsl, and CMakeLists.txt copies it into
-// ggx_specular.hpp for the sun pass's shaders, which compile at run time (sun_light_pass_shaders.hpp).
+// GGX's specular for the surfaces path tracing's rays hit (docs/DEVELOPMENT.md, "Path tracing"), which have no
+// game shader to follow. What the eye sees directly has the game's own specular table.
 #ifndef GGX_SPECULAR_HLSLI
 #define GGX_SPECULAR_HLSLI
 

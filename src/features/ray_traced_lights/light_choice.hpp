@@ -51,6 +51,7 @@ struct LocalLight
     // Path tracing (direct_light.hlsl): the light's own scales (cPSLight c8), its specular's (1 where its own
     // shader has none, as the ray-traced lights draw it) and its diffuse's.
     float specularScale{1}, diffuseScale{1};
+    float size{}; // cPSLight c4.w: its specular highlight is of a disc this wide
     // A masked spot's mask (the game's t4) projected as its shader projects it, from the world: the rows for x,
     // y and w (cPSScene c16, c17 and c19 through the light pass's view); its tile in the mask atlas, from 1, 0
     // for none (ray_tracing.cpp).

@@ -26,22 +26,24 @@ void detach() noexcept;
 void configure(const Configuration& configuration) noexcept;
 // The pass's own shaders did not compile (see PhantomFX.log).
 bool failed() noexcept;
-// The G-buffer's specular target as the last sun pass bound it (its material in .z, 43 for foliage), if
-// it is `width` x `height`; null otherwise. The view is a frame old; the target is the frame's.
+// The G-buffer's specular target (its material in .z, 43 for foliage), as the game last bound it, if it is
+// `width` x `height`; null otherwise.
 Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> specularTarget(UINT width, UINT height) noexcept;
-// The game's tables a sun pass reads the specular target's material by: the Fresnel term by angle and F0
-// (g_lut1), and each material's specular colour and F0 (g_MaterialTexture). As the last sun pass bound
-// them; null before one.
+// The game's tables a sun pass reads the specular target's material by: the specular lobe by the halfway
+// vector's angle, the roughness and the anisotropy (g_lut2), the Fresnel term by angle and F0 (g_lut1), and each
+// material's specular colour and F0 (g_MaterialTexture). As the last sun pass bound them; null before one.
 struct MaterialTables
 {
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> fresnel, materials;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> lobe, fresnel, materials;
 };
 MaterialTables materialTables() noexcept;
 
 // ---- Recording, on the game's render and worker threads ----
+// A context's render targets were bound: the G-buffer's gives its specular target.
+void targetsBound(UINT count, ID3D11RenderTargetView* const* targets, ID3D11DepthStencilView* depth) noexcept;
 // Before a draw, whoever draws it: what the ray-traced scene needs (ray_tracing::noteNormals and the
-// others), the G-buffer's normals and specular target, and with the global illumination the game's
-// probe light, drawn aside for the light to replace.
+// others), the G-buffer's normals, and with the global illumination the game's probe light, drawn aside
+// for the light to replace.
 void note(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_shaders::DrawnShader& shader) noexcept;
 // The upscale and the resolve, while an effect changes them, are drawn here instead, and the game's
 // SSAO is skipped while one replaces it; returns true when the game's draw must be skipped.

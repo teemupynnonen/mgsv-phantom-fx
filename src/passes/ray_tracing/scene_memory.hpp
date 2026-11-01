@@ -3,6 +3,7 @@
 #include "passes/ray_tracing/scene_description.hpp"
 
 #include <d3d11.h>
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -13,7 +14,7 @@
 namespace phantom_fx::scene_contents
 {
 // The pool's writes a frame uploads at most: a model larger is never made.
-constexpr std::uint64_t GeometryUploadBytes = 16ull << 20;
+constexpr std::uint64_t GeometryUploadBytes = 32ull << 20;
 
 // A geometry of a bottom-level structure: where its triangles lie in the pool, and its row of the
 // geometry table (GIGeometry).
@@ -26,6 +27,9 @@ struct Geometry
     std::uint32_t flags{};        // GI_GEOMETRY_*; GI_GEOMETRY_CUT_OUT makes it non-opaque
     std::uint32_t texture{};      // As GIGeometry
     float alphaThreshold{};
+    std::uint32_t specularTexture{}, normalTexture{}, materialIndex{}; // As GIGeometry
+    std::array<float, 3> emission{};
+    std::uint64_t normalOffset{}; // As GIGeometry
 };
 
 // How a bottom-level structure is built: once, then compacted (Static); or in place, again or refitted,
@@ -38,7 +42,7 @@ enum class Use : std::uint8_t
 
 using BlasId = std::uint32_t;
 
-// One of the game's textures for the scene, by its path hash (ModelPart::baseTexture): a shared copy
+// One of the game's textures for the scene, by its path hash (ModelPart::baseTexture and the others): a shared copy
 // of its levels of detail from the first no larger than the scene keeps (gi_textures.hpp), viewed as
 // `viewFormat`.
 struct SceneTexture
@@ -74,7 +78,7 @@ public:
     // false when the frame's scratch has no room: not built again, it is not traced until it is.
     virtual bool rebuild(BlasId id) = 0;
     virtual bool refit(BlasId id) = 0;
-    // A geometry's material: its flags but GI_GEOMETRY_CUT_OUT (its structure has it), texture and threshold.
+    // A geometry's material: its flags but GI_GEOMETRY_CUT_OUT (its structure has it), textures and threshold.
     virtual void setMaterial(BlasId id, std::uint32_t geometry, const scene_description::Material& material) = 0;
     // After the frame's changes: the static structures this frame builds within its budget.
     virtual void planBuilds() = 0;

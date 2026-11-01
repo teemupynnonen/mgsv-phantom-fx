@@ -15,8 +15,9 @@
 // The game's own scene for the ray tracing (docs/DEVELOPMENT.md, "Scene objects"): every rigid model
 // the game has loaded, on screen or not, where it is and its triangles, read from the model
 // visibility manager while the game's visibility tests run (nothing changes in it then), once a game
-// frame; the object brush's vegetation and props; and the characters, every skinned model the game
-// shows, in its pose, from the object registry's model list; the terrain from its heightmap.
+// frame; the object brush's vegetation and props; and from the object registry's model list the
+// characters, every skinned model the game shows, in its pose, and the rigid models no visibility
+// manager holds; the terrain from its heightmap.
 namespace phantom_fx::engine_scene
 {
 // Hooks the visibility tests on the supported build, with MinHook initialised; returns what was

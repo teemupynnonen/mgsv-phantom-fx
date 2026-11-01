@@ -19,11 +19,12 @@ using Microsoft::WRL::ComPtr;
 
 // The game's textures are looked up every LookFrames calls: the wanted ones not copied yet, and each
 // copied one every RecheckFrames for a replacement. A call copies CopiesPerCall at most.
-constexpr std::uint32_t LookFrames = 10, RecheckFrames = 300, CopiesPerCall = 32;
+constexpr std::uint32_t LookFrames = 10, RecheckFrames = 300, CopiesPerCall = 96;
 
 struct Copy
 {
     bool cutOut{};
+    bool isData{}; // Viewed as stored, not as sRGB
     std::uintptr_t source{}; // The game's texture it was copied from, to tell its replacement
     ComPtr<ID3D11Texture2D> texture;
     std::uint64_t bytes{};
@@ -65,6 +66,21 @@ std::pair<DXGI_FORMAT, DXGI_FORMAT> formatsOf(DXGI_FORMAT format)
     case DXGI_FORMAT_B8G8R8A8_UNORM:
     case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: return {DXGI_FORMAT_B8G8R8A8_TYPELESS, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB};
     default: return {format, format};
+    }
+}
+
+// The view of a texture holding data: the typeless format's plain one.
+DXGI_FORMAT dataViewOf(DXGI_FORMAT format)
+{
+    switch (formatsOf(format).first)
+    {
+    case DXGI_FORMAT_BC1_TYPELESS: return DXGI_FORMAT_BC1_UNORM;
+    case DXGI_FORMAT_BC2_TYPELESS: return DXGI_FORMAT_BC2_UNORM;
+    case DXGI_FORMAT_BC3_TYPELESS: return DXGI_FORMAT_BC3_UNORM;
+    case DXGI_FORMAT_BC7_TYPELESS: return DXGI_FORMAT_BC7_UNORM;
+    case DXGI_FORMAT_R8G8B8A8_TYPELESS: return DXGI_FORMAT_R8G8B8A8_UNORM;
+    case DXGI_FORMAT_B8G8R8A8_TYPELESS: return DXGI_FORMAT_B8G8R8A8_UNORM;
+    default: return format;
     }
 }
 
@@ -148,20 +164,22 @@ std::optional<gi_renderer::SceneTexture> copyOf(ID3D11Device* device, ID3D11Devi
     copy.texture = made;
     copy.bytes = bytes;
     copy.source = reinterpret_cast<std::uintptr_t>(source);
-    return gi_renderer::SceneTexture{path, made.Get(), formatsOf(desc.Format).second, wanted.MipLevels};
+    return gi_renderer::SceneTexture{path, made.Get(), copy.isData ? dataViewOf(desc.Format) : formatsOf(desc.Format).second, wanted.MipLevels};
 }
 }
 
-void want(std::uint64_t path, bool cutOut)
+void want(std::uint64_t path, Use use)
 {
     if (!path) return;
 
+    const bool isCutOut = use == Use::CutOut;
     auto [it, added] = copies.try_emplace(path);
     auto& copy = it->second;
-    if (added || (cutOut && !copy.cutOut))
+    if (added) copy.isData = use == Use::Data;
+    if (added || (isCutOut && !copy.cutOut))
     {
         // A cut-out mesh wants a larger copy than one only for colour.
-        copy.cutOut |= cutOut;
+        copy.cutOut |= isCutOut;
         copy.source = 0;
         copy.nextLook = calls;
     }

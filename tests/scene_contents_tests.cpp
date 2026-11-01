@@ -527,6 +527,27 @@ void instanceCap()
 
 // A ring made again takes the rings outside it along (a ring's edges lie on the next one's grid), not those
 // inside. Each is refreshed by itself every 120 frames, ring r 30 r frames after ring 0.
+// A bulb lights what is around it, not the camera: the rays aim at it from anywhere near the eye, however short its
+// light's own reach. One a kilometre off gives its light through the rays that meet it.
+void selfLitMeshesAimedAt()
+{
+    auto bulb = mesh(0, 0);
+    bulb.role = phantom_fx::scene_description::MeshRole::Emissive;
+    bulb.emission = {600, 480, 240};
+    const auto bulbs = model(Building, {bulb});
+    const Transform nearby{1, 0, 0, 30, 0, 1, 0, 0, 0, 0, 1, 0};
+    const Transform distant{1, 0, 0, 1000, 0, 1, 0, 0, 0, 0, 1, 0};
+
+    TestScene scene;
+    scene.run({.newModels = {bulbs}, .placements = {{Building, nearby}, {Building, distant}}});
+    const auto update = scene.run({.placements = {{Building, nearby}, {Building, distant}}});
+    expect(update.emitters.size() == 1, "The bulb near the eye is aimed at, and the one a kilometre off is not.");
+
+    const auto& emitter = update.emitters[0];
+    expect(emitter.sphere.x > 30 && emitter.sphere.x < 31 && emitter.place.z == 1, "It is where it is placed, with its triangles.");
+    expect(emitter.light.w > 0 && emitter.light.w < 30, "Its own reach stays what its light gives: a bulb's is far shorter than the distance it is aimed at from.");
+}
+
 void terrainRings()
 {
     TestScene scene;
@@ -568,6 +589,7 @@ int main()
     try
     {
         retention();
+        selfLitMeshesAimedAt();
         waitingForRoom();
         variant();
         variantWithoutRoomNeverTraced();

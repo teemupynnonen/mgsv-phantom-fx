@@ -6,8 +6,11 @@
 #include "features/indirect_light/ssgi.hpp"
 #include "features/lamp_contact_shadows/lamp_contact_shadows.hpp"
 #include "features/lamp_soft_shadows/lamp_soft_shadows.hpp"
+#include "features/depth_of_field/depth_of_field.hpp"
 #include "features/motion_blur/motion_blur.hpp"
+#include "features/path_tracing/glass.hpp"
 #include "features/path_tracing/path_tracing.hpp"
+#include "features/path_tracing/sky_capture.hpp"
 #include "features/photo_mode/focus.hpp"
 #include "features/photo_mode/photo_mode.hpp"
 #include "features/ray_traced_lights/local_lights.hpp"
@@ -56,6 +59,8 @@ constexpr Module Modules[]{
     {.attach = withDevice<ssgi::attach>, .configure = ssgi::configure, .present = ssgi::present, .detach = ssgi::detach},
     {.attach = withDevice<light_combine::attach>, .configure = light_combine::configure, .present = light_combine::present, .detach = light_combine::detach},
     {.attach = withDevice<path_tracing::attach>, .configure = path_tracing::configure, .present = path_tracing::present, .detach = path_tracing::detach},
+    {.attach = withDevice<glass::attach>, .present = glass::present, .detach = glass::detach},
+    {.attach = withDevice<sky_capture::attach>, .present = sky_capture::present, .detach = sky_capture::detach},
     {.attach = withDevice<visibility_bitmask::attach>, .configure = visibility_bitmask::configure, .detach = visibility_bitmask::detach},
 
     {.attach = ray_tracing::attach, .configure = ray_tracing::configure, .present = ray_tracing::present, .detach = ray_tracing::detach},
@@ -63,6 +68,7 @@ constexpr Module Modules[]{
     {.attach = atmosphere::attach, .configure = atmosphere::configure, .present = atmosphere::present, .detach = atmosphere::detach},
     {.attach = sea::attach, .configure = sea::configure, .present = sea::present, .detach = sea::detach},
 
+    {.attach = withDevice<depth_of_field::attach>, .configure = depth_of_field::configure, .present = depth_of_field::present, .detach = depth_of_field::detach},
     {.configure = motion_blur::configure},
     {.configure = frame_rate::configure},
     {.configure = photo_mode::configure},

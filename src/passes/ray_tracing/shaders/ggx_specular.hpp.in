@@ -1,7 +1,0 @@
-#pragma once
-
-// ggx_specular.hlsli as CMakeLists.txt copies it, for Direct3D 11's shaders, which compile at run time.
-namespace phantom_fx::ggx_specular
-{
-inline constexpr char Source[] = R"hlsl(@GGX_SPECULAR_SOURCE@)hlsl";
-}

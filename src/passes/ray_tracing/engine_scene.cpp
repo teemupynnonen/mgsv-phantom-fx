@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -157,8 +158,8 @@ std::atomic<std::uint64_t> snapshots{}, filesRead{}, skinnedFiles{}, unreadableF
 // Files the object brush and another source both asked for: read once, their meshes have the roles of the
 // source that asked first.
 std::atomic<std::uint64_t> sharedFiles{};
-std::atomic<std::uint32_t> lastInstances{}, lastOwners{}, lastOtherOwners{}, lastLeftOut{}, lastHidden{}, lastFadedOut{}, lastHidingGroups{}, lastCharacters{},
-    lastListedModels{};
+std::atomic<std::uint32_t> lastInstances{}, lastOwners{}, lastOtherOwners{}, lastLeftOut{}, lastHidden{}, lastFadedOut{}, lastHidingGroups{}, lastListedOnly{},
+    lastCharacters{}, lastListedModels{};
 // The model list was found in the last snapshot: the characters come from it.
 std::atomic<bool> modelListFound{};
 
@@ -291,8 +292,9 @@ std::optional<std::uint64_t> rigidModel(std::uintptr_t model)
 }
 
 // The game's characters: every skinned model on the object registry's model list the game shows,
-// in its pose this frame (docs/DEVELOPMENT.md, "Every model", "Characters"); false without the list.
-bool collectCharacters(std::vector<scene_description::CharacterInstance>& characters, std::uint32_t& listed)
+// in its pose this frame (docs/DEVELOPMENT.md, "Every model", "Characters"), each rigid model on the
+// list it shows handed to `listedRigid`; false without the list.
+bool collectCharacters(std::vector<scene_description::CharacterInstance>& characters, std::uint32_t& listed, const std::function<void(std::uintptr_t model)>& listedRigid)
 {
     const auto registry = read<std::uintptr_t>(base + RegistryGlobal);
     const auto type = read<std::uint32_t>(base + ModelTypeGlobal);
@@ -321,7 +323,10 @@ bool collectCharacters(std::vector<scene_description::CharacterInstance>& charac
         const auto states = read<std::uintptr_t>(model + ModelGroupStates);
         float matrix[16]{};
         if (!bones || !*bones || *bones > MaxBones || !palette || !*palette || !groups || !states || !readRaw(matrix, model + ModelMatrix, sizeof(matrix)))
+        {
+            listedRigid(model);
             continue;
+        }
 
         const auto transform = transformOf(matrix);
         const auto resource = transform ? read<std::uintptr_t>(model + ModelResource) : std::nullopt;
@@ -385,7 +390,7 @@ void snapshot()
     owners.erase(std::unique(owners.begin(), owners.end()), owners.end());
 
     std::vector<scene_description::ModelInstance> instances;
-    std::uint32_t others{}, leftOut{}, hidden{}, fadedOutModels{}, hidingGroups{};
+    std::uint32_t others{}, leftOut{}, hidden{}, fadedOutModels{}, hidingGroups{}, listedOnly{};
     const auto place = [&](std::uint64_t hash, const float* matrix, std::uint64_t hiddenGroups) {
         const auto transform = transformOf(matrix);
         if (!transform)
@@ -451,9 +456,21 @@ void snapshot()
             for (const auto& transform : transforms) instances.push_back({*hash, transform, 0});
     });
 
+    // A rigid model no visibility manager holds; those it holds are placed above.
+    const auto listedRigid = [&](std::uintptr_t model) {
+        if (std::binary_search(owners.begin(), owners.end(), model)) return;
+
+        float matrix[16]{};
+        const auto hash = rigidModel(model);
+        if (!hash || !readRaw(matrix, model + ModelMatrix, sizeof(matrix))) return;
+
+        ++listedOnly;
+        place(*hash, matrix, hiddenGroupsOf(model));
+    };
+
     std::vector<scene_description::CharacterInstance> characters;
     std::uint32_t listed{};
-    modelListFound = collectCharacters(characters, listed);
+    modelListFound = collectCharacters(characters, listed, listedRigid);
 
     ++snapshots;
     lastInstances = static_cast<std::uint32_t>(instances.size());
@@ -463,6 +480,7 @@ void snapshot()
     lastHidden = hidden;
     lastFadedOut = fadedOutModels;
     lastHidingGroups = hidingGroups;
+    lastListedOnly = listedOnly;
     lastCharacters = static_cast<std::uint32_t>(characters.size());
     lastListedModels = listed;
     std::lock_guard lock(publishMutex);
@@ -780,7 +798,8 @@ std::string status()
         + std::to_string(lastOtherOwners.load()) + " of other kinds, " + std::to_string(lastLeftOut.load()) + " left out, "
         + std::to_string(lastHidden.load()) + " models the game hides, " + std::to_string(lastFadedOut.load()) + " faded out, "
         + std::to_string(lastHidingGroups.load())
-        + " placed with mesh groups hidden), " + std::to_string(lastCharacters.load()) + " characters of "
+        + " placed with mesh groups hidden), " + std::to_string(lastListedOnly.load()) + " rigid models from the model list alone, " + std::to_string(lastCharacters.load())
+        + " characters of "
         + std::to_string(lastListedModels.load()) + " models listed" + (modelListFound.load() ? "" : " (no model list)") + ", "
         + std::to_string(snapshots.load()) + " snapshots; model files: " + std::to_string(filesRead.load()) + " rigid, "
         + std::to_string(skinnedFiles.load()) + " skinned, " + std::to_string(unreadableFiles.load()) + " unreadable, "

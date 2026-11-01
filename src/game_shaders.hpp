@@ -32,11 +32,17 @@ enum class GamePass : std::uint8_t
     LocalLight,      // A point or spot light: a draw that marks the stencil, then one that lights
     Resolve,         // The G-buffer and the light into the scene's colour, times the game's occlusion
     Sky,
+    SkyDome,         // The sky's painted dome and its clouds, drawn over it
     Sea,             // The game's sea, drawn over the lit scene after the sky (Primitive_TppFourierOcean*)
     ReflectionMask,  // The screen-space reflections' mask from the depth, normals and roughness; reads the scene's depth at t0
     ReflectionAdd,   // The screen-space reflections blended over the scene
+    Glass,           // Glass, drawn forward, some before ReflectionAdd, most among the particles after it
+    Mirror,          // A mirror, drawn forward: a painted picture of the room, or the mirror camera's
+    Exposure,        // The exposure's measure, in the list that follows the scene
     Reduce,          // The scene's quarter-size copy that bloom and the lens flares start from
     Copy,            // A plain copy the game makes anywhere
+    DofBake,         // The depth of field's first half-size pass: colour and blur radii from the scene and the depth
+    DofFar,          // The depth of field's far layer, blended under the near layer
     DofComposite,    // The depth of field over its copy of the scene
     MotionBlurBake,  // The velocity and depth the motion blur's gathers read, baked at half size
     MotionBlur,      // The motion blur's gather, twice at half size; a copy then blends it over the scene
@@ -61,6 +67,9 @@ struct GameShader
     bool hasRainReflection{};
     bool hasSprite{};     // Sky: the sun's or the moon's sprite
     bool isFarSea{};      // Sea: the far sea, a plane 5 m below the near sea (its material constants' c0.z)
+    // Glass, Mirror: the texture slot of what it reflects with: a cube map, or a mirror's picture.
+    std::uint8_t reflectionSlot{};
+    bool hasColorTexture{}; // Glass: its t0 is a colour with its cover in alpha, not a cover in red
 };
 
 inline constexpr GameShader GameShaders[]{
@@ -121,6 +130,8 @@ inline constexpr GameShader GameShaders[]{
     {.pass = GamePass::Sky, .name = "Sky_Draw_TppBaked", .checksum = "0fddc9d03f8bd436af2eabe2bc620c44", .hasSprite = true},
     {.pass = GamePass::Sky, .name = "Sky_Draw_Tpp", .checksum = "175290aae288daa07d2440ce316c7a50", .hasSprite = true},
     {GamePass::Sky, "Sky_Draw_TppNoSky", "3cf390b8d8af0de27c093019a693b636"}, // In fog and sandstorms: the fog's colour alone
+    {GamePass::SkyDome, "tpp3dfw_constant_sky", "1d8d495cfad8edf0a94795d1b83ab365"},
+    {GamePass::SkyDome, "tpp3dfw_generativeClouds", "4e081ddecae4b78e7229ae6dec61d2ee"},
 
     // Each as the game makes it and as the float scene patches it (HDR's withoutTonemap).
     {GamePass::Sea, "Primitive_TppFourierOceanHQ", "0b2897387196afcf41609619bde5527a"},
@@ -130,8 +141,22 @@ inline constexpr GameShader GameShaders[]{
     {.pass = GamePass::Sea, .name = "Primitive_TppFourierOceanFill", .checksum = "51218f2d1ccc9d0f9cf159653ed41f5d", .isFarSea = true},
     {.pass = GamePass::Sea, .name = "Primitive_TppFourierOceanFill", .checksum = "9291bd0ac69ab6cdeae6244f778c4ddb", .isFarSea = true},
 
+    {.pass = GamePass::Glass, .name = "fox3dfw_glass", .checksum = "03b2d74787e2defc6676a36051d3d81f", .reflectionSlot = 2},
+    {.pass = GamePass::Glass, .name = "fox3dfw_glass_color", .checksum = "8e6578bdefc44955cd0ab5cccc22c81f", .reflectionSlot = 2, .hasColorTexture = true},
+    {.pass = GamePass::Glass, .name = "fox3dfw_glass_commonref", .checksum = "00abb586fa0a2df41655a4065c133e5d", .reflectionSlot = 11},
+    {.pass = GamePass::Glass, .name = "fox3dfw_glass_commonref_color", .checksum = "85ac1703bd4b64d492078bfdc7413cb0", .reflectionSlot = 11, .hasColorTexture = true},
+    {.pass = GamePass::Glass, .name = "fox3dfw_glass_prim", .checksum = "450ae12fe44e642628bb821cb30518f5", .reflectionSlot = 2},
+    {.pass = GamePass::Glass, .name = "fox3dfw_glass_color_prim", .checksum = "80103d7646750f789a2cdfe40a0ade2c", .reflectionSlot = 2, .hasColorTexture = true},
+    {.pass = GamePass::Glass, .name = "fox3dfw_glass_commonref_prim", .checksum = "046923d579a4abbf7ad6317a48127cf2", .reflectionSlot = 11},
+    {.pass = GamePass::Glass, .name = "fox3dfw_glass_cnmref_col_prim", .checksum = "fd324a37839b9c695a91f0d73aac7331", .reflectionSlot = 11, .hasColorTexture = true},
+    {.pass = GamePass::Mirror, .name = "fox3dfw_parallax_refrection", .checksum = "46a340cbba1237547c5e162312a59f1d", .reflectionSlot = 0},
+    {.pass = GamePass::Mirror, .name = "fox3dfw_parallax_refrection_prim", .checksum = "1b3f595b05c25f9b4be89e8c4429ad07", .reflectionSlot = 0},
+
+    {GamePass::Exposure, "Tonemap_Lum_Lacc", "e86626849058330a6cb46dc3c7e405d8"},
     {GamePass::Reduce, "CopyReductionX4", "e5b80b0a4d737e50533f9a058ffdca42"},
     {GamePass::Copy, "CopyRenderBuffer", "9f93a957f1e21656e0d86bf112b71d6d"},
+    {GamePass::DofBake, "DOF_ScatterBakeFirst", "2ef2adeb0c715ce006f6d9fab08b3737"},
+    {GamePass::DofFar, "DOF_ScatterCompositeFar", "052b3dcbe0ef2e6160ac6580f868e057"},
     {GamePass::DofComposite, "DOF_ScatterCompositeFinal", "d1462a415f8e79dba14db617c576407d"},
     {GamePass::MotionBlurBake, "MotionBlurBakeVelocityDepth", "d89d8bcef5a286dee3f697d3aae068fa"},
     {GamePass::MotionBlur, "MotionBlurMcGuire", "475283f0d10c84d3c1b47e2ba153c916"},

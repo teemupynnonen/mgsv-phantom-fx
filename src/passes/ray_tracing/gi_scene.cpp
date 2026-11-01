@@ -373,7 +373,8 @@ std::optional<BlasId> Scene::createBlas(Use use, const std::vector<Geometry>& ge
     {
         const auto& geometry = geometries[i];
         GIGeometry row{static_cast<std::uint32_t>(geometry.vertexOffset), geometry.indexCount ? static_cast<std::uint32_t>(geometry.indexOffset) : GI_NO_INDICES,
-            geometry.flags, geometry.texture, geometry.alphaThreshold, {}};
+            geometry.flags, geometry.texture, geometry.alphaThreshold, geometry.specularTexture, geometry.normalTexture, geometry.materialIndex,
+            {geometry.emission[0], geometry.emission[1], geometry.emission[2], 0}, static_cast<std::uint32_t>(geometry.normalOffset), {}};
         writeRow(blas.firstGeometry + i, row);
         newRows.push_back(blas.firstGeometry + i);
     }
@@ -450,6 +451,8 @@ void Scene::setMaterial(BlasId id, std::uint32_t geometry, const scene_descripti
     row.flags = (row.flags & GI_GEOMETRY_CUT_OUT) | (material.flags & ~GI_GEOMETRY_CUT_OUT);
     row.texture = material.texture;
     row.alphaThreshold = material.alphaThreshold;
+    row.specularTexture = material.specularTexture;
+    row.normalTexture = material.normalTexture;
     writeRow(blas.firstGeometry + geometry, row);
 }
 

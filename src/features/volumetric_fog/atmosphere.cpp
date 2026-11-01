@@ -4,6 +4,7 @@
 #include "d3d11_helpers.hpp"
 #include "device_check.hpp"
 #include "features/hdr/hdr.hpp"
+#include "features/path_tracing/sky_capture.hpp"
 #include "features/volumetric_fog/atmosphere_shaders.hpp"
 #include "frame_latch.hpp"
 #include "game_constants.hpp"
@@ -548,6 +549,7 @@ bool drawSky(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, bo
     performance::Timed timed(context, performance::Pass::Sky);
     context->DrawInstanced(call.count, call.instances, call.first, call.firstInstance);
     timed.end();
+    sky_capture::capture(context, call);
     context->PSSetShader(gameShader, nullptr, 0);
     context->PSSetShaderResources(SkyParameterSlot, static_cast<UINT>(gameViews.size()), gameViews.data());
     for (auto* view : gameViews)

@@ -15,18 +15,25 @@ struct Textures
     ID3D12Resource* guideNormals{};
     ID3D12Resource* guideSpecular{};
     ID3D12Resource* guideMaterial{};
-    ID3D12Resource* guideTranslucency{};
+    ID3D12Resource* guideLobe{};
+    ID3D12Resource* specularTable{};
     ID3D12Resource* lampMasks{}; // Null without masked spots
     ID3D12Resource* reflection{};
     ID3D12Resource* reflectionDistance{};
+    ID3D12Resource* reflectionMap{};
     ID3D12Resource* lampDiffuse{};
     ID3D12Resource* lampSpecular{};
+    ID3D12Resource* surfaceDepth{}; // Glass and mirrors (glass.hpp); null while not traced
+    ID3D12Resource* surfaceNormal{};
+    ID3D12Resource* surfaceReflection{};
 };
 
-// Their views in the frame's tables, by the slots reflections.hlsl and direct_light.hlsl give them.
+// Their views in the frame's tables.
 void describe(gi_d3d12::Descriptors& descriptors, const Textures& textures);
 // The lamps' light at the render size. Needs the frame's scene built.
 void recordLamps(gi_d3d12::Recorder& recorder, std::uint32_t width, std::uint32_t height);
 // The reflections, which read the light's cache: after its passes.
 void recordReflections(gi_d3d12::Recorder& recorder, std::uint32_t width, std::uint32_t height);
+// Those of glass and mirrors: in the frame's tables, after the game drew them.
+void recordSurfaceReflections(gi_d3d12::Recorder& recorder, std::uint32_t width, std::uint32_t height);
 }

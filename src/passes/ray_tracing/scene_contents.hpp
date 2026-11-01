@@ -21,6 +21,7 @@
 // and each frame's instances of them. Everything here runs on the game's render thread.
 namespace phantom_fx::scene_contents
 {
+using gi::GIEmitter;
 using gi::GISkinRecord;
 using gi::uint4;
 using scene_description::CharacterInstance;
@@ -33,6 +34,7 @@ using scene_description::Transform;
 struct GameScene
 {
     std::uint32_t frameIndex{};
+    std::array<float, 3> eye{}; // The self-lit meshes nearest it are the rays' to aim at
     // The models first seen since the last frame.
     std::span<const std::shared_ptr<const Model>> newModels;
     // A newer list came: `placements` and `characters` replace the last, even when empty. Without one
@@ -80,6 +82,8 @@ struct Update
     // The characters' meshes to pose (Skin in gi_scene.hlsl), a record a mesh, and their palettes.
     std::vector<GISkinRecord> skins;
     std::vector<float> palettes;
+    // The self-lit meshes placed this frame the rays aim at, the strongest at the eye, at most GI_MAX_EMITTERS.
+    std::vector<GIEmitter> emitters;
     std::array<Ring, GI_TERRAIN_RINGS> terrain{};
     // Diagnostics: the frame's instances of the game's models when asked for (GameScene::shouldListInstances),
     // by instance; the triangles of every instance.
@@ -141,11 +145,21 @@ private:
         std::optional<std::uint64_t> poolOffset;
         std::uint64_t poolBytes{};
         std::optional<BlasId> blas;
+        // A self-lit mesh of the model (ModelRecord::emitters): which of its meshes, around where in object space, and
+        // how much of it there is.
+        struct Emitter
+        {
+            std::uint32_t part{};
+            std::array<float, 3> centre{};
+            float radius{}, area{};
+        };
+
         std::vector<Geometry> parts; // Each mesh's place in the pool and material, once laid out
         std::vector<std::uint64_t> skins;
         std::vector<Variant> variants;
         std::uint32_t lastPlaced{};
         std::array<float, 6> bounds{}; // Diagnostics (the shadow probe): object space, lowest then highest
+        std::vector<Emitter> emitters;
     };
 
     // One of the game's characters on the GPU side: its model's meshes it shows (`parts`, in the model's
@@ -189,6 +203,9 @@ private:
     void planTerrain(const std::array<float, 3>& eye, std::uint32_t frameIndex, Update& update);
     void makeSea();
     void addInstances(const GameScene& frame, Update& update);
+    static ModelRecord::Emitter emitterOf(const ModelPart& part, std::uint32_t index);
+    static void addEmitters(const ModelRecord& record, const ModelInstance& placement, const ModelRecord::Variant* variant, std::uint32_t instance,
+        const std::array<float, 3>& eye, std::vector<GIEmitter>& emitters);
     std::string describeCharacterMesh(std::uint64_t id, std::uint32_t shownIndex) const;
     static std::uint32_t partOfGeometry(const ModelRecord& record, std::uint64_t hiddenGroups, std::uint32_t geometry);
 
@@ -219,7 +236,8 @@ private:
     // room for their structure (never traced) and the texture copies refused for want of a free slot.
     std::uint32_t unreceivedPlacements{}, modelsPastCap{}, charactersPastCap{}, ringsPastCap{};
     std::uint32_t variantsWithoutRoom{}, texturesRefused{};
-    // Diagnostics: the frame has the sea's plane.
+    // Diagnostics: the frame has the sea's plane; the self-lit meshes placed near the eye, and those the rays aim at.
     bool isSeaTraced{};
+    std::uint32_t emittersPlaced{}, emittersAimedAt{};
 };
 }
