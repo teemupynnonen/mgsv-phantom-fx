@@ -346,7 +346,6 @@ GIFrameConstants constantsOf(const Frame& frame, std::uint32_t newGeometries, st
     copyMatrix(constants.viewProjection, frame.viewProjection);
     copyMatrix(constants.viewProjectionInverse, inverse(frame.viewProjection));
     copyMatrix(constants.previousViewProjection, frame.previousViewProjection);
-    copyMatrix(constants.previousViewProjectionInverse, inverse(frame.previousViewProjection));
     constants.eye = {frame.eye[0], frame.eye[1], frame.eye[2], 0};
     constants.sunDirection = {frame.sunDirection[0], frame.sunDirection[1], frame.sunDirection[2], 0};
     constants.sunColor = {frame.sunColor[0], frame.sunColor[1], frame.sunColor[2], 0};
