@@ -3,6 +3,7 @@
 // performance_menu.cpp.
 #include "character.hpp"
 #include "core.hpp"
+#include "cutscenes.hpp"
 #include "dev_tools.hpp"
 #include "features/frame_generation/frame_generation.hpp"
 #include "features/frame_generation/fsr_frame_generation.hpp"
@@ -539,6 +540,30 @@ void drawTravel()
     if (pressed >= 0) travel::go(static_cast<travel::Map>(pressed));
 }
 
+// Any of the game's cutscenes, in its own mission.
+void drawCutscenes()
+{
+    const bool supported = game_lua::isSupported();
+    const fxui::Item item({.id = "cutscenes",
+        .name = "Cutscenes",
+        .summary = "Plays any cutscene the game's scripts name, after one loading screen.",
+        .keywords = "demo movie story mission play watch scene",
+        .state = supported ? std::nullopt : std::optional(State::Unavailable),
+        .message = supported ? "" : "Unavailable for this game version."});
+    if (!item || !supported) return;
+
+    static std::optional<std::size_t> selected;
+    const auto labels = cutscenes::labels();
+    const char* const preview = selected ? labels[*selected].data() : "Pick a cutscene";
+    if (const auto picked = fxui::searchCombo("Cutscene", preview, labels, selected)) selected = picked;
+    if (fxui::button("Play",
+            "From free roam or the ACC. A story cutscene loads its mission and ends in the ACC, with no mission clear; a Mother Base one ends in free "
+            "roam there. The game saves on the way, as it does when leaving free roam. The story stays where it is. Cutscenes start in the mission's "
+            "own time and weather, not always the ones they have in the story.",
+            selected.has_value()))
+        cutscenes::play(*selected);
+}
+
 // Lua typed here runs in the game's own script state.
 void drawLuaConsole()
 {
@@ -577,6 +602,7 @@ void drawDeveloper()
     if (!page) return;
 
     drawTravel();
+    drawCutscenes();
     drawLuaConsole();
     if constexpr (DiagnosticLog)
     {
