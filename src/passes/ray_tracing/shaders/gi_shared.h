@@ -119,6 +119,12 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 // The point and spot lights a frame's shadows can hold (TraceLocalLightShadows in gi_shadow.hlsl). A base
 // at night drew about 100.
 #define GI_MAX_LOCAL_LIGHTS 128u
+// Which lights can reach a place (light_bins.hpp): bins this wide in metres, around the eye, so many along x and z and along y.
+#define GI_LIGHT_BIN_SIZE 2.0f
+#define GI_LIGHT_BINS_ACROSS 128u
+#define GI_LIGHT_BINS_HIGH 64u
+// How far past the game's volume for it a light still gives light, metres (LocalLightReaching).
+#define GI_LIGHT_VOLUME_MARGIN 0.02f
 
 // A point or spot light as its shadow rays and the global illumination's hits need it: a point in the
 // world whose light falls off as the game's light shaders have it (LocalLightAt in gi_light.hlsl), cut
@@ -212,6 +218,11 @@ struct GIFrameConstants
     // The point and spot lights' shadows (TraceLocalLightShadows): x the frame's lights, y rays a pixel.
     uint4 localLightCount;
     GILocalLight localLights[GI_MAX_LOCAL_LIGHTS];
+    // Which of them can reach a place (light_bins.hpp): a bit a light, along each axis from the origin.
+    float4 lightBinsOrigin;
+    uint4 lightBinsX[GI_LIGHT_BINS_ACROSS];
+    uint4 lightBinsY[GI_LIGHT_BINS_HIGH];
+    uint4 lightBinsZ[GI_LIGHT_BINS_ACROSS];
     // Self-lit meshes: x their light's scale from the game's units (the menu's strength times the light scale); y the
     // most radiance one lights others with, so scaled. And those the rays aim at: x how many.
     float4 emission;

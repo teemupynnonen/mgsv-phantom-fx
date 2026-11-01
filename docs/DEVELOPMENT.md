@@ -65,7 +65,7 @@ documentation and licenses are in `PhantomFX/`.
 ctest --test-dir build/release
 ```
 
-This runs eleven tests that need neither the game nor a GPU. `tests/upscaler_tests.cpp`: settings
+This runs fourteen tests that need neither the game nor a GPU. `tests/upscaler_tests.cpp`: settings
 (defaults, round trip, clamping, invalid files and values), the mode maths (render scales, texture LOD
 bias), the render size plan (DLSS's own size or the nominal one, rounded up to even and never above the
 output size, Custom's DLSS quality, the settings that make a new plan), the frames (when one starts,
@@ -107,6 +107,8 @@ view and the glass's targets. `tests/shared_textures_tests.cpp`: a shared output
 read until written, the same size keeping what it holds, a new size or a replaced texture leaving it unwritten.
 `tests/d3d12_host_tests.cpp`: Direct3D 12 work at a point of the immediate context, on WARP devices: each side reads what
 the other just wrote, frame after frame as the lists come round, and a failed evaluation leaves the next one fine.
+`tests/light_bins_tests.cpp`: a light that reaches a place is in that place's bins, wherever the light, the place and
+the eye are, in the bins or past them, however far it reaches, and stays out of places off its box.
 `tests/kernel_table_tests.cpp`: what the build makes of the compiled kernels: each kind of binding its own type,
 what the root signature binds left out, a slot with two names, a name with two shapes and a kernel without
 bindings failing.
@@ -206,6 +208,7 @@ what draws it, when that is the feature's own.
 | `src/passes/ray_tracing/trace.*` | A trace's steps, and the traces in the order the frame runs them (see "What a kick traces") |
 | `src/passes/ray_tracing/shared_textures.*` | What Direct3D 11 and 12 share: the Direct3D 11 half of a trace's results, and the rows that open, transition and bind a trace's textures |
 | `src/passes/ray_tracing/gi_renderer.*` | The Direct3D 12 side: the device, the scene's frame (the scene contents' update, then the recording), each feature's passes recorded in turn, the probes |
+| `src/passes/ray_tracing/light_bins.*` | Which of the frame's lights can reach a place, in bins along each world axis (see "Light bins") |
 | `src/passes/ray_tracing/scene_contents.*` | The scene contents: the game's models, their variants, characters, terrain rings, the sea's plane and textures the ray-traced scene holds, made as the scene memory has room and let go after a while unplaced; each frame's instances of them; their diagnostics (status, the probes' hits, F10's `models.txt`) (see "Ray-traced scene") |
 | `src/passes/ray_tracing/scene_memory.hpp` | The scene memory: the seam the scene contents reach the GPU through (the pool, structures, texture slots, instances) |
 | `src/passes/ray_tracing/gi_scene.*` | The ray-traced scene on Direct3D 12, the scene memory: the geometry pool, bottom-level structures (a geometry per mesh, compacted), the geometry table, the game's textures' slots, the frame's instances and top level (see "Ray-traced scene") |
@@ -2045,7 +2048,7 @@ the game's lights) is left alone until it runs.
   specular as the sun's: the game's tables, towards the light as a disc of its size (`c4.w`). Until the first sun
   pass has given those tables, the game's shaders draw the lights, as a session can start where no sun shines. A
   pixel picks two lights in proportion to their light there without shadows (weighted
-  reservoir sampling over all the frame's lights, white noise) and traces a shadow ray to a point on each
+  reservoir sampling over the lights that can reach it, see "Light bins", white noise) and traces a shadow ray to a point on each
   one's disc, as the ray-traced lights' rays leave (hair's share, the faces that cast); every light is
   shadowed in full, as the ray-traced lights shadow them. At the draw point (`path_tracing::addLampLight`,
   from `local_lights.cpp`) one full-screen draw adds their diffuse and specular light to the light
@@ -3226,6 +3229,30 @@ Not handled:
 - The bounce comes with the ray-traced lights: with them off, the global illumination has the sun and
   the sky only.
 
+### Light bins
+
+Path tracing's lamps at every pixel and the rays' hits at every bounce pick among the frame's lights (`TraceLampLight`,
+`SampledLocalLightReaching`). Walking all of them cost more than the rays that followed: at Mother Base at night a frame
+asks 6.5 million places, and of the 128 lights only 3.2 can reach one on average.
+
+`src/passes/ray_tracing/light_bins.cpp` keeps three tables in the frame's constants, one for each world axis: 2 m bins around
+the eye, 128 along x and z and 64 along y, each with a bit for every light whose bounding box crosses it. `LightsNear`
+ANDs the three bins of a place. A box is a run of bins along each axis, so this is as sharp as a grid of every cell, which would
+take 16 MB a frame where these take 5 KB. A light's box is its reach, cut to the game's volume for it where that is known, and
+5 cm more each way: the 2 cm a light gives past its volume, and room for rounding.
+
+Places and lights past the bins take the last bin at that end, so a far light is still found at its place, only with less
+culling. The bins only ever hold too much: a light left out gives that place no light, and the walk (`NextLight`) keeps the
+lights' order, so the light, and the random numbers it draws, stay as they were. A test run with a count of every light that
+reached a place outside its bins read 0 over 6.5 million places a frame.
+
+| Frozen frame, 2228 x 1254, night | Lights | Walked a place | GPU frame |
+| --- | --- | --- | --- |
+| Mother Base walkway | 128, 205 past the cap | 128 to 3.2 | 32.2 to 27.8 ms |
+| Mother Base deck | 79 | 79 to 1.95 | 26.2 to 24.3 ms |
+
+The lamp shadows of the non-path-traced lights (`light_shadows.hlsl`) still walk them all.
+
 ## GTVBAO
 
 With **Ambient occlusion (GTVBAO)** on, ground-truth visibility bitmask ambient occlusion replaces
@@ -3594,7 +3621,7 @@ it belongs to `forward_water_pass` (`src/passes/`), which composes them: the riv
 shaders over those draws read of the game's is in `src/passes/forward_scene.hpp`.
 
 All twelve river shaders are rows of the table (`Prim_TppPrimRiver*`, `Prim_TppRiverModel*`). From their disassembly:
-the cube map at `t2`, the scene's copy at `t3`, the ripples at `t6`, the fog at `t12`, the depth at `t13`, the shadow map
+the cube map at `t2`, the scene's copy at `t3`, the ripples at `t6` (`t4` in `Prim_TppRiverModelSh*Rpl`), the fog at `t12`, the depth at `t13`, the shadow map
 at `t14` with `s15`; `cPSMaterial` at `b4`, whose `[0]` holds the normal map's two scrolled offsets, and `cPSObject` at
 `b5`, whose `m_localParam[1]` is the sun's colour and `[2].x` the shore's fade. `b6` and up and `t7` to `t11` are free.
 
@@ -3613,7 +3640,10 @@ at `t14` with `s15`; `cPSMaterial` at `b4`, whose `[0]` holds the normal map's t
   mesh UV times a material scale plus the material's offset, the second layer at 0.97 of its scale, each `2t - 1`,
   summed, normalized and taken out of the vertex shader's tangent frame. The rows say where: layered rivers (`Tl`,
   `Ol`) keep the scales at `cPSMaterial[6]` and the frame at `TEXCOORD6-8`, the others at `[3]` and `TEXCOORD5-7`;
-  `Hnm` maps hold x and y in w and y, z rebuilt; `Rpl` shaders add the rain's rings from `t6` (`NAddRippleNormal`).
+  `Hnm` maps hold x and y in w and y, z rebuilt; `Rpl` shaders add the rain's rings (`NAddRippleNormal`): from `t6` in the
+  layered ones, from `t4` in `Prim_TppRiverModelSh*Rpl`, at the screen position over `cPSSystem`'s `m_renderInfo.xy`, turned
+  by the view's first column. Reading `t6` there took whatever an earlier draw left in it for the rings, and the ground's
+  grain showed in the river's reflection (2026-11-01).
 
   The second trace (`TraceSurfaceReflections`, reflections.hlsl) runs after the scene, so it reflects from where the
   water is now: no lag, and no reprojection to undo one. What it reflects is scaled by water's reflectance at the eye's
