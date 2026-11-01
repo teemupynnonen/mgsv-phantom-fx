@@ -357,6 +357,9 @@ if(BUILD_TESTING)
 endif()
 
 include(src/remaster/remaster.cmake)
+if(PHANTOM_FX_DEV_TOOLS AND BUILD_TESTING)
+    include(src/dev/tests.cmake)
+endif()
 
 # Package only runtime files and documentation, not dependency development files.
 set(CPACK_GENERATOR ZIP)

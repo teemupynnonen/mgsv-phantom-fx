@@ -1,11 +1,11 @@
 #include "remaster/remaster.hpp"
 
+#include "dev/remaster/tool_hooks.hpp"
 #include "dev_tools.hpp"
 #include "phantom_fx_settings.hpp"
 #include "remaster/game_materials.hpp"
 #include "remaster/in_force.hpp"
 #include "remaster/rule_file.hpp"
-#include "remaster/tool.hpp"
 
 #include <Windows.h>
 #include <atomic>

@@ -3,6 +3,9 @@
 Tunes the game's materials in the running game and saves the result into the repository, so that every
 build ships it. For example: a lamp whose surface is too bright goes down without touching any other.
 
+It has two halves. This folder holds the rules, which every build ships. `src/dev/remaster/` holds the tool that writes
+them, which only a dev build has.
+
 Game facts behind it: `docs/DEVELOPMENT.md`, "Materials".
 
 ## Using it
@@ -73,17 +76,21 @@ takes it for a tuned one and sets it to `from`, and the tool lists it as tuned.
 
 ## Detaching it
 
-Everything that runs lives in this folder. To take it out, delete the folder and `tests/remaster_tests.cpp`,
-then remove:
+To take out the tool alone, detach the development tools (`src/dev/README.md`): the rules go on working from the file
+built into the add-on.
+
+To take out both, delete this folder, `src/dev/remaster/` and `tests/remaster_tests.cpp`, then remove:
 
 | File | Lines |
 | --- | --- |
 | `CMakeLists.txt` | `include(src/remaster/remaster.cmake)` |
 | `src/addon.cpp` | `log(remaster::hook());` and the include |
 | `src/modules.cpp` | The `remaster::configure` row and the include |
-| `src/menu.cpp` | The `remaster::drawTool()` line and the include |
+| `src/dev/dev.cpp` | The `remaster::drawTool()` line and the include |
+| `src/dev/dev.cmake` | The `src/dev/remaster/` sources and `PHANTOM_FX_MATERIALS_FILE` |
+| `src/dev/tests.cmake` | `marks_tests` |
 | `src/passes/ray_tracing/engine_scene.cpp` | The last argument of `describeModel` and the include |
-| `docs/DEVELOPMENT.md` | The `src/remaster/` row, "Materials", and the mentions under "Build" and "Package a release" |
+| `docs/DEVELOPMENT.md` | The `src/remaster/` rows, "Materials", and the mentions under "Build" and "Package a release" |
 
 That leaves the add-on working. Two small things only this tool uses stay behind, to remove as well for a clean
 tree: `SelfLightFilter` in `scene_description` with its test `tunedSelfLight`, and `Configuration::areEnhancementsOn`.

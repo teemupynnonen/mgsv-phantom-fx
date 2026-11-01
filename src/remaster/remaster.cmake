@@ -1,5 +1,4 @@
-# The remastering tool (src/remaster/README.md). All of it hangs from this file, so that deleting the
-# folder and the few lines its README lists leaves the add-on as it was.
+# The remastering rules (README.md here), in every build. The tool that writes them is a dev build's: src/dev/dev.cmake.
 
 # nlohmann/json 3.12.0, the one header, for the rule file.
 set(NLOHMANN_JSON_COMMIT 55f93686c01528224f448c19128836e7df245f72) # v3.12.0
@@ -20,14 +19,8 @@ target_sources(phantom_fx PRIVATE src/remaster/remaster.cpp src/remaster/rules.c
 target_include_directories(phantom_fx SYSTEM PRIVATE "${NLOHMANN_JSON_DIR}/include")
 install(FILES "${NLOHMANN_JSON_DIR}/LICENSE.MIT" DESTINATION PhantomFX RENAME nlohmann-json-LICENSE.txt COMPONENT addon)
 
-# The tool itself only in a dev build, which saves into this checkout.
-if(PHANTOM_FX_DEV_TOOLS)
-    target_sources(phantom_fx PRIVATE src/remaster/tool.cpp src/remaster/panel.cpp src/remaster/marks.cpp)
-    set_source_files_properties(src/remaster/tool.cpp PROPERTIES COMPILE_DEFINITIONS "PHANTOM_FX_MATERIALS_FILE=\"${MATERIALS_FILE}\"")
-endif()
-
 if(BUILD_TESTING)
-    add_executable(remaster_tests tests/remaster_tests.cpp src/remaster/rules.cpp src/remaster/rule_file.cpp src/remaster/marks.cpp)
+    add_executable(remaster_tests tests/remaster_tests.cpp src/remaster/rules.cpp src/remaster/rule_file.cpp)
     target_include_directories(remaster_tests PRIVATE src)
     target_include_directories(remaster_tests SYSTEM PRIVATE "${NLOHMANN_JSON_DIR}/include")
     target_compile_features(remaster_tests PRIVATE cxx_std_20)

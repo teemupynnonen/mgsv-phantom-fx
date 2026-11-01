@@ -1,5 +1,5 @@
 // The remastering tool's state and actions; only a dev build has this file (remaster.cmake).
-#include "remaster/tool.hpp"
+#include "dev/remaster/tool.hpp"
 
 #include "fxui/fxui.hpp"
 #include "game_code.hpp"

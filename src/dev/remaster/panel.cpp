@@ -3,7 +3,7 @@
 #include "fxui/fxui.hpp"
 #include "remaster/game_materials.hpp"
 #include "remaster/in_force.hpp"
-#include "remaster/tool.hpp"
+#include "dev/remaster/tool.hpp"
 
 #include <Windows.h>
 #include <imgui.h>

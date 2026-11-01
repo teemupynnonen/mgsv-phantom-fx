@@ -1,7 +1,8 @@
 #pragma once
 
 #include "remaster/game_materials.hpp"
-#include "remaster/marks.hpp"
+#include "dev/remaster/marks.hpp"
+#include "dev/remaster/tool_hooks.hpp"
 
 #include <array>
 #include <cstdint>
@@ -9,20 +10,14 @@
 #include <string>
 #include <vector>
 
-// Inside the remastering tool, which only a dev build has (remaster.cmake): its state and actions in tool.cpp, for
-// remaster.cpp and for the panel that draws them (panel.cpp).
+// Inside the remastering tool, which only a dev build has: its state and actions in tool.cpp, for the panel that draws
+// them (panel.cpp).
 namespace phantom_fx::remaster
 {
-// A dev build's rules come from the checkout, so a save holds across restarts without a build: the text
-// of its materials.json, nothing without one.
-std::optional<std::string> savedRulesText();
+// The tool's line on the Developer page, saying how to reach it.
+void drawTool();
 
-// Hooks what the tool watches and registers the panel; empty when hooked, or why not.
-std::string hookTool() noexcept;
 void registerPanel() noexcept;
-
-// A flash or a compare holds a material away from its values, and a sweep goes by value: they end first.
-void settleTool() noexcept;
 
 // A material of a mark or a rule, as a row of the panel's lists.
 struct MaterialRow

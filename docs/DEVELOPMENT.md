@@ -242,7 +242,8 @@ what draws it, when that is the feature's own.
 | `src/dev/game_lua.cpp`, `src/dev/game_lua.hpp` | Lua in the game's script state, and the Developer page's console (see "Game Lua") |
 | `src/dev/travel.cpp`, `src/dev/travel.hpp` | The Developer page's travel: free roam in another map, and the way the page's tools leave a mission (see "Travel") |
 | `src/dev/cutscenes.cpp`, `src/dev/cutscenes.hpp`, `src/dev/cutscene_list.hpp` | The Developer page's cutscene player and its list (see "Cutscenes") |
-| `src/remaster/` | The remastering tool: rules that change the game's materials as they are made, saved in `materials.json` and built into the add-on, and a dev build's marks and the panel that tunes them (see its `README.md`, and "Materials") |
+| `src/remaster/` | The remastering rules: they change the game's materials as they are made, saved in `materials.json` and built into the add-on (see its `README.md`, and "Materials") |
+| `src/dev/remaster/` | The remastering tool that writes them: a dev build's marks, and the panel that tunes them |
 | `src/frame_log.cpp`, `src/frame_log.hpp` | Development diagnostics, off by default: shader log, F10 frame record, constant and texture dumps |
 | `src/dev/automation.cpp`, `src/dev/automation.hpp` | Dev builds: commands from files into the running game, F9's debug cases (see "Debug cases") |
 | `src/dev/inspect_trace.cpp`, `src/dev/inspect_trace.hpp`, `src/dev/inspect.hlsl`, `src/dev/inspect_shared.h` | A debug case's record of every pixel, a trace of its own |
@@ -1353,7 +1354,7 @@ The pixel shaders' `cPSMaterial` (`b4`, `float4 m_materials[8]`) has no copy on 
 memory at every draw, so a write to the pool shows at the next one. Zeroing the self-lit materials from outside
 the running game put out a floodlight panel and a wall lamp's bulb and they came back with the values; the light
 those lamps throw on the walls stayed, as it is a game light of its own (2026-11-01). The remastering tool
-(`src/remaster`) stands on this.
+(`src/remaster`, `src/dev/remaster`) stands on this.
 
 - **The pool.** At `[0x2B743B0]`: its rows at `+0x8`, their number at `+0x10` (5248), those in use at `+0x14`, a slot
   for each row at `+0x20` (12 bytes: the next in its hash bucket at `+2`, its uses at `+4`, its state at `+8`). A handle

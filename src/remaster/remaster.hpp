@@ -9,9 +9,8 @@ namespace phantom_fx
 struct Configuration;
 }
 
-// The remastering tool (README.md): what the rest of the add-on knows of it. The rules saved in
-// materials.json change the game's materials as they are made, in every build; only a dev build has the tool
-// that writes them.
+// The remastering rules (README.md): what the rest of the add-on knows of them. The rules saved in materials.json change
+// the game's materials as they are made, in every build; only a dev build has the tool that writes them (dev/remaster).
 namespace phantom_fx::remaster
 {
 // With MinHook initialised: reads the rules and hooks the game's materials. Returns what was done, for
@@ -25,7 +24,4 @@ void configure(const Configuration& configuration) noexcept;
 // reads the file, not the game's materials. A file already read keeps what it had, so a change in the
 // tool reaches the rays at the next start.
 void tuneFileSelfLight(std::uint64_t material, std::array<float, 4>& color, std::array<float, 4>& intensity);
-
-// The tool's line on the Developer page, saying how to reach it; only a dev build has it.
-void drawTool();
 }
