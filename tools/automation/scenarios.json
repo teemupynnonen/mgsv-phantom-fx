@@ -1,0 +1,92 @@
+[
+  {
+    "name": "mother-base-helipad",
+    "why": "Mother Base's Command platform in daylight: the most seen deck, rails and grates included",
+    "mission": "30050",
+    "player": "9.1155996322632 0.80012100934982 -42.430198669434",
+    "camera": "8.815599 1.5001209 -47.530197 0 0",
+    "clock": "52781",
+    "weather": "0",
+    "expect": {
+      "scene_lacks": 3.434,
+      "in_front": 0.003,
+      "in_sky": 0.014,
+      "extra_shadow": 2.088,
+      "missing_shadow": 0.729,
+      "light": 0.831
+    }
+  },
+  {
+    "name": "africa-roof",
+    "why": "Evening cloud on the tin roof by the windmill: a stand-in casts its shadow, the visible roof is not in the scene",
+    "mission": "30020",
+    "location": "mafr",
+    "cutscene": "false",
+    "player": "-634.00006103516 -13.297395706177 1050.0001220703",
+    "camera": "-634.30005 -12.597396 1044.9001 0 0",
+    "clock": "66600",
+    "weather": "1 0",
+    "expect": {
+      "scene_lacks": 18.956,
+      "in_front": 1.009,
+      "in_sky": 0.006,
+      "extra_shadow": 2.716,
+      "missing_shadow": 1.232,
+      "light": 0.782
+    }
+  },
+  {
+    "name": "afghanistan-ruins",
+    "why": "Afghanistan's ruins and dry grass in the sun: bushes the game's shadow map leaves out",
+    "mission": "30010",
+    "player": "1448.6099853516 337.78680419922 1466.4000244141",
+    "camera": "1448.3099 338.48682 1461.3 0 0",
+    "clock": "56889",
+    "weather": "0",
+    "expect": {
+      "scene_lacks": 5.156,
+      "in_front": 2.486,
+      "in_sky": 0.012,
+      "extra_shadow": 6.667,
+      "missing_shadow": 0.962,
+      "light": 1.154
+    }
+  },
+  {
+    "name": "acc-cabin",
+    "why": "Issue #35: the rays had no walls here, the cabin four times the game's brightness. Coming straight from Mother Base a visibility manager can hold the hull, which hides the fault, so it is reached from another map.",
+    "mission": "40050",
+    "player": "0.041769992560148 1198.0991210938 -1.0420397520065",
+    "camera": "0.54412866 1198.1945 0.44158316 -2.5194585 -0.019055285",
+    "clock": "52990",
+    "weather": "0",
+    "expect": {
+      "scene_lacks": 5.494,
+      "in_front": 0.008,
+      "in_sky": 0.54,
+      "extra_shadow": 0.532,
+      "missing_shadow": 0.173,
+      "light": 0.882
+    },
+    "via": "afghanistan"
+  },
+  {
+    "name": "mother-base-deck",
+    "why": "Mother Base's deck in front of the Command platform, away from the arrival spot: reached by a warp, not a map load",
+    "mission": "30050",
+    "location": "mtbs",
+    "cutscene": "false",
+    "player": "9 0.80000001192093 -25",
+    "camera": "8.7 1.4999999 -30.099998 0 0",
+    "clock": "56590",
+    "weather": "0 0",
+    "expect": {
+      "scene_lacks": 1.219,
+      "in_front": 0.001,
+      "in_sky": 0.027,
+      "extra_shadow": 0.464,
+      "missing_shadow": 0.228,
+      "light": 0.689
+    }
+  }
+]

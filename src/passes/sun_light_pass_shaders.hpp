@@ -1,5 +1,7 @@
 #pragma once
 
+#include "dev_tools.hpp"
+
 // HLSL for the sun light pass (sun_light_pass.hpp), compiled at runtime with d3dcompiler_47.
 namespace phantom_fx::sun_light_pass::shaders
 {
@@ -135,7 +137,15 @@ float SoftShadow(float2 uv, float receiverDepth, float2 tileMin, float2 tileMax,
 
     return 1 - blocked / FilterSamples;
 }
-)" R"(
+)"
+#if PHANTOM_FX_DEV_TOOLS
+R"(
+#if GAME_SHADOW
+static float g_ShadowMapAlone; // What SunShadow found in the shadow map, before fades and clouds
+#endif
+)"
+#endif
+R"(
 // The four cascades share one atlas, two by two. Returns 1 where the sun reaches, after the
 // distance fade, the clouds and the height fade. `tangentX` and `tangentY` lie on the receiver, in
 // view space, for the soft shadows. With ray-traced shadows, `rayTraced` is the rays' shadow, which
@@ -222,6 +232,15 @@ float SunShadow(float3 viewPosition, float2 pixel, float3 tangentX, float3 tange
         shadow = shadow * shadow;
     }
 
+)"
+#if PHANTOM_FX_DEV_TOOLS
+R"(
+#if GAME_SHADOW
+    g_ShadowMapAlone = shadow;
+#endif
+)"
+#endif
+R"(
     // Fades to lit towards the end of the shadow range.
     float3 fromMaxLevel = viewPosition - float3(0, 0, m_lightParams[8].x);
     float pastShadowStart = max(length(fromMaxLevel) - m_lightParams[8].y, 0);
@@ -304,6 +323,19 @@ void main(float4 position : SV_Position, float4 clipPosition : TEXCOORD0, float4
     float3 viewPosition = float3(screenPosition * m_projectionParam.xy * viewZ, viewZ);
     float3 eyeDirection = normalize(viewPosition);
 
+)"
+#if PHANTOM_FX_DEV_TOOLS
+R"(
+#if GAME_SHADOW
+    // Diagnostics (sun_light_pass::keepGameShadow): what the shadow map alone says of this pixel.
+    SunShadow(viewPosition, position.xy - 0.5, 0, 0, 1);
+    outDiffuse = float4(g_ShadowMapAlone, 0, 0, 1);
+    outSpecular = 0;
+    return;
+#endif
+)"
+#endif
+R"(
     float3 lightDirection = m_lightParams[0].xyz;
     float4 lightColor = float4(m_exposure.z * m_lightParams[1].xyz, m_lightParams[1].w);
 

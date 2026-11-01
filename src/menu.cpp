@@ -520,6 +520,7 @@ void drawDiagnostics(const upscaler::Status& state)
 }
 }
 
+#if PHANTOM_FX_DEV_TOOLS
 // A tool that runs Lua has nothing to run on a game version without it.
 fxui::ItemSpec luaTool(fxui::ItemSpec spec)
 {
@@ -619,6 +620,7 @@ void drawDeveloper()
             core::applyDiagnostics(options);
     }
 }
+#endif
 
 void draw()
 {
@@ -650,7 +652,9 @@ void draw()
         drawDisplay(wanted);
         drawWorld();
         drawDiagnostics(state);
-        if constexpr (DevTools) drawDeveloper();
+#if PHANTOM_FX_DEV_TOOLS
+        drawDeveloper();
+#endif
     }
 
     if (enhancements != core::enhancementsOn()) core::setEnhancements(enhancements);

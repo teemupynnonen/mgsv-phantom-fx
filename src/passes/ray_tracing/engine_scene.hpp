@@ -44,6 +44,22 @@ void take(Snapshot& snapshot, const std::vector<gi_inputs::DrawnBones>& drawn);
 // The renderer let these models go: their files are read again when the game places them again.
 void forget(const std::vector<std::uint64_t>& hashes);
 
+// Diagnostics (automation.hpp): what the scene takes that it would leave out. A debug case reveals
+// `everything` to name what the game drew and the scene lacks; `hashes` tries the scene with a few models
+// more. Set while the scene is off: its models are read again as they are revealed.
+struct Reveal
+{
+    bool everything{};
+    std::vector<std::uint64_t> hashes;
+
+    bool isAny() const { return everything || !hashes.empty(); }
+    bool has(std::uint64_t hash) const;
+};
+void setReveal(Reveal reveal);
+
+// Diagnostics: model files read but not yet handed to the scene.
+std::size_t waitingFiles();
+
 // The game's terrain as its terrain shaders draw it (NewTerrain_*; docs/DEVELOPMENT.md, "Scene
 // objects"): the virtual heightmap's page table and height atlas (vertex shader t0, t1), the page
 // table's converter (b4 c0, c1) and the world's scale and offset (b5 c10, c11).

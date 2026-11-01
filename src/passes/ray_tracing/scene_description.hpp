@@ -43,6 +43,16 @@ enum class MeshRole : std::uint8_t
     SunShadowOnly // Any other rigid model's solid stand-in: of the rays towards lights, only the sun's meet it
 };
 
+// Why the scene leaves a model out. A revealed scene (engine_scene::Reveal) takes it all the same, with
+// this reason, so a debug case can name what the game drew and the scene lacks.
+enum class Rejection : std::uint8_t
+{
+    None,
+    HiddenFromEveryPass,
+    FadedOut,
+    MeshGroupsHidden
+};
+
 enum class ModelFile : std::uint8_t
 {
     Unreadable, // Not an FMDL 2.0x the scene reads, or not all of it yet
@@ -108,6 +118,7 @@ struct ModelPart
     // Diagnostics (the shadow probe): the FMDL mesh's alpha and shadow bytes, and its material's technique.
     std::uint8_t alphaBits{}, shadowBits{};
     std::uint64_t technique{};
+    bool isDropped{}; // A mesh the scene drops, held only by a revealed scene (describeModel's keepsDropped)
 };
 
 // Diagnostics (the shadow probe): a mesh of a model file the scene drops, with its alpha and shadow bytes.
@@ -134,6 +145,7 @@ struct ModelInstance
     std::uint64_t hash{};
     Transform transform{};
     std::uint64_t hiddenGroups{};
+    Rejection rejection{};
 };
 
 // One of the game's characters (engine_scene.hpp): a skinned model in the pose the game gives it this
@@ -146,6 +158,7 @@ struct CharacterInstance
     Transform transform{};
     std::vector<float> palette;
     std::vector<bool> shownGroups;
+    Rejection rejection{};
 
     // Diagnostics (the shadow probe): each mesh group's state byte as read, and which of the model's
     // meshes (Model::parts) this frame's draws posed (engine_scene::take).
@@ -174,8 +187,9 @@ struct MaterialTextures
 ModelFile fileKindOf(std::span<const std::uint8_t> file);
 
 // The model in `file` as the scene takes it, found at `source`; null when the bytes are no FMDL 2.0x
-// the scene reads.
-std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const std::uint8_t> file, Source source);
+// the scene reads. With `keepsDropped`, for a revealed scene, the meshes the scene drops are kept as
+// solid ones, marked ModelPart::isDropped.
+std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const std::uint8_t> file, Source source, bool keepsDropped = false);
 
 // Cut-out, leaf and hair meshes: the rays test their texture's alpha.
 bool isCutOut(MeshRole role);

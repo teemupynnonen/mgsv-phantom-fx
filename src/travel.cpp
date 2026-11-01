@@ -4,9 +4,10 @@
 #include "game_lua.hpp"
 #include "log.hpp"
 
-#include <atomic>
 #include <format>
+#include <mutex>
 #include <string>
+#include <utility>
 
 namespace phantom_fx::travel
 {
@@ -77,8 +78,13 @@ end)
 return leaveFor(missionCode, nil, undoArrival)
 )";
 
-constexpr int NoRequest = -1;
-std::atomic<int> requested{NoRequest};
+struct Request
+{
+    Map map{};
+    std::optional<std::array<float, 3>> place;
+};
+std::mutex requestMutex;
+std::optional<Request> requested;
 }
 
 const char* name(Map map) noexcept
@@ -86,9 +92,12 @@ const char* name(Map map) noexcept
     return map < Map::Count ? Destinations[static_cast<std::size_t>(map)].name : "Unknown";
 }
 
-void go(Map map) noexcept
+void go(Map map, std::optional<std::array<float, 3>> place) noexcept
 {
-    if (map < Map::Count) requested = static_cast<int>(map);
+    if (map >= Map::Count) return;
+
+    std::lock_guard lock(requestMutex);
+    requested = Request{map, place};
 }
 
 bool depart(std::string_view code, std::string_view tool, std::string_view target)
@@ -118,12 +127,17 @@ bool depart(std::string_view code, std::string_view tool, std::string_view targe
 
 void onFrameStart() noexcept
 {
-    const int index = requested.exchange(NoRequest);
-    if (index == NoRequest) return;
+    std::optional<Request> request;
+    {
+        std::lock_guard lock(requestMutex);
+        request = std::exchange(requested, std::nullopt);
+    }
 
-    const auto& destination = Destinations[static_cast<std::size_t>(index)];
-    const auto setup = std::format("local missionCode, position = {}, {{{}, {}, {}}}\n", destination.missionCode, destination.position[0],
-        destination.position[1], destination.position[2]);
+    if (!request) return;
+
+    const auto& destination = Destinations[static_cast<std::size_t>(request->map)];
+    const auto position = request->place.value_or(std::array{destination.position[0], destination.position[1], destination.position[2]});
+    const auto setup = std::format("local missionCode, position = {}, {{{}, {}, {}}}\n", destination.missionCode, position[0], position[1], position[2]);
     if (!depart(setup + std::string(Script), "Travel", destination.name)) return;
 
     log("Travelling to " + std::string(destination.name) + ".");

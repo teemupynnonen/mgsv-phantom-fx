@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
+#include <optional>
 #include <string_view>
 
 // The Developer page's travel: free roam in another of the game's three maps after one loading
@@ -12,8 +14,9 @@ namespace phantom_fx::travel
 enum class Map : std::uint8_t { Afghanistan, Africa, MotherBase, Count };
 
 const char* name(Map map) noexcept;
-// Leaves for the map at the next frame start. A toast says whether the game went or why not.
-void go(Map map) noexcept;
+// Leaves for the map at the next frame start, arriving at `place` in place of its fixed spot. A toast
+// says whether the game went or why not.
+void go(Map map, std::optional<std::array<float, 3>> place = std::nullopt) noexcept;
 // For the tools that send the game to another mission, on the game thread: runs `code`, which can call
 // arriveOnFoot and leaveFor (travel.cpp) and returns nothing when the game leaves, or why not. `tool`
 // heads the toast that says why not, and `target` goes in the log. True when the game leaves.
