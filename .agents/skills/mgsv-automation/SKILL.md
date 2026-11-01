@@ -25,6 +25,7 @@ Run from `tools/automation`, as `case.py` imports `fx.py` from there:
 ```
 uv run -q --with numpy --with pillow --with scipy python fx.py <command>
 uv run -q --with numpy --with pillow --with scipy python case.py [--copy] [<case>]
+uv run -q --with numpy --with pillow python perf.py [--copy] <command>
 ```
 
 Cases are in `PhantomFX-automation/cases` beside each game:
@@ -61,8 +62,14 @@ Cases are in `PhantomFX-automation/cases` beside each game:
 | `fx.py [--copy] acc` | From free roam into the helicopter's cabin (the ACC) |
 | `fx.py png <file.dds>`, `fx.py diff <a.dds> <b.dds>` | A texture as a picture; how two captures differ |
 | `check_release.py` | Fails if the tools reached a release build |
+| `perf.py [--copy] log [<file>]` | A play session's costs by place, then its worst seconds |
+| `perf.py [--copy] ab <test> ...` | What each change costs on the frame as it stands, with the drift to judge it by. `--images` also says how far the frame moved |
 
 To drive the copy by hand: run `install.ps1` (`-Settings @()` for the player's exact settings), start `launch.ps1` in the background, then `fx.py --copy boot`. `replay` and `scenarios` do all of this themselves.
+
+## Costs
+
+With **Record the costs** on the Developer page ticked, or after `fx.py run "record_costs 1"`, a dev build writes what each second cost to `PhantomFX-automation/perf/`. The user plays, you read `perf.py log`. It stays as set across starts. A case always takes `perf.json` on its frozen frame. Judge a change by `perf.py ab` on a frozen frame, and never by a difference smaller than the drift it reports.
 
 ## Reading a report
 
@@ -104,6 +111,7 @@ Everything here is left out of a release build altogether, because hooking syste
 | What you see | Cause |
 |---|---|
 | "no record came" | Nothing rendered: a freeze during loading stalls the game, or the scene is off |
+| "no capture came" | The GPU's frames were not timed: nothing rendered, as above |
 | `fx.py` times out | No dev build running there, or the copy failed to start: read `PhantomFX-automation/launch.log` |
 | Report says "No record of the frame" | The case's `log.txt` has the error |
 | Title screen shows the cabin but a case fails | The title moves on by itself into a load. Use `fx.py --copy acc` |

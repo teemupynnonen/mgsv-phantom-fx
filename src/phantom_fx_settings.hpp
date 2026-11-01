@@ -215,4 +215,6 @@ Settings loadSettings(const std::filesystem::path& path);
 void saveSettings(const std::filesystem::path& path, const Settings& settings);
 // `settings` with one line of PhantomFX.ini applied; an unknown key or an invalid value changes nothing.
 Settings withLine(Settings settings, std::string_view key, std::string_view value);
+// The lines PhantomFX.ini holds for `settings`, which that file has only once they settle.
+std::string iniText(const Settings& settings);
 }

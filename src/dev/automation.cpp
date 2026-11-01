@@ -4,6 +4,7 @@
 #include "dev/game_shadow.hpp"
 #include "dev/held_camera.hpp"
 #include "dev/inspect_trace.hpp"
+#include "dev/perf_record.hpp"
 #include "fxui/fxui.hpp"
 #include "game_loop.hpp"
 #include "dev/game_lua.hpp"
@@ -20,6 +21,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <cstdint>
 #include <deque>
 #include <exception>
@@ -44,21 +46,10 @@ constexpr std::uint64_t InspectionFrames = 3600, SceneFrames = 3600;
 // Presents the scene's work to do stays the same before it counts as made: a model that never gets room
 // would otherwise hold a case up for SceneFrames.
 constexpr std::uint64_t SettledFrames = 60;
+// The GPU's frames a `perf` line times without saying.
+constexpr std::uint32_t DefaultCaptureFrames = 120;
 // Presents after a probe's pixel changes before its text has that pixel: a readback's frames in flight.
 constexpr std::string_view ProbeWait = "wait 8";
-
-// What the game is at, for a case to be found again (tools/automation/fx.py replay). Each value alone, as
-// any may fail in a loading screen. A story mission or a cutscene is found again only as a place on its map.
-constexpr std::string_view StateScript = R"(
-local function value(read)
-  local ok, result = pcall(read)
-  return ok and tostring(result) or "?"
-end
-return "mission=" .. value(function() return vars.missionCode end)
-  .. "\nplayer=" .. value(function() return vars.playerPosX end) .. " " .. value(function() return vars.playerPosY end) .. " " .. value(function() return vars.playerPosZ end)
-  .. "\nlocation=" .. value(function() return TppLocation.GetLocationName() end)
-  .. "\ncutscene=" .. value(function() return DemoDaemon.IsDemoPlaying() end)
-)";
 
 std::filesystem::path folder; // Empty while off
 std::atomic<std::uint64_t> presents{};
@@ -80,6 +71,8 @@ struct Script
     bool isWaitingForJob{};
     std::optional<std::uint64_t> inspectionsBefore;
     std::uint64_t inspectionDeadline{};
+    std::optional<std::uint64_t> capturesBefore;
+    std::uint64_t captureDeadline{};
     // Waiting for the scene: the give-up present, the work it had to do, and the present that last changed.
     std::optional<std::uint64_t> sceneDeadline;
     std::size_t sceneWork{};
@@ -142,6 +135,28 @@ std::size_t sceneWork()
     return engine_scene::waitingFiles() + gi_renderer::waitingWork();
 }
 
+// PhantomFX.ini's value for `key`, if it has that line.
+std::optional<std::string> iniValue(const Settings& settings, std::string_view key)
+{
+    std::istringstream lines(iniText(settings));
+    for (std::string line; std::getline(lines, line);)
+        if (line.starts_with(key) && line.size() > key.size() && line[key.size()] == '=') return line.substr(key.size() + 1);
+
+    return std::nullopt;
+}
+
+// Whether two of a setting's values say the same: 1 and 1.000000 do.
+bool isSameValue(std::string_view a, std::string_view b)
+{
+    if (a == b) return true;
+
+    float first{}, second{};
+    const auto [firstEnd, firstError] = std::from_chars(a.data(), a.data() + a.size(), first);
+    const auto [secondEnd, secondError] = std::from_chars(b.data(), b.data() + b.size(), second);
+
+    return firstError == std::errc{} && secondError == std::errc{} && firstEnd == a.data() + a.size() && secondEnd == b.data() + b.size() && first == second;
+}
+
 std::string text(const held_camera::Pose& pose)
 {
     return std::format("{} {} {} {} {}", pose.position[0], pose.position[1], pose.position[2], pose.yaw, pose.pitch);
@@ -153,14 +168,6 @@ std::optional<held_camera::Pose> readPose(std::istream& numbers)
     if (numbers >> pose.position[0] >> pose.position[1] >> pose.position[2] >> pose.yaw >> pose.pitch) return pose;
 
     return std::nullopt;
-}
-
-std::string timeNow()
-{
-    SYSTEMTIME now{};
-    GetLocalTime(&now);
-
-    return std::format("{:04}-{:02}-{:02}_{:02}-{:02}-{:02}", now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond);
 }
 
 std::string status()
@@ -178,7 +185,7 @@ std::string status()
 std::deque<std::string> caseLines(const std::string& name)
 {
     const auto path = "cases/" + name;
-    return {"game_shadow 1", "freeze", "wait 30", "state " + name, "inspect " + path + "/scene", "image " + path + "/traced", "textures " + path, "game_shadow 0",
+    return {"freeze", "wait 30", "perf " + path + "/perf", "game_shadow 1", "wait 30", "state " + name, "inspect " + path + "/scene", "image " + path + "/traced", "textures " + path, "game_shadow 0",
         "enhancements 0", "wait 45", "image " + path + "/vanilla", "enhancements 1", "reveal all", "inspect " + path + "/revealed", "reveal off", "case_done " + name};
 }
 
@@ -192,7 +199,7 @@ void writeState(const std::string& name)
     std::ofstream state(caseFolder / "state.txt", std::ios::trunc);
     const auto camera = held_camera::lastCamera();
     state << "name=" << name << "\nframe=" << game_loop::currentFrame() << "\ncamera=" << (camera ? text(*camera) : std::string("?")) << "\n";
-    if (const auto outcome = game_lua::run(StateScript, "=automation")) state << outcome->text << "\n";
+    if (const auto outcome = game_lua::run(game_lua::StateScript, "=automation")) state << outcome->text << "\n";
 
     const auto sky = weather::state();
     state << "clock=" << sky.clock << "\nweather=" << (sky.requested ? static_cast<int>(*sky.requested) : -1) << " " << sky.fogDensity << "\n";
@@ -328,6 +335,32 @@ void run(Script& running, const std::string& line)
         running.inspectionDeadline = presents + InspectionFrames;
         inspect_trace::request(folder / rest);
     }
+    else if (command == "perf" && !rest.empty())
+    {
+        // The frame count comes last, if at all: a case's name can have spaces.
+        auto file = trimmed(rest);
+        std::uint32_t frames = DefaultCaptureFrames;
+        if (const auto space = file.find_last_of(" \t"); space != file.npos)
+        {
+            const auto* const end = file.data() + file.size();
+            std::uint32_t asked{};
+            if (const auto [stop, error] = std::from_chars(file.data() + space + 1, end, asked); error == std::errc{} && stop == end)
+            {
+                file = trimmed(file.substr(0, space));
+                frames = asked;
+            }
+        }
+
+        running.capturesBefore = perf_record::capturesFinished();
+        running.captureDeadline = presents + frames + InspectionFrames;
+        perf_record::capture(folder / file, frames);
+    }
+    else if (command == "record_costs")
+    {
+        const bool isOn = invert("0");
+        perf_record::setRecording(isOn);
+        if (perf_record::isRecording() != isOn) running.output += "error: the recording switch could not be kept: PhantomFX.log says why\n";
+    }
     else if (command == "image" && !rest.empty())
     {
         askJob(running, [file = folder / (rest + ".dds"), rest](ID3D11DeviceContext* context, ID3D11Resource* backBuffer) {
@@ -354,10 +387,25 @@ void run(Script& running, const std::string& line)
     else if (command == "setting")
     {
         const auto separator = rest.find('=');
+        const auto key = trimmed(std::string_view(rest).substr(0, separator));
+        const auto value = separator == rest.npos ? std::string_view{} : trimmed(std::string_view(rest).substr(separator + 1));
         const auto settings = core::currentSettings();
-        const auto changed = separator == rest.npos ? settings : withLine(settings, trimmed(std::string_view(rest).substr(0, separator)),
-                                                                     trimmed(std::string_view(rest).substr(separator + 1)));
+        const auto current = iniValue(settings, key);
+        if (!current)
+        {
+            running.output += "error: no setting " + std::string(key) + "\n";
+            return;
+        }
+
+        const auto changed = withLine(settings, key, value);
         core::applySettings(changed);
+
+        // A test that changed nothing would read as costing nothing: asking for the value it has may be meant, a value
+        // withLine turned down is not.
+        if (changed != settings) return;
+
+        if (isSameValue(*current, value)) running.output += "the setting stays as it was\n";
+        else running.output += "error: " + std::string(key) + " does not take " + std::string(value) + "\n";
     }
     else if (command == "diagnostic") setDiagnostic(running, rest);
     else if (command == "lua")
@@ -439,6 +487,22 @@ bool isWaiting(Script& running)
         }
     }
 
+    if (running.capturesBefore)
+    {
+        if (perf_record::capturesFinished() != *running.capturesBefore)
+        {
+            running.output += perf_record::lastCapture() + "\n";
+            running.capturesBefore.reset();
+        }
+        else if (presents < running.captureDeadline) return true;
+        else
+        {
+            running.output += "error: no capture came: the GPU's frames were not timed\n";
+            running.capturesBefore.reset();
+            perf_record::cancelCapture();
+        }
+    }
+
     if (running.sceneDeadline)
     {
         if (const auto work = sceneWork(); work != running.sceneWork)
@@ -499,6 +563,14 @@ void onCaseKey()
 
     script = std::move(lines);
 }
+}
+
+std::string timeNow()
+{
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+
+    return std::format("{:04}-{:02}-{:02}_{:02}-{:02}-{:02}", now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond);
 }
 
 void install(const std::filesystem::path& addonDirectory) noexcept

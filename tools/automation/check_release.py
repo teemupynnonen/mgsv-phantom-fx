@@ -10,7 +10,7 @@ the C runtime, say nothing and are not listed.
 import sys
 from pathlib import Path
 
-TEXTS = ["PhantomFX-automation", "SteamRemoteStorage", "InspectPixels", "GAME_SHADOW", "g_ShadowMapAlone", "sun-light-game-shadow", "left out:", "dropped by the mesh rules",
+TEXTS = ["PhantomFX-automation", "Costs on file", "SteamRemoteStorage", "InspectPixels", "GAME_SHADOW", "g_ShadowMapAlone", "sun-light-game-shadow", "left out:", "dropped by the mesh rules",
     "Debug case", "PhantomFX-marks", "Hold for original", "reveal_now", "case_done", "command files", "TppPlayer", "TppMission", "ReserveMissionClear", "Automation", "=automation", "probe_text"]
 WIDE_TEXTS = ["steam_api64.dll"]
 

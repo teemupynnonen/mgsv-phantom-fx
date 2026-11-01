@@ -4,6 +4,7 @@
 #include "dev/automation.hpp"
 #include "dev/cutscenes.hpp"
 #include "dev/game_lua.hpp"
+#include "dev/perf_record.hpp"
 #include "dev/remaster/tool.hpp"
 #include "dev/travel.hpp"
 #include "fxui/fxui.hpp"
@@ -73,6 +74,20 @@ void drawCutscenes()
         cutscenes::play(*selected);
 }
 
+// What frames cost, on file.
+void drawCostRecording()
+{
+    const fxui::Item item({.id = "costRecording", .name = "Costs on file", .summary = "A row a second of what frames cost, to read after playing.",
+        .keywords = "performance recorder record frame time gpu log"});
+    if (!item) return;
+
+    bool isOn = perf_record::isRecording();
+    if (fxui::checkbox("Record the costs", isOn,
+            "Writes every pass, the rays, the lights, the map and the clock to PhantomFX-automation/perf once a second, until turned off, across starts. "
+            "tools/automation/perf.py log reads it. Debug cases keep their own costs either way."))
+        perf_record::setRecording(isOn);
+}
+
 // Lua typed here runs in the game's own script state.
 void drawLuaConsole()
 {
@@ -105,6 +120,7 @@ void drawLuaConsole()
 void install(const std::filesystem::path& addonDirectory) noexcept
 {
     automation::install(addonDirectory);
+    perf_record::install(addonDirectory / "PhantomFX-automation" / "perf");
 }
 
 void onFrameStart() noexcept
@@ -113,6 +129,7 @@ void onFrameStart() noexcept
     cutscenes::onFrameStart();
     game_lua::onFrameStart();
     automation::onFrameStart();
+    perf_record::onFrameStart();
 }
 
 void onPresent(ID3D11DeviceContext* context, ID3D11Resource* backBuffer) noexcept
@@ -132,6 +149,7 @@ void drawPage()
 
     drawTravel();
     drawCutscenes();
+    drawCostRecording();
     drawLuaConsole();
     remaster::drawTool();
     if constexpr (DiagnosticLog)

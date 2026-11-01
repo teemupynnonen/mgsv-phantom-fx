@@ -351,11 +351,7 @@ def side_by_side(before, after, path, labels):
 
 
 def main():
-    arguments = sys.argv[1:]
-    if arguments[:1] == ["--copy"]:
-        fx.game_folder = fx.AUTOMATION_GAME
-        arguments = arguments[1:]
-
+    arguments = fx.take_copy_flag(sys.argv[1:])
     if arguments:
         case = fx.cases() / arguments[0]
     else:
