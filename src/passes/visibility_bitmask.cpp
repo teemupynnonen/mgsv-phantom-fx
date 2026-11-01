@@ -27,7 +27,6 @@ std::atomic<bool> wantedRunning{}, pipelineFailed{};
 std::mutex resourceMutex;
 ComPtr<ID3D11Device> device;
 ComPtr<ID3D11ComputeShader> prefilterShader, occlusionShader, denoiseShader, finalDenoiseShader;
-ComPtr<ID3D11ComputeShader> lightShader, lightDenoiseShader, finalLightDenoiseShader;
 ComPtr<ID3D11Buffer> parameterBuffer;
 DistanceMips distances; // shaders::PrefilterDepths' output, written before each march
 
@@ -39,18 +38,14 @@ bool ensurePipeline()
 
     try
     {
-        const D3D_SHADER_MACRO occlusionPass[]{{"LIGHT", "0"}, {"FINAL", "0"}, {}}, lastOcclusionPass[]{{"LIGHT", "0"}, {"FINAL", "1"}, {}};
-        const D3D_SHADER_MACRO lightPass[]{{"LIGHT", "1"}, {"FINAL", "0"}, {}}, lastLightPass[]{{"LIGHT", "1"}, {"FINAL", "1"}, {}};
+        const D3D_SHADER_MACRO occlusionPass[]{{"FINAL", "0"}, {}}, lastOcclusionPass[]{{"FINAL", "1"}, {}};
         prefilterShader = computeShader(device.Get(), shaders::PrefilterDepths, "depth-prefilter");
         denoiseShader = computeShader(device.Get(), shaders::Denoise, "gtvbao-denoise", occlusionPass);
         finalDenoiseShader = computeShader(device.Get(), shaders::Denoise, "gtvbao-denoise-final", lastOcclusionPass);
-        lightShader = computeShader(device.Get(), shaders::March, "ssilvb", lightPass);
-        lightDenoiseShader = computeShader(device.Get(), shaders::Denoise, "ssilvb-denoise", lightPass);
-        finalLightDenoiseShader = computeShader(device.Get(), shaders::Denoise, "ssilvb-denoise-final", lastLightPass);
         parameterBuffer = makeConstantBuffer(device.Get(), sizeof(Parameters), "Creating the march constants");
 
         // Last, so it marks a complete pipeline.
-        occlusionShader = computeShader(device.Get(), shaders::March, "gtvbao", occlusionPass);
+        occlusionShader = computeShader(device.Get(), shaders::March, "gtvbao");
         log("Visibility bitmask march ready.");
 
         return true;
@@ -58,7 +53,7 @@ bool ensurePipeline()
     catch (const std::exception& error)
     {
         pipelineFailed = true;
-        log(std::string("GTVBAO and SSILVB unavailable: ") + error.what());
+        log(std::string("GTVBAO unavailable: ") + error.what());
 
         return false;
     }
@@ -177,9 +172,6 @@ void detach() noexcept
     occlusionShader.Reset();
     denoiseShader.Reset();
     finalDenoiseShader.Reset();
-    lightShader.Reset();
-    lightDenoiseShader.Reset();
-    finalLightDenoiseShader.Reset();
     parameterBuffer.Reset();
     distances = {};
     device.Reset();
@@ -207,11 +199,9 @@ bool failed() noexcept
     return pipelineFailed;
 }
 
-void march(ID3D11DeviceContext* context, Mode mode, const Parameters& parameters, ID3D11Buffer* scene, ID3D11ShaderResourceView* depth,
-    ID3D11ShaderResourceView* normals, ID3D11ShaderResourceView* diffuse, ID3D11ShaderResourceView* albedo, ID3D11ShaderResourceView* specular,
-    std::array<Target, 2>& results, Target& edges)
+void march(ID3D11DeviceContext* context, const Parameters& parameters, ID3D11Buffer* scene, ID3D11ShaderResourceView* depth,
+    ID3D11ShaderResourceView* normals, ID3D11ShaderResourceView* specular, std::array<Target, 2>& results, Target& edges)
 {
-    const bool light = mode == Mode::Light;
     std::lock_guard lock(resourceMutex);
     if (!ensurePipeline()) throw std::runtime_error("The visibility bitmask march is unavailable.");
 
@@ -220,18 +210,18 @@ void march(ID3D11DeviceContext* context, Mode mode, const Parameters& parameters
 
     ID3D11Buffer* buffers[]{parameterBuffer.Get(), scene};
     context->CSSetConstantBuffers(0, 2, buffers);
-    performance::Timed timed(context, light ? performance::Pass::LightPrefilter : performance::Pass::OcclusionPrefilter);
+    performance::Timed timed(context, performance::Pass::OcclusionPrefilter);
     prefilterDepths(context, depth, specular, distances);
 
-    timed.next(light ? performance::Pass::LightMarch : performance::Pass::OcclusionMarch);
-    ID3D11ShaderResourceView* inputs[]{depth, normals, diffuse, albedo, distances.view.Get()};
+    timed.next(performance::Pass::OcclusionMarch);
+    ID3D11ShaderResourceView* inputs[]{depth, normals, distances.view.Get()};
     ID3D11UnorderedAccessView* outputs[]{results[0].access.Get(), edges.access.Get()};
-    context->CSSetShaderResources(0, 5, inputs);
+    context->CSSetShaderResources(0, 3, inputs);
     context->CSSetUnorderedAccessViews(0, 2, outputs, nullptr);
-    context->CSSetShader(light ? lightShader.Get() : occlusionShader.Get(), nullptr, 0);
+    context->CSSetShader(occlusionShader.Get(), nullptr, 0);
     context->Dispatch(groups(results[0].width), groups(results[0].height), 1);
-    timed.next(light ? performance::Pass::LightDenoise : performance::Pass::OcclusionDenoise);
-    denoise(context, results, edges, light ? lightDenoiseShader.Get() : denoiseShader.Get(), light ? finalLightDenoiseShader.Get() : finalDenoiseShader.Get());
+    timed.next(performance::Pass::OcclusionDenoise);
+    denoise(context, results, edges, denoiseShader.Get(), finalDenoiseShader.Get());
 }
 
 void prefilterDistances(ID3D11DeviceContext* context, const Parameters& parameters, ID3D11Buffer* scene, ID3D11ShaderResourceView* depth,

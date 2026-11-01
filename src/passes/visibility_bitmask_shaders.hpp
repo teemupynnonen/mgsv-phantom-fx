@@ -2,12 +2,12 @@
 
 // HLSL for the visibility bitmask march (visibility_bitmask.hpp), compiled at runtime with
 // d3dcompiler_47. The occlusion is ported from three-gtvbao (norio, MIT; GT-VBAO by Mirko Salm, CC0 /
-// MIT; SSRT3 by Olivier Therrien, MIT), the light gathering from SSRT3 (CDRIN, MIT), the noise and the
-// denoiser from XeGTAO (Intel, MIT). Their licenses are in licenses/.
+// MIT; SSRT3 by Olivier Therrien, MIT), the noise and the denoiser from XeGTAO (Intel, MIT). Their
+// licenses are in licenses/.
 namespace phantom_fx::visibility_bitmask::shaders
 {
-// The constant buffer of the march's compute shaders, and of SSILVB's upsample and the global
-// illumination's combine; each reads the fields it needs. Defined for those shaders' headers too.
+// The constant buffer of the march's compute shaders, and of the global illumination's combine; each
+// reads the fields it needs. Defined for those shaders' headers too.
 #define PHANTOM_FX_MARCH_PARAMETERS R"(
 cbuffer Parameters : register(b0)
 {
@@ -15,8 +15,8 @@ cbuffer Parameters : register(b0)
     float Radius;            // Metres
     float MaxRadiusPixels;   // Caps the march for surfaces close to the camera
     float OcclusionStrength; // GTVBAO: exponent on the visibility
-    float LightStrength;     // SSILVB: multiplies the light
-    float DiffuseScale;      // SSILVB: 0 leaves the game's diffuse light out, for the diagnostics
+    float LightStrength;     // The combine: multiplies the light
+    float DiffuseScale;      // The combine: 0 leaves the game's diffuse light out, for the diagnostics
     float Padding;
 };
 )"
@@ -116,18 +116,11 @@ void main(uint2 thread : SV_DispatchThreadID, uint2 local : SV_GroupThreadID)
 }
 )";
 
-// The visibility bitmask march, once per pixel at render resolution (once per 2 x 2 for SSILVB, see
-// Scale): for each slice, 32 sectors of
+// The visibility bitmask march, once per pixel at render resolution: for each slice, 32 sectors of
 // the hemisphere around the view vector, set where a depth sample, taken as `thickness` deep,
 // covers them. The horizons go through the cosine-weighted measure's CDF first (GT-VBAO), so the
 // share of set sectors is the cosine-weighted occlusion. Also writes XeGTAO's depth edges for the
 // denoiser.
-//
-// With LIGHT 0 (GTVBAO) it writes the visibility. With LIGHT 1 (SSILVB) it writes the light the
-// sectors receive: each sample lights the sectors it covers first, as nearer samples hide what lies
-// behind them, with the diffuse light its surface reflects. Equal sectors carry equal cosine weight,
-// so the sum is the irradiance over pi, in the units of the game's diffuse light, which the resolve
-// multiplies by the albedo.
 //
 // Fox Engine's view space looks down +z and mirrors x (P00 < 0). Flipping z, and x when mirrored,
 // turns it into the usual view space looking down -z with x right and y up, which the maths below
@@ -143,25 +136,15 @@ cbuffer Scene : register(b1)
 
 Texture2D<float> Depth : register(t0);    // Reversed-Z, 0 on the sky
 Texture2D<float4> Normals : register(t1); // G-buffer view-space normals
-#if LIGHT
-Texture2D<float4> Diffuse : register(t2); // The game's diffuse light, as the resolve reads it
-Texture2D<float4> Albedo : register(t3);  // Through the resolve's sRGB view, so linear
-RWTexture2D<float3> OutLight : register(u0);
-#else
 RWTexture2D<unorm float> OutVisibility : register(u0);
-#endif
 // shaders::PrefilterDepths' distances and their smaller copies, negative on foliage.
-Texture2D<float> Distances : register(t4);
+Texture2D<float> Distances : register(t2);
 RWTexture2D<unorm float> OutEdges : register(u1);
 
 static const float Pi = 3.14159265;
 static const uint Sectors = 32;
 static const uint SliceCount = 2;
 static const uint StepCount = 8;
-// SSILVB marches one pixel in each 2 x 2, the top left, which its texel at half the render size
-// stands for: the bounce is soft, and the march is nearly all its cost. shaders::Upsample brings it
-// back to the render size. LightScale in ssilvb.cpp matches it.
-static const uint Scale = LIGHT ? 2 : 1;
 // The smaller copies of the distances, and XeGTAO's DepthMIPSamplingOffset: a sample 14 pixels or
 // more away reads the first, and each doubling of the distance the next.
 static const uint DistanceMipCount = 5;
@@ -270,23 +253,18 @@ float2 remapHorizons(float2 h, float d, float normalAngle, float cosN, float sin
 [numthreads(8, 8, 1)]
 void main(uint2 marchPixel : SV_DispatchThreadID)
 {
-    uint2 pixel = marchPixel * Scale;
+    const uint2 pixel = marchPixel;
     if (any(pixel >= Size)) return;
 
-    int2 p = pixel;
-    int step = Scale;
+    const int2 p = int2(pixel);
     float distance = distanceAt(p);
-    OutEdges[marchPixel] = packEdges(calculateEdges(distance, distanceAt(p + int2(-step, 0)), distanceAt(p + int2(step, 0)),
-        distanceAt(p + int2(0, -step)), distanceAt(p + int2(0, step))));
+    OutEdges[marchPixel] = packEdges(calculateEdges(distance, distanceAt(p + int2(-1, 0)), distanceAt(p + int2(1, 0)),
+        distanceAt(p + int2(0, -1)), distanceAt(p + int2(0, 1))));
 
-    // The sky, and a pass whose constants are not the main view's, stay unoccluded and unlit.
+    // The sky, and a pass whose constants are not the main view's, stay unoccluded.
     if (Depth[pixel] <= 0 || any(Scene[7] != float4(0, 0, 1, 0)))
     {
-#if LIGHT
-        OutLight[marchPixel] = 0;
-#else
         OutVisibility[marchPixel] = 1;
-#endif
         return;
     }
 
@@ -312,7 +290,6 @@ void main(uint2 marchPixel : SV_DispatchThreadID)
     float3 frameBitangent = float3(b, 1 - viewDir.y * viewDir.y * a, -viewDir.y);
 
     float occlusion = 0, weightSum = 0;
-    float3 light = 0;
     [unroll]
     for (uint slice = 0; slice < SliceCount; ++slice)
     {
@@ -335,7 +312,6 @@ void main(uint2 marchPixel : SV_DispatchThreadID)
         float dither = interleavedGradientNoise(marchPixel + 0.5 + normalAngle);
 
         uint occluded = 0;
-        float3 sliceLight = 0;
         [unroll]
         for (uint side = 0; side < 2; ++side)
         {
@@ -371,13 +347,6 @@ void main(uint2 marchPixel : SV_DispatchThreadID)
                 uint width = end - start;
                 // A shift by 32 is a shift by 0 in HLSL, hence the test for an empty range.
                 uint covered = width > 0 ? (0xFFFFFFFFu >> (Sectors - width)) << start : 0;
-#if LIGHT
-                // The sample's surface sends its light this way by the cosine at the sample (SSRT3);
-                // its back sends none.
-                uint lit = covered & ~occluded;
-                float facing = lit != 0 ? saturate(dot(viewNormal(texel), -toSample * invLength)) : 0;
-                if (facing > 0) sliceLight += countbits(lit) * facing * Diffuse[texel].rgb * Albedo[texel].rgb;
-#endif
                 occluded |= covered;
                 if (occluded == 0xFFFFFFFFu) break;
             }
@@ -385,38 +354,24 @@ void main(uint2 marchPixel : SV_DispatchThreadID)
 
         // The slice's cosine-weighted integral weighs it; a degenerate slice drops out, and so does one
         // whose normal faces away from the camera, as normal maps make some do on surfaces seen edge
-        // on: its negative weight could cancel the other slice's, and the light divided by the near
+        // on: its negative weight could cancel the other slice's, and the visibility divided by the near
         // zero sum would flare into white specks.
         float sliceWeight = max(projectedLength * (cosN + normalAngle * sinN), 0);
         occlusion += countbits(occluded) / float(Sectors) * sliceWeight;
-        light += sliceLight / Sectors * sliceWeight;
         weightSum += sliceWeight;
     }
 
-#if LIGHT
-    OutLight[marchPixel] = light / max(weightSum, 1e-4);
-#else
     float visibility = 1 - saturate(occlusion / max(weightSum, 1e-4));
     OutVisibility[marchPixel] = OcclusionStrength > 0 ? pow(visibility, OcclusionStrength) : 1;
-#endif
 }
 )";
 
-// XeGTAO's edge-aware 3 x 3 denoiser, one pixel per thread at the march's size, on the visibility
-// (LIGHT 0) or the light (LIGHT 1). The passes before the last weigh the centre less (beta / 5), so
-// they blur more, as XeGTAO's do.
+// XeGTAO's edge-aware 3 x 3 denoiser, one pixel per thread at the march's size. The passes before
+// the last weigh the centre less (beta / 5), so they blur more, as XeGTAO's do.
 inline constexpr char Denoise[] = R"(
-#if LIGHT
-#define Value float3
-#define Stored float3
-#else
-#define Value float
-#define Stored unorm float
-#endif
-
-Texture2D<Value> Source : register(t0);
+Texture2D<float> Source : register(t0);
 Texture2D<float> Edges : register(t1);
-RWTexture2D<Stored> Output : register(u0);
+RWTexture2D<unorm float> Output : register(u0);
 
 static const float BlurAmount = FINAL ? 1.2 : 1.2 / 5;
 static const float DiagonalWeight = 0.85 * 0.5;
@@ -451,7 +406,7 @@ void main(uint2 pixel : SV_DispatchThreadID)
     float weightBL = DiagonalWeight * (edges.w * edgesB.x + edges.x * edgesL.w);
     float weightBR = DiagonalWeight * (edges.y * edgesR.w + edges.w * edgesB.y);
 
-    Value sum = Source[p] * BlurAmount;
+    float sum = Source[p] * BlurAmount;
     float weight = BlurAmount;
     sum += Source[left] * edges.x + Source[right] * edges.y + Source[top] * edges.z + Source[bottom] * edges.w;
     weight += dot(edges, 1);

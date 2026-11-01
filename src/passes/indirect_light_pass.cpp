@@ -484,8 +484,6 @@ void note(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         const auto* row = shader.row();
         if (!row || std::ranges::find(NotedPasses, row->pass) == std::end(NotedPasses)) return;
 
-        if (call.indexed || call.count != 3 || call.instances != 1) return;
-
         const auto composition = latch.frame();
 
         // The rays trace the main view only, one kick a frame: a smaller camera's view in a corner of the
@@ -547,7 +545,7 @@ void targetsBound(UINT count, ID3D11RenderTargetView* const* targets, ID3D11Dept
     catch (const std::exception& error)
     {
         std::lock_guard lock(resourceMutex);
-        logOnce(std::string("GTVBAO, SSILVB or the rays: no specular target: ") + error.what());
+        logOnce(std::string("GTVBAO, SSGI or the rays: no specular target: ") + error.what());
     }
     catch (...)
     {

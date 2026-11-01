@@ -607,7 +607,7 @@ void draw()
                 .master = &enhancements,
                 .masterLabel = "Visual enhancements",
                 .masterKey = "F1",
-                .masterTip = "Soft shadows, contact shadows, GTVBAO, SSILVB, the volumetric fog and the ray tracing together, as set in their sections. "
+                .masterTip = "Soft shadows, contact shadows, GTVBAO, indirect lighting, the volumetric fog and the ray tracing together, as set in their sections. "
                              "Off shows the game's own lighting for comparison; F1 toggles it at any time. Not saved: each start begins with them on.",
                 .masterOff = "Off: the game's own lighting.",
                 .keys = keys});
