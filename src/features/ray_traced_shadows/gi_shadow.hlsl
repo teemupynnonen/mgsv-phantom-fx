@@ -49,6 +49,7 @@ void TraceSunShadows(uint2 gtid : SV_GroupThreadID, uint2 gid : SV_GroupID, uint
 
     uint2 did = gid * uint2(8, 4) + gtid;
     bool lit = true;
+    float light = 1.0f;
     if (all(did < g_Frame.dimensions.xy))
     {
         float depth = g_Depth.Load(int3(did, 0));
@@ -68,12 +69,14 @@ void TraceSunShadows(uint2 gtid : SV_GroupThreadID, uint2 gid : SV_GroupID, uint
             float blocker, transmittance;
             bool blocked = SurfaceRayBlocked(origin, facing, tolerance, toSun, g_Frame.shadowParams.z, PixelCone(position, 0.0f), true, blocking, ShadowRayTowards(RayTowardsSun),
                 random, blocker, transmittance);
-            // The denoiser takes a pixel as lit or not: past hair, lit with the chance its light gets through.
+            // The denoiser takes a pixel as lit or not: past hair and glass, lit with the chance its light gets through.
+            light = blocked ? 0.0f : transmittance;
             lit = !blocked && random.rand() < transmittance;
         }
 
-        // DLSS Ray Reconstruction denoises the image: the sun pass reads the ray as it is.
-        if (g_Frame.reconstruction.x != 0u) g_Shadow_Output[did] = lit ? 1.0f : 0.0f;
+        // DLSS Ray Reconstruction denoises the image: the sun pass reads the ray as it is, with what hair and glass let
+        // through as it is too. Drawn as a coin toss, a pane's dirt boiled under it, half its pixels flipping each frame.
+        if (g_Frame.reconstruction.x != 0u) g_Shadow_Output[did] = light;
     }
 
     if (lit) InterlockedOr(g_TileMask, FFX_DNSR_Shadows_GetBitMaskFromPixelPosition(did));
