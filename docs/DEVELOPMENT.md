@@ -3293,19 +3293,26 @@ ground had the rays'.
 Two halves, one mechanism:
 
 - **Shadow.** At a river's or liquid's draw (`forward_shadows`, `src/features/forward_shadows/`) the game's shadow
-  map is replaced by a 1x1 white one and the sampler that always compares, and the scene is multiplied by the
-  rays' shadow at the surface's pixels. The map's shadow is the bed's, left in the deferred lighting under the
-  water, and the surface itself only dims to 0.95 - a water surface is mostly the sky reflected in it. Glass
-  takes the same pair from `forward_shadows::tracedShadowResources`, blanked at its own draw in `glass::draw`.
+  map is replaced by a 1x1 white one and the sampler that always compares, so the map's shadow — which no longer
+  matches the rays' scene — does not darken the surface. The water takes no sun shadow of its own: its reflection is
+  what the eye reads, and the bed's shadow stays in the deferred lighting under it. Glass takes the same pair from
+  `forward_shadows::tracedShadowResources`, blanked at its own draw in `glass::draw`.
+- **Caustics.** Before the water blends (`shaders::Caustics`), the same geometry draws once more and multiplies the
+  scene by the light the water's waves focus: `caustics_map.hpp` (the art's tiling map, `caust_016.png`) sampled twice,
+  scrolled apart, its mip from the water's column. The bed's depth comes from the kick's copy (`ray_tracing::surfaceDepth`),
+  so the webs ramp in over the first 25 cm of water (nothing focuses where it meets the shore or anything standing in
+  it), fade exponentially with the column, and are strongest just under the surface. `Atmosphere > Water caustics`
+  holds the switch and the **Intensity**.
 - **Reflection.** The forward draw blanks the game's cube map and records the water as a surface
   (`glass::recordWater`), the same way glass and mirrors are recorded: depth, a zero normal (the water's is its
   depth's slope) and the menu's share of what it reflects. The glass module's second trace
   (`TraceSurfaceReflections`, reflections.hlsl) runs after the scene, so it reflects from where the water is
   now: no lag, and no reprojection to undo one. What it reflects is scaled by water's reflectance at the eye's
   angle (`WaterReflectance`, Karis' split-sum fit, F0 0.02), and added over the scene at the exposure by the
-  glass composite.
+  glass composite. Its roughness (`Atmosphere > Water reflections`) spreads it as ripples would: the game's own
+  normal map is sampled in screen space through a flow map, so the trace cannot read it.
 - **Shadow of a surface.** `TraceSurfaceReflections` also traces the sun for each surface pixel, into
-  `g_ForwardShadow` (u97): the forward multiply and the glass composite read it.
+  `g_ForwardShadow` (u97): the glass composite reads it.
 
 Why the surfaces are one ray a pixel: they are drawn after the upscaler, so neither Ray Reconstruction nor the
 add-on's denoisers see them; their grain is the trace's own, and the water's ripples stay the game's own normal

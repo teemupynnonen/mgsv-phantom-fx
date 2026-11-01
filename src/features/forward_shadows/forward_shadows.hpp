@@ -6,10 +6,12 @@
 
 #include <array>
 
-// The sun's ray-traced shadow on the forward pass's reflective surfaces. Rivers, liquids and glass blend
-// over the lit scene and sample the game's shadow map alone, so their water kept the map's shadow while the
-// rays' lit the ground (docs/DEVELOPMENT.md, "Forward shadows"). At such a draw the map's shadow is left
-// out and the pixels the surface drew are multiplied by the rays' shadow.
+// The forward pass's reflective surfaces and the rays' shadow. Rivers, liquids and glass blend over the lit scene
+// and would sample the game's shadow map alone, whose shadow the rays' replaced on the ground. At such a draw the
+// map's shadow is left out, so the surface is not shadowed by a map that no longer matches the scene; the water
+// takes no sun shadow of its own (its reflection is what the eye reads), and the bed under it is lit by the sun
+// pass as the rest of the scene is. The draw is also where the water is recorded as a surface for the traced
+// reflections (glass::recordWater).
 namespace phantom_fx::forward_shadows
 {
 void configure(const Configuration& configuration) noexcept;
@@ -18,5 +20,19 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
 // A forward surface drawn by another module (glass) leaves the game's shadow map out the same way: the 1x1
 // white map shadow and the sampler that always passes, for its shadow slot and s15. False when unavailable.
 bool tracedShadowResources(ID3D11DeviceContext* context, ID3D11ShaderResourceView** whiteMap, ID3D11SamplerState** alwaysPass) noexcept;
+
+// The camera the water is drawn with, for the caustics the forward pass puts on the bed under it: the inverse of the
+// frame's projection-view, the eye, the render size, and the frame's index (the pattern's time). The kick fills it,
+// so the forward draw reads it without a lock of its own.
+struct Cameras
+{
+    float viewProjectionInverse[16];
+    float eye[4];
+    float dimensions[2];
+    float frame;
+    float padding;
+    float nearFar[4];  // xy: the camera's near and far, for the water column the caustics read
+};
+void setCameras(const Cameras& cameras) noexcept;
 
 }

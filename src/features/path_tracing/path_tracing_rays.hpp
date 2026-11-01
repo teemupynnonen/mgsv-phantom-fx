@@ -27,8 +27,6 @@ struct Textures
     ID3D12Resource* surfaceNormal{};
     ID3D12Resource* surfaceReflection{};
     // The rivers' and liquids' guides (forward_shadows) and their own sun shadow, a frame old; null without.
-    ID3D12Resource* forwardDepth{};   // R32_FLOAT, the surface's reversed-Z depth
-    ID3D12Resource* forwardSurface{}; // R8_UNORM, where a river or a liquid drew
     ID3D12Resource* forwardShadow{};  // R16_FLOAT, the sun's shadow on the surface itself (u97)
 };
 

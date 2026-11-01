@@ -36,6 +36,8 @@ Health health();
 bool isReflecting() noexcept;
 // The menu's strength of the reflections.
 float reflectionStrength() noexcept;
+// The menu's roughness of the water's traced reflection (features/water_reflections).
+float waterReflectionRoughness() noexcept;
 
 // ---- Recording, on the game's render and worker threads ----
 // The resolve (indirect_light_pass.cpp): the game's `specular` light with the traced reflections added, at

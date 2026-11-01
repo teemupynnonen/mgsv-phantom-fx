@@ -154,11 +154,20 @@ Surface main(float4 position : SV_Position, float4 uv : TEXCOORD0, float3 unused
 // trace takes the slope from the depth's neighbours, so no shader interface can go wrong), and 0.3 of what it
 // reflects, which the trace scales by the water's reflectance at the eye's angle.
 inline constexpr char WaterSurface[] = R"(
+cbuffer Parameters : register(b0)
+{
+    float Roughness; // The menu's (features/water_reflections)
+    float3 Padding;
+};
+
 Surface main(float4 position : SV_Position)
 {
     Surface surface;
     surface.depth = position.z;
-    surface.normal = float4(0.0f, 0.0f, 0.0f, 0.1f); // xyz 0: water, the trace takes the slope from the depth's neighbours
+    // xyz 0: water, the trace takes the slope from the depth's neighbours. Its roughness spreads the traced
+    // reflection as the ripples would: the game's normal map is screen-space and driven by a flow map, and the trace
+    // cannot read it, so the spread stands in for the detail.
+    surface.normal = float4(0.0f, 0.0f, 0.0f, Roughness);
     surface.weight = float4(0.3f, 0.3f, 0.3f, 1.0f);
     return surface;
 }
@@ -177,6 +186,7 @@ Texture2D<float4> Scene : register(t0);
 Texture2D<float4> Weight : register(t1);     // The surfaces' weights
 Texture2D<float4> Reflection : register(t2); // What they reflect, in the scene's units
 Texture2D<float> Shadow : register(t3);     // The sun's traced shadow on the surface itself (ray_tracing::forwardShadow)
+Texture2D<float4> SurfaceNormal : register(t4); // The surfaces' normal: zero xyz marks water
 
 float4 main(float4 position : SV_Position) : SV_Target
 {
@@ -187,8 +197,10 @@ float4 main(float4 position : SV_Position) : SV_Target
     const float3 reflected = Reflection.Load(pixel).rgb * Strength * weight.rgb / weight.a;
     const float3 encoded = reflected <= 0.003131 ? reflected * 12.92 : 1.055 * pow(max(reflected, 0.00001), 1 / 2.4) - 0.055;
     // The surface dims in the sun's shade, as the water does: a pane is mostly what it reflects and the sky behind
-    // it, so blocking the sun barely changes it.
-    const float shade = lerp(0.85f, 1.0f, Shadow.Load(pixel));
+    // it, so blocking the sun barely changes it. Water takes no shadow here: the caustics and its light are the bed's,
+    // drawn under it before it blends (forward_shadows' caustics), and what it reflects is added untouched.
+    const bool water = all(SurfaceNormal.Load(pixel).xyz == 0.0f);
+    const float shade = water ? 1.0f : lerp(0.85f, 1.0f, Shadow.Load(pixel));
     return float4(Scene.Load(pixel).rgb * lerp(1.0f, shade, weight.a) + weight.a * encoded, 1);
 }
 )";

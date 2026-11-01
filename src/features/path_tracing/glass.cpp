@@ -64,6 +64,7 @@ ComPtr<ID3D11ComputeShader> guidesShader;
 ComPtr<ID3D11BlendState> surfaceBlend, colorOnly;
 ComPtr<ID3D11DepthStencilState> behindGameDepth;
 ComPtr<ID3D11Buffer> compositeParameters;
+ComPtr<ID3D11Buffer> waterParameters; // The water's roughness, for its surface shader (the menu's)
 Target depthTarget, normalTarget, weightTarget;
 ComputeTexture reflection;
 // The scene, as the composite reads it while it draws into it.
@@ -98,6 +99,7 @@ bool ensurePipeline()
         check(device->CreateVertexShader(fullScreenCode->GetBufferPointer(), fullScreenCode->GetBufferSize(), nullptr, fullScreenShader.ReleaseAndGetAddressOf()),
             "Creating the glass's vertex shader");
         compositeParameters = makeConstantBuffer(device.Get(), sizeof(CompositeParameters), "Creating the glass's constants");
+        waterParameters = makeConstantBuffer(device.Get(), 16, "Creating the water's constants");
 
         const auto guidesCode = compile(shaders::ReconstructionGuides, "glass-guides", "cs_5_0");
         check(device->CreateComputeShader(guidesCode->GetBufferPointer(), guidesCode->GetBufferSize(), nullptr, guidesShader.ReleaseAndGetAddressOf()),
@@ -202,7 +204,7 @@ void composite(ID3D11DeviceContext* immediate, ID3D11RenderTargetView* target, f
     immediate->CopyResource(sceneCopy.Get(), sceneTexture.Get());
 
     ID3D11ShaderResourceView* inputs[]{sceneCopyView.Get(), weightTarget.texture.view.Get(), reflection.view.Get(),
-        ray_tracing::forwardShadow(desc.Width, desc.Height)};
+        ray_tracing::forwardShadow(desc.Width, desc.Height), normalTarget.texture.view.Get()};
     const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(desc.Width), static_cast<float>(desc.Height), 0, 1};
     immediate->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     immediate->IASetInputLayout(nullptr);
@@ -210,7 +212,7 @@ void composite(ID3D11DeviceContext* immediate, ID3D11RenderTargetView* target, f
     immediate->GSSetShader(nullptr, nullptr, 0);
     immediate->PSSetShader(compositeShader.Get(), nullptr, 0);
     immediate->PSSetConstantBuffers(0, 1, compositeParameters.GetAddressOf());
-    immediate->PSSetShaderResources(0, 4, inputs);
+    immediate->PSSetShaderResources(0, 5, inputs);
     immediate->OMSetRenderTargets(1, &target, nullptr);
     immediate->OMSetBlendState(colorOnly.Get(), nullptr, 0xFFFFFFFF);
     immediate->OMSetDepthStencilState(nullptr, 0);
@@ -367,7 +369,10 @@ void recordWater(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call
         ComPtr<ID3D11RenderTargetView> depth, normal, weight;
         {
             std::lock_guard lock(resourceMutex);
-            if (!waterShader || weightTarget.texture.width != width || weightTarget.texture.height != height) return;
+            if (!waterShader || weightTarget.texture.width != width || weightTarget.texture.height != height)
+            {
+                return;
+            }
 
             surface = waterShader;
             blend = surfaceBlend;
@@ -378,6 +383,21 @@ void recordWater(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call
         }
 
         if (!viewportFillsTarget(context)) return;
+
+        // The menu's roughness, for the surface shader (WaterSurface): the water's traced reflection spreads by it.
+        {
+            const float roughness[4]{path_tracing::waterReflectionRoughness(), 0.0f, 0.0f, 0.0f};
+            ComPtr<ID3D11Buffer> parameters;
+            {
+                std::lock_guard lock(resourceMutex);
+                parameters = waterParameters;
+            }
+            if (parameters)
+            {
+                check(write(context, parameters.Get(), roughness), "Writing the water's constants");
+                context->PSSetConstantBuffers(0, 1, parameters.GetAddressOf());
+            }
+        }
 
         ID3D11RenderTargetView* const targets[3]{depth.Get(), normal.Get(), weight.Get()};
         drawSurface(context, call, surface.Get(), targets, blend.Get(), depthTest.Get(), gameTarget.Get(), gameDepth.Get());

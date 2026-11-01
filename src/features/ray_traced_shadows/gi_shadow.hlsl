@@ -21,27 +21,6 @@
 #include "ffx_denoiser_shadows/ffx_denoiser_shadows_tileclassification.h"
 #pragma dxc diagnostic pop
 
-// The forward surfaces the glass module records (glass.hpp): where water drew, and how near it is. A water
-// surface writes a zero normal there; glass writes its own. The bed under the water takes the sun through its
-// waves, which the trace has no ripples for.
-Texture2D<float> g_SurfaceDepth : register(t26);
-Texture2D<float4> g_SurfaceNormal : register(t27);
-
-// Two wave sets crossing in world space, scrolling apart: the light a water surface focuses where their
-// ridges meet. Narrow, since a focus is. A stand-in for the caustics the trace cannot form, scaled by how
-// shallow the water is and how strongly the sun reaches.
-static const float CausticScale = 0.6f;
-static const float CausticStrength = 0.8f;
-
-float CausticPattern(float2 world, float time)
-{
-    const float2 uv = world * CausticScale;
-    float waves = sin(uv.x + 1.6f * sin(uv.y * 0.7f + time * 0.9f)) * sin(uv.y * 1.2f - time * 1.1f);
-    waves += 0.6f * sin(dot(uv, float2(1.2f, -0.9f)) + time * 1.5f);
-
-    return pow(saturate(0.5f + 0.35f * waves), 6.0f);
-}
-
 // How far a point lies beyond the game's shadow map: 0 inside it, 1 past its fade, as
 // SunLight_DL_CS_ES fades its shadow to lit (sun_light_pass_shaders.hpp, SunShadow). In view space the
 // fade runs from the point (0, 0, c8.x); its distance from there follows from the distance to the
@@ -70,7 +49,6 @@ void TraceSunShadows(uint2 gtid : SV_GroupThreadID, uint2 gid : SV_GroupID, uint
 
     uint2 did = gid * uint2(8, 4) + gtid;
     bool lit = true;
-    float caustic = 1.0f; // The sun's multiplier on a bed under water: 1 where none is
     if (all(did < g_Frame.dimensions.xy))
     {
         float depth = g_Depth.Load(int3(did, 0));
@@ -92,25 +70,10 @@ void TraceSunShadows(uint2 gtid : SV_GroupThreadID, uint2 gid : SV_GroupID, uint
                 random, blocker, transmittance);
             // The denoiser takes a pixel as lit or not: past hair, lit with the chance its light gets through.
             lit = !blocked && random.rand() < transmittance;
-
-            // Under a river or a liquid (a zero normal marks the water the glass module recorded) the bed takes
-            // the sun through the water's waves: the light focuses where they meet, and the shade the bed keeps is
-            // a web of bright lines, not the trace's sharp shadow. The pattern stands in for the caustics the
-            // trace cannot form.
-            const float waterDepth = g_SurfaceDepth.Load(int3(did, 0));
-            const float4 waterNormal = g_SurfaceNormal.Load(int3(did, 0));
-            if (waterDepth > 0.0f && all(waterNormal.xyz == 0.0f))
-            {
-                const float under = max(toLinearDepth(depth, g_Frame.nearFar.xy) - toLinearDepth(waterDepth, g_Frame.nearFar.xy), 0.0f);
-                const float time = float(g_Frame.dimensions.z) * (1.0f / 60.0f);
-                const float shallow = saturate(1.0f - under * (1.0f / 3.0f));
-                caustic = 1.0f + CausticStrength * CausticPattern(position.xz, time) * shallow;
-            }
         }
 
-        // DLSS Ray Reconstruction denoises the image: the sun pass reads the ray as it is. The caustics make
-        // the sun brighter than full where it focuses, so the bed's light keeps them.
-        if (g_Frame.reconstruction.x != 0u) g_Shadow_Output[did] = lit ? min(caustic, 1.8f) : 0.0f;
+        // DLSS Ray Reconstruction denoises the image: the sun pass reads the ray as it is.
+        if (g_Frame.reconstruction.x != 0u) g_Shadow_Output[did] = lit ? 1.0f : 0.0f;
     }
 
     if (lit) InterlockedOr(g_TileMask, FFX_DNSR_Shadows_GetBitMaskFromPixelPosition(did));

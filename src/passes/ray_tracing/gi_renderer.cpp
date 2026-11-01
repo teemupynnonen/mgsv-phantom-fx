@@ -185,7 +185,7 @@ struct State
     std::uint64_t statsFence{}, lastStats{};
     Shared depth, normal, albedo, output, shadow, shadowDebug, velocity, terrainPages, terrainHeights, lightDebug, materialSpecular, skyCube, guideNormals,
         guideSpecular, reflection, reflectionDistance, reflectionMap, guideMaterial, guideLobe, specularTable, lampMasks, lampDiffuse, lampSpecular, surfaceDepth,
-        surfaceNormal, surfaceReflection, forwardDepth, forwardSurface, forwardShadow;
+        surfaceNormal, surfaceReflection, forwardShadow;
 
     ~State()
     {
@@ -972,13 +972,9 @@ Result render(const Frame& frame)
                 traced.surfaceNormal = openShared(s, s.surfaceNormal, frame.textures.surfaceNormal, "Opening the glass's normals").Get();
                 traced.surfaceReflection = openShared(s, s.surfaceReflection, frame.textures.surfaceReflection, "Opening the glass's reflections").Get();
             }
-            // The rivers' and liquids' own guides and sun shadow (forward_shadows).
+            // The rivers' and liquids' own sun shadow (forward_shadows), and the water's mask for the caustics:
+            // the previous frame's surfaces, copied by glass::beginFrame before it clears them.
             if (frame.textures.forwardShadow) traced.forwardShadow = openShared(s, s.forwardShadow, frame.textures.forwardShadow, "Opening the forward surfaces' shadow").Get();
-            if (frame.textures.forwardDepth && frame.textures.forwardSurface)
-            {
-                traced.forwardDepth = openShared(s, s.forwardDepth, frame.textures.forwardDepth, "Opening the forward surfaces' depth").Get();
-                traced.forwardSurface = openShared(s, s.forwardSurface, frame.textures.forwardSurface, "Opening the forward surfaces' mask").Get();
-            }
         }
         if (traces.tracesLampLight)
         {
@@ -1102,7 +1098,7 @@ Result render(const Frame& frame)
             {shadow, Write}, {shadowDebug, Write}, {lightDebug, Write}, {velocity, Read}, {terrainPages, Read},
             {terrainHeights, Read}, {traced.guideNormals, Read}, {traced.guideSpecular, Read}, {traced.reflection, Write}, {traced.reflectionDistance, Write}, {traced.reflectionMap, Write},
             {traced.guideMaterial, Read}, {traced.guideLobe, Read}, {traced.specularTable, Read}, {traced.lampMasks, Read}, {traced.lampDiffuse, Write}, {traced.lampSpecular, Write},
-            {traced.forwardDepth, Read}, {traced.forwardSurface, Read}, {traced.forwardShadow, Write}};
+            {traced.forwardShadow, Write}};
         const auto transitionShared = [&](bool toCommon) {
             std::vector<D3D12_RESOURCE_BARRIER> barriers;
             if (toCommon) barriers.push_back(uavBarrier());
