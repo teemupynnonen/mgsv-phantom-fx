@@ -368,9 +368,9 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
             context->PSSetConstantBuffers(0, 1, gameConstants.GetAddressOf());
             context->PSSetConstantBuffers(CausticSceneSlot, 1, gameSceneSlot.GetAddressOf());
             context->PSSetSamplers(0, 1, gameMapSampler.GetAddressOf());
-            context->PSSetShaderResources(0, 1, &gameTargets3[0]);
-            ID3D11ShaderResourceView* noMap{};
-            context->PSSetShaderResources(1, 1, &noMap);
+            // The game's t0 and t1 back: t1 is the river's normal map, which the water's surface reads next
+            // (water::recordWater).
+            context->PSSetShaderResources(0, 2, gameTargets3);
         }
     }
 
@@ -381,7 +381,7 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
     {
         static std::atomic<bool> loggedReflection{};
         if (!loggedReflection.exchange(true)) log("Forward shadows: the rivers' reflection leaves the cube map to the surface trace.");
-        water::recordWater(context, call);
+        water::recordWater(context, call, *row);
     }
 
     // Back as the game had it.
