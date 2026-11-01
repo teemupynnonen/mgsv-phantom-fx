@@ -29,6 +29,10 @@
 - **Glass and mirrors reflect.** With path tracing, windows, vehicle glass, glasses, visors and mirrors show what is
   really around them, at the strength the game gives each, in place of its small cube maps and the mirrors' painted
   pictures. The rays see them too: light comes through, and they show in reflections.
+- **Rays see clothes and other layered materials in their real colours.** Many of the game's materials get their colour
+  from a second texture, and rays only read the first: Kaz's beige coat was white in a window's reflection, and the
+  light bouncing off such surfaces took the wrong colour. Reflections and the global illumination now see them as the
+  camera does.
 - **DLSS Ray Reconstruction.** A new **Ray Reconstruction** switch under the upscaler, for NVIDIA RTX GPUs,
   shown while a ray-traced effect is on: NVIDIA's model cleans up the ray-traced global illumination,
   shadows and lights and upscales in one step, in place of DLSS and the add-on's own denoisers, with a

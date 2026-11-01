@@ -11,6 +11,8 @@
 #include "constant_capture.hpp"
 #include "core.hpp"
 #include "d3d12_helpers.hpp"
+#include "dev/dev.hpp"
+#include "dev_tools.hpp"
 #include "device_check.hpp"
 #include "features/frame_generation/fsr_frame_generation.hpp"
 #include "features/frame_generation/presenter.hpp"
@@ -543,9 +545,12 @@ void onDestroyCommandList(command_list* list)
 }
 
 // With frame generation the game's swap chain is the presenter's stand-in, whose Present follows.
-void onPresent(command_queue* queue, swapchain*, const rect*, const rect*, uint32_t, const rect*)
+void onPresent(command_queue* queue, swapchain* swapChain, const rect*, const rect*, uint32_t, const rect*)
 {
     if (queue->get_immediate_command_list() != immediateList) return;
+
+    if constexpr (DevTools)
+        dev::onPresent(native(queue->get_immediate_command_list()), reinterpret_cast<ID3D11Resource*>(swapChain->get_current_back_buffer().handle));
 
     const bool generating = presenter::active();
     upscaler::setFrameGeneration(generating);
@@ -591,6 +596,10 @@ void onReshadePresent(effect_runtime* runtime)
     if (runtime->is_key_pressed(VK_F2)) photo_mode::toggle();
     if (runtime->is_key_pressed(VK_F3)) photo_mode::toggleUi();
     if (runtime->is_key_pressed(VK_F4)) photo_mode::toggleBlur();
+    if constexpr (DevTools)
+    {
+        if (runtime->is_key_pressed(VK_F9)) dev::onCaseKey();
+    }
 
     const auto down = [runtime](uint32_t key) { return !overlayOpen && runtime->is_key_down(key); };
     photo_mode::setControls({down('W'), down('S'), down('A'), down('D'), down(VK_SPACE), down(VK_CONTROL), down(VK_SHIFT)});
@@ -623,6 +632,7 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshadeMo
     if (isSupportedGameBuild() && !weather::supported()) log("The weather manager has unexpected code; the weather menu is unavailable.");
 
     frame_log::install(directory);
+    if constexpr (DevTools) dev::install(directory);
     upscaler::initialize(directory);
     core::initialize(directory, isSupportedGameBuild());
     // The game makes its swap chain and targets next, so the float scene and HDR are decided now.

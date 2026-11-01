@@ -51,6 +51,8 @@ public:
     virtual ~Trace() = default;
 
     virtual bool runsIn(const kick_traces::KickTraces& traces) const = 0;
+    // Whether its frame needs the scene's instances listed, as a hit names them by index.
+    virtual bool listsInstances(const gi_renderer::Frame& frame) const = 0;
 
     // Every kick, whether it runs or not, before Direct3D 12 may read the kick's inputs. Throws on Direct3D errors.
     virtual void gather(const Kick& kick) = 0;

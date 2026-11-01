@@ -4,13 +4,13 @@
 #include "fxui/fxui.hpp"
 #include "game_code.hpp"
 #include "game_loop.hpp"
-#include "game_lua.hpp"
+#include "dev/game_lua.hpp"
 #include "game_memory.hpp"
 #include "log.hpp"
 #include "remaster/in_force.hpp"
 #include "remaster/remaster.hpp"
 #include "remaster/rule_file.hpp"
-#include "travel.hpp"
+#include "dev/travel.hpp"
 #include "weather.hpp"
 
 #include <Windows.h>

@@ -1,5 +1,7 @@
 #include "phantom_fx_settings.hpp"
 
+#include "dev_tools.hpp"
+
 #include <Windows.h>
 #include <algorithm>
 #include <charconv>
@@ -325,6 +327,18 @@ Settings loadSettings(const std::filesystem::path& path)
 
     return settings;
 }
+
+#if PHANTOM_FX_DEV_TOOLS
+Settings withLine(Settings settings, std::string_view key, std::string_view value)
+{
+    IniValues values;
+    values.insert_or_assign(std::string(trim(key)), std::string(trim(value)));
+    IniReader reader(values);
+    describe(settings, reader);
+
+    return settings;
+}
+#endif
 
 void saveSettings(const std::filesystem::path& path, const Settings& settings)
 {
