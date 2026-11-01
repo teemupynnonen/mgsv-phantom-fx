@@ -23,7 +23,7 @@ HEADER = np.dtype([("magic", "S4"), ("width", "<u4"), ("height", "<u4"), ("frame
 PIXEL = np.dtype([("view", "<u4"), ("view_distance", "<f4"), ("surface", "<u4"), ("surface_distance", "<f4"), ("sun", "<u4"), ("sun_distance", "<f4"),
     ("game_distance", "<f4"), ("kinds", "<u4")])
 
-# As GI_INSPECT_SURFACE_* in gi_shared.h.
+# As GI_INSPECT_SURFACE_* in src/dev/inspect.hlsl.
 SURFACE_METRES, SURFACE_SHARE = 0.05, 0.02
 # Regions under this share of the frame are noise: alpha-tested edges and the shadow map's texels.
 LEAST_REGION = 0.0005

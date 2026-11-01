@@ -1,12 +1,14 @@
 #include "dev/automation.hpp"
 
 #include "core.hpp"
+#include "dev/inspect_trace.hpp"
 #include "features/photo_mode/photo_mode.hpp"
 #include "fxui/fxui.hpp"
 #include "game_loop.hpp"
 #include "dev/game_lua.hpp"
 #include "log.hpp"
 #include "passes/ray_tracing/engine_scene.hpp"
+#include "passes/ray_tracing/gi_renderer.hpp"
 #include "passes/ray_tracing/ray_tracing.hpp"
 #include "passes/sun_light_pass.hpp"
 #include "resource_dump.hpp"
@@ -132,6 +134,12 @@ std::string_view trimmed(std::string_view text)
     if (first == text.npos) return {};
 
     return text.substr(first, text.find_last_not_of(" \t") - first + 1);
+}
+
+// What the scene has yet to make.
+std::size_t sceneWork()
+{
+    return engine_scene::waitingFiles() + gi_renderer::waitingWork();
 }
 
 std::string text(const photo_mode::Pose& pose)
@@ -291,7 +299,7 @@ void run(Script& running, const std::string& line)
     else if (command == "wait_scene")
     {
         running.sceneDeadline = presents + SceneFrames;
-        running.sceneWork = ray_tracing::waitingWork();
+        running.sceneWork = sceneWork();
         running.sceneBusyAt = presents;
     }
     else if (command == "probe")
@@ -316,9 +324,9 @@ void run(Script& running, const std::string& line)
     else if (command == "probe_text") running.output += ray_tracing::shadowProbe() + "\n";
     else if (command == "inspect" && !rest.empty())
     {
-        running.inspectionsBefore = ray_tracing::inspections();
+        running.inspectionsBefore = inspect_trace::finished();
         running.inspectionDeadline = presents + InspectionFrames;
-        ray_tracing::inspect(folder / rest);
+        inspect_trace::request(folder / rest);
     }
     else if (command == "image" && !rest.empty())
     {
@@ -422,7 +430,7 @@ bool isWaiting(Script& running)
 
     if (running.inspectionsBefore)
     {
-        if (ray_tracing::inspections() != *running.inspectionsBefore) running.inspectionsBefore.reset();
+        if (inspect_trace::finished() != *running.inspectionsBefore) running.inspectionsBefore.reset();
         else if (presents < running.inspectionDeadline) return true;
         else
         {
@@ -433,7 +441,7 @@ bool isWaiting(Script& running)
 
     if (running.sceneDeadline)
     {
-        if (const auto work = ray_tracing::waitingWork(); work != running.sceneWork)
+        if (const auto work = sceneWork(); work != running.sceneWork)
         {
             running.sceneWork = work;
             running.sceneBusyAt = presents;

@@ -195,9 +195,6 @@ add_gi_kernels(passes/ray_tracing/shaders/gi_scene.hlsl ClearNewGeometries Debug
 add_gi_kernels(features/global_illumination/gi_light.hlsl ClearCounters GenerateDispatch PrepareGuides TraceLight LearnAlbedo PurgeTiles PopulateMultibounceCells PopulateCells
     UpdateTiles UpdateMultibounceCells ResolveLight UpdateFoliageMemory CompositeLight)
 add_gi_kernels(features/ray_traced_shadows/gi_shadow.hlsl TraceSunShadows ClassifyShadowTiles DebugShadows ProbeShadows)
-if(PHANTOM_FX_DEV_TOOLS)
-    add_gi_kernels(features/ray_traced_shadows/gi_shadow.hlsl InspectPixels)
-endif()
 add_gi_kernels(features/ray_traced_shadows/gi_shadow_filter.hlsl FilterShadows)
 add_gi_kernels(features/ray_traced_lights/light_shadows.hlsl TraceLocalLightShadows FilterLocalLightShadows ProbeLocalLights)
 add_gi_kernels(features/path_tracing/reflections.hlsl TraceReflections TraceSurfaceReflections)

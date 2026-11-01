@@ -26,8 +26,7 @@ struct ID3D11Resource;
 //   wait <frames>                 lets that many frames present
 //   wait_scene                    until the scene's work to do has stopped changing
 //   probe <x> <y>                 the shadow and lamp probes' text at that render pixel
-//   inspect <file>                a record of every pixel, into `<file>.bin` and `<file>.tsv`
-//                                 (gi_renderer::Frame::inspectTo)
+//   inspect <file>                a record of every pixel, into `<file>.bin` and `<file>.tsv` (inspect_trace.hpp)
 //   image <file>                  the next presented frame as `<file>.dds`
 //   textures <folder>             the ray tracing's textures and the game's shadow, as DDS files
 //   game_shadow 0|1               keeps the game's shadow per pixel (sun_light_pass::keepGameShadow)
