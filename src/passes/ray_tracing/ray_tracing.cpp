@@ -58,6 +58,7 @@ struct Options
     // With the shadows: the game's shadow map adds its shadow near the camera, so the rays leave it cut-out
     // geometry without its texture there. Without, they take that geometry as letting half the sun through.
     bool withShadowMap{};
+    bool usesMicromaps = true; // Read when the renderer starts: it needs another Direct3D 12 runtime
     int lightRays{4};   // The point and spot lights' shadow rays a pixel
     float sunSize{0.53f}; // The sun's angular diameter for the shadows and the light's hits, in degrees
     int lightPixelRays{2}; // The light's rays a light pixel (a 2 x 2 of render pixels): 1, 2 or 4
@@ -423,7 +424,7 @@ void ensurePipeline()
 {
     if (packShader)
     {
-        if (!gi_renderer::started()) gi_renderer::start(device.Get(), fenceHandle);
+        if (!gi_renderer::started()) gi_renderer::start(device.Get(), fenceHandle, latch.latest().usesMicromaps);
         return;
     }
 
@@ -434,7 +435,7 @@ void ensurePipeline()
 
     check(device->CreateFence(0, D3D11_FENCE_FLAG_SHARED, IID_PPV_ARGS(&fence)), "Creating the shared fence");
     check(fence->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &fenceHandle), "Sharing the fence");
-    gi_renderer::start(device.Get(), fenceHandle);
+    gi_renderer::start(device.Get(), fenceHandle, latch.latest().usesMicromaps);
 }
 
 // The G-buffer into the shared textures, on the immediate context; call with executionMutex held.
@@ -1040,6 +1041,7 @@ void configure(const Configuration& configuration) noexcept
     const Options options{
         .asked = kick_traces::askedBy(configuration),
         .withShadowMap = settings.rayTracedShadows.withGameShadows,
+        .usesMicromaps = settings.globalIllumination.usesOpacityMicromaps,
         .lightRays = settings.rayTracedLights.shadowRaysPerPixel,
         .sunSize = settings.sun.diameterDegrees,
         .lightPixelRays = settings.globalIllumination.raysPerLightPixel,

@@ -510,12 +510,13 @@ gi_denoiser::Camera denoiserCamera(const Frame& frame)
 }
 }
 
-void start(ID3D11Device* device11, HANDLE sharedFence)
+void start(ID3D11Device* device11, HANDLE sharedFence, bool usesMicromaps)
 {
     if (state) return;
 
     auto s = std::make_unique<State>();
-    if (const auto agility = createAgilityDevice(device11))
+    if (!usesMicromaps) log("Opacity micromaps: off in the settings; the system's Direct3D 12 traces without them.");
+    if (const auto agility = usesMicromaps ? createAgilityDevice(device11) : nullptr)
     {
         s->wrapper = agility;
         check(agility.As(&s->device), "Finding Direct3D 12 ray tracing");

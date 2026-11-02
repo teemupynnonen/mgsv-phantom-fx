@@ -2716,6 +2716,10 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
     Agility SDK 1.620.1 runtime from `PhantomFX\D3D12` (`createAgilityDevice`). The kernels stay `cs_6_5` under the pipeline flag
     `RAYQUERY_ALLOW_OPACITY_MICROMAPS_ON_PRE_SM69_SHADERS`. Without the DLL, or on a GPU that lacks them, the rays stay on the
     system's runtime and test alpha as before. Only an RTX 5080 has run this.
+  - **The setting.** **Opacity micromaps** under Global illumination (`opacity_micromaps`, on by default) is read when the renderer
+    starts, as it picks the runtime. Off, the Agility SDK runtime never loads. It is a setting because no query tells hardware from
+    emulation: Microsoft's Agility SDK 1.619 table has RTX 40 and newer in hardware and older RTX cards emulating, and both
+    report the same raytracing tier. A test build on an RTX 3090 only lost time.
   - **One a mesh.** `Scene::micromaps` holds one for all that show a mesh, static or moving: a pose does not change how a texture
     lies on a triangle. The key is its index buffer's address and its texture's slot. Moving meshes matter most: the jungle's 258
     plants are characters. Refits read the indices, so they stay in the geometry pool, copied out of the frame's bake buffer.
@@ -2740,8 +2744,8 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
 
     That is at the level used, 6. Levels 2, 4 and 5 moved 5.1, 4.7 and 1.8% of the frame with two states on every ray, and four
     states saved less at each. Level 6 costs 16 MB in the jungle.
-  - **Baselines.** Compare against a build without them, or with `D3D12Core.dll` removed. `D3D12_RAYTRACING_INSTANCE_FLAG_DISABLE_OMMS`
-    is no baseline: it cost 0.35 ms over no micromaps at all.
+  - **Baselines.** Compare with the setting off and the game restarted. `D3D12_RAYTRACING_INSTANCE_FLAG_DISABLE_OMMS` is no
+    baseline: it cost 0.35 ms over no micromaps at all.
 - **Instances.** The frame's `D3D12_RAYTRACING_INSTANCE_DESC`s (up to 131,072) are both the top
   level's input and what the kernels read (`t5`): one per placement of a model and per character, with
   its transform; the terrain rings with identity. `InstanceID` holds the kind (`GI_INSTANCE_*`, low 8

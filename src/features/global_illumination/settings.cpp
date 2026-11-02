@@ -37,5 +37,12 @@ void describe(GlobalIllumination& light, SettingVisitor& visit)
             .max = 3,
             .standard = Defaults.strength,
             .tip = "1 is physically based; higher brightens the indirect light, 0 leaves only the sun and the lamps."});
+    visit.toggle(light.usesOpacityMicromaps,
+        {.iniKey = "opacity_micromaps",
+            .label = "Opacity micromaps",
+            .tip = "Rays pass leaves, fences and other cut-outs much faster, knowing which parts of them are solid or clear without reading "
+                   "their textures. RTX 40 and newer do this in hardware. Older RTX cards emulate it and can run slower: try it off there. "
+                   "GPUs without DXR 1.2 ignore this. Takes a restart.",
+            .needsRayTracing = true});
 }
 }
