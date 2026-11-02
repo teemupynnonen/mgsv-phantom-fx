@@ -32,7 +32,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-PLAYER_GAME = Path(r"C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP")
+PLAYER_GAME = Path(os.environ.get("PHANTOM_FX_GAME", r"C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP"))
 AUTOMATION_GAME = Path.home() / "Documents" / "Development" / "mgsv-automation" / "game"
 LINK = "PhantomFX-automation"
 # What is expected of each scenario, in the repository; their pictures and depth, which stay on this machine.
