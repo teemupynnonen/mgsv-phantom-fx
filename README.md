@@ -98,8 +98,11 @@ Needs DXR 1.1.
 | <kbd>F2</kbd> | Photo mode |
 | <kbd>F3</kbd> | Hide HUD |
 | <kbd>F4</kbd> | Photo mode blur on/off |
-
-Photo mode: <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> to move, mouse to look, <kbd>Space</kbd> / <kbd>Ctrl</kbd> up/down, <kbd>Shift</kbd> faster.
+| <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> | Photo mode: move |
+| Mouse | Photo mode: look |
+| <kbd>Space</kbd> / <kbd>Ctrl</kbd> | Photo mode: up / down |
+| <kbd>Shift</kbd> | Photo mode: faster |
+| <kbd>C</kbd> | Photo mode: slower |
 
 ## Notes
 
