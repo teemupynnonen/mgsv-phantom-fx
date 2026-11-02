@@ -954,7 +954,7 @@ float VisibilityFromSurface(float3 origin, float3 normal, float tolerance, float
 // ---- Where a pixel's rays leave its surface ----
 // The scene's own surface where a ray from the eye through the pixel meets it near the depth's point: its
 // exact point and its triangle's normal, from which a ray leaves past that very surface (LiftOffTriangle).
-// A shadow ray then skips nothing near it, as it passes the undersides of what it meets; other rays stop on any
+// A shadow ray then skips nothing near it, as it passes the undersides of solid surfaces; other rays stop on any
 // face, so they still skip copies of the surface.
 // Where the game drew something the scene lacks or holds at another level of detail, the depth's point
 // and the G-buffer's normal, with copies of the surface skipped ("Copies of a surface"). Until 2026-10-24
@@ -1023,10 +1023,10 @@ float3 LiftOffTriangle(float3 position, float3 normal)
     return position + normal * (steps * step * largest);
 }
 
-// A pixel's ray leaves on the side `side` points to: off the triangle, or off the depth's point. 4 cm along the bumpy
-// normal, as the global illumination's and the reflections' left at 10 m until 2026-11-02, took them through the next wall
-// in a room's corner, where a ray from inside the wall reached the sun past the backs of its faces: the corner lit up in
-// bright seams (a debug case).
+// A pixel's ray leaves on the side `side` points to: off the triangle, or off the depth's point where the scene has no
+// surface there. Until 2026-11-02 the global illumination's and the opaque reflections' always left the depth's point, 4 cm
+// along the bumpy normal at 10 m, which took them through the next wall in a room's corner: a ray from inside the wall
+// reached the sun past the backs of its faces, and the corner lit up in bright seams (a debug case).
 float3 PixelRayOrigin(PixelSurface surface, float3 side)
 {
     return surface.isExact ? LiftOffTriangle(surface.position, side) : OffsetFromScreenSurface(surface.position, side);
