@@ -52,7 +52,7 @@ struct Composition
     // The ray-traced scene runs, for the global illumination or the ray-traced shadows or lights: the
     // passes tell it what it needs (ray_tracing::noteNormals and the others).
     bool rayTracing{};
-    bool showOcclusion{}, showLight{}, showGlobalIllumination{}, showTracedScene{}, showTracedSceneOnly{};
+    bool showOcclusion{}, showLight{}, showGlobalIllumination{}, showTracedScene{};
 };
 
 FrameLatch<Composition> latch;
@@ -281,7 +281,7 @@ bool drawResolveForGlobal(ID3D11DeviceContext* context, const ui_redirect::DrawC
     auto* light = ray_tracing::light(size.first, size.second);
     // The scene view alone: the game's resolve would multiply it by the G-buffer's albedo and add the
     // game's specular, so the scene's own colours are written instead.
-    if (composition.showTracedSceneOnly && light)
+    if (composition.showTracedScene && light)
     {
         std::lock_guard lock(resourceMutex);
         if (!ensurePipeline()) return false;
@@ -393,8 +393,8 @@ void configure(const Configuration& configuration) noexcept
         .rayTracing = configuration.effects.tracesScene(),
         .showOcclusion = diagnostics.showAmbientOcclusion,
         .showLight = diagnostics.showIndirectLight,
-        .showGlobalIllumination = diagnostics.showGlobalIllumination || diagnostics.showTracedScene,
-        .showTracedSceneOnly = diagnostics.showTracedSceneOnly,
+        .showGlobalIllumination = diagnostics.showGlobalIllumination,
+        .showTracedScene = diagnostics.showTracedScene,
     };
 
     latch.set(composition);

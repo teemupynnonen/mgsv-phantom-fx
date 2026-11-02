@@ -1168,7 +1168,7 @@ void runComposite(ID3D11RenderTargetView* destination, ID3D11ShaderResourceView*
     // The traced scene's view replaces the image here, after the upscaler: fed through the upscaler it
     // has no motion vectors of its own, so it lagged the camera, its edges sparkled and it never
     // settled on the frame the game drew.
-    auto* debugView = options.showTracedSceneOnly
+    auto* debugView = options.showTracedScene
                           ? ray_tracing::light(colorTarget.width, colorTarget.height)
                       : isShadowView
                           ? ray_tracing::shadowDebug(colorTarget.width, colorTarget.height)

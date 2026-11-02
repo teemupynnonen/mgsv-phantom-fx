@@ -150,8 +150,7 @@ struct Diagnostics
     bool showAmbientOcclusion{};   // GTVBAO's occlusion alone in place of the lit scene
     bool showIndirectLight{};      // SSILVB's light alone in place of the lit scene
     bool showGlobalIllumination{}; // The global illumination's light alone in place of the lit scene
-    bool showTracedScene{};        // The global illumination's traced scene from the camera, through the game's resolve
-    bool showTracedSceneOnly{};    // The traced scene alone, drawn after the upscaler: no albedo or specular of the game's, no lag
+    bool showTracedScene{};        // The global illumination's traced scene from the camera
     bool twoSidedShadows{};        // Rays towards lights blocked by every surface from both sides, as until 2026-10-26
     int lightVolumes{};            // 0 the ray-traced lights within the game's volumes, 1 those with a shadow map beyond, 2 every one beyond
     bool logGlobalIlluminationOften{}; // The global illumination's light logged every few frames, not every ten seconds

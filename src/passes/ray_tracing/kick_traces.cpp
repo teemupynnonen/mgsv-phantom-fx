@@ -15,7 +15,7 @@ Asked askedBy(const Configuration& configuration)
         .runsRayTracedLights = effects.runs(Effect::RayTracedLights),
         .runsPathTracing = effects.runs(Effect::PathTracing),
         .asksRayReconstruction = configuration.settings.upscaling.isRayReconstructionAsked(),
-        .showsScene = configuration.diagnostics.showTracedScene || configuration.diagnostics.showTracedSceneOnly};
+        .showsScene = configuration.diagnostics.showTracedScene};
 }
 
 bool isPathTraced(const Asked& asked, bool isDenoisedByReconstruction)
