@@ -781,7 +781,9 @@ bool StopsShadowRay(uint instance, uint geometry, bool dxrFrontFace, bool isTowa
     if (!(InstanceKind(desc) & GI_INSTANCE_MODEL)) return true;
 
     uint flags = g_Geometries[FirstGeometry(desc) + geometry].flags;
-    if (flags & GI_GEOMETRY_NO_SHADOW) return false;
+    // A main-view-only mesh of a model with a sun stand-in (a hut's window trim): with lightDiagnostics.w the sun's rays meet it, as
+    // the stand-in leaves a slit its own casing does not close, which the game's shadow map lets through too (2026-11-02).
+    if (flags & GI_GEOMETRY_NO_SHADOW) return !isTowardsLamp && (flags & GI_GEOMETRY_STOOD_IN) && g_Frame.lightDiagnostics.w != 0u;
     if (isTowardsLamp && (flags & GI_GEOMETRY_SUN_ONLY)) return false;
 
     return !dxrFrontFace || (flags & GI_GEOMETRY_CUT_OUT) != 0;

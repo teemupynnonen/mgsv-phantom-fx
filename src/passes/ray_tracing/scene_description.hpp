@@ -108,6 +108,8 @@ struct ModelPart
     std::uint32_t mesh{};
     std::uint32_t group{};
     MeshRole role{};
+    // A main-view-only mesh of a model with a sun stand-in (GI_GEOMETRY_STOOD_IN): a window's trim, which the stand-in leaves open.
+    bool isStoodIn{};
     std::uint64_t baseTexture{};
     bool textureIsMask{};
     std::uint64_t specularTexture{}, normalTexture{};
