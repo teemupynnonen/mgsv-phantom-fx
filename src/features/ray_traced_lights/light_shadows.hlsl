@@ -167,8 +167,8 @@ void ProbeLocalLights()
         float2 cone = PixelCone(position, 0.0f);
         Random random = MakeRandom(g_Frame.dimensions.z, centre.y * g_Frame.dimensions.x + centre.x);
         probe.receiver = float4(position, distance(position, g_Frame.eye.xyz));
-        probe.start = float4(surface.position - position, surface.exact ? 1.0f : 0.0f);
-        probe.startHit = surface.exact ? ProbeHit(surface.hit) : uint4(0u, 0u, 0u, 0u);
+        probe.start = float4(surface.position - position, surface.isExact ? 1.0f : 0.0f);
+        probe.startHit = surface.isExact ? ProbeHit(surface.hit) : uint4(0u, 0u, 0u, 0u);
         probe.view = ProbeHit(TraceClosest(g_Frame.eye.xyz, normalize(DepthPosition(centre, 1e-6f) - g_Frame.eye.xyz), 1e5f));
         float reaching = 0.0f;
         for (uint i = 0; i < g_Frame.localLightCount.x; ++i)

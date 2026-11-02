@@ -255,7 +255,7 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
     float3 world = DepthPosition(pixel, depth);
     Random random = MakeRandom(did.x + did.y * LightSize().x, g_FrameIndex);
     PixelSurface surface = PixelSurfaceAt(world, normal);
-    float3 origin = PixelRayOrigin(surface);
+    float3 origin = PixelRayOrigin(surface, surface.normal);
     uint rays = clamp(g_Frame.lightRays.x, 1u, 4u);
     // Foliage (the normals' alpha under a half, PrepareGuides) takes twice: swaying and thin, it restarts its
     // denoiser history every few frames, so its light is mostly the frame's rays; shaded grass boiled (2026-10-25).
@@ -264,7 +264,7 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
     float totalLuminance = 0.0f, totalDistance = 0.0f;
     for (uint ray = 0; ray < rays; ++ray)
     {
-        float3 direction = AboveSurface(mapToCosineHemisphere(random.rand2(), normal), surface);
+        float3 direction = MirrorAboveSurface(mapToCosineHemisphere(random.rand2(), normal), surface.normal);
         if (ray == 0) firstDirection = direction;
         SceneHit hit = TraceFromSurface(origin, surface.normal, CopyTolerance(world), direction, MAX_HIT_DISTANCE);
         CountDiagnostic(GI_COUNTER_HITS, hit.hit);

@@ -268,8 +268,8 @@ void TraceReflections(uint2 did : SV_DispatchThreadID)
     Random random = MakeRandom(did.x + did.y * g_BufferDimensions.x + g_BufferDimensions.x * g_BufferDimensions.y, g_FrameIndex);
     float cosineToEye;
     PixelSurface surface = PixelSurfaceAt(world, normal);
-    float3 direction = AboveSurface(SpecularDirection(normal, toEye, alpha, random.rand2(), cosineToEye), surface);
-    float3 origin = PixelRayOrigin(surface);
+    float3 direction = MirrorAboveSurface(SpecularDirection(normal, toEye, alpha, random.rand2(), cosineToEye), surface.normal);
+    float3 origin = PixelRayOrigin(surface, surface.normal);
     float hitDistance;
     bool isRough = normalRoughness.w >= RoughSurface;
     float3 light = ReflectedLight(origin, surface.normal, CopyTolerance(world), direction, PixelCone(world, g_Frame.rayCone.x + alpha), isRough, random, hitDistance);

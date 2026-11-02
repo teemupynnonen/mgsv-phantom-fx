@@ -220,7 +220,7 @@ what draws it, when that is the feature's own.
 | `src/passes/ray_tracing/gi_d3d12.hpp` | The kernels, root signature and descriptor tables every ray-traced feature shares |
 | `src/passes/ray_tracing/gi_slots.hpp` | The slots of those tables, a type a kind; `gi_bindings.h`, generated, names each one (see "Kernels and their slots") |
 | `tools/kernel_bindings/` | Build tool: C++'s slot names, `Kernel` enum and table of DXIL, from the compiled kernels (see "Kernels and their slots") |
-| `src/passes/ray_tracing/shaders/` | HLSL the ray-traced features share: `gi_shared.h` (also C++), `gi_common.hlsli`, `gi_shadow.hlsli` (where shadow rays leave a surface; the FidelityFX Shadow Denoiser's data access), `gi_hit_light.hlsli` (a ray's hit lit as the global illumination lights it, the hash grid cache), `ggx_specular.hlsli` (the specular of what path tracing's rays hit), `gi_scene.hlsl` |
+| `src/passes/ray_tracing/shaders/` | HLSL the ray-traced features share: `gi_shared.h` (also C++), `gi_common.hlsli` (among much else, where a pixel's rays leave its surface), `gi_shadow.hlsli` (which side shadow rays leave from; the FidelityFX Shadow Denoiser's data access), `gi_hit_light.hlsli` (a ray's hit lit as the global illumination lights it, the hash grid cache), `ggx_specular.hlsli` (the specular of what path tracing's rays hit), `gi_scene.hlsl` |
 | `third_party/ffx_denoiser_shadows/` | AMD's FidelityFX Shadow Denoiser headers, unchanged (MIT; `licenses/AMD-FidelityFX-LICENSE.txt`) |
 
 ### Shared
@@ -2900,7 +2900,9 @@ denoiser (see "Ray Reconstruction").
   "Shadows from every surface (old)" (`shadowDiagnostics.x`), goes back to every surface casting from both
   sides.
 - **Where a ray leaves** (`PixelSurfaceAt`, for the sun's rays, the lights', the debug view's, and the
-  global illumination's and path-traced reflections' first rays). A ray from the eye through the pixel looks for the scene's own surface near the depth's point (within
+  global illumination's and path-traced reflections' first rays; glass's and water's reflections keep
+  the depth's point, as their surface is not in the opaque depth). A ray from the eye through the pixel
+  looks for the scene's own surface near the depth's point (within
   3 cm plus 2% of the distance; cut-out geometry by its alpha), searching that stretch alone: the game
   hides what comes between the camera and the player (a bush the camera backs into) and the scene keeps
   it. Searched from the eye, the ray stopped on its leaves and those pixels left from the depth's point,
@@ -2925,13 +2927,13 @@ denoiser (see "Ray Reconstruction").
   copies of the surface just above it ("Copies of a surface" in `gi_common.hlsli`). Until 2026-10-24
   every ray left that way: a lamp's hard shadow showed the skip taking a character pressed to a wall
   for a copy of the wall, light through his back in patches ragged along the wall's bumpy normals.
-  The global illumination's and the reflections' first rays left that way until 2026-11-02. In a room's
+  The global illumination's and the opaque reflections' first rays left that way until 2026-11-02. In a room's
   inside corner the lift, 4 cm at 10 m, followed a bumpy normal through the next wall; from inside a wall
   a ray towards the sun passes the backs of its faces, so whatever those rays met was sunlit, and the
   corners lit up in bright seams (a debug case: 0 of 64 rays reached the room from those pixels, 60 to
   64 from their neighbours), and that room's back wall took about half its light that way. A bumpy
   normal also tilts some rays under the triangle they leave. They are mirrored back above it
-  (`AboveSurface`): left there, the reflections' showed as white veins along the bumps of a dark wall,
+  (`MirrorAboveSurface`): left there, the reflections' showed as white veins along the bumps of a dark wall,
   whether copies of the surface were skipped or not.
 - **Cut-out meshes.** A model mesh the game alpha-tests (FMDL alpha bits 5 and 7, see "Scene objects",
   mesh flags) is cut-out geometry: non-opaque in its structure, so only it reaches the rays' candidate
@@ -3039,7 +3041,7 @@ denoiser (see "Ray Reconstruction").
   four harness scenes, before the captured meshes went: each scene's shadow takes the expected colour.
   The probe also shows where the rays start: the scene's triangle they leave (or the depth's point), its
   normal and the sun's cosine to it and to the G-buffer's normal, which side they leave, the lift off it
-  (Wächter and Binder's offset grows with the world coordinates: about 3 cm at 1,200 m) and whatever that
+  (`LiftOffTriangle`, or `OffsetFromScreenSurface` at the depth's point) and whatever that
   lift passes through, and whether the blocker is the start's own triangle or mesh. Added 2026-10-24 when
   Snake's chest was shadowed in strips along its folds, each ray blocked at 0.00 m by his own suit's mesh
   from inside. Each model it lists shows its meshes' alpha and shadow bytes and the meshes left out.
