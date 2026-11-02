@@ -4,10 +4,10 @@
 
 - **Photo mode crawls with C.** Holding C moves the free camera at 0.5 m/s, next to Shift's 25 m/s, for
   lining up a close shot.
-- **Path tracing is far faster in the jungle.** Rays now know which parts of leaves and other cut-outs are solid or clear
-  without reading their textures. At night in the jungle that saves about 4 ms of a 22 ms frame, and a few tenths of a
-  millisecond elsewhere. RTX 40 and newer do this in hardware. Older RTX cards emulate it and can run slower: turn **Opacity
-  micromaps** off under Global illumination and restart. GPUs without DXR 1.2 are not affected.
+- **Path tracing can run far faster in the jungle.** Turn on **Opacity micromaps** under Global illumination and restart, on
+  an RTX 40 or newer. Rays then know which parts of leaves and other cut-outs are solid or clear without reading their
+  textures. At night in the jungle that saves about 4 ms of a 22 ms frame, and a few tenths of a millisecond elsewhere. Older
+  RTX cards emulate it and can run slower, so it is off by default. GPUs without DXR 1.2 ignore it.
 - **Path tracing is faster through foliage.** Rays test leaves and other cut-outs against their textures millions of times
   a frame, and each test worked out afresh how sharp a texture to read. Each mesh now knows that once. The jungle saves
   about 2 ms a frame and other places up to 1 ms, with the picture unchanged.

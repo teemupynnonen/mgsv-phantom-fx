@@ -2716,10 +2716,10 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
     Agility SDK 1.620.1 runtime from `PhantomFX\D3D12` (`createAgilityDevice`). The kernels stay `cs_6_5` under the pipeline flag
     `RAYQUERY_ALLOW_OPACITY_MICROMAPS_ON_PRE_SM69_SHADERS`. Without the DLL, or on a GPU that lacks them, the rays stay on the
     system's runtime and test alpha as before. Only an RTX 5080 has run this.
-  - **The setting.** **Opacity micromaps** under Global illumination (`opacity_micromaps`, on by default) is read when the renderer
-    starts, as it picks the runtime. Off, the Agility SDK runtime never loads. It is a setting because no query tells hardware from
-    emulation: Microsoft's Agility SDK 1.619 table has RTX 40 and newer in hardware and older RTX cards emulating, and both
-    report the same raytracing tier. A test build on an RTX 3090 only lost time.
+  - **The setting.** **Opacity micromaps** under Global illumination (`opacity_micromaps`, off by default) is read when the
+    renderer starts, as it picks the runtime. Off, the Agility SDK runtime never loads. It is a setting because no query tells
+    hardware from emulation: Microsoft's Agility SDK 1.619 table has RTX 40 and newer in hardware and older RTX cards emulating,
+    and both report the same raytracing tier. A test build on an RTX 3090 only lost time, so nobody gets it unasked.
   - **One a mesh.** `Scene::micromaps` holds one for all that show a mesh, static or moving: a pose does not change how a texture
     lies on a triangle. The key is its index buffer's address and its texture's slot. Moving meshes matter most: the jungle's 258
     plants are characters. Refits read the indices, so they stay in the geometry pool, copied out of the frame's bake buffer.

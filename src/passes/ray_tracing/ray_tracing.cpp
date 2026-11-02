@@ -58,7 +58,7 @@ struct Options
     // With the shadows: the game's shadow map adds its shadow near the camera, so the rays leave it cut-out
     // geometry without its texture there. Without, they take that geometry as letting half the sun through.
     bool withShadowMap{};
-    bool usesMicromaps = true; // Read when the renderer starts: it needs another Direct3D 12 runtime
+    bool usesMicromaps{}; // Read when the renderer starts: it needs another Direct3D 12 runtime
     int lightRays{4};   // The point and spot lights' shadow rays a pixel
     float sunSize{0.53f}; // The sun's angular diameter for the shadows and the light's hits, in degrees
     int lightPixelRays{2}; // The light's rays a light pixel (a 2 x 2 of render pixels): 1, 2 or 4

@@ -41,7 +41,7 @@ void describe(GlobalIllumination& light, SettingVisitor& visit)
         {.iniKey = "opacity_micromaps",
             .label = "Opacity micromaps",
             .tip = "Rays pass leaves, fences and other cut-outs much faster, knowing which parts of them are solid or clear without reading "
-                   "their textures. RTX 40 and newer do this in hardware. Older RTX cards emulate it and can run slower: try it off there. "
+                   "their textures. RTX 40 and newer do this in hardware: turn it on there. Older RTX cards emulate it and can run slower. "
                    "GPUs without DXR 1.2 ignore this. Takes a restart.",
             .needsRayTracing = true});
 }
