@@ -39,8 +39,10 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
 
         // The game's environment leaves the draw, and a flat grey takes its place: its own shader lights the pane
         // `(ambient + diffuse) x` that, so it takes the sun and its shade and the dirt in its alpha reads, without a baked
-        // environment behind it. The traced reflection is added over it at the composite.
-        ComPtr<ID3D11ShaderResourceView> flat = forward_surfaces::flatCube();
+        // environment behind it. The traced reflection is added over it at the composite. A mirror's slot holds a flat
+        // picture, not a cube, so it reads nothing.
+        ComPtr<ID3D11ShaderResourceView> flat;
+        if (row->pass == GamePass::Glass) flat = forward_surfaces::flatCube();
         ID3D11ShaderResourceView* none{};
         ID3D11ShaderResourceView* replacement = flat ? flat.Get() : none;
         context->PSSetShaderResources(row->reflectionSlot, 1, &replacement);
