@@ -683,9 +683,10 @@ float SunRayChance(float cosine)
 
 // The sun as a disc of its angular size at a hit: a shadow ray to a point on it from the side it lights,
 // a leaf's far side too. Its light before the cosine and the albedo. A matte hit may leave the ray out (SunRayChance) and count the
-// ones it traces for those: the cosine it is lit by cancels the chance's, so a counted ray stays near DimSunRayLight. A reflection's
-// hit keeps every ray: its specular and its normal map's cosine do not cancel, and what reflections clamp (BrightestHit) would keep
-// less than a counted ray stands for.
+// ones it traces for those: the cosine it is lit by cancels the chance's, so a counted ray stays near DimSunRayLight. The chance goes
+// by the disc's brightest cosine, as a point near its edge lights a grazing hit more than its centre does. A reflection's hit keeps
+// every ray: its specular and its normal map's cosine do not cancel, and what reflections clamp (BrightestHit) would keep less than a
+// counted ray stands for.
 float3 SunReaching(float3 world, float3 normal, float3 origin, float tolerance, bool leaf, bool isMatte, inout Random random, out float3 direction)
 {
     direction = g_Frame.sunDirection.xyz;
@@ -695,7 +696,7 @@ float3 SunReaching(float3 world, float3 normal, float3 origin, float tolerance, 
     float cosine = dot(sunSide, towardsSun);
     if (!(cosine > 0.0f) || dot(g_Frame.sunColor.rgb, 1.0f) <= 0.0f) return 0.0f;
 
-    float chance = isMatte ? SunRayChance(cosine) : 1.0f;
+    float chance = isMatte ? SunRayChance(cosine + g_Frame.shadowParams.x) : 1.0f;
     if (chance < 1.0f && random.rand() >= chance) return 0.0f;
 
     direction = SunSample(random.rand2());
