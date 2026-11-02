@@ -42,6 +42,9 @@ struct ID3D11Resource;
 //   clock <seconds>               the time of day, its clock stopped there (weather.hpp)
 //   weather <type> [<fog>]|off    forces TppDefine.WEATHER's type, with the fog's density for Foggy; or lets go
 //   status                        frame counts, the camera, the scene
+//   peek <address|game+rva> [bytes]  the game's memory there, 256 bytes without saying, 4096 at most
+//   drawn <x> <y> <z> <radius>    where the main camera's rigid model draws of the next 10 frames put their models, near there
+//   owner <hash>                  every placement of that model the next snapshot finds: its owner, fields and raw bytes
 namespace phantom_fx::automation
 {
 // The local time as the tools' files are named by it: 2026-11-01_21-05-09.

@@ -7,6 +7,7 @@
 #include "dev/perf_record.hpp"
 #include "dev/remaster/tool.hpp"
 #include "dev/travel.hpp"
+#include "features/photo_mode/photo_mode.hpp"
 #include "fxui/fxui.hpp"
 #include "log.hpp"
 
@@ -123,6 +124,7 @@ void install(const std::filesystem::path& addonDirectory) noexcept
     perf_record::install(addonDirectory / "PhantomFX-automation" / "perf");
 }
 
+/** The game thread, at the main loop's frame start: each tool that runs there, in order. */
 void onFrameStart() noexcept
 {
     travel::onFrameStart();
@@ -130,6 +132,7 @@ void onFrameStart() noexcept
     game_lua::onFrameStart();
     automation::onFrameStart();
     perf_record::onFrameStart();
+    photo_mode::onFrameStart();
 }
 
 void onPresent(ID3D11DeviceContext* context, ID3D11Resource* backBuffer) noexcept
