@@ -1239,6 +1239,17 @@ level at Camp Omega's cliffs. No names in the exe: the class names here are desc
   whose `+0x20` and `+0x28` begin and end an array of world matrices (4x4, column-major: translation
   at `+0x30`, `1` at `+0x3C`). The props and buildings the game draws one by one with skinning shaders
   and `m_useWeightCount` 0 (see "Ray-traced shadows").
+  The holder's instances (`+0x10`, `0x60` bytes each, vtable `0x210D998`, in the matrices' order) point to their matrix
+  at `+0x28`; an instance's byte at `+0x1E` has bit `0x02` while the group does not draw it. Destructible props (barrels,
+  a hut's window panes) are such groups: the game moves a few single models of the prop onto the placements near the
+  player and stops drawing the group's copy there, and stops drawing a broken one's (2026-11-02, read with the `owner`,
+  `drawn` and `peek` automation lines: of a hut's 18 window panes, the bit was set on the three a single model stood on and
+  on the one the player broke, which the main camera's draws no longer held; clear on the others, each drawn once a frame,
+  the six about 170 m away included). Nothing else in the group, its instances' records, their ids or its model changed
+  when a pane or a barrel broke. The scene leaves those instances out (`undrawnInstances` in `engine_scene.cpp`), and
+  places a group whole when its instances do not read as these. Before, a broken barrel stayed in the rays and a
+  standing prop near the player was there twice; a rule placing such props from their single models alone dropped every
+  pane without one, and with it the dirt in their light.
 - **Model** (vtable `0x20F4D90`, `0x200` bytes), shared by a group's instances or an instance itself:
   `+0x40` the world matrix (also at `+0xA0`), `+0x80` the local box (min, max as float4), `+0x118` the
   resource handle (vtable `0x21027C0`, `0xA0` bytes: `+0x30` the file's 64-bit path hash, `+0x60` the

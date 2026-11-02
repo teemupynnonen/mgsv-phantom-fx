@@ -60,6 +60,11 @@ void setReveal(Reveal reveal);
 // Diagnostics: model files read but not yet handed to the scene.
 std::size_t waitingFiles();
 
+// Diagnostics: the next snapshot describes every placement of the model `hash` (its owner, its fields and
+// raw bytes), to diff what the game changes; watchedOwners has the text once a snapshot ran.
+void watchOwners(std::uint64_t hash);
+std::optional<std::string> watchedOwners();
+
 // The game's terrain as its terrain shaders draw it (NewTerrain_*; docs/DEVELOPMENT.md, "Scene
 // objects"): the virtual heightmap's page table and height atlas (vertex shader t0, t1), the page
 // table's converter (b4 c0, c1) and the world's scale and offset (b5 c10, c11).
