@@ -136,7 +136,7 @@ if(NOT EXISTS "${AGILITY_SDK_DIR}/build/native/bin/x64/D3D12Core.dll")
     set(archive "${CMAKE_BINARY_DIR}/_deps/agility-sdk-${AGILITY_SDK_VERSION}.zip")
     message(STATUS "Downloading the Agility SDK ${AGILITY_SDK_VERSION}")
     file(DOWNLOAD "https://api.nuget.org/v3-flatcontainer/microsoft.direct3d.d3d12/${AGILITY_SDK_VERSION}/microsoft.direct3d.d3d12.${AGILITY_SDK_VERSION}.nupkg"
-        "${archive}" TLS_VERIFY ON STATUS status)
+        "${archive}" EXPECTED_HASH SHA256=a8a494c3e5f687d9be0a465ec8248da70781ab689d888db8806b600422722be6 TLS_VERIFY ON STATUS status)
     list(GET status 0 code)
     if(NOT code EQUAL 0)
         message(FATAL_ERROR "Could not download the Agility SDK: ${status}")

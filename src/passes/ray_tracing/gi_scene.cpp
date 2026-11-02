@@ -799,7 +799,7 @@ std::optional<Scene::Micromap> Scene::planMicromap(const Blas& blas, std::uint32
     }
 
     const auto descOffset = bakeUsed, indexOffset = descOffset + descBytes, dataOffset = indexOffset + indexBytes;
-    jobs.push_back({blas.firstGeometry + geometry, jobGroups, level, static_cast<std::uint32_t>(dataOffset), static_cast<std::uint32_t>(descOffset),
+    jobs.push_back({rows[blas.firstGeometry + geometry], jobGroups, level, static_cast<std::uint32_t>(dataOffset), static_cast<std::uint32_t>(descOffset),
         static_cast<std::uint32_t>(indexOffset), {}});
     build.descOffset = descOffset;
     build.destination = *destination;

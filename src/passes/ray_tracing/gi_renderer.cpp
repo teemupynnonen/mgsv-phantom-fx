@@ -33,6 +33,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 
 // The kernels' DXIL, in gi_d3d12::Kernel's order (CMakeLists.txt).
@@ -84,16 +85,27 @@ ComPtr<ID3D12Device> createAgilityDevice(ID3D11Device* device11)
         || !GetModuleFileNameW(addon, path, MAX_PATH))
         return nullptr;
 
+    // Direct3D takes the runtime's folder in the system's code page, which not every folder's name fits.
     const auto directory = std::filesystem::path(path).parent_path() / "PhantomFX" / "D3D12";
+    std::string sdkPath;
+    try
+    {
+        sdkPath = directory.string() + "\\";
+    }
+    catch (const std::system_error&)
+    {
+        log("Opacity micromaps: the system's code page cannot name the add-on's folder; the system's Direct3D 12 traces without them.");
+        return nullptr;
+    }
+
     if (!std::filesystem::exists(directory / "D3D12Core.dll"))
     {
-        log("Opacity micromaps: no Agility SDK runtime at " + directory.string() + "; the system's Direct3D 12 traces without them.");
+        log("Opacity micromaps: no Agility SDK runtime at " + sdkPath + "; the system's Direct3D 12 traces without them.");
         return nullptr;
     }
 
     ComPtr<ID3D12SDKConfiguration1> configuration;
     ComPtr<ID3D12DeviceFactory> factory;
-    const auto sdkPath = directory.string() + "\\";
     auto result = D3D12GetInterface(AgilityConfiguration, IID_PPV_ARGS(&configuration));
     if (SUCCEEDED(result)) result = configuration->CreateDeviceFactory(AgilitySdkVersion, sdkPath.c_str(), IID_PPV_ARGS(&factory));
 

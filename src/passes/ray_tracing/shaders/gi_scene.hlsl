@@ -189,8 +189,7 @@ groupshared uint gs_SeenStates;
 
 // One group a triangle of the frame's jobs (g_Dispatch.x groups, 65535 a row, over g_Dispatch.y jobs):
 // its micro-triangles' states, sixteen a word, then its micromap's description and its index, the
-// uniform one where every micro-triangle agrees. A geometry whose row has no texture yet (the table's
-// upload ran out of room) is unknown throughout: the rays' alpha test settles it as without micromaps.
+// uniform one where every micro-triangle agrees.
 [numthreads(64, 1, 1)]
 void BakeMicromaps(uint3 gid : SV_GroupID, uint thread : SV_GroupIndex)
 {
@@ -199,11 +198,10 @@ void BakeMicromaps(uint3 gid : SV_GroupID, uint thread : SV_GroupIndex)
 
     GIMicromapJob job = g_MicromapJobs[FindMicromapJob(group)];
     uint primitive = group - job.firstGroup;
-    GIGeometry geometry = g_Geometries[job.row];
+    GIGeometry geometry = job.geometry;
     uint3 i = TriangleIndices(geometry, primitive);
     float2 uv0 = VertexUV(geometry, i.x), uv1 = VertexUV(geometry, i.y), uv2 = VertexUV(geometry, i.z);
-    bool hasTexture = (geometry.flags & GI_GEOMETRY_ALPHA_TEXTURE) != 0 && geometry.texture != 0;
-    Texture2D<float4> texture = g_SceneTextures[NonUniformResourceIndex(hasTexture ? geometry.texture - 1 : 0)];
+    Texture2D<float4> texture = g_SceneTextures[NonUniformResourceIndex(geometry.texture - 1)];
 
     if (thread == 0) gs_SeenStates = 0;
     GroupMemoryBarrierWithGroupSync();
@@ -218,7 +216,7 @@ void BakeMicromaps(uint3 gid : SV_GroupID, uint thread : SV_GroupIndex)
         {
             float2 a, b, c;
             MicroTriangle(word * 16u + k, job.level, a, b, c);
-            uint state = hasTexture ? MicroTriangleState(texture, geometry.alphaThreshold, uv0, uv1, uv2, a, b, c) : 2u;
+            uint state = MicroTriangleState(texture, geometry.alphaThreshold, uv0, uv1, uv2, a, b, c);
             packed |= state << (2u * k);
             seen |= 1u << state;
         }
