@@ -240,7 +240,7 @@ void setDiagnostic(Script& running, const std::string& rest)
     std::string name;
     int value{};
     auto diagnostics = core::currentDiagnostics();
-    const std::pair<std::string_view, bool*> flags[]{{"show_scene", &diagnostics.showTracedScene}, {"two_sided_shadows", &diagnostics.twoSidedShadows},
+    const std::pair<std::string_view, bool*> flags[]{{"show_scene", &diagnostics.showTracedScene}, {"show_scene_only", &diagnostics.showTracedSceneOnly}, {"two_sided_shadows", &diagnostics.twoSidedShadows},
         {"no_jitter", &diagnostics.noJitter}};
     const bool isRead = static_cast<bool>(arguments >> name >> value);
     const auto* const flag = std::ranges::find(flags, name, &std::pair<std::string_view, bool*>::first);
