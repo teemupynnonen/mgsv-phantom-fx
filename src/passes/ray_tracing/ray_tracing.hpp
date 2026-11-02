@@ -128,6 +128,10 @@ bool active() noexcept;
 // The global illumination's light is on and lighting frames: the game's probe light and SSAO make way
 // for it. Until then they stay.
 bool lightRuns() noexcept;
+// The share of a sunlit surface's light that is the sky's, as the global illumination's lights have it this frame: the
+// sky's mean radiance over that and the sun's at normal incidence (gi_hit_light.hlsli, HitDirectLight - the same
+// units). What is left of the light in the sun's shade; 1 with no sun.
+float skyShare() noexcept;
 
 // What `from` recorded now belongs to `into`: FinishCommandList, or a command list executed in a
 // deferred context.

@@ -250,7 +250,8 @@ inline constexpr char Composite[] = R"(
 cbuffer Parameters : register(b0)
 {
     float Strength; // The menu's
-    float3 Padding;
+    float SkyShare; // What is left of a surface's light in the sun's shade (ray_tracing::skyShare)
+    float2 Padding;
 };
 
 Texture2D<float4> Scene : register(t0);
@@ -269,10 +270,10 @@ float4 main(float4 position : SV_Position) : SV_Target
     const float3 reflected = Reflection.Load(pixel).rgb * Strength * weight.rgb / weight.a;
     const float3 encoded = reflected <= 0.003131 ? reflected * 12.92 : 1.055 * pow(max(reflected, 0.00001), 1 / 2.4) - 0.055;
     // The pane dims in the sun's shade, as the ground does: its own draw saw no shadow map (a lit one stood in), so the
-    // light on its dirt is the sun's everywhere, and the rays' shadow takes it away where the sun is blocked. It weighs
-    // by what the pane covers, so clean glass keeps what is seen through it.
+    // light on its dirt is the sun's everywhere, and the rays' shadow takes the sun's share away where it is blocked: the
+    // sky's share stays. It weighs by what the pane covers, so clean glass keeps what is seen through it.
     // Water takes no shadow here: its light and the caustics are the bed's, and what it reflects is added untouched.
-    const float shade = waterShare > 0 ? 1.0f : Shadow.Load(pixel);
+    const float shade = waterShare > 0 ? 1.0f : lerp(SkyShare, 1.0f, Shadow.Load(pixel));
     return float4(Scene.Load(pixel).rgb * lerp(1.0f, shade, weight.a) + weight.a * encoded, 1);
 }
 )";

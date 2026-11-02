@@ -362,6 +362,7 @@ ComPtr<ID3D11Texture2D> terrainPages, terrainHeights;
 SharedTexture depthOut, normalOut, albedoOut;
 std::string failure;
 std::atomic<std::uint64_t> lastKick{}; // GetTickCount64 of the last frame lit
+std::atomic<float> lastSkyShare{1};    // skyShare
 #if PHANTOM_FX_DEV_TOOLS
 // Diagnostics: a debug case's pixel for the probes, as x << 32 | y + 1 (0 for the screen's centre).
 std::atomic<std::uint64_t> probePixel{};
@@ -615,7 +616,8 @@ void logLights(const gi_renderer::Frame& frame, float cameraExposure)
     const auto text = [](const std::array<float, 3>& v) { return std::to_string(v[0]) + " " + std::to_string(v[1]) + " " + std::to_string(v[2]); };
     std::string line = "Global illumination's lights (x 1/1024, before exposure): sun " + text(frame.sunColor) + " towards "
         + text(frame.sunDirection) + "; exposure: main view " + std::to_string(cameraExposure) + ", sun pass "
-        + std::to_string(sun ? sun->exposure : 0.0f) + ", probe pass " + std::to_string(sky ? sky->exposure : 0.0f);
+        + std::to_string(sun ? sun->exposure : 0.0f) + ", probe pass " + std::to_string(sky ? sky->exposure : 0.0f)
+        + "; the sky's share of sunlit light " + std::to_string(lastSkyShare.load(std::memory_order_relaxed));
     if (sky)
     {
         gi_lighting::SphericalHarmonics radiance{};
@@ -900,6 +902,14 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     {
         const auto radiance = gi_lighting::skyRadiance(sky->matrices, LightScale);
         for (int i = 0; i < 9; ++i) frame.skyRadiance[i] = radiance[i];
+    }
+
+    {
+        // The sky's mean radiance is its first coefficient by Y00's constant.
+        const auto luminance = [](const std::array<float, 3>& c) { return 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]; };
+        const float skyLight = std::max(luminance(frame.skyRadiance[0]) * 0.282095f, 0.0f);
+        const float sunLight = sun ? std::max(luminance(frame.sunColor), 0.0f) : 0.0f;
+        lastSkyShare.store(skyLight + sunLight > 0 ? skyLight / (skyLight + sunLight) : 1.0f, std::memory_order_relaxed);
     }
 
     // The main view's exposure, as this frame's lighting passes have it; the sun pass's before the main
@@ -1418,6 +1428,11 @@ ID3D11Texture2D* reflectionDistance(UINT width, UINT height) noexcept
 bool active() noexcept
 {
     return enabled.load(std::memory_order_relaxed);
+}
+
+float skyShare() noexcept
+{
+    return lastSkyShare.load(std::memory_order_relaxed);
 }
 
 bool lightRuns() noexcept

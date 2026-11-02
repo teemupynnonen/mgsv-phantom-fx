@@ -27,7 +27,7 @@ constexpr float ClearColor[4]{};
 
 struct CompositeParameters
 {
-    float strength, padding[3];
+    float strength, skyShare, padding[2];
 };
 
 // What a deferred context, then its command list, recorded: a surface drawn, into the scene `scene`; the draw that ends the
@@ -261,7 +261,7 @@ void composite(ID3D11DeviceContext* immediate, ID3D11RenderTargetView* target, f
         check(device->CreateShaderResourceView(sceneCopy.Get(), &viewDesc, sceneCopyView.ReleaseAndGetAddressOf()), "Creating the surfaces' copy of the scene");
     }
 
-    check(write(immediate, compositeParameters.Get(), CompositeParameters{strength}), "Writing the surfaces' constants");
+    check(write(immediate, compositeParameters.Get(), CompositeParameters{strength, ray_tracing::skyShare()}), "Writing the surfaces' constants");
     immediate->CopyResource(sceneCopy.Get(), sceneTexture.Get());
 
     ID3D11ShaderResourceView* const inputs[]{sceneCopyView.Get(), weightTarget.texture.view.Get(), reflection.view.Get(),
