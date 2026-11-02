@@ -288,7 +288,7 @@ struct GIShadowProbe
                         // instance + 1, y its geometry | 1 << 31 on a front face, z its kind (GI_INSTANCE_*), w asuint(its distance)
     uint4 view;
     float4 shadow;   // x: the denoised shadow at the centre; y: this frame's ray (1 lit, 0 blocked)
-    // Where the shadow rays start (ShadowSurfaceAt, ShadowRayStart):
+    // Where the shadow rays start (PixelSurfaceAt, ShadowRayStart):
     float4 start;    // xyz: the surface's normal towards the eye; w: 1 on the scene's own surface, 0 at the depth's point
     float4 lift;     // xyz: the start's lift off that surface, world space; w: 1 when the rays leave its far side
     uint4 startHit;  // On the scene's own surface, its triangle: x its instance + 1, y its geometry, z its primitive; w the
@@ -306,7 +306,7 @@ struct GILightProbe
     float4 receiver; // xyz: the centre pixel's surface, world space; w: its distance from the eye, 0 for the sky
     float4 share;    // x: the share of the lights' light the rays to their centres let through; y: the filtered share the light
                      // pass reads there; z: all the lights' light there without shadows (luminance); w: how many lights light it
-    float4 start;    // Where the rays leave (ShadowSurfaceAt): xyz the scene surface's point less the depth's; w 1 on the scene's own surface
+    float4 start;    // Where the rays leave (PixelSurfaceAt): xyz the scene surface's point less the depth's; w 1 on the scene's own surface
     uint4 startHit;  // That surface, as GIShadowProbe::lightNearest; zeros at the depth's point
     uint4 view;      // The camera's ray through the centre pixel, as the scene view traces it (GIShadowProbe::view)
     float4 lights[GI_PROBE_LIGHTS]; // x: the light's index in the frame + 1, 0 for none; y: its light there without shadows

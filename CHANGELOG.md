@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Rooms no longer light up from inside their walls.** In a room's corners the rays of global illumination and of
+  path-traced reflections could start inside the next wall and find the sun there, which drew bright broken lines along
+  the seams. Their rays now leave the surface the pixel shows, as the shadow rays do, and white veins on bumpy walls went
+  with the same change. That leak also lit the walls themselves, so a room with little daylight is about twice as dark.
+  It costs about 0.7 ms a frame at 1440p under path tracing.
 - **Path tracing is faster where many lights burn.** Each pixel and each ray's hit now looks only at the lights that can
   reach it, not at every light in the frame. At Mother Base at night that saves 4.4 ms of a 32 ms frame, about 31 to 36 fps,
   and the picture stays the same.

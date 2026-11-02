@@ -60,7 +60,7 @@ void TraceSunShadows(uint2 gtid : SV_GroupThreadID, uint2 gid : SV_GroupID, uint
             float3 toSun = SunSample(random.rand2());
             float3 origin, facing;
             float tolerance;
-            ShadowRayStart(ShadowSurfaceAt(position, normal), toSun, origin, facing, tolerance);
+            ShadowRayStart(PixelSurfaceAt(position, normal), toSun, origin, facing, tolerance);
             float blocking = BeyondShadowMap(position, depth) * g_Frame.shadowParams.y;
             // Rays to the sun run parallel: each keeps its pixel's footprint. The sun's size comes from
             // spreading the rays over its disc; a cone widened by it as well took cut-out alpha from
@@ -276,7 +276,7 @@ RWTexture2D<float4> g_ShadowDebug : register(u78); // The debug view, blended ov
 
 struct DebugRay
 {
-    ShadowSurface surface; // The surface it leaves
+    PixelSurface surface; // The surface it leaves
     float3 origin, normal, direction;
     float tolerance, nearEnd, beyond;
     uint copies;      // Copies of the surface skipped in the near segment
@@ -289,7 +289,7 @@ DebugRay TraceDebugRay(float3 position, float3 normal, float depth)
 {
     DebugRay r;
     r.direction = g_Frame.sunDirection.xyz;
-    r.surface = ShadowSurfaceAt(position, normal);
+    r.surface = PixelSurfaceAt(position, normal);
     ShadowRayStart(r.surface, r.direction, r.origin, r.normal, r.tolerance);
     r.beyond = BeyondShadowMap(position, depth);
     float rayLength = g_Frame.shadowParams.z;
@@ -305,13 +305,13 @@ DebugRay TraceDebugRay(float3 position, float3 normal, float depth)
     return r;
 }
 
-// The debug view of where a pixel's shadow rays leave (ShadowSurfaceAt), against the depth's point and
+// The debug view of where a pixel's shadow rays leave (PixelSurfaceAt), against the depth's point and
 // the G-buffer's normal. Grey: from the depth's point, the scene having no surface near it. Blue: the
 // scene's surface there faces over 60 degrees away from the game's normal. Otherwise red where it lies
 // nearer the eye than the depth's point, cyan where farther, clear up to 5 mm apart and full from 3 cm.
 float4 ShadowStartColor(float3 position, float3 normal)
 {
-    ShadowSurface surface = ShadowSurfaceAt(position, normal);
+    PixelSurface surface = PixelSurfaceAt(position, normal);
     if (!surface.exact) return float4(0.5f, 0.5f, 0.5f, 0.6f);
     if (dot(surface.normal, normal) < 0.5f) return float4(0.2f, 0.3f, 1.0f, 0.75f);
 
@@ -363,7 +363,8 @@ void DebugShadows(uint2 did : SV_DispatchThreadID)
     g_ShadowDebug[did] = color;
 }
 
-groupshared float3 g_ProbeReceiver, g_ProbeNormal;
+groupshared float3 g_ProbeReceiver, g_ProbeNormal, g_ProbeOrigin;
+groupshared PixelSurface g_ProbeSurface;
 groupshared uint g_ProbeValid;
 groupshared uint4 g_ProbeLightHits[GI_PROBE_LIGHT_RAYS];
 
@@ -425,6 +426,8 @@ void ProbeShadows(uint index : SV_GroupIndex)
             probe.view = ProbeHit(TraceClosest(g_Frame.eye.xyz, normalize(farPoint - g_Frame.eye.xyz), 1e5f));
             g_ProbeReceiver = position;
             g_ProbeNormal = normal;
+            g_ProbeOrigin = PixelRayOrigin(r.surface);
+            g_ProbeSurface = r.surface;
             g_ProbeValid = 1;
         }
 
@@ -440,9 +443,8 @@ void ProbeShadows(uint index : SV_GroupIndex)
         if (g_ProbeValid)
         {
             float2 spread = float2((index + 0.5f) / GI_PROBE_LIGHT_RAYS, frac(index * 0.618034f));
-            float3 direction = mapToCosineHemisphere(spread, g_ProbeNormal);
-            float3 origin = OffsetFromTriangle(g_ProbeReceiver, g_ProbeNormal);
-            lightHit = ProbeHit(TraceFromSurface(origin, g_ProbeNormal, CopyTolerance(g_ProbeReceiver), direction, 1e9f));
+            float3 direction = AboveSurface(mapToCosineHemisphere(spread, g_ProbeNormal), g_ProbeSurface);
+            lightHit = ProbeHit(TraceFromSurface(g_ProbeOrigin, g_ProbeSurface.normal, CopyTolerance(g_ProbeReceiver), direction, 1e9f));
         }
 
         g_ProbeLightHits[index] = lightHit;
