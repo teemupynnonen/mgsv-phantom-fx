@@ -66,6 +66,7 @@ ComPtr<ID3D11BlendState> surfaceBlend, colorOnly;
 ComPtr<ID3D11DepthStencilState> behindGameDepth;
 ComPtr<ID3D11Buffer> compositeParameters;
 ComPtr<ID3D11ShaderResourceView> lit;      // 1x1, so the map's comparison always passes: no map shadow
+ComPtr<ID3D11ShaderResourceView> flat;     // 1x1 cube, one grey: the pane's light where the game's environment was
 ComPtr<ID3D11SamplerState> litSampler;     // comparison ALWAYS
 Target depthTarget, normalTarget, weightTarget;
 ComputeTexture reflection, forwardShadow;
@@ -136,6 +137,29 @@ bool ensurePipeline()
         ComPtr<ID3D11Texture2D> whiteTexture;
         check(device->CreateTexture2D(&white, &whiteData, whiteTexture.GetAddressOf()), "Creating the surfaces' lit shadow map");
         check(device->CreateShaderResourceView(whiteTexture.Get(), nullptr, lit.ReleaseAndGetAddressOf()), "Creating the surfaces' lit shadow map");
+
+        // A pane's cube map, flat: its own shader then lights it `(ambient + diffuse) x` that, so the pane takes the sun and
+        // its shade, and the dirt in its alpha reads, while the traced reflection is added over it.
+        D3D11_TEXTURE2D_DESC flatCube{};
+        flatCube.Width = flatCube.Height = 1;
+        flatCube.MipLevels = 1;
+        flatCube.ArraySize = 6;
+        flatCube.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        flatCube.SampleDesc.Count = 1;
+        flatCube.Usage = D3D11_USAGE_IMMUTABLE;
+        flatCube.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        flatCube.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE;
+        const std::uint32_t grey = 0x40404040u; // 0.25 in each channel, alpha ignored: the pane's light between none and the game's
+        D3D11_SUBRESOURCE_DATA greyFaces[6]{};
+        for (auto& face : greyFaces)
+        {
+            face.pSysMem = &grey;
+            face.SysMemPitch = sizeof(grey);
+        }
+        ComPtr<ID3D11Texture2D> flatObject;
+        check(device->CreateTexture2D(&flatCube, greyFaces, flatObject.GetAddressOf()), "Creating the surfaces' flat cube");
+        check(device->CreateShaderResourceView(flatObject.Get(), nullptr, flat.ReleaseAndGetAddressOf()),
+            "Creating the surfaces' flat cube view");
 
         D3D11_SAMPLER_DESC always{};
         always.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR;
@@ -288,6 +312,7 @@ void detach() noexcept
     behindGameDepth.Reset();
     compositeParameters.Reset();
     lit.Reset();
+    flat.Reset();
     litSampler.Reset();
     depthTarget = normalTarget = weightTarget = {};
     reflection = forwardShadow = {};
@@ -382,6 +407,12 @@ void recorded(std::uint64_t into, std::uint64_t from) noexcept
 void forget(std::uint64_t contextOrList) noexcept
 {
     notes.forget(contextOrList);
+}
+
+ComPtr<ID3D11ShaderResourceView> flatCube() noexcept
+{
+    std::lock_guard lock(resourceMutex);
+    return flat;
 }
 
 ComPtr<ID3D11ShaderResourceView> surfaceWeights(UINT width, UINT height) noexcept

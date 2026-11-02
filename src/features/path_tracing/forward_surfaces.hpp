@@ -55,6 +55,10 @@ Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> surfaceWeights(UINT width, UINT
 // compares, for the surface's shadow slot and s15. The composite dims it by the rays' shadow instead (reflections.hlsl,
 // g_ForwardShadow). False when unavailable.
 bool tracedShadow(ID3D11ShaderResourceView** whiteMap, ID3D11SamplerState** alwaysPass) noexcept;
+// A 1x1 cube map, one flat grey: what a pane reflects with, in place of the game's baked environment. Its own shader
+// computes `(ambient + diffuse) x that` - the light on the pane, the sun and its shadow with it - which the dirt in its
+// alpha modulates; the traced reflection is added over it. Null while off.
+Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> flatCube() noexcept;
 
 // ---- The immediate context ----
 // At the kick (ray_tracing.cpp): the surface targets, empty for this frame's, at the render size; all null when unavailable.

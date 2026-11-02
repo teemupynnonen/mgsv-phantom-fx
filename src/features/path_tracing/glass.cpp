@@ -37,10 +37,13 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         context->PSGetShaderResources(row->reflectionSlot, 1, reflected.GetAddressOf());
         if (row->pass == GamePass::Mirror && isLivePicture(reflected.Get())) return false;
 
-        // What the game reflects with leaves the draw. A view of nothing reads black: glass keeps its tint, its highlights, what
-        // it covers and the fog over it, and the traced reflection takes the cube map's place at its weight.
+        // The game's environment leaves the draw, and a flat grey takes its place: its own shader lights the pane
+        // `(ambient + diffuse) x` that, so it takes the sun and its shade and the dirt in its alpha reads, without a baked
+        // environment behind it. The traced reflection is added over it at the composite.
+        ComPtr<ID3D11ShaderResourceView> flat = forward_surfaces::flatCube();
         ID3D11ShaderResourceView* none{};
-        context->PSSetShaderResources(row->reflectionSlot, 1, &none);
+        ID3D11ShaderResourceView* replacement = flat ? flat.Get() : none;
+        context->PSSetShaderResources(row->reflectionSlot, 1, &replacement);
         // Its shadow map leaves too (t8, s15): the rays' shadow takes its place at the composite (forward_surfaces,
         // tracedShadow). A pane the game's map shaded would keep a shadow the scene no longer has.
         constexpr UINT GlassShadowSlot = 8, ShadowSamplerSlot = 15;
