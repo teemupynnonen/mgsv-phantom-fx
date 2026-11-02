@@ -5,6 +5,8 @@
 #include "ui_redirect.hpp"
 
 #include <d3d11.h>
+#include <wrl/client.h>
+#include <optional>
 #include <utility>
 
 // The global illumination's light in the game's (docs/DEVELOPMENT.md, "Global illumination"): the
@@ -31,4 +33,13 @@ void drawProbeLightAside(ID3D11DeviceContext* context, const ui_redirect::DrawCa
 // `size`. False leaves the resolve the game's light this frame.
 bool combine(ID3D11DeviceContext* context, ID3D11ShaderResourceView* diffuse, ID3D11ShaderResourceView* light, std::pair<UINT, UINT> size,
     visibility_bitmask::Target& lit);
+
+// What the last combine read, for the forward draws after it (river_light.hpp): the traced light at its strength in place of
+// the game's probe light, both at the render size. None when the combine has not run in the last few frames.
+struct Ambient
+{
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> traced, probe;
+    float strength{};
+};
+std::optional<Ambient> ambient();
 }

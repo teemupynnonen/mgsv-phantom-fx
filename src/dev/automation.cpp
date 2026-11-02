@@ -5,6 +5,7 @@
 #include "dev/held_camera.hpp"
 #include "dev/inspect_trace.hpp"
 #include "dev/perf_record.hpp"
+#include "features/global_illumination/river_light.hpp"
 #include "fxui/fxui.hpp"
 #include "game_memory.hpp"
 #include "game_loop.hpp"
@@ -251,7 +252,8 @@ void setDiagnostic(Script& running, const std::string& rest)
     const auto* const flag = std::ranges::find(flags, name, &std::pair<std::string_view, bool*>::first);
     if (isRead && flag != std::end(flags)) *flag->second = value != 0;
     else if (isRead && name == "debug_view") diagnostics.debugView = static_cast<DebugView>(value);
-    else running.output += "error: diagnostic debug_view|show_scene|two_sided_shadows|no_jitter <value>\n";
+    else if (isRead && name == "river_light") river_light::setEnabled(value != 0);
+    else running.output += "error: diagnostic debug_view|show_scene|two_sided_shadows|no_jitter|river_light <value>\n";
 
     core::applyDiagnostics(diagnostics);
 }
