@@ -82,6 +82,13 @@ struct HookTimer
 std::mutex bonesMutex;
 std::vector<DrawnBones> drawnBones;
 
+#if PHANTOM_FX_DEV_TOOLS
+// Diagnostics (recordRigidDraws): where the main camera's rigid model draws put their models, while asked.
+std::atomic<bool> recordingRigid{};
+std::mutex rigidMutex;
+std::vector<RigidDraw> rigidDraws;
+#endif
+
 UINT byteWidth(ID3D11Buffer* buffer)
 {
     D3D11_BUFFER_DESC desc{};
@@ -179,6 +186,17 @@ void drawIndexed(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call
 
         // A skinned mesh (useWeightCount set): its bones as drawn, for the scene's characters.
         if (boundKind == VertexShader::Model && object->useWeightCount[0] != 0) noteBones(context, *scene, *object, call);
+#if PHANTOM_FX_DEV_TOOLS
+        if (boundKind == VertexShader::Model && object->useWeightCount[0] == 0 && recordingRigid.load(std::memory_order_relaxed))
+        {
+            RigidDraw drawn{.firstIndex = call.first, .indexCount = call.count};
+            const auto& view = scene->view;
+            const float offset[3]{object->viewWorld[0][3] - view[0][3], object->viewWorld[1][3] - view[1][3], object->viewWorld[2][3] - view[2][3]};
+            for (int i = 0; i < 3; ++i) drawn.position[i] = view[0][i] * offset[0] + view[1][i] * offset[1] + view[2][i] * offset[2];
+            std::lock_guard lock(rigidMutex);
+            if (rigidDraws.size() < (1u << 16)) rigidDraws.push_back(drawn);
+        }
+#endif
     }
     catch (...)
     {
@@ -208,6 +226,22 @@ std::size_t present() noexcept
 {
     return pending.present();
 }
+
+#if PHANTOM_FX_DEV_TOOLS
+void recordRigidDraws(bool on) noexcept
+{
+    std::lock_guard lock(rigidMutex);
+    rigidDraws.clear();
+    recordingRigid = on;
+}
+
+std::vector<RigidDraw> takeRigidDraws() noexcept
+{
+    std::lock_guard lock(rigidMutex);
+    recordingRigid = false;
+    return std::exchange(rigidDraws, {});
+}
+#endif
 
 std::vector<DrawnBones> takeDrawnBones(const SceneConstants& camera) noexcept
 {

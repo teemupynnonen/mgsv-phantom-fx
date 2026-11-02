@@ -54,6 +54,16 @@ struct DrawnBones
 // At the kick: the skinned meshes drawn for the frame `camera` draws since the last call.
 std::vector<DrawnBones> takeDrawnBones(const game_constants::SceneConstants& camera) noexcept;
 
+// Diagnostics (dev builds): where the main camera's rigid model draws put their models, and which mesh (its index
+// range), recorded from recordRigidDraws(true) until takeRigidDraws.
+struct RigidDraw
+{
+    std::array<float, 3> position{};
+    std::uint32_t firstIndex{}, indexCount{};
+};
+void recordRigidDraws(bool on) noexcept;
+std::vector<RigidDraw> takeRigidDraws() noexcept;
+
 // Diagnostics: the draw hook's time on the game's threads, all threads together, and the draws it
 // looked at, since the last call.
 struct Work

@@ -16,6 +16,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <format>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -60,6 +61,14 @@ constexpr std::size_t ChunkTable = 0x88, RecordInUse = 0x100;
 constexpr std::size_t RecordSize = 0x30, RecordsPerChunk = 256, RecordUse = 0x20, RecordOwner = 0x28;
 // An instance group: its model, and the holder of its world matrices (begin, end).
 constexpr std::size_t GroupModel = 0x40, GroupMatrices = 0x60, MatricesBegin = 0x20, MatricesEnd = 0x28;
+// The holder's instances (+0x10), 0x60 bytes each in the matrices' order: each points to its matrix (+0x28), and its byte at
+// +0x1E has bit 0x02 while the group does not draw it. Read 2026-11-02 on a hut's window panes (model 84a2aa9c6ae74858):
+// set on the panes a single model of the prop stood on, and on the one the player broke, which the game drew from the
+// group no longer (the `drawn` automation line); clear on the 14 others, each drawn once a frame. Nothing else in the
+// group, its records or its model changed when a pane or a barrel broke.
+constexpr std::uintptr_t InstanceVtable = 0x210D998;
+constexpr std::size_t HolderInstances = 0x10, InstanceSize = 0x60, InstanceMatrix = 0x28, InstanceState = 0x1E;
+constexpr std::uint8_t InstanceNotDrawn = 0x02;
 // A model: its world matrix (when an instance itself) and resource, which has the file's path hash,
 // the file in memory and its size.
 constexpr std::size_t ModelMatrix = 0x40, ModelResource = 0x118, ResourceHash = 0x30, ResourceFile = 0x60, ResourceFileSize = 0x68;
@@ -162,6 +171,64 @@ Reveal currentReveal()
 }
 #endif
 
+// What the next snapshot finds of one model's placements (watchOwners): dev builds only.
+#if PHANTOM_FX_DEV_TOOLS
+std::mutex watchMutex;
+std::uint64_t watchedHash{};
+std::optional<std::string> watchedText;
+
+std::uint64_t watchedNow()
+{
+    std::lock_guard lock(watchMutex);
+    return watchedText ? 0 : watchedHash;
+}
+
+bool isA(std::uintptr_t object, std::uintptr_t vtableRva) noexcept;
+
+std::uint64_t hashOfModel(std::uintptr_t model)
+{
+    const auto resource = read<std::uintptr_t>(model + ModelResource);
+    if (!resource || !isA(*resource, ResourceVtable)) return 0;
+
+    return read<std::uint64_t>(*resource + ResourceHash).value_or(0);
+}
+
+std::string hexDump(std::uintptr_t address, std::size_t from, std::size_t to)
+{
+    std::string text;
+    std::array<std::uint8_t, 16> row{};
+    for (auto at = from; at < to; at += 16)
+    {
+        text += std::format("  +{:#05x}", at);
+        if (!readRaw(row.data(), address + at, row.size())) text += " unreadable";
+        else
+            for (const auto byte : row) text += std::format(" {:02x}", byte);
+        text += '\n';
+    }
+
+    return text;
+}
+
+// A model object's fields the scene reads, and the bytes around them, to diff before and after the game changes it.
+std::string describeModelObject(std::uintptr_t model)
+{
+    float m[16]{};
+    const bool hasMatrix = readRaw(m, model + ModelMatrix, sizeof(m));
+    std::string text = std::format("  model {:#x}: hidden passes {:#010x}, layer {:#010x}, fade {}, groups {}", model,
+        read<std::uint32_t>(model + ModelHiddenPasses).value_or(0), read<std::uint32_t>(model + ModelLayer).value_or(0),
+        read<float>(model + ModelFade).value_or(-1.0f), read<std::uint16_t>(model + ModelGroupCount).value_or(0));
+    if (hasMatrix) text += std::format(", at ({:.2f} {:.2f} {:.2f})", m[12], m[13], m[14]);
+    text += '\n';
+
+    const auto groups = read<std::uint16_t>(model + ModelGroupCount);
+    const auto states = read<std::uintptr_t>(model + ModelGroupStates);
+    if (groups && *groups && states && *states) text += "  group states:\n" + hexDump(*states, 0, (std::min<std::size_t>(*groups, 64) + 15) & ~std::size_t{15});
+    text += "  model bytes:\n" + hexDump(model, 0x00, 0x220);
+
+    return text;
+}
+#endif
+
 // The skinned models parsed, for their meshes' index ranges and bone groups (take); render thread.
 std::unordered_map<std::uint64_t, std::shared_ptr<const scene_description::Model>> skinnedModels;
 
@@ -179,7 +246,7 @@ std::atomic<std::uint64_t> snapshots{}, filesRead{}, skinnedFiles{}, unreadableF
 // source that asked first.
 std::atomic<std::uint64_t> sharedFiles{};
 std::atomic<std::uint32_t> lastInstances{}, lastOwners{}, lastOtherOwners{}, lastLeftOut{}, lastHidden{}, lastFadedOut{}, lastHidingGroups{}, lastListedOnly{},
-    lastCharacters{}, lastListedModels{};
+    lastCharacters{}, lastListedModels{}, lastNotDrawn{}, lastUnreadGroups{};
 // The model list was found in the last snapshot: the characters come from it.
 std::atomic<bool> modelListFound{};
 
@@ -372,11 +439,43 @@ bool collectCharacters(std::vector<scene_description::CharacterInstance>& charac
     return true;
 }
 
+// Each of a group's instances the game does not draw (InstanceNotDrawn), in the matrices' order; empty when its instances
+// cannot be read, and the group is placed whole. The game keeps a destructible prop (a barrel, a window pane; 2026-11-02)
+// as an instance group, moves a few single models of it onto the placements near the player and stops drawing the group's
+// copy there, and stops drawing a broken one's: placed from the group, a broken prop stayed in the rays and a prop a single
+// model stood on was there twice.
+std::vector<bool> undrawnInstances(std::uintptr_t holder, std::uintptr_t matricesBegin, std::size_t count)
+{
+    const auto first = read<std::uintptr_t>(holder + HolderInstances);
+    if (!first || !*first) return {};
+
+    std::vector<std::uint8_t> bytes(count * InstanceSize);
+    if (!readRaw(bytes.data(), *first, bytes.size())) return {};
+
+    std::vector<bool> undrawn(count);
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        const auto* instance = bytes.data() + i * InstanceSize;
+        std::uintptr_t vtable{}, matrix{};
+        std::memcpy(&vtable, instance, sizeof(vtable));
+        std::memcpy(&matrix, instance + InstanceMatrix, sizeof(matrix));
+        if (vtable != base + InstanceVtable || matrix != matricesBegin + 64 * i) return {};
+
+        undrawn[i] = (instance[InstanceState] & InstanceNotDrawn) != 0;
+    }
+
+    return undrawn;
+}
+
 // Every record in use of the managers seen, their owners' instances, published; with snapshotMutex.
 void snapshot()
 {
     const auto reveal = currentReveal();
     std::vector<std::uintptr_t> owners;
+#if PHANTOM_FX_DEV_TOOLS
+    const auto watched = watchedNow();
+    std::vector<std::pair<std::uintptr_t, std::array<std::uint8_t, RecordSize>>> watchedRecords;
+#endif
     for (auto& slot : seenManagers)
     {
         const auto manager = slot.load(std::memory_order_relaxed);
@@ -407,6 +506,14 @@ void snapshot()
                 std::memcpy(&use, recordBuffer.data() + i * RecordSize + RecordUse, sizeof(use));
                 std::memcpy(&owner, recordBuffer.data() + i * RecordSize + RecordOwner, sizeof(owner));
                 if (use == manager + RecordInUse && owner) owners.push_back(owner);
+#if PHANTOM_FX_DEV_TOOLS
+                if (use == manager + RecordInUse && owner && watched)
+                {
+                    std::array<std::uint8_t, RecordSize> record{};
+                    std::memcpy(record.data(), recordBuffer.data() + i * RecordSize, RecordSize);
+                    watchedRecords.emplace_back(owner, record);
+                }
+#endif
             }
         }
     }
@@ -415,7 +522,7 @@ void snapshot()
     owners.erase(std::unique(owners.begin(), owners.end()), owners.end());
 
     std::vector<scene_description::ModelInstance> instances;
-    std::uint32_t others{}, leftOut{}, hidden{}, fadedOutModels{}, hidingGroups{}, listedOnly{};
+    std::uint32_t others{}, leftOut{}, hidden{}, fadedOutModels{}, hidingGroups{}, listedOnly{}, notDrawn{}, unreadGroups{};
     const auto place = [&](std::uint64_t hash, const float* matrix, std::uint64_t hiddenGroups, Rejection rejection) {
         const auto transform = transformOf(matrix);
         if (!transform)
@@ -434,10 +541,59 @@ void snapshot()
         instances.push_back({hash, *transform, hiddenGroups, rejection});
     };
 
+#if PHANTOM_FX_DEV_TOOLS
+    std::string watchedFound;
+#endif
+
     for (const auto owner : owners)
     {
         const auto vtable = read<std::uintptr_t>(owner);
         if (!vtable) continue;
+
+#if PHANTOM_FX_DEV_TOOLS
+        if (watched)
+        {
+            if (*vtable == base + GroupVtable)
+            {
+                const auto model = read<std::uintptr_t>(owner + GroupModel);
+                if (model && *model && hashOfModel(*model) == watched)
+                {
+                    const auto holder = read<std::uintptr_t>(owner + GroupMatrices);
+                    const auto begin = holder ? read<std::uintptr_t>(*holder + MatricesBegin) : std::nullopt;
+                    const auto end = holder ? read<std::uintptr_t>(*holder + MatricesEnd) : std::nullopt;
+                    const std::size_t count = begin && end && *end >= *begin ? (*end - *begin) / 64 : 0;
+                    watchedFound += std::format("instance group {:#x}, {} placements:\n", owner, count);
+                    for (std::size_t i = 0; i < std::min<std::size_t>(count, 64); ++i)
+                    {
+                        float m[16]{};
+                        if (readRaw(m, *begin + 64 * i, sizeof(m)))
+                            watchedFound += std::format("  [{}] at ({:.2f} {:.2f} {:.2f}), row 3 ({} {} {} {})\n", i, m[12], m[13], m[14], m[3], m[7], m[11], m[15]);
+                    }
+                    watchedFound += "  group bytes:\n" + hexDump(owner, 0x00, 0x100);
+                    if (const auto records = read<std::uintptr_t>(owner + 0x50); records && *records)
+                        watchedFound += "  +0x50 records:\n" + hexDump(*records, 0x00, std::max<std::size_t>(0x10, (count * 8 + 15) & ~std::size_t{15}));
+                    if (const auto ids = read<std::uintptr_t>(owner + 0x58); ids && *ids)
+                        watchedFound += "  +0x58 ids:\n" + hexDump(*ids, 0x00, std::max<std::size_t>(0x10, (count * 8 + 15) & ~std::size_t{15}));
+                    for (const auto& [recordOwner, record] : watchedRecords)
+                        if (recordOwner == owner)
+                        {
+                            // The box's corners, x y z in half metres at +0x10 and +0x18.
+                            std::int16_t low[3]{}, high[3]{};
+                            std::memcpy(low, record.data() + 0x10, sizeof(low));
+                            std::memcpy(high, record.data() + 0x18, sizeof(high));
+                            watchedFound += std::format("  record in use, box centre ({:.1f} {:.1f} {:.1f}):", (low[0] + high[0]) / 4.0f, (low[1] + high[1]) / 4.0f,
+                                (low[2] + high[2]) / 4.0f);
+                            for (const auto byte : record) watchedFound += std::format(" {:02x}", byte);
+                            watchedFound += '\n';
+                        }
+                    if (holder && *holder) watchedFound += "  matrix holder bytes:\n" + hexDump(*holder, 0x00, 0x80);
+                    watchedFound += describeModelObject(*model);
+                }
+            }
+            else if (*vtable == base + ModelVtable && hashOfModel(owner) == watched)
+                watchedFound += "single model:\n" + describeModelObject(owner);
+        }
+#endif
 
         if (*vtable == base + GroupVtable)
         {
@@ -455,8 +611,19 @@ void snapshot()
             matrixBuffer.resize((*end - *begin) / 4);
             if (!readRaw(matrixBuffer.data(), *begin, *end - *begin)) continue;
 
+            const auto undrawn = undrawnInstances(*holder, *begin, matrixBuffer.size() / 16);
+            if (undrawn.empty()) ++unreadGroups;
             const auto hiddenGroups = hiddenGroupsOf(*model);
-            for (std::size_t i = 0; i < matrixBuffer.size(); i += 16) place(*hash, matrixBuffer.data() + i, hiddenGroups, Rejection::None);
+            for (std::size_t i = 0; i < matrixBuffer.size(); i += 16)
+            {
+                if (!undrawn.empty() && undrawn[i / 16])
+                {
+                    ++notDrawn;
+                    continue;
+                }
+
+                place(*hash, matrixBuffer.data() + i, hiddenGroups, Rejection::None);
+            }
         }
         else if (*vtable == base + ModelVtable)
         {
@@ -497,6 +664,9 @@ void snapshot()
     // of the frame there, which left the rays no walls (2026-10-30, a debug case's revealed scene).
     const auto listedRigid = [&](std::uintptr_t model, bool isHidden) {
         if (std::binary_search(owners.begin(), owners.end(), model)) return;
+#if PHANTOM_FX_DEV_TOOLS
+        if (watched && hashOfModel(model) == watched) watchedFound += "on the model list alone:\n" + describeModelObject(model);
+#endif
 
         float matrix[16]{};
         const auto hash = rigidModel(model);
@@ -509,6 +679,13 @@ void snapshot()
     std::vector<scene_description::CharacterInstance> characters;
     std::uint32_t listed{};
     modelListFound = collectCharacters(characters, listed, reveal, listedRigid);
+#if PHANTOM_FX_DEV_TOOLS
+    if (watched)
+    {
+        std::lock_guard lock(watchMutex);
+        if (watchedHash == watched) watchedText = watchedFound.empty() ? std::string("no placement of it\n") : watchedFound;
+    }
+#endif
 
     ++snapshots;
     lastInstances = static_cast<std::uint32_t>(instances.size());
@@ -519,6 +696,8 @@ void snapshot()
     lastFadedOut = fadedOutModels;
     lastHidingGroups = hidingGroups;
     lastListedOnly = listedOnly;
+    lastNotDrawn = notDrawn;
+    lastUnreadGroups = unreadGroups;
     lastCharacters = static_cast<std::uint32_t>(characters.size());
     lastListedModels = listed;
     std::lock_guard lock(publishMutex);
@@ -591,6 +770,19 @@ std::size_t waitingFiles()
 {
     std::lock_guard lock(publishMutex);
     return pendingFiles.size();
+}
+
+void watchOwners(std::uint64_t hash)
+{
+    std::lock_guard lock(watchMutex);
+    watchedHash = hash;
+    watchedText.reset();
+}
+
+std::optional<std::string> watchedOwners()
+{
+    std::lock_guard lock(watchMutex);
+    return watchedText;
 }
 #endif
 
@@ -856,7 +1048,8 @@ std::string status()
         + std::to_string(lastOtherOwners.load()) + " of other kinds, " + std::to_string(lastLeftOut.load()) + " left out, "
         + std::to_string(lastHidden.load()) + " models the game hides, " + std::to_string(lastFadedOut.load()) + " faded out, "
         + std::to_string(lastHidingGroups.load())
-        + " placed with mesh groups hidden), " + std::to_string(lastListedOnly.load()) + " rigid models from the model list alone, " + std::to_string(lastCharacters.load())
+        + " placed with mesh groups hidden, " + std::to_string(lastNotDrawn.load()) + " group instances the game does not draw, " + std::to_string(lastUnreadGroups.load()) + " groups whose instances could not be read), "
+        + std::to_string(lastListedOnly.load()) + " rigid models from the model list alone, " + std::to_string(lastCharacters.load())
         + " characters of "
         + std::to_string(lastListedModels.load()) + " models listed" + (modelListFound.load() ? "" : " (no model list)") + ", "
         + std::to_string(snapshots.load()) + " snapshots; model files: " + std::to_string(filesRead.load()) + " rigid, "

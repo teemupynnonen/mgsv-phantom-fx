@@ -6,10 +6,12 @@
 #include "dev/inspect_trace.hpp"
 #include "dev/perf_record.hpp"
 #include "fxui/fxui.hpp"
+#include "game_memory.hpp"
 #include "game_loop.hpp"
 #include "dev/game_lua.hpp"
 #include "log.hpp"
 #include "passes/ray_tracing/engine_scene.hpp"
+#include "passes/ray_tracing/gi_inputs.hpp"
 #include "passes/ray_tracing/gi_renderer.hpp"
 #include "passes/ray_tracing/ray_tracing.hpp"
 #include "resource_dump.hpp"
@@ -26,8 +28,11 @@
 #include <deque>
 #include <exception>
 #include <format>
+#include <cmath>
 #include <fstream>
 #include <functional>
+#include <map>
+#include <tuple>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -329,6 +334,78 @@ void run(Script& running, const std::string& line)
         running.lines.emplace_front(ProbeWait);
     }
     else if (command == "probe_text") running.output += ray_tracing::shadowProbe() + "\n";
+    else if (command == "owner" && !rest.empty())
+    {
+        std::uint64_t hash{};
+        const auto text = trimmed(rest);
+        if (const auto [stop, error] = std::from_chars(text.data(), text.data() + text.size(), hash, 16); error != std::errc{} || !hash)
+            running.output += "error: owner <model hash, hex>\n";
+        else
+        {
+            engine_scene::watchOwners(hash);
+            running.lines.push_front("owner_text");
+            running.lines.emplace_front("wait 10");
+        }
+    }
+    else if (command == "peek" && !rest.empty())
+    {
+        // `game+` takes an offset from the executable's base.
+        std::string where;
+        std::size_t length = 256;
+        std::istringstream arguments(rest);
+        arguments >> where >> std::dec >> length;
+        std::uintptr_t address{};
+        const bool isRva = where.starts_with("game+");
+        const std::string_view digits = std::string_view(where).substr(isRva ? 5 : 0);
+        const auto [stop, error] = std::from_chars(digits.data(), digits.data() + digits.size(), address, 16);
+        if (error != std::errc{} || length == 0 || length > 4096) running.output += "error: peek <hex address or game+hex> [bytes, at most 4096]\n";
+        else
+        {
+            if (isRva) address += reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+            std::array<std::uint8_t, 16> row{};
+            for (std::size_t at = 0; at < length; at += 16)
+            {
+                running.output += std::format("{:#014x}", address + at);
+                if (!game_memory::readRaw(row.data(), address + at, row.size())) running.output += " unreadable";
+                else
+                    for (const auto byte : row) running.output += std::format(" {:02x}", byte);
+                running.output += '\n';
+            }
+        }
+    }
+    else if (command == "drawn" && !rest.empty())
+    {
+        gi_inputs::recordRigidDraws(true);
+        running.lines.push_front("drawn_text " + rest);
+        running.lines.emplace_front("wait 10");
+    }
+    else if (command == "drawn_text")
+    {
+        std::istringstream numbers(rest);
+        float x{}, y{}, z{}, radius{};
+        if (!(numbers >> x >> y >> z >> radius)) running.output += "error: drawn <x> <y> <z> <radius>\n";
+        else
+        {
+            // Each place and mesh once, with how many draws of it the frames had.
+            std::map<std::tuple<long, long, long, std::uint32_t, std::uint32_t>, int> seen;
+            for (const auto& draw : gi_inputs::takeRigidDraws())
+            {
+                const float dx = draw.position[0] - x, dy = draw.position[1] - y, dz = draw.position[2] - z;
+                if (dx * dx + dy * dy + dz * dz > radius * radius) continue;
+
+                ++seen[{std::lround(draw.position[0] * 100), std::lround(draw.position[1] * 100), std::lround(draw.position[2] * 100), draw.firstIndex,
+                    draw.indexCount}];
+            }
+            for (const auto& [key, count] : seen)
+            {
+                const auto& [px, py, pz, first, indices] = key;
+                running.output += std::format("({:.2f} {:.2f} {:.2f}) indices {} from {}: {} draws\n", px / 100.0, py / 100.0, pz / 100.0, indices, first, count);
+            }
+            if (seen.empty()) running.output += "no rigid draw there\n";
+        }
+    }
+    else if (command == "owner_text")
+        running.output += engine_scene::watchedOwners().value_or("error: no snapshot came: is the ray-traced scene running?\n");
     else if (command == "inspect" && !rest.empty())
     {
         running.inspectionsBefore = inspect_trace::finished();
