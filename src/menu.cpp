@@ -492,8 +492,9 @@ void drawDiagnostics(const upscaler::Status& state)
         changed |= fxui::checkbox("SSILVB only", options.showIndirectLight, "With SSILVB on, the scene shows the light it adds alone: black where nothing bounces.");
         changed |= fxui::checkbox("Global illumination only", options.showGlobalIllumination, "With global illumination on, the scene shows its indirect light alone.");
         changed |= fxui::checkbox("Global illumination scene", options.showTracedScene,
-            "With global illumination on, the scene shows the geometry it traces, coloured by its normals: red where it disagrees with the game's "
-            "depth, magenta and black stripes where it lacks what the game drew, yellow where it has something in the sky.");
+            "With global illumination on, the scene shows the geometry it traces, coloured by its normals and drawn alone: not through the game's "
+            "resolve, so no albedo or specular of the game's is on it. Red where it disagrees with the game's depth, magenta and black stripes where "
+            "it lacks what the game drew, yellow where it has something in the sky.");
         if (const auto scene = ray_tracing::status(); options.showTracedScene && !scene.empty()) fxui::note(Tone::Dim, scene);
         constexpr Choice<int> volumes[]{{0, "The game's volumes"}, {1, "Shadow-mapped lights beyond"}, {2, "Every light beyond"}};
         changed |= fxui::combo("Light volumes", options.lightVolumes, volumes,

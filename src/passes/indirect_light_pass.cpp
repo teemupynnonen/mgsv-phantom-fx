@@ -52,7 +52,7 @@ struct Composition
     // The ray-traced scene runs, for the global illumination or the ray-traced shadows or lights: the
     // passes tell it what it needs (ray_tracing::noteNormals and the others).
     bool rayTracing{};
-    bool showOcclusion{}, showLight{}, showGlobalIllumination{};
+    bool showOcclusion{}, showLight{}, showGlobalIllumination{}, showTracedScene{};
 };
 
 FrameLatch<Composition> latch;
@@ -71,7 +71,7 @@ MaterialTables lastTables;
 // ---- Direct3D, guarded by resourceMutex ----
 std::mutex resourceMutex;
 ComPtr<ID3D11Device> device;
-ComPtr<ID3D11PixelShader> showOcclusionShader, showLightShader;
+ComPtr<ID3D11PixelShader> showOcclusionShader, showLightShader, showSceneShader;
 ComPtr<ID3D11ShaderResourceView> whiteView; // 1x1, the resolve's occlusion while an effect replaces the game's
 // The game's diffuse light with SSILVB's or the global illumination's added, read by the resolve in
 // its place.
@@ -89,6 +89,7 @@ bool ensurePipeline()
         const D3D_SHADER_MACRO occlusionView[]{{"LIGHT", "0"}, {}}, lightView[]{{"LIGHT", "1"}, {}};
         showOcclusionShader = pixelShader(device.Get(), shaders::Show, "gtvbao-show", occlusionView);
         showLightShader = pixelShader(device.Get(), shaders::Show, "ssilvb-show", lightView);
+        showSceneShader = pixelShader(device.Get(), shaders::ShowScene, "traced-scene-show");
 
         D3D11_TEXTURE2D_DESC white{};
         white.Width = white.Height = white.MipLevels = white.ArraySize = 1;
@@ -278,6 +279,22 @@ bool drawResolveForGlobal(ID3D11DeviceContext* context, const ui_redirect::DrawC
 
     const auto size = sizeOf(depth.Get());
     auto* light = ray_tracing::light(size.first, size.second);
+    // The scene view alone: the game's resolve would multiply it by the G-buffer's albedo and add the
+    // game's specular, so the scene's own colours are written instead.
+    if (composition.showTracedScene && light)
+    {
+        std::lock_guard lock(resourceMutex);
+        if (!ensurePipeline()) return false;
+
+        context->PSSetShaderResources(DiffuseSlot, 1, &light);
+        context->PSSetShader(showSceneShader.Get(), nullptr, 0);
+        context->DrawInstanced(call.count, call.instances, call.first, call.firstInstance);
+        context->PSSetShader(gameShader, nullptr, 0);
+        context->PSSetShaderResources(DiffuseSlot, 1, diffuse.GetAddressOf());
+
+        return true;
+    }
+
     // Path tracing's reflections join the specular light.
     auto* specularWithReflections = path_tracing::addReflections(context, specular.Get(), size);
     std::lock_guard lock(resourceMutex);
@@ -351,6 +368,7 @@ void detach() noexcept
         std::lock_guard lock(resourceMutex);
         showOcclusionShader.Reset();
         showLightShader.Reset();
+        showSceneShader.Reset();
         whiteView.Reset();
         diffuseWithLight = {};
         device.Reset();
@@ -375,7 +393,8 @@ void configure(const Configuration& configuration) noexcept
         .rayTracing = configuration.effects.tracesScene(),
         .showOcclusion = diagnostics.showAmbientOcclusion,
         .showLight = diagnostics.showIndirectLight,
-        .showGlobalIllumination = diagnostics.showGlobalIllumination || diagnostics.showTracedScene,
+        .showGlobalIllumination = diagnostics.showGlobalIllumination,
+        .showTracedScene = diagnostics.showTracedScene,
     };
 
     latch.set(composition);
