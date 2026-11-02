@@ -365,25 +365,36 @@ void run(Script& running, const std::string& line)
             std::array<std::uint8_t, 16> row{};
             for (std::size_t at = 0; at < length; at += 16)
             {
+                const std::size_t bytes = std::min<std::size_t>(row.size(), length - at);
                 running.output += std::format("{:#014x}", address + at);
-                if (!game_memory::readRaw(row.data(), address + at, row.size())) running.output += " unreadable";
+                if (!game_memory::readRaw(row.data(), address + at, bytes)) running.output += " unreadable";
                 else
-                    for (const auto byte : row) running.output += std::format(" {:02x}", byte);
+                    for (std::size_t i = 0; i < bytes; ++i) running.output += std::format(" {:02x}", row[i]);
                 running.output += '\n';
             }
         }
     }
     else if (command == "drawn" && !rest.empty())
     {
-        gi_inputs::recordRigidDraws(true);
-        running.lines.push_front("drawn_text " + rest);
-        running.lines.emplace_front("wait 10");
+        std::istringstream numbers(rest);
+        float x{}, y{}, z{}, radius{};
+        if (!(numbers >> x >> y >> z >> radius)) running.output += "error: drawn <x> <y> <z> <radius>\n";
+        else
+        {
+            gi_inputs::recordRigidDraws(true);
+            running.lines.push_front("drawn_text " + rest);
+            running.lines.emplace_front("wait 10");
+        }
     }
     else if (command == "drawn_text")
     {
         std::istringstream numbers(rest);
         float x{}, y{}, z{}, radius{};
-        if (!(numbers >> x >> y >> z >> radius)) running.output += "error: drawn <x> <y> <z> <radius>\n";
+        if (!(numbers >> x >> y >> z >> radius))
+        {
+            gi_inputs::takeRigidDraws();
+            running.output += "error: drawn <x> <y> <z> <radius>\n";
+        }
         else
         {
             // Each place and mesh once, with how many draws of it the frames had.

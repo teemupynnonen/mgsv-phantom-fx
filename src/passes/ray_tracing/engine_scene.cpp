@@ -562,6 +562,7 @@ void snapshot()
                     const auto begin = holder ? read<std::uintptr_t>(*holder + MatricesBegin) : std::nullopt;
                     const auto end = holder ? read<std::uintptr_t>(*holder + MatricesEnd) : std::nullopt;
                     const std::size_t count = begin && end && *end >= *begin ? (*end - *begin) / 64 : 0;
+                    const std::size_t dumpBytes = std::max<std::size_t>(0x10, (std::min<std::size_t>(count, MaxGroupInstances) * 8 + 15) & ~std::size_t{15});
                     watchedFound += std::format("instance group {:#x}, {} placements:\n", owner, count);
                     for (std::size_t i = 0; i < std::min<std::size_t>(count, 64); ++i)
                     {
@@ -571,9 +572,9 @@ void snapshot()
                     }
                     watchedFound += "  group bytes:\n" + hexDump(owner, 0x00, 0x100);
                     if (const auto records = read<std::uintptr_t>(owner + 0x50); records && *records)
-                        watchedFound += "  +0x50 records:\n" + hexDump(*records, 0x00, std::max<std::size_t>(0x10, (count * 8 + 15) & ~std::size_t{15}));
+                        watchedFound += "  +0x50 records:\n" + hexDump(*records, 0x00, dumpBytes);
                     if (const auto ids = read<std::uintptr_t>(owner + 0x58); ids && *ids)
-                        watchedFound += "  +0x58 ids:\n" + hexDump(*ids, 0x00, std::max<std::size_t>(0x10, (count * 8 + 15) & ~std::size_t{15}));
+                        watchedFound += "  +0x58 ids:\n" + hexDump(*ids, 0x00, dumpBytes);
                     for (const auto& [recordOwner, record] : watchedRecords)
                         if (recordOwner == owner)
                         {
