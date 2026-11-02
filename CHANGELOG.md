@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Rooms no longer light up from inside their walls.** In a room's corners the rays of global illumination and of
+  path-traced reflections could start inside the next wall and find the sun there, which drew bright broken lines along
+  the seams. Their rays now leave the surface the pixel shows, as the shadow rays do, and white veins on bumpy walls went
+  with the same change. That leak also lit the walls themselves, so a room with little daylight is about twice as dark.
+  It costs about 1.4 ms a frame at 1440p under path tracing.
 - **Photo mode crawls with C.** Holding C moves the free camera at 0.5 m/s, next to Shift's 25 m/s, for
   lining up a close shot.
 - **Path tracing is faster where many lights burn.** Each pixel and each ray's hit now looks only at the lights that can

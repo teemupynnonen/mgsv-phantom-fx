@@ -220,7 +220,7 @@ what draws it, when that is the feature's own.
 | `src/passes/ray_tracing/gi_d3d12.hpp` | The kernels, root signature and descriptor tables every ray-traced feature shares |
 | `src/passes/ray_tracing/gi_slots.hpp` | The slots of those tables, a type a kind; `gi_bindings.h`, generated, names each one (see "Kernels and their slots") |
 | `tools/kernel_bindings/` | Build tool: C++'s slot names, `Kernel` enum and table of DXIL, from the compiled kernels (see "Kernels and their slots") |
-| `src/passes/ray_tracing/shaders/` | HLSL the ray-traced features share: `gi_shared.h` (also C++), `gi_common.hlsli`, `gi_shadow.hlsli` (where shadow rays leave a surface; the FidelityFX Shadow Denoiser's data access), `gi_hit_light.hlsli` (a ray's hit lit as the global illumination lights it, the hash grid cache), `ggx_specular.hlsli` (the specular of what path tracing's rays hit), `gi_scene.hlsl` |
+| `src/passes/ray_tracing/shaders/` | HLSL the ray-traced features share: `gi_shared.h` (also C++), `gi_common.hlsli` (among much else, where a pixel's rays leave its surface), `gi_shadow.hlsli` (which side shadow rays leave from; the FidelityFX Shadow Denoiser's data access), `gi_hit_light.hlsli` (a ray's hit lit as the global illumination lights it, the hash grid cache), `ggx_specular.hlsli` (the specular of what path tracing's rays hit), `gi_scene.hlsl` |
 | `third_party/ffx_denoiser_shadows/` | AMD's FidelityFX Shadow Denoiser headers, unchanged (MIT; `licenses/AMD-FidelityFX-LICENSE.txt`) |
 
 ### Shared
@@ -2899,11 +2899,13 @@ denoiser (see "Ray Reconstruction").
   towards lights take what the game's shadow maps hold, but for the solid stand-ins left out. Diagnostics,
   "Shadows from every surface (old)" (`shadowDiagnostics.x`), goes back to every surface casting from both
   sides.
-- **Where a ray leaves** (`ShadowSurfaceAt`, for the sun's rays, the lights' and the debug view's). A
-  ray from the eye through the pixel looks for the scene's own surface near the depth's point (within
-  3 cm plus 2% of the distance; cut-out geometry by its alpha), searching that stretch alone: the game
-  hides what comes between the camera and the player (a bush the camera backs into) and the scene keeps
-  it. Searched from the eye, the ray stopped on its leaves and those pixels left from the depth's point,
+- **Where a ray leaves** (`PixelSurfaceAt`, for the sun's rays, the lights', the debug view's, and the
+  global illumination's and path-traced reflections' first rays; what the game draws in front of the
+  rest, glass, mirrors and rivers, keeps its own start, as its surface is not in the opaque depth, while
+  the sea, in the G-buffer, leaves as any surface does). A ray from the eye through the pixel looks for
+  the scene's own surface near the depth's point (within 3 cm plus 2% of the distance; cut-out geometry
+  by its alpha), searching that stretch alone: the game hides what comes between the camera and the
+  player (a bush the camera backs into) and the scene keeps it. Searched from the eye, the ray stopped on its leaves and those pixels left from the depth's point,
   inside the coarser rock behind for some, so the hidden bush's leaves showed as shadows on what lay
   behind (the shadow probe, 2026-10-24: the camera's ray met leaves 0.1 to 1.4 m away, the game's
   surface 2.4 to 5.9 m). Found, the shadow ray leaves its exact
@@ -2913,8 +2915,8 @@ denoiser (see "Ray Reconstruction").
   maps reach. The point comes from the triangle's corners and the ray is traced in the instance's own
   space, each a few steps of the largest coordinate off in any direction, as a character's transform
   turns the error of one large coordinate into the others. Wachter and Binder's offset
-  (`OffsetFromTriangle`, Ray Tracing Gems chapter 6: 256 steps of each coordinate on its own, which the
-  global illumination's rays keep) failed both ways, found by the shadow probe on 2026-10-24. In the
+  (`OffsetFromTriangle`, Ray Tracing Gems chapter 6: 256 steps of each coordinate on its own, which
+  rays leaving a hit keep) failed both ways, found by the shadow probe on 2026-10-24. In the
   field it lifted the start about 3 cm: Snake's chest was shadowed in strips along the folds of his
   suit, the start inside the next fold, 5 to 6 mm under its surface, the ray blocked at 0.00 m leaving
   it. In the helicopter, whose floor lies near the map's origin across but 1,200 m up, it lifted next
@@ -2925,6 +2927,14 @@ denoiser (see "Ray Reconstruction").
   copies of the surface just above it ("Copies of a surface" in `gi_common.hlsli`). Until 2026-10-24
   every ray left that way: a lamp's hard shadow showed the skip taking a character pressed to a wall
   for a copy of the wall, light through his back in patches ragged along the wall's bumpy normals.
+  The global illumination's and the opaque reflections' first rays all left that way until 2026-11-02,
+  and do now only where the scene has no surface near the depth's point. In a room's inside corner the lift, 4 cm at 10 m, followed a bumpy normal through the next wall; from inside a wall
+  a ray towards the sun passes the backs of its faces, so whatever those rays met was sunlit, and the
+  corners lit up in bright seams (a debug case: 0 of 64 rays reached the room from those pixels, 60 to
+  64 from their neighbours), and that room's back wall took about half its light that way. A bumpy
+  normal also tilts some rays under the triangle they leave. They are mirrored back above it
+  (`MirrorAboveSurface`): left there, the reflections' showed as white veins along the bumps of a dark
+  wall, whether copies of the surface were skipped or not.
 - **Cut-out meshes.** A model mesh the game alpha-tests (FMDL alpha bits 5 and 7, see "Scene objects",
   mesh flags) is cut-out geometry: non-opaque in its structure, so only it reaches the rays' candidate
   code. In the captured-mesh era the shadow rays' alpha test on the captured grass and bushes' cards (5
@@ -3031,13 +3041,13 @@ denoiser (see "Ray Reconstruction").
   four harness scenes, before the captured meshes went: each scene's shadow takes the expected colour.
   The probe also shows where the rays start: the scene's triangle they leave (or the depth's point), its
   normal and the sun's cosine to it and to the G-buffer's normal, which side they leave, the lift off it
-  (Wächter and Binder's offset grows with the world coordinates: about 3 cm at 1,200 m) and whatever that
+  (`LiftOffTriangle`, or `OffsetFromScreenSurface` at the depth's point) and whatever that
   lift passes through, and whether the blocker is the start's own triangle or mesh. Added 2026-10-24 when
   Snake's chest was shadowed in strips along its folds, each ray blocked at 0.00 m by his own suit's mesh
   from inside. Each model it lists shows its meshes' alpha and shadow bytes and the meshes left out.
 - **Shadow ray starts debug view** (Diagnostics, Debug view "Shadow ray starts"; needs the ray-traced
   shadows and an upscaler, with the probe). `ShadowStartColor` colours where each pixel's shadow rays
-  leave (`ShadowSurfaceAt`) against the depth's point and the G-buffer's normal: grey from the depth's
+  leave (`PixelSurfaceAt`) against the depth's point and the G-buffer's normal: grey from the depth's
   point (no scene surface near), blue on a scene surface facing over 60 degrees away from the game's
   normal, red where the scene's surface lies nearer the eye than the game's, cyan where farther (clear
   up to 5 mm, full from 3 cm); clear on the game's surface. Built 2026-10-25 for the detached shelf
@@ -3222,7 +3232,7 @@ With DLSS Ray Reconstruction denoising, the rays go out without the filter (see 
   every one traced at the kick.
 - **Lamp probe** (`ProbeLocalLights`, 2026-10-26). With the shadow rays' debug view chosen, one thread
   at the centre pixel works out every light there without shadows and traces a ray to each one's centre
-  as the shadow rays leave (`ShadowSurfaceAt`, `SurfaceRayBlocked`, short of the lamp): the share those
+  as the shadow rays leave (`PixelSurfaceAt`, `SurfaceRayBlocked`, short of the lamp): the share those
   rays let through, the filtered share the lights are drawn with, and the six strongest lights, each with
   its part of the light, its distance and what blocks it. It shows under the debug view and goes to the
   log as it changes ("Lamp probe"), sun or none: the sun's probe needs a sun pass, which rooms lack.

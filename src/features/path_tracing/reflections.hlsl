@@ -267,11 +267,12 @@ void TraceReflections(uint2 did : SV_DispatchThreadID)
     // Apart from the global illumination's rays from the same pixel (TraceLight seeds by the pixel alone).
     Random random = MakeRandom(did.x + did.y * g_BufferDimensions.x + g_BufferDimensions.x * g_BufferDimensions.y, g_FrameIndex);
     float cosineToEye;
-    float3 direction = SpecularDirection(normal, toEye, alpha, random.rand2(), cosineToEye);
-    float3 origin = OffsetFromScreenSurface(world, normal);
+    PixelSurface surface = PixelSurfaceAt(world, normal);
+    float3 direction = MirrorAboveSurface(SpecularDirection(normal, toEye, alpha, random.rand2(), cosineToEye), surface.normal);
+    float3 origin = PixelRayOrigin(surface, surface.normal);
     float hitDistance;
     bool isRough = normalRoughness.w >= RoughSurface;
-    float3 light = ReflectedLight(origin, normal, CopyTolerance(world), direction, PixelCone(world, g_Frame.rayCone.x + alpha), isRough, random, hitDistance);
+    float3 light = ReflectedLight(origin, surface.normal, CopyTolerance(world), direction, PixelCone(world, g_Frame.rayCone.x + alpha), isRough, random, hitDistance);
     float3 exposed = RemoveNaNs(light) * g_Frame.nearFar.w;
     bool isGameBlended = hitDistance < SkyHitDistance && specularAlbedo.a > 0.0f;
     float fresnel = GameFresnel(normalRoughness.w, saturate(dot(normal, toEye)));
