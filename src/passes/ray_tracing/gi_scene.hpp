@@ -231,6 +231,8 @@ private:
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputsOf(const Blas& blas, bool update) const;
     // Gives a structure all its micromaps for its next build, if its meshes have them or this frame can bake them; else none.
     void linkMicromaps(Blas& blas);
+    // Lets go of the micromaps it holds: those nothing else holds return once the GPU is past this frame.
+    void releaseMicromaps(Blas& blas);
     std::optional<Micromap> planMicromap(const Blas& blas, std::uint32_t geometry);
     D3D12_GPU_VIRTUAL_ADDRESS address(const Blas& blas) const;
     void writeRow(std::uint32_t row, const GIGeometry& geometry);

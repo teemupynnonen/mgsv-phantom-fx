@@ -199,6 +199,8 @@ void Scene::planBuilds()
             }
 
             ++tally.builtWithoutMicromaps;
+            releaseMicromaps(blas);
+            blas.mayHaveMicromaps = false;
         }
 
         if (staticBuilds >= BuildsPerFrame || triangles >= BuildTrianglesPerFrame || scratchUsed + blas.scratch > tlasScratch + BuildScratchBytes)
@@ -567,15 +569,7 @@ void Scene::destroyBlas(BlasId id)
 
     releases.push_back({signalValue, Pool::Structures, blas.offset, blas.size});
     releases.push_back({signalValue, Pool::Rows, blas.firstGeometry, blas.geometries.size()});
-    for (const auto key : blas.micromapKeys)
-    {
-        const auto micromap = micromaps.find(key);
-        if (--micromap->second.users) continue;
-
-        releases.push_back({signalValue, Pool::Micromaps, micromap->second.arrayOffset, micromap->second.arrayBytes});
-        releases.push_back({signalValue, Pool::Geometry, micromap->second.indexOffset, micromap->second.indexBytes});
-        micromaps.erase(micromap);
-    }
+    releaseMicromaps(blas);
 
     const auto generation = blas.generation;
     blas = {};
@@ -712,6 +706,21 @@ D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS Scene::inputsOf(const Blas&
     inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
     inputs.pGeometryDescs = blas.geometries.data();
     return inputs;
+}
+
+void Scene::releaseMicromaps(Blas& blas)
+{
+    for (const auto key : blas.micromapKeys)
+    {
+        const auto micromap = micromaps.find(key);
+        if (--micromap->second.users) continue;
+
+        releases.push_back({signalValue, Pool::Micromaps, micromap->second.arrayOffset, micromap->second.arrayBytes});
+        releases.push_back({signalValue, Pool::Geometry, micromap->second.indexOffset, micromap->second.indexBytes});
+        micromaps.erase(micromap);
+    }
+
+    blas.micromapKeys.clear();
 }
 
 void Scene::linkMicromaps(Blas& blas)
