@@ -904,11 +904,14 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         for (int i = 0; i < 9; ++i) frame.skyRadiance[i] = radiance[i];
     }
 
+    // A frame without the sky's light keeps the last share: its zero would read as all the light the sun's.
+    if (!sun) lastSkyShare.store(1.0f, std::memory_order_relaxed);
+    else if (sky)
     {
         // The sky's mean radiance is its first coefficient by Y00's constant.
         const auto luminance = [](const std::array<float, 3>& c) { return 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]; };
         const float skyLight = std::max(luminance(frame.skyRadiance[0]) * 0.282095f, 0.0f);
-        const float sunLight = sun ? std::max(luminance(frame.sunColor), 0.0f) : 0.0f;
+        const float sunLight = std::max(luminance(frame.sunColor), 0.0f);
         lastSkyShare.store(skyLight + sunLight > 0 ? skyLight / (skyLight + sunLight) : 1.0f, std::memory_order_relaxed);
     }
 

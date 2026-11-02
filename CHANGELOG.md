@@ -7,7 +7,8 @@
   and the picture stays the same.
 - **Glass dims in shadow again.** Under path tracing a pane kept the game's shadow map, whose shadow no longer matched a
   scene the rays shaded, so glass stayed lit in a dark room. It leaves that map out and takes the rays' sun shadow at its
-  own pixels: at most 15% dimmer in shade, as little as it shows of the sun.
+  own pixels. In shade a pane keeps the sky's share of its light, so its dirt dims without going black, and a flat grey
+  stands in for the game's environment so the pane takes the light and its dirt shows instead of reading as a mirror.
 
 - **Dirty and frosted glass casts a shadow.** Sunlight and lamplight went through every pane untouched. A pane now lets
   through what it neither reflects nor covers, so its dirt shows in the light on the floor behind it.

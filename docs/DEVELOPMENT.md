@@ -1950,8 +1950,13 @@ the game's lights) is left alone until it runs.
     scene, before the exposure, the depth of field and the upscaler read it. So a particle in front of a pane has the
     reflection over it. A traced reflection is added to what the draw left, as encoding the sum of the two would need
     each pane's own colour. The rays' shadow on the pane itself (`TraceSurfaceReflections`, `g_ForwardShadow`: a ray from
-    the surface towards the sun's disc, one sample) dims it as the sun's absence does, to 0.85: a pane is mostly what it
-    reflects and the sky behind it, so blocking the sun barely changes it.
+    the surface towards the sun's disc, one sample; none in a frame without a sun) dims it by what it covers, down to the
+    sky's share of its light (`ray_tracing::skyShare`: the sky's mean radiance over that and the sun's at normal
+    incidence, the global illumination's own lights each frame, in the same units as `HitDirectLight`). The pane's own
+    draw sees a lit shadow map standing in for the game's, so the light on its dirt is the sun's everywhere until then.
+    Its cube map is a 1x1 flat grey (0.25, `forward_surfaces::flatCube`), not black: the game's shader lights the pane
+    `(ambient + diffuse) x` it, so the dirt has light to show. A mirror's slot holds a picture, not a cube, and is left
+    empty.
   - **The rays.** Glass used to be left out for its alpha and shadow bytes. It is now `MeshRole::Glass`, taken by its material: any
     with a `GlassColor` vector, which four techniques have and no other (`fox3DFW_Glass_CommonRef`, `_CommonRef_LNM`,
     `_LNM` and two unnamed); mirrors are `MeshRole::Mirror`, by their technique, `fox3DFW_ParallaxReflection`. They are non-opaque

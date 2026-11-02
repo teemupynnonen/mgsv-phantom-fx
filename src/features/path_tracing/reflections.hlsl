@@ -315,8 +315,9 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
 
     // The surface's own sun shadow, for the composite to dim what it covers (surface_shaders.hpp, Composite): a ray from
     // the surface towards a point on the sun's disc, one sample, seeded by the pixel alone. Water takes no sun shadow
-    // (the composite reads 1 at its pixels), so it traces none: the ray would never be read.
-    if (isWater)
+    // (the composite reads 1 at its pixels), so it traces none: the ray would never be read. Nor does a frame without a
+    // sun: its direction is zero, and the ray would have none.
+    if (isWater || dot(g_Frame.sunColor.rgb, 1.0f) <= 0.0f)
     {
         g_ForwardShadow[did] = 1.0f;
         return;
