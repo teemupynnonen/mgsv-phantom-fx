@@ -18,6 +18,10 @@ namespace phantom_fx::motion_blur
 std::string hook() noexcept;
 // While on, the engine draws its velocity passes every frame; its blur follows the game's setting.
 void setVelocityOnly(bool on) noexcept;
+// Another effect's (VB-SSGI's temporal accumulation) asking for the velocity passes too: while on,
+// the engine draws them every frame, whatever the upscaler asks. The blur still follows the game's
+// setting and the add-on's toggle.
+void wantVelocityPasses(bool on) noexcept;
 // While frame generation runs the blur is halved, as NVIDIA's DLSS-G guide asks: each frame shows half
 // the motion.
 void setFrameGeneration(bool on) noexcept;

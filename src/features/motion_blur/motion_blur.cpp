@@ -43,7 +43,7 @@ constexpr float FixedFrameRate = 60;
 
 using PluginStep = void (*)(void* plugin, std::uint8_t* context, void* view);
 PluginStep originalPreExec{}, originalExec{};
-std::atomic<bool> velocityOnly{}, enabled{true}, frameGeneration{};
+std::atomic<bool> velocityOnly{}, extraVelocityPasses{}, enabled{true}, frameGeneration{};
 std::atomic<float> strength{1};
 std::atomic<LONGLONG> lastStrengthLog{};
 
@@ -123,7 +123,7 @@ void preExec(void* plugin, std::uint8_t* context, void* view)
     originalPreExec(plugin, context, view);
 
     auto* flags = *reinterpret_cast<std::uint64_t**>(context + FrameFlags);
-    if (velocityOnly.load(std::memory_order_relaxed) && flags) *flags |= VelocityPasses;
+    if ((velocityOnly.load(std::memory_order_relaxed) || extraVelocityPasses.load(std::memory_order_relaxed)) && flags) *flags |= VelocityPasses;
 
     applyStrength(static_cast<const std::uint8_t*>(plugin), static_cast<const std::uint8_t*>(view));
 }
@@ -163,6 +163,11 @@ std::string hook() noexcept
 void setVelocityOnly(bool on) noexcept
 {
     velocityOnly = on;
+}
+
+void wantVelocityPasses(bool on) noexcept
+{
+    extraVelocityPasses = on;
 }
 
 void setFrameGeneration(bool on) noexcept
