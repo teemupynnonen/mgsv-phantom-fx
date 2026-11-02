@@ -2,6 +2,7 @@
 // its new geometries started over, the game's terrain and characters into the geometry pool, and a debug
 // view of the scene from the camera.
 #include "gi_common.hlsli"
+#include "gi_micromap.hlsli"
 
 // Each new geometry starts what was learnt about it (its albedo) over.
 [numthreads(64, 1, 1)]
@@ -142,4 +143,98 @@ void TerrainGrid(uint2 did : SV_DispatchThreadID)
     g_GeometryPoolOut.Store4(first + 48, asuint(float4(p10, 1.0f)));
     g_GeometryPoolOut.Store4(first + 64, asuint(float4(p01, 1.0f)));
     g_GeometryPoolOut.Store4(first + 80, asuint(float4(p11, 1.0f)));
+}
+
+// ---- Opacity micromaps (gi_scene.hpp) ----
+StructuredBuffer<GIMicromapJob> g_MicromapJobs : register(t8);
+RWByteAddressBuffer g_MicromapBake : register(u3);
+
+// The job holding a group of the frame's dispatch: jobs are sorted by their first group and adjoin.
+uint FindMicromapJob(uint group)
+{
+    uint low = 0, high = g_Dispatch.y;
+    while (high - low > 1)
+    {
+        uint middle = (low + high) / 2;
+        if (g_MicromapJobs[middle].firstGroup <= group) low = middle;
+        else high = middle;
+    }
+
+    return low;
+}
+
+// A micro-triangle's state (D3D12_RAYTRACING_OPACITY_MICROMAP_STATE) from its texture's alpha at points over
+// it, a barycentric grid of four steps with its corners and edges: opaque or transparent where they all
+// agree, unknown otherwise, which the rays' alpha test then settles (CutOutBlocks). Detail finer than the
+// grid can slip between its points.
+uint MicroTriangleState(Texture2D<float4> texture, float threshold, float2 uv0, float2 uv1, float2 uv2, float2 a, float2 b, float2 c)
+{
+    uint opaque = 0, samples = 0;
+    for (uint i = 0; i <= 4; ++i)
+        for (uint j = 0; j <= 4 - i; ++j)
+        {
+            float2 barycentrics = a + (b - a) * (i / 4.0f) + (c - a) * (j / 4.0f);
+            float2 uv = (1.0f - barycentrics.x - barycentrics.y) * uv0 + barycentrics.x * uv1 + barycentrics.y * uv2;
+            if (texture.SampleLevel(g_WrapSampler, uv, 0.0f).a >= threshold) ++opaque;
+            ++samples;
+        }
+
+    if (opaque == samples) return 1u;
+    if (opaque == 0) return 0u;
+
+    return opaque * 2 >= samples ? 3u : 2u;
+}
+
+groupshared uint gs_SeenStates;
+
+// One group a triangle of the frame's jobs (g_Dispatch.x groups, 65535 a row, over g_Dispatch.y jobs):
+// its micro-triangles' states, sixteen a word, then its micromap's description and its index, the
+// uniform one where every micro-triangle agrees. A geometry whose row has no texture yet (the table's
+// upload ran out of room) is unknown throughout: the rays' alpha test settles it as without micromaps.
+[numthreads(64, 1, 1)]
+void BakeMicromaps(uint3 gid : SV_GroupID, uint thread : SV_GroupIndex)
+{
+    uint group = gid.y * 65535u + gid.x;
+    if (group >= g_Dispatch.x) return;
+
+    GIMicromapJob job = g_MicromapJobs[FindMicromapJob(group)];
+    uint primitive = group - job.firstGroup;
+    GIGeometry geometry = g_Geometries[job.row];
+    uint3 i = TriangleIndices(geometry, primitive);
+    float2 uv0 = VertexUV(geometry, i.x), uv1 = VertexUV(geometry, i.y), uv2 = VertexUV(geometry, i.z);
+    bool hasTexture = (geometry.flags & GI_GEOMETRY_ALPHA_TEXTURE) != 0 && geometry.texture != 0;
+    Texture2D<float4> texture = g_SceneTextures[NonUniformResourceIndex(hasTexture ? geometry.texture - 1 : 0)];
+
+    if (thread == 0) gs_SeenStates = 0;
+    GroupMemoryBarrierWithGroupSync();
+
+    uint microTriangles = 1u << (2u * job.level);
+    uint bytes = microTriangles / 4u;
+    uint seen = 0;
+    for (uint word = thread; word < microTriangles / 16u; word += 64u)
+    {
+        uint packed = 0;
+        for (uint k = 0; k < 16u; ++k)
+        {
+            float2 a, b, c;
+            MicroTriangle(word * 16u + k, job.level, a, b, c);
+            uint state = hasTexture ? MicroTriangleState(texture, geometry.alphaThreshold, uv0, uv1, uv2, a, b, c) : 2u;
+            packed |= state << (2u * k);
+            seen |= 1u << state;
+        }
+
+        g_MicromapBake.Store(job.dataOffset + primitive * bytes + 4u * word, packed);
+    }
+
+    InterlockedOr(gs_SeenStates, seen);
+    GroupMemoryBarrierWithGroupSync();
+    if (thread != 0) return;
+
+    // Its states are found from the bake buffer's start, the micromap arrays' input.
+    g_MicromapBake.Store2(job.descOffset + 8u * primitive, uint2(job.dataOffset + primitive * bytes, job.level | (GI_MICROMAP_FORMAT_4_STATE << 16)));
+    // D3D12_RAYTRACING_OPACITY_MICROMAP_SPECIAL_INDEX: -1 fully transparent, -2 fully opaque.
+    int index = int(primitive);
+    if (gs_SeenStates == 2u) index = -2;
+    else if (gs_SeenStates == 1u) index = -1;
+    g_MicromapBake.Store(job.indexOffset + 4u * primitive, asuint(index));
 }

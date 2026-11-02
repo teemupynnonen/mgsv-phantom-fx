@@ -529,7 +529,10 @@ float2 LightCone(float3 origin)
 // `untextured` says; the ray's cone (`cone`: its width at the origin and its growth a metre, metres)
 // picks the texture's level of detail. Without, every triangle is opaque. Every ray tests alpha: the
 // global illumination's rays once took every triangle as opaque, and a bank of grass, a heap of solid
-// cards to them, went dark (2026-10-23). With `canMeetGlass`, glass stops it (GI_GEOMETRY_GLASS).
+// cards to them, went dark (2026-10-23). With `canMeetGlass`, glass stops it (GI_GEOMETRY_GLASS). With micromaps these rays take
+// a micro-triangle that is part solid as what most of it is, and test no alpha on it: 3.4 to 3.8 ms off the jungle with those known
+// to be all one or the other, past what a frame of them shows. A ray to the sun or a lamp past the near stretch tests alpha still,
+// as there 1% of a frame moved by over 10% for 0.5 ms (SurfaceRayBlocked).
 SceneHit TraceClosest(float3 origin, float3 direction, float minDistance, float maxDistance, uint mask, bool alphaTest, bool untextured, float2 cone,
     bool canMeetGlass = false)
 {
@@ -543,7 +546,7 @@ SceneHit TraceClosest(float3 origin, float3 direction, float minDistance, float 
     if (alphaTest)
     {
         RayQuery<RAY_FLAG_NONE> query;
-        query.TraceRayInline(g_Scene, GI_RAY_FLAGS, mask, ray);
+        query.TraceRayInline(g_Scene, GI_RAY_FLAGS | g_Frame.closestRayFlags.x, mask, ray);
         while (query.Proceed())
         {
             uint row = query.CandidateInstanceContributionToHitGroupIndex() + query.CandidateGeometryIndex();

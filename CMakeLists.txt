@@ -127,6 +127,24 @@ if(NOT EXISTS "${STREAMLINE_DIR}/license.txt")
 endif()
 list(TRANSFORM STREAMLINE_RUNTIME PREPEND "${STREAMLINE_DIR}/bin/x64/" OUTPUT_VARIABLE STREAMLINE_FILES)
 
+# Opacity micromaps: the Direct3D 12 Agility SDK 1.620.1 runtime. The ray-traced scene's
+# device loads it from PhantomFX\D3D12 beside the add-on through a device factory (the game's exe
+# exports no SDK version), for Shader Model 6.9's opt-in of older RayQuery shaders to micromaps.
+set(AGILITY_SDK_VERSION 1.620.1)
+set(AGILITY_SDK_DIR "${CMAKE_BINARY_DIR}/_deps/agility-sdk-${AGILITY_SDK_VERSION}")
+if(NOT EXISTS "${AGILITY_SDK_DIR}/build/native/bin/x64/D3D12Core.dll")
+    set(archive "${CMAKE_BINARY_DIR}/_deps/agility-sdk-${AGILITY_SDK_VERSION}.zip")
+    message(STATUS "Downloading the Agility SDK ${AGILITY_SDK_VERSION}")
+    file(DOWNLOAD "https://api.nuget.org/v3-flatcontainer/microsoft.direct3d.d3d12/${AGILITY_SDK_VERSION}/microsoft.direct3d.d3d12.${AGILITY_SDK_VERSION}.nupkg"
+        "${archive}" TLS_VERIFY ON STATUS status)
+    list(GET status 0 code)
+    if(NOT code EQUAL 0)
+        message(FATAL_ERROR "Could not download the Agility SDK: ${status}")
+    endif()
+    file(ARCHIVE_EXTRACT INPUT "${archive}" DESTINATION "${AGILITY_SDK_DIR}" PATTERNS build/native/bin/x64/D3D12Core.dll LICENSE.txt)
+    file(REMOVE "${archive}")
+endif()
+
 # AMD FSR SDK 2.3.0 for FSR upscaling and frame generation: the API headers and AMD's signed
 # Direct3D 12 runtime. The upscaler DLL holds FSR 4 and FSR 3.1 and picks by GPU. The add-on loads
 # the runtime at run time; nothing is linked.
@@ -167,7 +185,7 @@ list(SORT DXC_SDK_DIRS COMPARE NATURAL ORDER DESCENDING)
 find_program(DXC_EXECUTABLE dxc HINTS "$ENV{WindowsSdkVerBinPath}x64" ${DXC_SDK_DIRS} REQUIRED)
 set(GI_SHADER_DIR "${CMAKE_BINARY_DIR}/gi_shaders")
 set(GI_SHADER_SHARED "${CMAKE_SOURCE_DIR}/src/passes/ray_tracing/shaders")
-set(GI_SHADER_INCLUDES "${GI_SHADER_SHARED}/gi_shared.h" "${GI_SHADER_SHARED}/gi_common.hlsli" "${GI_SHADER_SHARED}/gi_shadow.hlsli" "${GI_SHADER_SHARED}/gi_hit_light.hlsli"
+set(GI_SHADER_INCLUDES "${GI_SHADER_SHARED}/gi_shared.h" "${GI_SHADER_SHARED}/gi_common.hlsli" "${GI_SHADER_SHARED}/gi_shadow.hlsli" "${GI_SHADER_SHARED}/gi_micromap.hlsli" "${GI_SHADER_SHARED}/gi_hit_light.hlsli"
     "${GI_SHADER_SHARED}/ggx_specular.hlsli" "${CMAKE_SOURCE_DIR}/third_party/ffx_denoiser_shadows/ffx_denoiser_shadows_filter.h"
     "${CMAKE_SOURCE_DIR}/third_party/ffx_denoiser_shadows/ffx_denoiser_shadows_tileclassification.h"
     "${CMAKE_SOURCE_DIR}/third_party/ffx_denoiser_shadows/ffx_denoiser_shadows_util.h" "${nrd_SOURCE_DIR}/Shaders/NRD.hlsli")
@@ -191,7 +209,7 @@ function(add_gi_kernels source)
     set(GI_KERNELS ${GI_KERNELS} PARENT_SCOPE)
 endfunction()
 file(MAKE_DIRECTORY "${GI_SHADER_DIR}")
-add_gi_kernels(passes/ray_tracing/shaders/gi_scene.hlsl ClearNewGeometries DebugScene TerrainGrid Skin)
+add_gi_kernels(passes/ray_tracing/shaders/gi_scene.hlsl ClearNewGeometries DebugScene TerrainGrid Skin BakeMicromaps)
 add_gi_kernels(features/global_illumination/gi_light.hlsl ClearCounters GenerateDispatch PrepareGuides TraceLight LearnAlbedo PurgeTiles PopulateMultibounceCells PopulateCells
     UpdateTiles UpdateMultibounceCells ResolveLight UpdateFoliageMemory CompositeLight)
 add_gi_kernels(features/ray_traced_shadows/gi_shadow.hlsl TraceSunShadows ClassifyShadowTiles DebugShadows ProbeShadows)
@@ -252,11 +270,14 @@ set_target_properties(phantom_fx PROPERTIES
 add_custom_command(TARGET phantom_fx POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         ${DLSS_FILES} ${STREAMLINE_FILES} ${FIDELITYFX_FILES} "$<TARGET_FILE_DIR:phantom_fx>"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${AGILITY_SDK_DIR}/build/native/bin/x64/D3D12Core.dll" "$<TARGET_FILE_DIR:phantom_fx>/PhantomFX/D3D12/D3D12Core.dll"
 )
 
 # The add-on and its DLLs go beside mgsvtpp.exe; documentation and licenses into PhantomFX/.
 install(TARGETS phantom_fx RUNTIME DESTINATION . COMPONENT addon)
 install(FILES ${DLSS_FILES} ${STREAMLINE_FILES} ${FIDELITYFX_FILES} DESTINATION . COMPONENT addon)
+install(FILES "${AGILITY_SDK_DIR}/build/native/bin/x64/D3D12Core.dll" DESTINATION PhantomFX/D3D12 COMPONENT addon)
+install(FILES "${AGILITY_SDK_DIR}/LICENSE.txt" DESTINATION PhantomFX RENAME Microsoft-Agility-SDK-LICENSE.txt COMPONENT addon)
 install(FILES README.md CHANGELOG.md LICENSE DESTINATION PhantomFX COMPONENT addon)
 install(FILES "${DLSS_SDK_DIR}/LICENSE.txt" DESTINATION PhantomFX RENAME NVIDIA-DLSS-LICENSE.txt COMPONENT addon)
 install(FILES "${STREAMLINE_DIR}/license.txt" DESTINATION PhantomFX RENAME NVIDIA-Streamline-LICENSE.txt COMPONENT addon)

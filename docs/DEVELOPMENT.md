@@ -2708,6 +2708,40 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   moonlight through them, 2% of the jungle's frame by over 10%, with nothing changed.
   Reading `b0` back at the kick, as the first alpha copies did, gave the last draw's constants (0, so every
   texel blocked: the pylon's solid shadow).
+- **Opacity micromaps** (2026-11-02). Each triangle of a cut-out mesh carries 4^6 micro-triangles, each solid, clear or part of
+  both, baked from its texture's alpha at full detail (`BakeMicromaps`, the curve in `gi_micromap.hlsli`). A ray that lands on a
+  known one is settled by the hardware, with no alpha test. A mesh of over 3,900 triangles goes coarser, as each is baked whole in
+  one frame (`micromapLevelOf`); the largest seen has 1,990.
+  - **Runtime.** They need DXR 1.2 and Shader Model 6.9, and the system's Direct3D 12 stops at 6.8, so a device factory loads the
+    Agility SDK 1.620.1 runtime from `PhantomFX\D3D12` (`createAgilityDevice`). The kernels stay `cs_6_5` under the pipeline flag
+    `RAYQUERY_ALLOW_OPACITY_MICROMAPS_ON_PRE_SM69_SHADERS`. Without the DLL, or on a GPU that lacks them, the rays stay on the
+    system's runtime and test alpha as before. Only an RTX 5080 has run this.
+  - **One a mesh.** `Scene::micromaps` holds one for all that show a mesh, static or moving: a pose does not change how a texture
+    lies on a triangle. The key is its index buffer's address and its texture's slot. Moving meshes matter most: the jungle's 258
+    plants are characters. Refits read the indices, so they stay in the geometry pool, copied out of the frame's bake buffer.
+  - **Not hair or glass.** Hair must see each hit (`PassHair`). Glass carries `GI_GEOMETRY_CUT_OUT` and often an alpha that is no
+    hole: a micromap would let its solid parts stop sun rays that pass it (`CutOutBlocks`).
+  - **All or none.** A structure has room for no micromaps or all of them (`createBlas`), and `linkMicromaps` gives it one or the
+    other. With only some, it needed up to 19 kB more than either case, and its build wrote into the next structure. The GPU
+    hung with no page fault, on whichever operation met the damage, in about half of the launches where a texture came late.
+    `GetRaytracingAccelerationStructurePrebuildInfo` on the structure as built shows it.
+  - **The wait.** A static structure waits up to 90 frames for its textures (`MicromapWaitFrames`), then builds without: 45 at the
+    jungle's start against 126 with them. It never gets them later. A wait of 300 frames left none out in the one scene tried.
+  - **Two states.** Closest-hit rays (`TraceClosest`: bounces, reflections, the near stretch of rays to lights) take a part-solid
+    micro-triangle as what most of it is, and test no alpha (`closestRayFlags`). Rays past the near stretch to the sun or a lamp
+    keep testing it: that shadow is what a pixel shows directly.
+
+    | Jungle, one frozen frame, 1920 x 1080 | Saved | Frame moved over 10% |
+    | --- | --- | --- |
+    | Doing nothing | 0 | 0.5% |
+    | Four states | 2.1 ms | 0.5% |
+    | Two states on closest hits | 3.8 ms | 0.6% |
+    | Two states on every ray | 4.3 ms | 0.6%, south view 0.3% against 0 |
+
+    That is at the level used, 6. Levels 2, 4 and 5 moved 5.1, 4.7 and 1.8% of the frame with two states on every ray, and four
+    states saved less at each. Level 6 costs 16 MB in the jungle.
+  - **Baselines.** Compare against a build without them, or with `D3D12Core.dll` removed. `D3D12_RAYTRACING_INSTANCE_FLAG_DISABLE_OMMS`
+    is no baseline: it cost 0.35 ms over no micromaps at all.
 - **Instances.** The frame's `D3D12_RAYTRACING_INSTANCE_DESC`s (up to 131,072) are both the top
   level's input and what the kernels read (`t5`): one per placement of a model and per character, with
   its transform; the terrain rings with identity. `InstanceID` holds the kind (`GI_INSTANCE_*`, low 8
@@ -2717,7 +2751,7 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   instance, row, indices, vertices, transform. A hit the global illumination keeps packs its instance (20
   bits) and its geometry within the structure (12 bits) into one word.
 - **Recording order.** The pool's uploads and the table's rows; `ClearNewGeometries`, `TerrainGrid`,
-  `Skin`; the bottom levels and compactions; the instances' copy; the top level. Between frames the pool, the table and the instances are in the non-pixel shader resource state.
+  `Skin`; `BakeMicromaps` and the micromap arrays; the bottom levels and compactions; the instances' copy; the top level. Between frames the pool, the table and the instances are in the non-pixel shader resource state.
 - **Hidden mesh groups** (2026-10-26). A rigid model has its mesh groups' states too, as a character
   does (`hiddenGroupsOf` in `engine_scene.cpp`: the same count and state bytes on the model object, a
   group hidden while any of bits 0x33 is set), and a placement carries the groups its model hides

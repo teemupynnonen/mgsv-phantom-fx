@@ -43,6 +43,8 @@ $kept + $Settings | Set-Content (Join-Path $Game 'PhantomFX.ini')
 if ($Ini) { Copy-Item $Ini (Join-Path $Game 'PhantomFX.ini') -Force }
 
 Get-ChildItem $Build -File | Where-Object { $_.Extension -in '.addon64', '.dll' } | Copy-Item -Destination $Game -Force
+$Runtime = Join-Path $Build 'PhantomFX/D3D12'
+if (Test-Path $Runtime) { New-Item -ItemType Directory -Force (Join-Path $Game 'PhantomFX') | Out-Null; Copy-Item $Runtime (Join-Path $Game 'PhantomFX/D3D12') -Recurse -Force }
 # Ray Reconstruction's library, which the player's folder has and a build does not.
 Copy-Item (Join-Path $Steam 'nvngx_dlssd.dll') $Game -Force
 $saves = Join-Path $Game 'PhantomFX-automation\saves'

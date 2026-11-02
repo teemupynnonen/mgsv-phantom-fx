@@ -4,6 +4,9 @@
 
 - **Photo mode crawls with C.** Holding C moves the free camera at 0.5 m/s, next to Shift's 25 m/s, for
   lining up a close shot.
+- **Path tracing is far faster in the jungle.** Rays now know which parts of leaves and other cut-outs are solid or clear
+  without reading their textures. At night in the jungle that saves about 4 ms of a 22 ms frame, and a few tenths of a
+  millisecond elsewhere. It needs a GPU and driver with DXR 1.2; on others nothing changes.
 - **Path tracing is faster through foliage.** Rays test leaves and other cut-outs against their textures millions of times
   a frame, and each test worked out afresh how sharp a texture to read. Each mesh now knows that once. The jungle saves
   about 2 ms a frame and other places up to 1 ms, with the picture unchanged.

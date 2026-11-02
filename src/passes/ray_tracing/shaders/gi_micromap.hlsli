@@ -1,7 +1,7 @@
-// Opacity micromaps (experiment): a triangle's 4^level micro-triangles lie along a space-filling curve over
+// Opacity micromaps: a triangle's 4^level micro-triangles lie along a space-filling curve over
 // its barycentric grid (the DXR spec's "Opacity micromap encoding"). The curve's walk is the one NVIDIA's
-// Opacity Micro-Map SDK and OptiX give (bird::index2dbary); the hardware test in the experiment checked
-// it against the GPU's own lookup.
+// Opacity Micro-Map SDK and OptiX give (bird::index2dbary); a hardware test checked it against the
+// GPU's own lookup (2026-10-29).
 #ifndef GI_MICROMAP_HLSLI
 #define GI_MICROMAP_HLSLI
 
