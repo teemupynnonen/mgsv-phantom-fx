@@ -992,7 +992,8 @@ PixelSurface PixelSurfaceAt(float3 position, float3 gbufferNormal)
         hit = TraceClosest(g_Frame.eye.xyz, direction, searchFrom, surfaceDistance + tolerance, GI_MASK_SCENE, true, false, float2(0.0f, g_Frame.rayCone.x));
         if (!hit.hit || !IsShadowOnly(hit.instance, hit.geometry)) break;
 
-        searchFrom = hit.distance * 1.0001f + 1e-3f;
+        // A triangle's hit lies strictly past a ray's TMin, so this one drops out and what lies right behind it stays.
+        searchFrom = hit.distance;
     }
 
     if (!hit.hit || abs(hit.distance - surfaceDistance) > tolerance || IsShadowOnly(hit.instance, hit.geometry)) return surface;
