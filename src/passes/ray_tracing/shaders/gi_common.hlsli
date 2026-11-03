@@ -953,9 +953,8 @@ float VisibilityFromSurface(float3 origin, float3 normal, float tolerance, float
 
 // ---- Where a pixel's rays leave its surface ----
 // The scene's own surface where a ray from the eye through the pixel meets it near the depth's point: its
-// exact point and its triangle's normal, from which a ray leaves past that very surface (LiftOffTriangle).
-// A shadow ray then skips nothing near it, as it passes the undersides of solid surfaces; other rays stop on any
-// face, so they still skip copies of the surface.
+// exact point and its triangle's normal, from which a ray leaves past that very surface (LiftOffTriangle),
+// so nothing near it needs skipping.
 // Where the game drew something the scene lacks or holds at another level of detail, the depth's point
 // and the G-buffer's normal, with copies of the surface skipped ("Copies of a surface"). Until 2026-10-24
 // every ray left that way: the skip took a character pressed to a wall for a copy of the wall, and
@@ -985,9 +984,17 @@ PixelSurface PixelSurfaceAt(float3 position, float3 gbufferNormal)
     float surfaceDistance = length(toSurface);
     float3 direction = toSurface / max(surfaceDistance, 1e-6f);
     float tolerance = 0.03f + 0.02f * surfaceDistance;
-    SceneHit hit = TraceClosest(g_Frame.eye.xyz, direction, max(surfaceDistance - tolerance, 0.0f), surfaceDistance + tolerance, GI_MASK_SCENE, true,
-        false, float2(0.0f, g_Frame.rayCone.x));
-    // A stand-in the camera never sees is not the surface (a tarp's slab, 16 cm before its sheet).
+    float searchFrom = max(surfaceDistance - tolerance, 0.0f);
+    SceneHit hit;
+    // A stand-in the camera never sees is not the surface (a tarp's slab, 16 cm before its sheet): what the game drew may lie behind it.
+    for (uint attempt = 0; attempt < 4; ++attempt)
+    {
+        hit = TraceClosest(g_Frame.eye.xyz, direction, searchFrom, surfaceDistance + tolerance, GI_MASK_SCENE, true, false, float2(0.0f, g_Frame.rayCone.x));
+        if (!hit.hit || !IsShadowOnly(hit.instance, hit.geometry)) break;
+
+        searchFrom = hit.distance * 1.0001f + 1e-3f;
+    }
+
     if (!hit.hit || abs(hit.distance - surfaceDistance) > tolerance || IsShadowOnly(hit.instance, hit.geometry)) return surface;
 
     SceneTriangle t = LoadTriangle(hit.instance, hit.geometry, hit.primitive);
@@ -1023,13 +1030,15 @@ float3 LiftOffTriangle(float3 position, float3 normal)
     return position + normal * (steps * step * largest);
 }
 
-// A pixel's ray leaves on the side `side` points to: off the triangle, or off the depth's point where the scene has no
-// surface there. Until 2026-11-02 the global illumination's and the opaque reflections' always left the depth's point, 4 cm
-// along the bumpy normal at 10 m, which took them through the next wall in a room's corner: a ray from inside the wall
-// reached the sun past the backs of its faces, and the corner lit up in bright seams (a debug case).
-float3 PixelRayOrigin(PixelSurface surface, float3 side)
+// A pixel's ray leaves on the side `side` points to: off the triangle, past that very surface, or off the depth's point
+// with copies of the surface skipped, where the scene has no surface there. Until 2026-11-02 the global illumination's and
+// the opaque reflections' always left the depth's point, 4 cm along the bumpy normal at 10 m, which took them through the
+// next wall in a room's corner: a ray from inside the wall reached the sun past the backs of its faces, and the corner lit
+// up in bright seams (a debug case).
+void PixelRayStart(PixelSurface surface, float3 side, out float3 origin, out float tolerance)
 {
-    return surface.isExact ? LiftOffTriangle(surface.position, side) : OffsetFromScreenSurface(surface.position, side);
+    origin = surface.isExact ? LiftOffTriangle(surface.position, side) : OffsetFromScreenSurface(surface.position, side);
+    tolerance = surface.isExact ? 0.0f : CopyTolerance(surface.position);
 }
 
 // A bumpy normal tilts some of a pixel's rays under the triangle they leave: mirrored back above it. Left there, the

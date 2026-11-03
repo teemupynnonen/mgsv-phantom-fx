@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Rays no longer pass what lies right beside a surface.** Global illumination and path-traced reflections could take a
+  surface close to the one they left for a copy of it and go through. Where the pixel's surface is known they now skip
+  nothing, as the shadow rays do, and a stand-in in front of it no longer hides it. No spot measured looks different, and
+  the cost is the same.
 - **Rooms no longer light up from inside their walls.** In a room's corners the rays of global illumination and of
   path-traced reflections could start inside the next wall and find the sun there, which drew bright broken lines along
   the seams. Their rays now leave the surface the pixel shows, as the shadow rays do, and white veins on bumpy walls went
