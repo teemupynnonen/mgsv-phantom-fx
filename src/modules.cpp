@@ -3,6 +3,7 @@
 #include "features/ambient_occlusion/gtvbao.hpp"
 #include "features/frame_rate/frame_rate.hpp"
 #include "features/global_illumination/light_combine.hpp"
+#include "features/global_illumination/river_light.hpp"
 #include "features/indirect_light/ssilvb.hpp"
 #include "features/lamp_contact_shadows/lamp_contact_shadows.hpp"
 #include "features/lamp_soft_shadows/lamp_soft_shadows.hpp"
@@ -64,6 +65,7 @@ constexpr Module Modules[]{
     {.attach = withDevice<path_tracing::attach>, .configure = path_tracing::configure, .present = path_tracing::present, .detach = path_tracing::detach},
     {.attach = withDevice<forward_surfaces::attach>, .present = forward_surfaces::present, .detach = forward_surfaces::detach},
     {.attach = withDevice<water::attach>, .detach = water::detach},
+    {.attach = withDevice<river_light::attach>, .detach = river_light::detach},
     {.attach = withDevice<sky_capture::attach>, .present = sky_capture::present, .detach = sky_capture::detach},
     {.attach = withDevice<visibility_bitmask::attach>, .configure = visibility_bitmask::configure, .detach = visibility_bitmask::detach},
 

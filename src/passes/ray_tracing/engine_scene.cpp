@@ -365,6 +365,16 @@ std::uint64_t hiddenGroupsOf(std::uintptr_t model)
     return hidden;
 }
 
+// Whether `hidden` (hiddenGroupsOf) is every one of the model's mesh groups, the first 64.
+bool hidesEveryGroup(std::uintptr_t model, std::uint64_t hidden)
+{
+    const auto groups = read<std::uint16_t>(model + ModelGroupCount);
+    if (!hidden || !groups || !*groups) return false;
+
+    const auto count = std::min<std::size_t>(*groups, 64);
+    return hidden == (count == 64 ? ~0ull : (1ull << count) - 1);
+}
+
 bool fadedOut(std::uintptr_t model)
 {
     return read<float>(model + ModelFade) == 0.0f;
@@ -614,7 +624,11 @@ void snapshot()
 
             const auto undrawn = undrawnInstances(*holder, *begin, matrixBuffer.size() / 16);
             if (undrawn.empty()) ++unreadGroups;
-            const auto hiddenGroups = hiddenGroupsOf(*model);
+            // A group's model hiding all its groups (state 0x22) does not stop the group's own draws: a tree by an Africa stream,
+            // 84a1febcf8c77996, drawn at its placements, was left out of the scene and the water reflected the sky through
+            // it (2026-11-02, a debug case and `drawn`). Where the instances' states were read, they say what is not drawn.
+            auto hiddenGroups = hiddenGroupsOf(*model);
+            if (!undrawn.empty() && hidesEveryGroup(*model, hiddenGroups)) hiddenGroups = 0;
             for (std::size_t i = 0; i < matrixBuffer.size(); i += 16)
             {
                 if (!undrawn.empty() && undrawn[i / 16])

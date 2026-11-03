@@ -36,7 +36,7 @@ struct ID3D11Resource;
 //   reveal off|all|<hash> ...     restarts the scene, taking what it leaves out: all of it or those models
 //   enhancements 0|1              the F1 switch
 //   setting <key>=<value>         a PhantomFX.ini line, applied at once (and saved, as the overlay does)
-//   diagnostic <name> <value>     debug_view, show_scene, two_sided_shadows or no_jitter
+//   diagnostic <name> <value>     debug_view, show_scene, two_sided_shadows, no_jitter or river_light
 //   lua <code>                    runs `code` in the game's Lua (game_lua.hpp), its value or error
 //   travel <map> [<x> <y> <z>]    afghanistan, africa or motherbase free roam (travel.hpp), at that place
 //   clock <seconds>               the time of day, its clock stopped there (weather.hpp)

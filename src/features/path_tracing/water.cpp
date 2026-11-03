@@ -3,6 +3,7 @@
 #include "features/path_tracing/water.hpp"
 
 #include "d3d11_helpers.hpp"
+#include "features/global_illumination/river_light.hpp"
 #include "features/path_tracing/forward_surfaces.hpp"
 #include "features/path_tracing/path_tracing.hpp"
 #include "hresult.hpp"
@@ -66,7 +67,11 @@ void detach() noexcept
 
 bool drawRiver(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call) noexcept
 {
-    const auto drawGame = [&] { context->DrawIndexedInstanced(call.count, call.instances, call.first, call.vertexOffset, call.firstInstance); };
+    // The river's light follows its draw at once, with the same bindings, so its draws aside match it.
+    const auto drawGame = [&] {
+        context->DrawIndexedInstanced(call.count, call.instances, call.first, call.vertexOffset, call.firstInstance);
+        river_light::draw(context, call);
+    };
 
     try
     {
