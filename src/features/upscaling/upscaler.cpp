@@ -1165,12 +1165,17 @@ void runComposite(ID3D11RenderTargetView* destination, ID3D11ShaderResourceView*
     immediate->UpdateSubresource(compositeConstants.Get(), 0, nullptr, &constants, 0, 0);
 
     const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(outputTarget.width), static_cast<float>(outputTarget.height), 0, 1};
-    auto* shadowRays = isShadowView
-                           ? ray_tracing::shadowDebug(colorTarget.width, colorTarget.height)
-                       : view == DebugView::LightHistory || view == DebugView::LightValidation
-                           ? ray_tracing::lightDebug(colorTarget.width, colorTarget.height)
-                           : nullptr;
-    ID3D11ShaderResourceView* inputs[]{outputTarget.view.Get(), motionTarget.view.Get(), objectVelocity, shadowRays};
+    // The traced scene's view replaces the image here, after the upscaler: fed through the upscaler it
+    // has no motion vectors of its own, so it lagged the camera, its edges sparkled and it never
+    // settled on the frame the game drew.
+    auto* debugView = options.showTracedScene
+                          ? ray_tracing::light(colorTarget.width, colorTarget.height)
+                      : isShadowView
+                          ? ray_tracing::shadowDebug(colorTarget.width, colorTarget.height)
+                      : view == DebugView::LightHistory || view == DebugView::LightValidation
+                          ? ray_tracing::lightDebug(colorTarget.width, colorTarget.height)
+                          : nullptr;
+    ID3D11ShaderResourceView* inputs[]{outputTarget.view.Get(), motionTarget.view.Get(), objectVelocity, debugView};
     immediate->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     immediate->VSSetShader(ensureStretch()->vertex.Get(), nullptr, 0);
     immediate->PSSetShader(compositeShader.Get(), nullptr, 0);

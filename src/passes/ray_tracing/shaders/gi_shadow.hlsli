@@ -146,82 +146,13 @@ float FFX_DNSR_Shadows_ReadHistory(float2 uv)
 }
 
 // ---- Where a pixel's shadow rays leave its surface ----
-// The scene's own surface where a ray from the eye through the pixel meets it near the depth's point: its
-// exact point and its triangle's normal, from which a ray leaves past that very surface (LiftOffTriangle),
-// so nothing near it needs skipping.
-// Where the game drew something the scene lacks or holds at another level of detail, the depth's point
-// and the G-buffer's normal, with copies of the surface skipped (gi_common.hlsli). Until 2026-10-24
-// every ray left that way: the skip took a character pressed to a wall for a copy of the wall, and
-// light went through him, ragged along the wall's bumpy normals.
-struct ShadowSurface
-{
-    float3 position;
-    float3 normal; // Towards the eye: the triangle's on the scene's surface, else the G-buffer's
-    bool exact;    // On the scene's own surface
-    SceneHit hit;  // Diagnostics (the probe): the eye's ray's hit on it
-};
-
-ShadowSurface ShadowSurfaceAt(float3 position, float3 gbufferNormal)
-{
-    ShadowSurface surface;
-    surface.position = position;
-    surface.normal = gbufferNormal;
-    surface.exact = false;
-    surface.hit = (SceneHit)0;
-
-    // Only the stretch around the depth's point: the game hides what comes between the camera and the player
-    // (a bush the camera backs into) and the scene keeps it. Searched from the eye, the ray stopped on its
-    // leaves and the pixels behind them left from the depth's point, inside the coarser rock behind for some:
-    // the bush's leaves showed as shadows on what lay behind (the shadow probe, 2026-10-24: the camera's ray
-    // met leaves 0.1 to 1.4 m away, the game's surface 2.4 to 5.9 m).
-    float3 toSurface = position - g_Frame.eye.xyz;
-    float surfaceDistance = length(toSurface);
-    float3 direction = toSurface / max(surfaceDistance, 1e-6f);
-    float tolerance = 0.03f + 0.02f * surfaceDistance;
-    SceneHit hit = TraceClosest(g_Frame.eye.xyz, direction, max(surfaceDistance - tolerance, 0.0f), surfaceDistance + tolerance, GI_MASK_SCENE, true,
-        false, float2(0.0f, g_Frame.rayCone.x));
-    // A stand-in the camera never sees is not the surface (a tarp's slab, 16 cm before its sheet).
-    if (!hit.hit || abs(hit.distance - surfaceDistance) > tolerance || IsShadowOnly(hit.instance, hit.geometry)) return surface;
-
-    SceneTriangle t = LoadTriangle(hit.instance, hit.geometry, hit.primitive);
-    float3 normal = cross(t.v1 - t.v0, t.v2 - t.v0);
-    float lengthSquared = dot(normal, normal);
-    if (!(lengthSquared > 0.0f)) return surface;
-
-    normal *= rsqrt(lengthSquared);
-    surface.normal = dot(normal, direction) > 0.0f ? -normal : normal;
-    surface.position = TrianglePoint(t, hit.barycentrics);
-    surface.exact = true;
-    surface.hit = hit;
-    return surface;
-}
-
-// A shadow ray's start off a point on the scene's own surface: 16 float steps of the point's largest
-// coordinate along the normal, about 2 mm at 1,200 m from the map's origin, where the game's maps reach.
-// The point is worked out from the triangle's corners, and the ray is traced in the instance's own space,
-// each a few steps of the largest coordinate off in any direction: a character's transform turns the
-// error of a large coordinate into the others. Wächter and Binder's offset (OffsetFromTriangle, 256 steps
-// of each coordinate on its own) lifted the start about 3 cm in the field, more than the folds of a
-// character's clothes, so it sat inside the next fold and his chest was shadowed in strips; and next to
-// nothing in the helicopter, whose floor lies near the map's origin across but 1,200 m up, so a face
-// turned sideways hit its own triangle in every other frame (the shadow probe, 2026-10-24). Coordinates
-// under 128 m count as 128: a large model's own coordinates reach that far.
-float3 LiftOffTriangle(float3 position, float3 normal)
-{
-    const float steps = 16.0f;
-    const float step = 1.0f / 8388608.0f; // A float step, relative
-
-    float largest = max(max(abs(position.x), abs(position.y)), max(abs(position.z), 128.0f));
-    return position + normal * (steps * step * largest);
-}
-
 // A shadow ray's start towards `toLight`: from the surface's side facing the light, as leaves lit from
 // behind take light through them.
-void ShadowRayStart(ShadowSurface surface, float3 toLight, out float3 origin, out float3 facing, out float tolerance)
+void ShadowRayStart(PixelSurface surface, float3 toLight, out float3 origin, out float3 facing, out float tolerance)
 {
     facing = dot(surface.normal, toLight) >= 0.0f ? surface.normal : -surface.normal;
-    origin = surface.exact ? LiftOffTriangle(surface.position, facing) : OffsetFromScreenSurface(surface.position, facing);
-    tolerance = surface.exact ? 0.0f : CopyTolerance(surface.position);
+    origin = PixelRayOrigin(surface, facing);
+    tolerance = surface.isExact ? 0.0f : CopyTolerance(surface.position);
 }
 
 // A hit as the probe lists it (GIShadowProbe::lightNearest); zeros for none.

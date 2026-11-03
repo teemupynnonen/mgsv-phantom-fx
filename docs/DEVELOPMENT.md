@@ -186,7 +186,7 @@ what draws it, when that is the feature's own.
 | `volumetric_fog/` | `atmosphere.*`: the larger fog texture, the game's fog pass over all of it, the shadowed fill before the resolve. `atmosphere_shaders.hpp`: the game's fog formula per froxel with the sun shadowed; Hillaire's atmosphere tables, the physical fog and sky (Epic Games' reference, MIT) |
 | `water_caustics/` | `water_caustics.*`: the light a river's waves focus on its bed, drawn over the river's own draw. `caustics_map.*`: the tiling web, made at start-up. `water_caustics_shaders.hpp`: that draw |
 | `sea/` | `sea.*`: the sea's waves and its surface in the G-buffer in place of the game's sea, its level and wind from the game's, its depth for the guides and its level for the ray-traced scene (see "Sea"). `sea_shaders.hpp`: the spectrum, the FFT, the maps, the surface |
-| `photo_mode/` | `photo_mode.*`: photo mode (F2), the game's pause, a free camera through the camera selector, the game's input held back; hiding the UI (F3). `focus.*`: its autofocus |
+| `photo_mode/` | `photo_mode.*`: photo mode (F2), the game's pause, a free camera through the camera selector, the game's input held back; hiding the UI (F3); the dev build's Enter teleport. `focus.*`: its autofocus |
 | `hdr/` | `hdr.*`: the float scene, in SDR too, and HDR10 output: the swap chain, the float scene targets and their sRGB views, the shader patches, the grading and output passes (see "HDR"). `hdr_shaders.hpp`: the encode and decode of the float scene, bloom's reduction, the grading, the output to PQ or, in SDR, to the game's 8 bits with a dither |
 | `frame_rate/` | `frame_rate.*`: hook on the frame wait setter, the optional 60 fps unlock |
 | `motion_blur/` | `motion_blur.*`: hooks on the motion blur plugin, velocity passes every frame |
@@ -220,7 +220,7 @@ what draws it, when that is the feature's own.
 | `src/passes/ray_tracing/gi_d3d12.hpp` | The kernels, root signature and descriptor tables every ray-traced feature shares |
 | `src/passes/ray_tracing/gi_slots.hpp` | The slots of those tables, a type a kind; `gi_bindings.h`, generated, names each one (see "Kernels and their slots") |
 | `tools/kernel_bindings/` | Build tool: C++'s slot names, `Kernel` enum and table of DXIL, from the compiled kernels (see "Kernels and their slots") |
-| `src/passes/ray_tracing/shaders/` | HLSL the ray-traced features share: `gi_shared.h` (also C++), `gi_common.hlsli`, `gi_shadow.hlsli` (where shadow rays leave a surface; the FidelityFX Shadow Denoiser's data access), `gi_hit_light.hlsli` (a ray's hit lit as the global illumination lights it, the hash grid cache), `ggx_specular.hlsli` (the specular of what path tracing's rays hit), `gi_scene.hlsl` |
+| `src/passes/ray_tracing/shaders/` | HLSL the ray-traced features share: `gi_shared.h` (also C++), `gi_common.hlsli` (among much else, where a pixel's rays leave its surface), `gi_shadow.hlsli` (which side shadow rays leave from; the FidelityFX Shadow Denoiser's data access), `gi_hit_light.hlsli` (a ray's hit lit as the global illumination lights it, the hash grid cache), `ggx_specular.hlsli` (the specular of what path tracing's rays hit), `gi_scene.hlsl` |
 | `third_party/ffx_denoiser_shadows/` | AMD's FidelityFX Shadow Denoiser headers, unchanged (MIT; `licenses/AMD-FidelityFX-LICENSE.txt`) |
 
 ### Shared
@@ -1239,6 +1239,17 @@ level at Camp Omega's cliffs. No names in the exe: the class names here are desc
   whose `+0x20` and `+0x28` begin and end an array of world matrices (4x4, column-major: translation
   at `+0x30`, `1` at `+0x3C`). The props and buildings the game draws one by one with skinning shaders
   and `m_useWeightCount` 0 (see "Ray-traced shadows").
+  The holder's instances (`+0x10`, `0x60` bytes each, vtable `0x210D998`, in the matrices' order) point to their matrix
+  at `+0x28`; an instance's byte at `+0x1E` has bit `0x02` while the group does not draw it. Destructible props (barrels,
+  a hut's window panes) are such groups: the game moves a few single models of the prop onto the placements near the
+  player and stops drawing the group's copy there, and stops drawing a broken one's (2026-11-02, read with the `owner`,
+  `drawn` and `peek` automation lines: of a hut's 18 window panes, the bit was set on the three a single model stood on and
+  on the one the player broke, which the main camera's draws no longer held; clear on the others, each drawn once a frame,
+  the six about 170 m away included). Nothing else in the group, its instances' records, their ids or its model changed
+  when a pane or a barrel broke. The scene leaves those instances out (`undrawnInstances` in `engine_scene.cpp`), and
+  places a group whole when its instances do not read as these. Before, a broken barrel stayed in the rays and a
+  standing prop near the player was there twice; a rule placing such props from their single models alone dropped every
+  pane without one, and with it the dirt in their light.
 - **Model** (vtable `0x20F4D90`, `0x200` bytes), shared by a group's instances or an instance itself:
   `+0x40` the world matrix (also at `+0xA0`), `+0x80` the local box (min, max as float4), `+0x118` the
   resource handle (vtable `0x21027C0`, `0xA0` bytes: `+0x30` the file's 64-bit path hash, `+0x60` the
@@ -2013,6 +2024,20 @@ the game's lights) is left alone until it runs.
   character, gives its light to the diffuse rays that meet it. The intensities are set for how a bulb looks, and
   rooms are lit by the lamps placed beside them: a mesh lights others with at most the sun's radiance
   (`MostEmission`), and the menu's **Self-lit surfaces** (`path_traced_emission`, 1 by default, 0 to 4) scales it.
+  A frame at Mother Base at night spends 2.5 to 3 ms on them at 1920 x 1080: about 1.5 ms the shadow rays, about 1 ms choosing
+  one, and 0.3 ms the triangle and its texture. Dropping them outright is not free: 15% of the deck
+  changes by over 10%. Rolling for their rays as for the moon's below saved 0.8 ms at most, and at that it visibly stirred
+  the walkway around its lit windows, 1.5% of the frame over 10%, so they keep every ray.
+- **Dim sun rays** (`SunRayChance`, `gi_hit_light.hlsli`). Under Ray Reconstruction a matte hit, a diffuse ray's or a cache
+  cell's, whose sun or moon light would be under 0.5 after the exposure traces its ray only in proportion, and counts that ray
+  for those it left out, so its light stays the same on average. At night most hits spend a ray on moonlight too faint to show.
+  With reflections' hits rolling too, that saved 0.26 to 0.83 ms. At most 0.2% of a frame moved by over 10%, about what doing
+  nothing moves, but in Africa the worst 1% moved 2.1 to 2.5% against 0.7 to 1.6%, and the light read 0.3 to 0.4% darker. A
+  limit of 2 saved up to 1.72 ms but took 2% off the jungle, where the moon is all the light there is; the cause was not looked
+  into. Reflections' hits keep every ray. They were 0.01 to 0.10 ms of those savings (the reflections' and glass's phases), and
+  what they add up to is clamped (`BrightestHit`). A highlight that clamp holds at 4 stays 4 with every ray, but averages 4 times
+  the chance when a ray stands for those left out, and a floor does nothing for a chance above it. A matte hit has nothing there
+  to lose: the cosine it is lit by cancels the chance's, so a counted ray's light stays near 0.5 by the albedo.
 - **The sky** (`sky_capture.*`). The sky's light is nine numbers, without a horizon, clouds or the sun's glow, so a ray
   that got away reflected a smooth blur. The sky reflection map cannot stand in: `TPPSunLightReflectMap` fills it
   from baked cubes (`g_EnvSpecCubeTexture`), and the sun pass reads two levels of one rate from it. So the game's
@@ -2882,11 +2907,13 @@ denoiser (see "Ray Reconstruction").
   towards lights take what the game's shadow maps hold, but for the solid stand-ins left out. Diagnostics,
   "Shadows from every surface (old)" (`shadowDiagnostics.x`), goes back to every surface casting from both
   sides.
-- **Where a ray leaves** (`ShadowSurfaceAt`, for the sun's rays, the lights' and the debug view's). A
-  ray from the eye through the pixel looks for the scene's own surface near the depth's point (within
-  3 cm plus 2% of the distance; cut-out geometry by its alpha), searching that stretch alone: the game
-  hides what comes between the camera and the player (a bush the camera backs into) and the scene keeps
-  it. Searched from the eye, the ray stopped on its leaves and those pixels left from the depth's point,
+- **Where a ray leaves** (`PixelSurfaceAt`, for the sun's rays, the lights', the debug view's, and the
+  global illumination's and path-traced reflections' first rays; what the game draws in front of the
+  rest, glass, mirrors and rivers, keeps its own start, as its surface is not in the opaque depth, while
+  the sea, in the G-buffer, leaves as any surface does). A ray from the eye through the pixel looks for
+  the scene's own surface near the depth's point (within 3 cm plus 2% of the distance; cut-out geometry
+  by its alpha), searching that stretch alone: the game hides what comes between the camera and the
+  player (a bush the camera backs into) and the scene keeps it. Searched from the eye, the ray stopped on its leaves and those pixels left from the depth's point,
   inside the coarser rock behind for some, so the hidden bush's leaves showed as shadows on what lay
   behind (the shadow probe, 2026-10-24: the camera's ray met leaves 0.1 to 1.4 m away, the game's
   surface 2.4 to 5.9 m). Found, the shadow ray leaves its exact
@@ -2896,8 +2923,8 @@ denoiser (see "Ray Reconstruction").
   maps reach. The point comes from the triangle's corners and the ray is traced in the instance's own
   space, each a few steps of the largest coordinate off in any direction, as a character's transform
   turns the error of one large coordinate into the others. Wachter and Binder's offset
-  (`OffsetFromTriangle`, Ray Tracing Gems chapter 6: 256 steps of each coordinate on its own, which the
-  global illumination's rays keep) failed both ways, found by the shadow probe on 2026-10-24. In the
+  (`OffsetFromTriangle`, Ray Tracing Gems chapter 6: 256 steps of each coordinate on its own, which
+  rays leaving a hit keep) failed both ways, found by the shadow probe on 2026-10-24. In the
   field it lifted the start about 3 cm: Snake's chest was shadowed in strips along the folds of his
   suit, the start inside the next fold, 5 to 6 mm under its surface, the ray blocked at 0.00 m leaving
   it. In the helicopter, whose floor lies near the map's origin across but 1,200 m up, it lifted next
@@ -2908,6 +2935,14 @@ denoiser (see "Ray Reconstruction").
   copies of the surface just above it ("Copies of a surface" in `gi_common.hlsli`). Until 2026-10-24
   every ray left that way: a lamp's hard shadow showed the skip taking a character pressed to a wall
   for a copy of the wall, light through his back in patches ragged along the wall's bumpy normals.
+  The global illumination's and the opaque reflections' first rays all left that way until 2026-11-02,
+  and do now only where the scene has no surface near the depth's point. In a room's inside corner the lift, 4 cm at 10 m, followed a bumpy normal through the next wall; from inside a wall
+  a ray towards the sun passes the backs of its faces, so whatever those rays met was sunlit, and the
+  corners lit up in bright seams (a debug case: 0 of 64 rays reached the room from those pixels, 60 to
+  64 from their neighbours), and that room's back wall took about half its light that way. A bumpy
+  normal also tilts some rays under the triangle they leave. They are mirrored back above it
+  (`MirrorAboveSurface`): left there, the reflections' showed as white veins along the bumps of a dark
+  wall, whether copies of the surface were skipped or not.
 - **Cut-out meshes.** A model mesh the game alpha-tests (FMDL alpha bits 5 and 7, see "Scene objects",
   mesh flags) is cut-out geometry: non-opaque in its structure, so only it reaches the rays' candidate
   code. In the captured-mesh era the shadow rays' alpha test on the captured grass and bushes' cards (5
@@ -3014,13 +3049,13 @@ denoiser (see "Ray Reconstruction").
   four harness scenes, before the captured meshes went: each scene's shadow takes the expected colour.
   The probe also shows where the rays start: the scene's triangle they leave (or the depth's point), its
   normal and the sun's cosine to it and to the G-buffer's normal, which side they leave, the lift off it
-  (Wächter and Binder's offset grows with the world coordinates: about 3 cm at 1,200 m) and whatever that
+  (`LiftOffTriangle`, or `OffsetFromScreenSurface` at the depth's point) and whatever that
   lift passes through, and whether the blocker is the start's own triangle or mesh. Added 2026-10-24 when
   Snake's chest was shadowed in strips along its folds, each ray blocked at 0.00 m by his own suit's mesh
   from inside. Each model it lists shows its meshes' alpha and shadow bytes and the meshes left out.
 - **Shadow ray starts debug view** (Diagnostics, Debug view "Shadow ray starts"; needs the ray-traced
   shadows and an upscaler, with the probe). `ShadowStartColor` colours where each pixel's shadow rays
-  leave (`ShadowSurfaceAt`) against the depth's point and the G-buffer's normal: grey from the depth's
+  leave (`PixelSurfaceAt`) against the depth's point and the G-buffer's normal: grey from the depth's
   point (no scene surface near), blue on a scene surface facing over 60 degrees away from the game's
   normal, red where the scene's surface lies nearer the eye than the game's, cyan where farther (clear
   up to 5 mm, full from 3 cm); clear on the game's surface. Built 2026-10-25 for the detached shelf
@@ -3205,7 +3240,7 @@ With DLSS Ray Reconstruction denoising, the rays go out without the filter (see 
   every one traced at the kick.
 - **Lamp probe** (`ProbeLocalLights`, 2026-10-26). With the shadow rays' debug view chosen, one thread
   at the centre pixel works out every light there without shadows and traces a ray to each one's centre
-  as the shadow rays leave (`ShadowSurfaceAt`, `SurfaceRayBlocked`, short of the lamp): the share those
+  as the shadow rays leave (`PixelSurfaceAt`, `SurfaceRayBlocked`, short of the lamp): the share those
   rays let through, the filtered share the lights are drawn with, and the six strongest lights, each with
   its part of the light, its distance and what blocks it. It shows under the debug view and goes to the
   log as it changes ("Lamp probe"), sun or none: the sun's probe needs a sun pass, which rooms lack.
@@ -3258,6 +3293,9 @@ reached a place outside its bins read 0 over 6.5 million places a frame.
 | --- | --- | --- | --- |
 | Mother Base walkway | 128, 205 past the cap | 128 to 3.2 | 32.2 to 27.8 ms |
 | Mother Base deck | 79 | 79 to 1.95 | 26.2 to 24.3 ms |
+
+The self-lit meshes the rays aim at have no bins. Their reach is long, so a place at Mother Base would still walk 19 of the 64, and
+walking the bits costs about what skipping saves: a build with them saved no more than its dim sun rays do alone, at four spots (2026-11-02).
 
 The lamp shadows of the non-path-traced lights (`light_shadows.hlsl`) still walk them all.
 
@@ -3856,9 +3894,16 @@ F2 does nothing.
   (loading screens) the request lapses.
 - **Flight.** Each selector update, the mouse turns the camera (0.001 rad per raw count; pitch within
   ±1.55 rad). W and S move along the view, A and D along the horizontal right, Space and Ctrl along
-  +y: 5 m/s, 25 m/s with Shift, by real time (`QueryPerformanceCounter`, at most 0.1 s a step). The
-  active camera's rotation and position are replaced for the original update and put back after it,
-  so the game's camera keeps its own.
+  +y: 5 m/s, 25 m/s with Shift, 0.5 m/s with C, by real time (`QueryPerformanceCounter`, at most 0.1 s
+  a step). The active camera's rotation and position are replaced for the original update and put back
+  after it, so the game's camera keeps its own.
+- **Teleport (dev build only).** Enter leaves photo mode and warps the player to the free camera's
+  position, facing the camera's yaw. The game's warp needs game time, so the request is taken at the
+  next selector update (which also clears the pause), and a held camera, as a debug case leaves behind,
+  is let go so the pause really clears; the warp then runs at the next frame start through the game's
+  Lua, from `dev::onFrameStart` (`src/dev/game_lua.hpp`): `GameObject.SendCommand` with
+  `WarpAndWaitBlock` for the player (object 0), or `SetPosition` for the vehicle or walker gear they are
+  in; missions and free roam only. It is the call Infinite Heaven's `InfTppUtil.Warp` makes.
 - **Input.** In photo mode the raw input reader takes the mouse's movement for the free camera and
   gives the game only button and key releases, so nothing held when photo mode started stays held
   after it. The keys come from ReShade, and not while its overlay is open.
