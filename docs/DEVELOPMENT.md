@@ -2948,12 +2948,13 @@ denoiser (see "Ray Reconstruction").
   rest, glass, mirrors and rivers, keeps its own start, as its surface is not in the opaque depth, while
   the sea, in the G-buffer, leaves as any surface does). A ray from the eye through the pixel looks for
   the scene's own surface near the depth's point (within 3 cm plus 2% of the distance; cut-out geometry
-  by its alpha), searching that stretch alone: the game hides what comes between the camera and the
-  player (a bush the camera backs into) and the scene keeps it. Searched from the eye, the ray stopped on its leaves and those pixels left from the depth's point,
-  inside the coarser rock behind for some, so the hidden bush's leaves showed as shadows on what lay
+  by its alpha, stand-ins passed), searching that stretch alone: the game hides what comes between the
+  camera and the player (a bush the camera backs into) and the scene keeps it. Searched from the eye,
+  the ray stopped on its leaves and those pixels left from the depth's point, inside the coarser rock
+  behind for some, so the hidden bush's leaves showed as shadows on what lay
   behind (the shadow probe, 2026-10-24: the camera's ray met leaves 0.1 to 1.4 m away, the game's
-  surface 2.4 to 5.9 m). Found, the shadow ray leaves its exact
-  point on the triangle, from the side facing the light, lifted off it along the normal by 16 float
+  surface 2.4 to 5.9 m). Found, the ray leaves its exact
+  point on the triangle, a shadow ray from the side facing the light, lifted off it along the normal by 16 float
   steps of the point's largest coordinate (`LiftOffTriangle`; coordinates under 128 m count as 128),
   and nothing near it is skipped. That is about 2 mm at 1,200 m from the map's origin, where the game's
   maps reach. The point comes from the triangle's corners and the ray is traced in the instance's own
@@ -2972,13 +2973,22 @@ denoiser (see "Ray Reconstruction").
   every ray left that way: a lamp's hard shadow showed the skip taking a character pressed to a wall
   for a copy of the wall, light through his back in patches ragged along the wall's bumpy normals.
   The global illumination's and the opaque reflections' first rays all left that way until 2026-11-02,
-  and do now only where the scene has no surface near the depth's point. In a room's inside corner the lift, 4 cm at 10 m, followed a bumpy normal through the next wall; from inside a wall
-  a ray towards the sun passes the backs of its faces, so whatever those rays met was sunlit, and the
+  and do now only where the scene has no surface near the depth's point. In a room's inside corner the
+  lift, 4 cm at 10 m, followed a bumpy normal through the next wall; from inside a wall a ray towards
+  the sun passes the backs of its faces, so whatever those rays met was sunlit, and the
   corners lit up in bright seams (a debug case: 0 of 64 rays reached the room from those pixels, 60 to
   64 from their neighbours), and that room's back wall took about half its light that way. A bumpy
   normal also tilts some rays under the triangle they leave. They are mirrored back above it
   (`MirrorAboveSurface`): left there, the reflections' showed as white veins along the bumps of a dark
   wall, whether copies of the surface were skipped or not.
+  They went on skipping copies from their new start until 2026-11-03, as their rays stop on any face
+  where a shadow ray passes undersides. That risked what it had done to the shadow rays: a wall's next
+  facet in a shallow crease, or a character against a wall, taken for a copy and passed. Without the
+  skip no fault was measured gone and no dark undersides appeared: in that debug case's room the skips
+  a frame fell from 280,000 to 211,000 while its light and cost stayed within two runs' noise, and the
+  ruins' and Snake's boots on a deck read the same. The stretch passes stand-ins since then too: a pixel
+  behind one left from the depth's point, though only 48 of 134 recorded debug cases had any there, the
+  worst 0.47% of its frame.
 - **Cut-out meshes.** A model mesh the game alpha-tests (FMDL alpha bits 5 and 7, see "Scene objects",
   mesh flags) is cut-out geometry: non-opaque in its structure, so only it reaches the rays' candidate
   code. In the captured-mesh era the shadow rays' alpha test on the captured grass and bushes' cards (5
