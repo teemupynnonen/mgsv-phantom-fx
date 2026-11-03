@@ -2906,7 +2906,8 @@ denoiser (see "Ray Reconstruction").
   the scene's own surface near the depth's point (within 3 cm plus 2% of the distance; cut-out geometry
   by its alpha, stand-ins passed), searching that stretch alone: the game hides what comes between the
   camera and the player (a bush the camera backs into) and the scene keeps it. Searched from the eye,
-  the ray stopped on its leaves and those pixels left from the depth's point, inside the coarser rock behind for some, so the hidden bush's leaves showed as shadows on what lay
+  the ray stopped on its leaves and those pixels left from the depth's point, inside the coarser rock
+  behind for some, so the hidden bush's leaves showed as shadows on what lay
   behind (the shadow probe, 2026-10-24: the camera's ray met leaves 0.1 to 1.4 m away, the game's
   surface 2.4 to 5.9 m). Found, the ray leaves its exact
   point on the triangle, a shadow ray from the side facing the light, lifted off it along the normal by 16 float
