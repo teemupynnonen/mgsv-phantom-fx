@@ -2,6 +2,7 @@
 #include "passes/ray_tracing/gi_scene.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <stdexcept>
 #include <utility>
@@ -28,6 +29,7 @@ void applyMaterial(GIGeometry& row, const scene_description::Material& material)
     row.flags = (row.flags & GI_GEOMETRY_CUT_OUT) | (material.flags & ~GI_GEOMETRY_CUT_OUT);
     row.texture = material.texture;
     row.alphaThreshold = material.alphaThreshold;
+    row.texelsPerMetre = material.texelsPerMetre;
     row.specularTexture = material.specularTexture;
     row.normalTexture = material.normalTexture;
     row.materialIndex = material.materialIndex;
@@ -35,11 +37,55 @@ void applyMaterial(GIGeometry& row, const scene_description::Material& material)
     row.layerTexture = material.layerTexture;
     row.layerMaskTexture = material.layerMaskTexture;
 }
+
+// Opacity micromaps: the arrays' memory and their builds' scratch; the frames a static structure waits for its cut-out meshes'
+// textures and for room in the frames' bakes.
+constexpr std::uint64_t MicromapPoolBytes = 128ull << 20, MicromapScratchBytes = 32ull << 20;
+constexpr std::uint32_t MicromapWaitFrames = 90;
+// Each triangle's micro-triangles, 4 to this. Few leave rays testing alpha where they need not, and the coarser ones change the
+// picture under rays that take unknown ones as settled (TraceClosest): 2, 4 and 5 moved 5.1, 4.7 and 1.8% of a jungle frame, 6 no
+// more than doing nothing, and 6 is the fastest of them too (2026-11-02). A jungle takes 16 MB of it.
+constexpr std::uint32_t MicromapLevel = 6;
+// The coarsest a big mesh goes: BakeMicromaps writes whole words of 16 micro-triangles.
+constexpr std::uint32_t CoarsestMicromapLevel = 2;
+// The micro-triangles a frame bakes at most, each sampled 15 times (BakeMicromaps): the rest wait.
+constexpr std::uint64_t MicroTrianglesPerFrame = 16'000'000;
+constexpr std::uint64_t MicromapArrayAlignment = 128; // D3D12_RAYTRACING_OPACITY_MICROMAP_ARRAY_BYTE_ALIGNMENT
+// Texture slots go above a mesh's GPU address in its micromap's key, which fits under it (linkMicromaps).
+constexpr int MicromapKeyTextureShift = 48;
+
+constexpr auto BakeRead = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_COPY_SOURCE;
+
+// A cut-out geometry the rays test alpha on, whose micromap the scene bakes. Not hair, which dims rays layer by layer (PassHair) and
+// so must see each hit, nor glass, whose alpha is no hole: every ray but a reflection's passes it (CutOutBlocks).
+bool isMicromapped(std::uint32_t flags)
+{
+    return (flags & GI_GEOMETRY_CUT_OUT) && (flags & GI_GEOMETRY_UV) && !(flags & (GI_GEOMETRY_HAIR | GI_GEOMETRY_GLASS));
 }
 
-Scene::Scene(ID3D12Device5* device, D3D12_CPU_DESCRIPTOR_HANDLE textures, UINT descriptorSize)
-    : device(device), blasAllocator(BlasPoolBytes), textureDescriptors(textures), descriptorSize(descriptorSize)
+// A mesh is baked whole in one frame, so a big one goes coarser to stay within a frame's bake: a dispatch that runs for seconds loses
+// the device.
+std::uint32_t micromapLevelOf(std::uint32_t triangles)
 {
+    auto level = MicromapLevel;
+    while (level > CoarsestMicromapLevel && (std::uint64_t{triangles} << (2 * level)) > MicroTrianglesPerFrame) --level;
+
+    return level;
+}
+}
+
+Scene::Scene(ID3D12Device5* device, D3D12_CPU_DESCRIPTOR_HANDLE textures, UINT descriptorSize, bool isMicromapCapable)
+    : device(device), blasAllocator(BlasPoolBytes), textureDescriptors(textures), descriptorSize(descriptorSize), isMicromapCapable(isMicromapCapable),
+      micromapAllocator(isMicromapCapable ? MicromapPoolBytes : 0)
+{
+    if (isMicromapCapable)
+    {
+        bake = createStorage(device, BakeBytes, "Creating the micromaps' bake buffer");
+        micromapPool = createBuffer(device, MicromapPoolBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
+            D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, "Creating the micromap pool");
+        micromapScratch = createStorage(device, MicromapScratchBytes, "Creating the micromaps' build scratch");
+    }
+
     geometryPool = createBuffer(device, PoolBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
         D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, "Creating the geometry pool");
     blasPool = createBuffer(device, BlasPoolBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
@@ -87,6 +133,7 @@ void Scene::beginFrame(std::uint32_t frameSlot, std::uint64_t completedFence, st
         if (release.pool == Pool::Geometry) poolAllocator.release(release.offset, release.size);
         else if (release.pool == Pool::Structures) blasAllocator.release(release.offset, release.size);
         else if (release.pool == Pool::Rows) rowAllocator.release(release.offset, release.size);
+        else if (release.pool == Pool::Micromaps) micromapAllocator.release(release.offset, release.size);
         return true;
     });
     std::erase_if(closedTextures, [&](const ClosedTexture& closed) {
@@ -119,6 +166,10 @@ void Scene::beginFrame(std::uint32_t frameSlot, std::uint64_t completedFence, st
     builds.clear();
     compactions.clear();
     instances.clear();
+    jobs.clear();
+    micromapBuilds.clear();
+    jobGroups = 0;
+    bakeUsed = micromapScratchUsed = frameMicroTriangles = 0;
     uploadUsed = geometryUploaded = 0;
     scratchUsed = tlasScratch;
     tally.builtThisFrame = tally.compactedThisFrame = 0;
@@ -130,10 +181,27 @@ void Scene::planBuilds()
     std::uint32_t staticBuilds{};
     std::uint64_t triangles{};
     std::vector<BlasId> waiting;
+    tally.waitingForMicromaps = 0;
     for (const auto id : buildQueue)
     {
         auto& blas = structures[id];
         if (!blas.live || !blas.queued) continue;
+
+        // Its micromaps need all its cut-out geometries' textures and room in a bake: it waits for them a while.
+        if (blas.mayHaveMicromaps) linkMicromaps(blas);
+        if (blas.mayHaveMicromaps)
+        {
+            if (blas.framesWaited++ < MicromapWaitFrames)
+            {
+                ++tally.waitingForMicromaps;
+                waiting.push_back(id);
+                continue;
+            }
+
+            ++tally.builtWithoutMicromaps;
+            releaseMicromaps(blas);
+            blas.mayHaveMicromaps = false;
+        }
 
         if (staticBuilds >= BuildsPerFrame || triangles >= BuildTrianglesPerFrame || scratchUsed + blas.scratch > tlasScratch + BuildScratchBytes)
         {
@@ -220,11 +288,47 @@ void Scene::recordWrites(ID3D12GraphicsCommandList4& list)
     list.ResourceBarrier(1, &barrier);
 }
 
-void Scene::recordBottomLevels(ID3D12GraphicsCommandList4& list)
+void Scene::recordGeometryReady(ID3D12GraphicsCommandList4& list)
 {
     D3D12_RESOURCE_BARRIER readable[]{uavBarrier(), transition(geometryPool.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)};
     list.ResourceBarrier(static_cast<UINT>(std::size(readable)), readable);
+}
 
+void Scene::recordMicromaps(ID3D12GraphicsCommandList4& list)
+{
+    if (micromapBuilds.empty()) return;
+
+    // The jobs' descriptions, states and indices, read by the arrays' builds and the bottom levels'.
+    D3D12_RESOURCE_BARRIER ready[]{uavBarrier(), transition(bake.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, BakeRead)};
+    list.ResourceBarrier(static_cast<UINT>(std::size(ready)), ready);
+    for (const auto& build : micromapBuilds)
+    {
+        D3D12_RAYTRACING_OPACITY_MICROMAP_ARRAY_DESC array{};
+        array.NumOmmHistogramEntries = static_cast<UINT>(build.histogram.size());
+        array.pOmmHistogram = build.histogram.data();
+        array.InputBuffer = bake->GetGPUVirtualAddress();
+        array.PerOmmDescs = {bake->GetGPUVirtualAddress() + build.descOffset, sizeof(D3D12_RAYTRACING_OPACITY_MICROMAP_DESC)};
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC desc{};
+        desc.Inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_OPACITY_MICROMAP_ARRAY;
+        desc.Inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+        desc.Inputs.NumDescs = 1;
+        desc.Inputs.pOpacityMicromapArrayDesc = &array;
+        desc.DestAccelerationStructureData = micromapPool->GetGPUVirtualAddress() + build.destination;
+        desc.ScratchAccelerationStructureData = micromapScratch->GetGPUVirtualAddress() + build.scratch;
+        list.BuildRaytracingAccelerationStructure(&desc, 0, nullptr);
+    }
+
+    auto pool = transition(geometryPool.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    list.ResourceBarrier(1, &pool);
+    for (const auto& build : micromapBuilds) list.CopyBufferRegion(geometryPool.Get(), build.indexTo, bake.Get(), build.indexFrom, build.indexBytes);
+
+    pool = transition(geometryPool.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    D3D12_RESOURCE_BARRIER done[]{uavBarrier(), pool};
+    list.ResourceBarrier(static_cast<UINT>(std::size(done)), done);
+}
+
+void Scene::recordBottomLevels(ID3D12GraphicsCommandList4& list)
+{
     bool postbuild{};
     for (const auto& build : builds)
     {
@@ -267,6 +371,11 @@ void Scene::recordBottomLevels(ID3D12GraphicsCommandList4& list)
             D3D12_RAYTRACING_ACCELERATION_STRUCTURE_COPY_MODE_COMPACT);
 
     if (!compactions.empty()) list.ResourceBarrier(1, &all);
+    if (!micromapBuilds.empty())
+    {
+        const auto writable = transition(bake.Get(), BakeRead, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        list.ResourceBarrier(1, &writable);
+    }
 }
 
 void Scene::recordInstances(ID3D12GraphicsCommandList4& list)
@@ -360,11 +469,43 @@ std::optional<BlasId> Scene::createBlas(Use use, const std::vector<Geometry>& ge
 
         blas.geometries.push_back(desc);
         blas.triangles += (geometry.indexCount ? geometry.indexCount : geometry.vertexCount) / 3;
+        if (isMicromapCapable && geometry.indexCount && isMicromapped(geometry.material.flags))
+            blas.micromapped.push_back(static_cast<std::uint32_t>(blas.geometries.size() - 1));
     }
 
     auto inputs = inputsOf(blas, false);
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuild{};
     device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &prebuild);
+
+    // Room for it with all its micromaps too, as it has them all or none (linkMicromaps): with some of each it can need more than
+    // with either, by up to 19 kB of a 800 kB structure, and its build then writes into the next structure's room. That hung the GPU
+    // in about half of the launches where a texture came late (2026-11-02).
+    blas.mayHaveMicromaps = !blas.micromapped.empty();
+    if (blas.mayHaveMicromaps)
+    {
+        auto geometriesWith = blas.geometries;
+        std::vector<D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC> triangles;
+        std::vector<D3D12_RAYTRACING_GEOMETRY_OMM_LINKAGE_DESC> links;
+        triangles.reserve(geometries.size());
+        links.reserve(geometries.size());
+        for (const auto i : blas.micromapped)
+        {
+            triangles.push_back(geometriesWith[i].Triangles);
+            links.push_back({{bake->GetGPUVirtualAddress(), 4}, DXGI_FORMAT_R32_UINT, 0, micromapPool->GetGPUVirtualAddress()});
+            geometriesWith[i].Type = D3D12_RAYTRACING_GEOMETRY_TYPE_OMM_TRIANGLES;
+            geometriesWith[i].OmmTriangles = {&triangles.back(), &links.back()};
+        }
+
+        auto with = inputs;
+        with.pGeometryDescs = geometriesWith.data();
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuildWith{};
+        device->GetRaytracingAccelerationStructurePrebuildInfo(&with, &prebuildWith);
+        prebuild.ResultDataMaxSizeInBytes = std::max(prebuild.ResultDataMaxSizeInBytes, prebuildWith.ResultDataMaxSizeInBytes);
+        prebuild.ScratchDataSizeInBytes = std::max(prebuild.ScratchDataSizeInBytes, prebuildWith.ScratchDataSizeInBytes);
+        prebuild.UpdateScratchDataSizeInBytes = std::max(prebuild.UpdateScratchDataSizeInBytes, prebuildWith.UpdateScratchDataSizeInBytes);
+        blas.micromapTriangles.resize(geometries.size());
+        blas.links.resize(geometries.size());
+    }
 
     const auto first = rowAllocator.allocate(geometries.size());
     if (!first) return std::nullopt;
@@ -428,6 +569,7 @@ void Scene::destroyBlas(BlasId id)
 
     releases.push_back({signalValue, Pool::Structures, blas.offset, blas.size});
     releases.push_back({signalValue, Pool::Rows, blas.firstGeometry, blas.geometries.size()});
+    releaseMicromaps(blas);
 
     const auto generation = blas.generation;
     blas = {};
@@ -444,6 +586,7 @@ bool Scene::rebuild(BlasId id)
         return false;
     }
 
+    if (blas.mayHaveMicromaps) linkMicromaps(blas);
     builds.push_back({id, blas.generation, false, scratchUsed, 0});
     scratchUsed += blas.scratch;
     blas.built = true;
@@ -515,6 +658,7 @@ std::optional<std::uint32_t> Scene::openTexture(const SceneTexture& texture)
     auto& opened = textures[textureSlot];
     check(opened.open(device, texture.texture), "Opening one of the game's textures");
     freeTextures.pop_back();
+    const auto desc = opened.resource->GetDesc();
     writeTexture(textureSlot, opened.resource.Get(), texture.viewFormat, texture.mips);
 
     return textureSlot;
@@ -535,7 +679,13 @@ Scene::Stats Scene::stats() const
         {
             ++result.structures;
             if (blas.compacted) ++result.compacted;
+            if (!blas.micromapKeys.empty()) ++result.micromapStructures;
         }
+
+    result.micromapMeshes = static_cast<std::uint32_t>(micromaps.size());
+    for (const auto& [key, micromap] : micromaps) result.microTriangles += micromap.microTriangles;
+    result.micromapUsed = micromapAllocator.usedSize();
+    result.micromapCapacity = micromapAllocator.capacity();
 
     result.poolUsed = poolAllocator.usedSize();
     result.poolCapacity = poolAllocator.capacity();
@@ -556,6 +706,122 @@ D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS Scene::inputsOf(const Blas&
     inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
     inputs.pGeometryDescs = blas.geometries.data();
     return inputs;
+}
+
+void Scene::releaseMicromaps(Blas& blas)
+{
+    for (const auto key : blas.micromapKeys)
+    {
+        const auto micromap = micromaps.find(key);
+        if (--micromap->second.users) continue;
+
+        releases.push_back({signalValue, Pool::Micromaps, micromap->second.arrayOffset, micromap->second.arrayBytes});
+        releases.push_back({signalValue, Pool::Geometry, micromap->second.indexOffset, micromap->second.indexBytes});
+        micromaps.erase(micromap);
+    }
+
+    blas.micromapKeys.clear();
+}
+
+void Scene::linkMicromaps(Blas& blas)
+{
+    for (const auto i : blas.micromapped)
+    {
+        const auto& row = rows[blas.firstGeometry + i];
+        if (!(row.flags & GI_GEOMETRY_ALPHA_TEXTURE) || !row.texture) return;
+    }
+
+    // By its texture too: a model's variants share their triangles, not always what covers them.
+    const auto keyOf = [&](std::uint32_t i) {
+        return blas.geometries[i].Triangles.IndexBuffer | (std::uint64_t{rows[blas.firstGeometry + i].texture} << MicromapKeyTextureShift);
+    };
+
+    // Held as they are baked, for a structure that waits for room in the frames' bakes.
+    for (const auto i : blas.micromapped)
+    {
+        const auto key = keyOf(i);
+        if (std::ranges::find(blas.micromapKeys, key) != blas.micromapKeys.end()) continue;
+
+        auto micromap = micromaps.find(key);
+        if (micromap == micromaps.end())
+        {
+            const auto planned = planMicromap(blas, i);
+            if (!planned) return;
+
+            micromap = micromaps.emplace(key, *planned).first;
+        }
+
+        ++micromap->second.users;
+        blas.micromapKeys.push_back(key);
+    }
+
+    for (const auto i : blas.micromapped)
+    {
+        const auto& micromap = micromaps.at(keyOf(i));
+        auto& geometry = blas.geometries[i];
+        blas.micromapTriangles[i] = geometry.Triangles;
+        blas.links[i] = {{geometryPool->GetGPUVirtualAddress() + micromap.indexOffset, 4}, DXGI_FORMAT_R32_UINT, 0,
+            micromapPool->GetGPUVirtualAddress() + micromap.arrayOffset};
+        geometry.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_OMM_TRIANGLES;
+        geometry.OmmTriangles = {&blas.micromapTriangles[i], &blas.links[i]};
+    }
+
+    blas.mayHaveMicromaps = false;
+}
+
+std::optional<Scene::Micromap> Scene::planMicromap(const Blas& blas, std::uint32_t geometry)
+{
+    const auto count = blas.geometries[geometry].Triangles.IndexCount / 3;
+    const auto level = micromapLevelOf(count);
+    const auto microTriangles = std::uint64_t{count} << (2 * level);
+    const auto dataBytes = aligned(microTriangles / 4, 128);
+    const auto descBytes = aligned(count * sizeof(D3D12_RAYTRACING_OPACITY_MICROMAP_DESC), 128);
+    const auto indexBytes = aligned(std::uint64_t{count} * 4, 128);
+    const auto needed = descBytes + indexBytes + dataBytes;
+    if (bakeUsed + needed > BakeBytes || (bakeUsed && frameMicroTriangles + microTriangles > MicroTrianglesPerFrame)) return std::nullopt;
+
+    MicromapBuild build;
+    build.histogram.push_back({count, level, D3D12_RAYTRACING_OPACITY_MICROMAP_FORMAT_OC1_4_STATE});
+    D3D12_RAYTRACING_OPACITY_MICROMAP_ARRAY_DESC array{};
+    array.NumOmmHistogramEntries = 1;
+    array.pOmmHistogram = build.histogram.data();
+    array.InputBuffer = bake->GetGPUVirtualAddress();
+    array.PerOmmDescs = {bake->GetGPUVirtualAddress(), sizeof(D3D12_RAYTRACING_OPACITY_MICROMAP_DESC)};
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
+    inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_OPACITY_MICROMAP_ARRAY;
+    inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+    inputs.NumDescs = 1;
+    inputs.pOpacityMicromapArrayDesc = &array;
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuild{};
+    device->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &prebuild);
+    const auto scratchBytes = aligned(prebuild.ScratchDataSizeInBytes, 256);
+    if (micromapScratchUsed + scratchBytes > MicromapScratchBytes) return std::nullopt;
+
+    const auto destination = micromapAllocator.allocate(prebuild.ResultDataMaxSizeInBytes, MicromapArrayAlignment);
+    const auto indices = poolAllocator.allocate(indexBytes, 16);
+    if (!destination || !indices)
+    {
+        if (destination) micromapAllocator.release(*destination, prebuild.ResultDataMaxSizeInBytes);
+        if (indices) poolAllocator.release(*indices, indexBytes);
+        ++tally.micromapsRefused;
+        return std::nullopt;
+    }
+
+    const auto descOffset = bakeUsed, indexOffset = descOffset + descBytes, dataOffset = indexOffset + indexBytes;
+    jobs.push_back({rows[blas.firstGeometry + geometry], jobGroups, level, static_cast<std::uint32_t>(dataOffset), static_cast<std::uint32_t>(descOffset),
+        static_cast<std::uint32_t>(indexOffset), {}});
+    build.descOffset = descOffset;
+    build.destination = *destination;
+    build.scratch = micromapScratchUsed;
+    build.indexFrom = indexOffset;
+    build.indexTo = *indices;
+    build.indexBytes = std::uint64_t{count} * 4;
+    micromapBuilds.push_back(std::move(build));
+    jobGroups += count;
+    bakeUsed += needed;
+    frameMicroTriangles += microTriangles;
+    micromapScratchUsed += scratchBytes;
+    return Micromap{*destination, prebuild.ResultDataMaxSizeInBytes, *indices, indexBytes, microTriangles};
 }
 
 D3D12_GPU_VIRTUAL_ADDRESS Scene::address(const Blas& blas) const

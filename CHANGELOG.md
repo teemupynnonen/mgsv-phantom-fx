@@ -9,6 +9,13 @@
   It costs about 1.4 ms a frame at 1440p under path tracing.
 - **Photo mode crawls with C.** Holding C moves the free camera at 0.5 m/s, next to Shift's 25 m/s, for
   lining up a close shot.
+- **Path tracing can run far faster in the jungle.** Turn on **Opacity micromaps** under Global illumination and restart, on
+  an RTX 40 or newer. Rays then know which parts of leaves and other cut-outs are solid or clear without reading their
+  textures. At night in the jungle that saves about 4 ms of a 22 ms frame, and a few tenths of a millisecond elsewhere. Older
+  RTX cards emulate it and can run slower, so it is off by default. GPUs without DXR 1.2 ignore it.
+- **Path tracing is faster through foliage.** Rays test leaves and other cut-outs against their textures millions of times
+  a frame, and each test worked out afresh how sharp a texture to read. Each mesh now knows that once. The jungle saves
+  about 2 ms a frame and other places up to 1 ms, with the picture unchanged.
 - **Path tracing is faster where many lights burn.** Each pixel and each ray's hit now looks only at the lights that can
   reach it, not at every light in the frame. At Mother Base at night that saves 4.4 ms of a 32 ms frame, about 31 to 36 fps,
   and the picture stays the same.

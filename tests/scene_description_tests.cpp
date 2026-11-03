@@ -633,6 +633,22 @@ void skinThroughBoneGroup()
 }
 
 // A debug case's revealed scene: a mesh the rules drop is kept as solid and marked, and still listed as dropped.
+// The rays read a cut-out's level of detail from this. A right triangle of 2 m sides over a whole 512-texel side of its texture has
+// its coordinates run half their length along a metre: 256 texels.
+void aCutOutMeshKnowsItsTexelsAMetre()
+{
+    ModelPart part;
+    part.role = MeshRole::CutOut;
+    part.vertices = {{0, 0, 0}, {2, 0, 0}, {0, 0, 2}};
+    constexpr std::uint32_t HalfOne = 0x3C00;
+    part.uvs = {0, HalfOne, HalfOne << 16};
+    part.indices = {0, 1, 2};
+
+    const auto material = materialOf(part, {.base = 6, .baseTexelsAcross = 512});
+    expect(std::abs(material.texelsPerMetre - 256.0f) < 1e-3f, "A cut-out mesh's texels a metre are its texture's over its coordinates' run along a metre.");
+    expect(materialOf(part, {}).texelsPerMetre == 0.0f, "A cut-out mesh waiting for its texture has none yet.");
+}
+
 void revealedSceneKeepsDroppedMeshes()
 {
     const auto file = modelFile({{16, 5}, {0, 0}}, false);
@@ -649,6 +665,7 @@ int main()
     try
     {
         revealedSceneKeepsDroppedMeshes();
+        aCutOutMeshKnowsItsTexelsAMetre();
         tarpSheetsCastThroughStandIn();
         solidStandInsCastTheSunAlone();
         pylonLattice();

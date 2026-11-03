@@ -474,9 +474,12 @@ float TextureLod(float3 v0, float3 v1, float3 v2, float2 uv0, float2 uv1, float2
 
 // Whether a cut-out geometry (non-opaque, as glass is) stops a ray where the ray crosses it: with its
 // texture, where the texture's alpha is at least the game's threshold at the level of detail the ray's
-// cone (`footprint` metres across there) meets; without, as `untextured` says. Glass never does: the sun's and
-// a lamp's light come through it, and only a reflection's rays meet it (TraceClosest's `canMeetGlass`).
-bool CutOutBlocks(uint row, uint primitive, float2 barycentrics, bool untextured, float footprint, float3x4 objectToWorld)
+// cone (`footprint` metres across there) meets; without, as `untextured` says. The level comes from the mesh's
+// average texels a metre (GIGeometry::texelsPerMetre), as a jungle's rays run this about 20 million times a frame: working it
+// out from each triangle's vertices and placement took 2 ms of that, and showed no different on the same frozen frame.
+// Glass never does: the sun's and a lamp's light come through it, and only a reflection's rays meet it (TraceClosest's
+// `canMeetGlass`).
+bool CutOutBlocks(uint row, uint primitive, float2 barycentrics, bool untextured, float footprint)
 {
     GIGeometry geometry = g_Geometries[row];
     if (geometry.flags & GI_GEOMETRY_GLASS) return false;
@@ -486,17 +489,7 @@ bool CutOutBlocks(uint row, uint primitive, float2 barycentrics, bool untextured
     float2 uv0 = VertexUV(geometry, i.x), uv1 = VertexUV(geometry, i.y), uv2 = VertexUV(geometry, i.z);
     float2 uv = (1.0f - barycentrics.x - barycentrics.y) * uv0 + barycentrics.x * uv1 + barycentrics.y * uv2;
     Texture2D<float4> texture = g_SceneTextures[NonUniformResourceIndex(geometry.texture - 1)];
-    float lod = 0.0f;
-    if (footprint > 0.0f)
-    {
-        float3 v0 = mul(objectToWorld, float4(PoolVertex(geometry, i.x).xyz, 1.0f));
-        float3 v1 = mul(objectToWorld, float4(PoolVertex(geometry, i.y).xyz, 1.0f));
-        float3 v2 = mul(objectToWorld, float4(PoolVertex(geometry, i.z).xyz, 1.0f));
-        float2 size;
-        texture.GetDimensions(size.x, size.y);
-        lod = TextureLod(v0, v1, v2, uv0, uv1, uv2, size, footprint);
-    }
-
+    float lod = footprint > 0.0f ? log2(max(footprint * geometry.texelsPerMetre, 1e-6f)) : 0.0f;
     float4 texel = texture.SampleLevel(g_WrapSampler, uv, lod);
     return texel.a >= geometry.alphaThreshold;
 }
@@ -536,7 +529,10 @@ float2 LightCone(float3 origin)
 // `untextured` says; the ray's cone (`cone`: its width at the origin and its growth a metre, metres)
 // picks the texture's level of detail. Without, every triangle is opaque. Every ray tests alpha: the
 // global illumination's rays once took every triangle as opaque, and a bank of grass, a heap of solid
-// cards to them, went dark (2026-10-23). With `canMeetGlass`, glass stops it (GI_GEOMETRY_GLASS).
+// cards to them, went dark (2026-10-23). With `canMeetGlass`, glass stops it (GI_GEOMETRY_GLASS). With micromaps these rays take
+// a micro-triangle that is part solid as what most of it is, and test no alpha on it: 3.4 to 3.8 ms off the jungle with those known
+// to be all one or the other, past what a frame of them shows. A ray to the sun or a lamp past the near stretch tests alpha still,
+// as there 1% of a frame moved by over 10% for 0.5 ms (SurfaceRayBlocked).
 SceneHit TraceClosest(float3 origin, float3 direction, float minDistance, float maxDistance, uint mask, bool alphaTest, bool untextured, float2 cone,
     bool canMeetGlass = false)
 {
@@ -550,13 +546,13 @@ SceneHit TraceClosest(float3 origin, float3 direction, float minDistance, float 
     if (alphaTest)
     {
         RayQuery<RAY_FLAG_NONE> query;
-        query.TraceRayInline(g_Scene, GI_RAY_FLAGS, mask, ray);
+        query.TraceRayInline(g_Scene, GI_RAY_FLAGS | g_Frame.closestRayFlags.x, mask, ray);
         while (query.Proceed())
         {
             uint row = query.CandidateInstanceContributionToHitGroupIndex() + query.CandidateGeometryIndex();
             float footprint = cone.x + query.CandidateTriangleRayT() * cone.y;
             bool isGlassHit = canMeetGlass && (g_Geometries[row].flags & GI_GEOMETRY_GLASS) != 0;
-            if (isGlassHit || CutOutBlocks(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), untextured, footprint, query.CandidateObjectToWorld3x4()))
+            if (isGlassHit || CutOutBlocks(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), untextured, footprint))
                 query.CommitNonOpaqueTriangleHit();
         }
 
@@ -897,7 +893,7 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
         float footprint = cone.x + query.CandidateTriangleRayT() * cone.y;
         bool untextured = false;
         if (chance) untextured = random.rand() < blocking;
-        if (!CutOutBlocks(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), untextured, footprint, query.CandidateObjectToWorld3x4()))
+        if (!CutOutBlocks(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), untextured, footprint))
             continue;
 
         if (IsHair(row)) PassHair(query.CandidateTriangleRayT(), transmittance, nearestHair);
@@ -926,8 +922,7 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
         if (chance) untextured = random.rand() < blocking;
         float footprint = cone.x + every.CandidateTriangleRayT() * cone.y;
         bool cutOut = (g_Geometries[row].flags & GI_GEOMETRY_CUT_OUT) != 0;
-        if (cutOut && !CutOutBlocks(row, every.CandidatePrimitiveIndex(), every.CandidateTriangleBarycentrics(), untextured, footprint,
-                          every.CandidateObjectToWorld3x4()))
+        if (cutOut && !CutOutBlocks(row, every.CandidatePrimitiveIndex(), every.CandidateTriangleBarycentrics(), untextured, footprint))
             continue;
 
         if (IsHair(row)) PassHair(every.CandidateTriangleRayT(), transmittance, nearestHair);

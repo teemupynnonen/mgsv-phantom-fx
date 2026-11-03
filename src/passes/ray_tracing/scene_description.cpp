@@ -1,9 +1,12 @@
 // What the ray-traced scene takes of the game's model files; scene_description.hpp describes it.
 #include "passes/ray_tracing/scene_description.hpp"
 
+#include "passes/ray_tracing/half_float.hpp"
 #include "passes/ray_tracing/shaders/gi_shared.h"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstring>
 
 namespace phantom_fx::scene_description
@@ -653,6 +656,31 @@ std::array<std::uint64_t, 5> texturePathsOf(const ModelPart& part)
     return {part.baseTexture, part.specularTexture, part.normalTexture, layer, layerMask};
 }
 
+namespace
+{
+// How far a mesh's texture coordinates run along a metre of it: the square root of their area over its own.
+float uvPerMetreOf(const ModelPart& part)
+{
+    double uvArea{}, surface{};
+    const auto uvOf = [&](std::uint16_t i) { return std::array{halfToFloat(static_cast<std::uint16_t>(part.uvs[i])), halfToFloat(static_cast<std::uint16_t>(part.uvs[i] >> 16))}; };
+    for (std::size_t i = 0; i + 2 < part.indices.size(); i += 3)
+    {
+        const auto a = part.indices[i], b = part.indices[i + 1], c = part.indices[i + 2];
+        const auto& va = part.vertices[a];
+        const auto& vb = part.vertices[b];
+        const auto& vc = part.vertices[c];
+        const std::array e{vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]}, f{vc[0] - va[0], vc[1] - va[1], vc[2] - va[2]};
+        const std::array cross{e[1] * f[2] - e[2] * f[1], e[2] * f[0] - e[0] * f[2], e[0] * f[1] - e[1] * f[0]};
+        surface += std::sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]);
+
+        const auto ua = uvOf(a), ub = uvOf(b), uc = uvOf(c);
+        uvArea += std::abs((ub[0] - ua[0]) * (uc[1] - ua[1]) - (uc[0] - ua[0]) * (ub[1] - ua[1]));
+    }
+
+    return surface > 0 ? static_cast<float>(std::sqrt(uvArea / surface)) : 0.0f;
+}
+}
+
 Material materialOf(const ModelPart& part, const MaterialTextures& textures)
 {
     Material material{.flags = flagsOf(part.role) | (part.uvs.empty() ? 0u : GI_GEOMETRY_UV), .materialIndex = part.materialIndex, .emission = part.emission};
@@ -668,6 +696,7 @@ Material materialOf(const ModelPart& part, const MaterialTextures& textures)
     {
         material.flags |= GI_GEOMETRY_ALPHA_TEXTURE;
         material.alphaThreshold = CutOutThreshold;
+        material.texelsPerMetre = uvPerMetreOf(part) * textures.baseTexelsAcross;
     }
 
     // Before its mask's copy comes a layer would lie on all of the mesh.

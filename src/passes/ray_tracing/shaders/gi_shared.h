@@ -227,6 +227,7 @@ struct GIFrameConstants
     // most radiance one lights others with, so scaled. And those the rays aim at: x how many.
     float4 emission;
     uint4 emitterCount;
+    uint4 closestRayFlags; // x: what closest-hit rays add to their flags (TraceClosest)
     GIEmitter emitters[GI_MAX_EMITTERS];
 };
 
@@ -245,6 +246,9 @@ struct GISkinRecord
     uint bindNormalOffset;  // Its normals and tangents (GIGeometry::normalOffset); 0 without
     uint posedNormalOffset; // And where they go posed
 };
+
+#define GI_MICROMAP_FORMAT_4_STATE 2u
+#define GI_RAY_FLAG_FORCE_OMM_2_STATE 0x400u // D3D12_RAY_FLAG_FORCE_OMM_2_STATE
 
 // One geometry of a bottom-level structure (gi_scene.hpp): where its triangles lie in the geometry
 // pool, and its material. An instance's geometries start at its InstanceContributionToHitGroupIndex,
@@ -266,6 +270,22 @@ struct GIGeometry
     uint layerTexture;    // 1 + its layer's index (rgb its colour, a how much of it lies), 0 without
     uint layerMaskTexture; // 1 + its layer's mask's index (how much of it lies), 0 without
     float4 layerMapping;  // The layer's coordinates: (second coordinates + zw) x xy
+    float texelsPerMetre; // With GI_GEOMETRY_ALPHA_TEXTURE: its texture's texels along a metre of its surface, on average
+    float3 unused;
+};
+
+// A cut-out mesh whose opacity micromap BakeMicromaps writes this frame, one thread group a triangle, into the scene's bake buffer
+// (gi_scene.hpp): each triangle's micromap description, states and index (its own micromap, or a uniform one). Jobs are sorted by
+// their first group and adjoin.
+struct GIMicromapJob
+{
+    GIGeometry geometry; // Its row of the table, whose upload can wait for a later frame: a bake from a stale row would be for good
+    uint firstGroup;     // In the frame's dispatch
+    uint level;          // 4^level micro-triangles a triangle, at least 16
+    uint dataOffset;     // Bytes into the bake buffer: its triangles' states, 2 bits each, 4^level / 4 bytes a triangle
+    uint descOffset;     // Bytes into the bake buffer: a D3D12_RAYTRACING_OPACITY_MICROMAP_DESC a triangle
+    uint indexOffset;    // Bytes into the bake buffer: a 32-bit micromap index a triangle
+    uint padding[3];
 };
 
 // The shadow probe: the sun ray from the screen's centre pixel, as the shadow rays trace it but
@@ -331,7 +351,8 @@ struct GIInstanceDesc
 #ifdef __cplusplus
 static_assert(sizeof(GIFrameConstants) % 16 == 0);
 static_assert(sizeof(GIInstanceDesc) == 64);
-static_assert(sizeof(GIGeometry) == 80);
+static_assert(sizeof(GIGeometry) == 96);
+static_assert(sizeof(GIMicromapJob) == 128);
 }
 #endif
 

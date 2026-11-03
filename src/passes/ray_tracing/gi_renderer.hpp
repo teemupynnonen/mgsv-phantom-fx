@@ -150,7 +150,7 @@ struct Result
 };
 
 // Throws when the GPU cannot trace rays (DXR 1.1) or Direct3D 12 fails.
-void start(ID3D11Device* device, HANDLE sharedFence);
+void start(ID3D11Device* device, HANDLE sharedFence, bool usesMicromaps);
 void stop() noexcept;
 bool started() noexcept;
 
