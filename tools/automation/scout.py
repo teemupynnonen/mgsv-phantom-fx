@@ -391,9 +391,12 @@ def main():
     if command in ("shot", "times"):
         name, *camera = rest
         camera = [float(value) for value in camera]
+        if len(camera) != (3 if "look" in found else 5):
+            sys.exit("give <x> <y> <z> <yaw> <pitch>, or <x> <y> <z> --look <x> <y> <z>")
+
         if "look" in found:
             camera += aim(camera, found["look"])
-        camera = [round(value, 4) for value in camera[:5]] + [lens(found)]
+        camera = [round(value, 4) for value in camera] + [lens(found)]
     if command == "times":
         times(name, camera, found)
     elif command == "shot":
