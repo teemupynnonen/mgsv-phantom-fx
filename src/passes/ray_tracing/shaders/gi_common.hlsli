@@ -844,6 +844,16 @@ bool DimsThroughGlass(uint row, uint towards)
     return (towards == RayTowardsSun || towards == RayTowardsLamp) && (g_Geometries[row].flags & GI_GEOMETRY_GLASS) != 0;
 }
 
+// Whether a pane a ray meets is the one it left. A ray towards the sun or a lamp starts a couple of centimetres off a
+// surface, so from a pane it crosses that pane at once: dimmed by its own cover, every pane cast its dirt's shadow onto
+// itself, and the mask's frame and streaks read as a shadow of the window on the glass, from the side the eye is on.
+// A pane that the ray goes through lies further from the plane it started on.
+bool IsOwnPane(float3 origin, float3 direction, float distance, float3 normal)
+{
+    const float OwnPlane = 0.05f;
+    return distance * abs(dot(direction, normal)) < OwnPlane;
+}
+
 // How wide a patch of a pane a ray towards a light reads its mask over. One fixed width, whatever the camera and the
 // distance: read at the camera's pixel, the mask's detail came and went with the camera, and each frame's point on the
 // sun's disc crossed a sharper level at another texel, so a pane's dirt's shadow appeared in patches and boiled near.
@@ -953,7 +963,8 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
         float footprint = cone.x + query.CandidateTriangleRayT() * cone.y;
         if (DimsThroughGlass(row, towards))
         {
-            if (StopsRay(query.CandidateInstanceIndex(), query.CandidateGeometryIndex(), query.CandidateTriangleFrontFace(), towards))
+            if (StopsRay(query.CandidateInstanceIndex(), query.CandidateGeometryIndex(), query.CandidateTriangleFrontFace(), towards)
+                && !IsOwnPane(origin, direction, query.CandidateTriangleRayT(), normal))
             {
                 transmittance *= PaneTransmittance(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(),
                     PaneFootprint(footprint, query.CandidateTriangleRayT(), towards), query.CandidateObjectToWorld3x4());
@@ -991,9 +1002,12 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
         float footprint = cone.x + every.CandidateTriangleRayT() * cone.y;
         if (DimsThroughGlass(row, towards))
         {
-            transmittance *= PaneTransmittance(row, every.CandidatePrimitiveIndex(), every.CandidateTriangleBarycentrics(),
-                PaneFootprint(footprint, every.CandidateTriangleRayT(), towards), every.CandidateObjectToWorld3x4());
-            nearestHair = min(nearestHair, every.CandidateTriangleRayT());
+            if (!IsOwnPane(origin, direction, every.CandidateTriangleRayT(), normal))
+            {
+                transmittance *= PaneTransmittance(row, every.CandidatePrimitiveIndex(), every.CandidateTriangleBarycentrics(),
+                    PaneFootprint(footprint, every.CandidateTriangleRayT(), towards), every.CandidateObjectToWorld3x4());
+                nearestHair = min(nearestHair, every.CandidateTriangleRayT());
+            }
             continue;
         }
         bool untextured = false;
