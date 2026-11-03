@@ -16,6 +16,9 @@ void hold(const Pose& pose) noexcept;
 void move(const Pose& pose, int updates) noexcept;
 void release() noexcept;
 bool isHeld() noexcept;
+// Live, the held camera leaves the game running instead of freezing it, until released.
+void setLive(bool isLive) noexcept;
+bool isLive() noexcept;
 // The camera the game's last camera update rendered from; empty before the first.
 std::optional<Pose> lastCamera() noexcept;
 
