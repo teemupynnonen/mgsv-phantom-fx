@@ -2,6 +2,12 @@
 
 ## 2.0.1
 
+### New
+
+- **Photo mode: no near clip plane.** A new **No near clip plane** switch under Photo mode on the Camera page moves
+  the free camera's near clip plane from 7 cm to 1 mm, so what the camera nearly touches no longer vanishes. Off by
+  default; the game's own camera is untouched.
+
 ### Fixed
 
 - Ray-traced light where things touch the ground: no pale glow under Snake's arm when he lies prone, and no black
