@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Photo mode: no near clip plane.** A new **No near clip plane** switch under Photo mode on the Camera page moves
+  the free camera's near clip plane from 7 cm to 1 mm, so what the camera nearly touches no longer vanishes. Off by
+  default; the game's own camera is untouched.
 - **Global illumination is a little faster in open country.** Its rays and their bounces, also those of path-traced
   reflections, now look 100 m for what they hit and take the sky's light past it. At 4K that saves about 0.7 ms of an
   18 ms frame in Afghanistan and 0.3 ms in the jungle, and the picture looks the same. Turning off **Short rays** under
