@@ -807,6 +807,9 @@ SceneHit TraceFromSurface(float3 origin, float3 normal, float tolerance, float3 
     SceneHit hit;
     for (uint attempt = 0; attempt < 6; ++attempt)
     {
+        // A ray's TMin must not pass its TMax: a hit passed right at the ray's end leaves nothing to look for.
+        if (start >= maxDistance) break;
+
         hit = TraceClosest(origin, direction, start, maxDistance, mask, alphaTest, false, cone, towards == RayAlongReflection);
         bool copy = hit.hit && IsCopyOfSurface(hit, normal, direction, tolerance);
         CountDiagnostic(GI_COUNTER_COPIES, copy);
