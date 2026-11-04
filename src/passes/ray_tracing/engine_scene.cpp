@@ -93,9 +93,9 @@ constexpr std::size_t ModelFade = 0x1B8;
 constexpr std::size_t ModelLayer = 0x1AC;
 constexpr std::uint32_t MarkerSilhouetteLayer = 0x20;
 // Every model, characters too, is on an object registry's model list (docs/DEVELOPMENT.md, "Every
-// model"): the global holding the first registry, each registry's link to the next and its table of list
-// headers by type number less one (a header: the first object, then the last), the global holding the
-// models' type number, and the link from one object to the one before it.
+// model"): the global holding the first registry, each registry's link to the next and its table of pointers to
+// list headers by type number less one (a header: the first object, then the last), the global holding the models'
+// type number, and the link from one object to the one before it.
 constexpr std::uintptr_t FirstRegistryGlobal = 0x2B73298, ModelTypeGlobal = 0x29E51B4;
 constexpr std::size_t RegistryNext = 0, RegistryLists = 0x30, ListLast = 8, ObjectNext = 0x10;
 constexpr std::uint32_t MaxTypes = 256, MaxRegistries = 16, MaxListedModels = 1 << 16;
