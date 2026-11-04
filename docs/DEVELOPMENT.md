@@ -1327,11 +1327,15 @@ level at Camp Omega's cliffs. No names in the exe: the class names here are desc
   holding its shader resource view at `+8`). The manager's streaming list (`+0x10` to `+0x18`, 24-byte
   nodes whose first word points 0x10 into a record) leaves a few loaded textures out. Neither the model
   objects nor their materials hold the texture: the draws bind it by id.
-- **Every model** (found 2026-10-23): the object registry (vtable `0x20F08C8`; the global at RVA
-  `0x2BA04A8` points to it) keeps a list of each object type's instances: at `+0x1E8` a table of list
-  headers by type number (`+0x38` of an object, a word; models are type 3, the global at RVA
-  `0x29E51B4`), each header the last object, the first and the count; objects are linked first to last
-  through `+0x10` (and back through `+0x18`). In Afghanistan the model list held 882 models: 566 rigid,
+- **Every model** (found 2026-10-23, corrected 2026-11-04): object registries, chained from the global at
+  RVA `0x2B73298` through `+0`, each keep a list of each object type's instances: `+0x30` points to a table
+  of list headers by type number less one (`+0x38` of an object, a word; models are type 3, the global at
+  RVA `0x29E51B4`), each header the first object, the last and the count; objects are linked last to first
+  through `+0x10` (and back through `+0x18`), and hold their registry at `+0x30` (the game's own unlinking,
+  `0x1B5640`). One registry held all 1242 models in Afghanistan, two more held none. The table was first
+  read at `+0x1E8` of the object at RVA `0x2BA04A8`, but that object is 0x1E0 bytes (`0x1B3B80`): the table
+  just happened to be allocated right after it, until another mod changed what the game allocates and
+  the scene lost every character, the helicopter and the swaying trees. In Afghanistan the model list held 882 models: 566 rigid,
   360 skinned. Characters are among them and in no visibility manager. So, at times, are a few rigid models, the
   scene taking those from here: the helicopter's cabin between missions (`84a2d14c3f28beb5`, `84a3b06a43ea483f`, at
   (0, 1200, 0), 71% of the frame there), 438 models in all there, and none at Mother Base or in Afghanistan. Arriving

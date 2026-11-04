@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Characters, the helicopter and swaying trees stay in the ray-traced scene beside other mods.** The scene found the
+  game's list of models in a spot that only held it by chance. With some other mods installed it read an empty list, so
+  Snake, the soldiers, the helicopter's cabin and trees that move in the wind cast no ray-traced shadows and global
+  illumination went through them. The list is now read where the game itself keeps it.
 - **Global illumination is a little faster in open country.** Its rays and their bounces, also those of path-traced
   reflections, now look 100 m for what they hit and take the sky's light past it. At 4K that saves about 0.7 ms of an
   18 ms frame in Afghanistan and 0.3 ms in the jungle, and the picture looks the same. Turning off **Short rays** under
