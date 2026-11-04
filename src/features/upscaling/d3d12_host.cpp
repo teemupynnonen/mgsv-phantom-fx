@@ -85,7 +85,7 @@ void Host::evaluate(const std::function<void(Evaluation&)>& record)
     }
 
     checkStep(list->Close(), "Recording ");
-    checkStep(queue->Wait(fence12.Get(), drawn), "Waiting for the ", " inputs");
+    checkStep(waitForDirect3D11(queue.Get(), fence12.Get(), drawn), "Waiting for the ", " inputs");
     ID3D12CommandList* lists[]{list.Get()};
     queue->ExecuteCommandLists(1, lists);
     const auto done = ++fenceValue;

@@ -29,6 +29,8 @@ struct ID3D11Resource;
 //   probe <x> <y>                 the shadow and lamp probes' text at that render pixel
 //   perf <file> [<frames>]        what the GPU's next frames cost, into `<file>.json` (perf_record.hpp), 120 without saying
 //   record_costs 0|1              the Developer page's Record the costs
+//   gputrace [<submits>]          Nsight Graphics traces the ray tracing queue's next submissions (gpu_trace.hpp), 1 without saying
+//   gputrace_result               how the last GPU Trace request went
 //   inspect <file>                a record of every pixel, into `<file>.bin` and `<file>.tsv` (inspect_trace.hpp)
 //   image <file>                  the next presented frame as `<file>.dds`
 //   textures <folder>             the ray tracing's textures and the game's shadow, as DDS files

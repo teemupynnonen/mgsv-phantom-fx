@@ -14,6 +14,8 @@ endif()
 option(PHANTOM_FX_DIAGNOSTIC_LOG "Log the periodic statistics used in development" OFF)
 # The overlay's Developer page, tools for testing in the game that players never get (the dev preset).
 option(PHANTOM_FX_DEV_TOOLS "Add the Developer page to the overlay" OFF)
+# For a GPU profiler's per-line view of the kernels: their DXIL carries the HLSL and its debug info (larger bytecode, same code).
+option(PHANTOM_FX_SHADER_DEBUG_INFO "Embed debug info and source in the ray tracing kernels" OFF)
 
 include(FetchContent)
 FetchContent_Declare(minhook
@@ -193,11 +195,15 @@ set(GI_SHADER_HEADERS)
 set(GI_KERNELS)
 # Each kernel's one home: the Kernel enum and the table of their DXIL come from this list, in this order, and C++ takes their
 # slots from what they were compiled with (tools/kernel_bindings).
+set(GI_SHADER_DEBUG_FLAGS)
+if(PHANTOM_FX_SHADER_DEBUG_INFO)
+    set(GI_SHADER_DEBUG_FLAGS -Zi -Qembed_debug)
+endif()
 function(add_gi_kernels source)
     foreach(entry IN LISTS ARGN)
         set(output "${GI_SHADER_DIR}/${entry}.h")
         add_custom_command(OUTPUT "${output}" "${GI_SHADER_DIR}/${entry}.dxil"
-            COMMAND "${DXC_EXECUTABLE}" -nologo -T cs_6_5 -E ${entry} -HV 2021 -O3 -WX -I "${GI_SHADER_SHARED}" -I "${CMAKE_SOURCE_DIR}/third_party" -I "${nrd_SOURCE_DIR}/Shaders"
+            COMMAND "${DXC_EXECUTABLE}" -nologo -T cs_6_5 -E ${entry} -HV 2021 -O3 -WX ${GI_SHADER_DEBUG_FLAGS} -I "${GI_SHADER_SHARED}" -I "${CMAKE_SOURCE_DIR}/third_party" -I "${nrd_SOURCE_DIR}/Shaders"
                 -Fh "${output}" -Vn GI_${entry} -Fo "${GI_SHADER_DIR}/${entry}.dxil"
                 "${CMAKE_SOURCE_DIR}/src/${source}"
             DEPENDS "${CMAKE_SOURCE_DIR}/src/${source}" ${GI_SHADER_INCLUDES}

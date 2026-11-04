@@ -2,6 +2,7 @@
 
 #include "core.hpp"
 #include "dev/game_shadow.hpp"
+#include "dev/gpu_trace.hpp"
 #include "dev/held_camera.hpp"
 #include "dev/inspect_trace.hpp"
 #include "dev/perf_record.hpp"
@@ -445,6 +446,15 @@ void run(Script& running, const std::string& line)
         running.captureDeadline = presents + frames + InspectionFrames;
         perf_record::capture(folder / file, frames);
     }
+    else if (command == "gputrace")
+    {
+        std::uint32_t submits = 1;
+        if (!rest.empty()) std::from_chars(rest.data(), rest.data() + rest.size(), submits);
+        if (!gpu_trace::isAvailable()) running.output += "error: this build has no Nsight Graphics SDK (dev.cmake looks in its install)\n";
+        else gpu_trace::request(submits);
+    }
+    else if (command == "gputrace_result")
+        running.output += gpu_trace::lastResult() + "\n";
     else if (command == "record_costs")
     {
         const bool isOn = invert("0");

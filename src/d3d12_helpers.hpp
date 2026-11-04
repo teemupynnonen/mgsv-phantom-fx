@@ -7,6 +7,8 @@
 #include <d3d12.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
+#include <cstdint>
+#include <memory>
 #include <utility>
 
 // Direct3D 12 helpers shared by the global illumination, FSR and the presenter: barriers, and the
@@ -52,6 +54,39 @@ struct Device12
     Microsoft::WRL::ComPtr<ID3D12Device> wrapper, native;
 };
 
+#if PHANTOM_FX_DEV_TOOLS
+constexpr GUID DeviceFactory{0x114863bf, 0xc386, 0x4aee, {0xb3, 0x9d, 0x8f, 0x0b, 0xbb, 0x06, 0x29, 0x55}}; // CLSID_D3D12DeviceFactory
+
+// GPU profilers (Nsight Systems, Nsight Graphics) layer Direct3D 12 themselves, and their layer crashes under
+// ReShade's wrapper on the first Map. With PHANTOM_FX_PROFILING set, a dev build makes its device through the
+// device factory, which ReShade's D3D12CreateDevice hook does not see.
+inline bool isProfiling()
+{
+    static const bool isSet = GetEnvironmentVariableW(L"PHANTOM_FX_PROFILING", nullptr, 0) > 0;
+    return isSet;
+}
+#endif
+
+// Holds `queue` until Direct3D 11 has signalled `value` on a fence the two share. A profiler sees none of Direct3D 11's
+// signals and would hold the queue forever, so while profiling (dev builds) the CPU waits for the value instead.
+inline HRESULT waitForDirect3D11(ID3D12CommandQueue* queue, ID3D12Fence* fence, std::uint64_t value)
+{
+#if PHANTOM_FX_DEV_TOOLS
+    if (isProfiling())
+    {
+        if (fence->GetCompletedValue() >= value) return S_OK;
+
+        const std::unique_ptr<void, HandleCloser> event(CreateEventW(nullptr, FALSE, FALSE, nullptr));
+        if (!event) return HRESULT_FROM_WIN32(GetLastError());
+
+        if (const auto result = fence->SetEventOnCompletion(value, event.get()); FAILED(result)) return result;
+
+        return WaitForSingleObject(event.get(), FenceTimeout) == WAIT_OBJECT_0 ? S_OK : HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+    }
+#endif
+    return queue->Wait(fence, value);
+}
+
 inline Device12 createDevice12(ID3D11Device* device11)
 {
     Microsoft::WRL::ComPtr<IDXGIDevice> dxgi;
@@ -59,6 +94,17 @@ inline Device12 createDevice12(ID3D11Device* device11)
     Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
     check(dxgi->GetAdapter(adapter.GetAddressOf()), "Finding the GPU");
     Device12 made;
+#if PHANTOM_FX_DEV_TOOLS
+    if (isProfiling())
+    {
+        Microsoft::WRL::ComPtr<ID3D12DeviceFactory> factory;
+        check(D3D12GetInterface(DeviceFactory,IID_PPV_ARGS(&factory)), "Finding the Direct3D 12 device factory");
+        check(factory->CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&made.wrapper)), "Creating the Direct3D 12 device for profiling");
+        if (FAILED(made.wrapper->QueryInterface(UnwrappedObject, reinterpret_cast<void**>(made.native.GetAddressOf())))) made.native = made.wrapper;
+
+        return made;
+    }
+#endif
     check(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&made.wrapper)), "Creating the Direct3D 12 device");
     if (FAILED(made.wrapper->QueryInterface(UnwrappedObject, reinterpret_cast<void**>(made.native.GetAddressOf())))) made.native = made.wrapper;
 

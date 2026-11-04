@@ -3,6 +3,7 @@
 
 #include "camera.hpp"
 #include "clock.hpp"
+#include "dev/gpu_trace.hpp"
 #include "dev/perf_record.hpp"
 #include "dev_tools.hpp"
 #include "features/global_illumination/gi_light.hpp"
@@ -527,6 +528,10 @@ void start(ID3D11Device* device11, HANDLE sharedFence, bool usesMicromaps)
         const auto d3d12 = createDevice12(device11);
         s->wrapper = d3d12.wrapper;
         check(d3d12.native.As(&s->device), "Finding Direct3D 12 ray tracing");
+#if PHANTOM_FX_DEV_TOOLS
+        if (isProfiling())
+            log(std::string("Profiling: ray tracing's Direct3D 12 device made through the device factory, ") + (d3d12.native == d3d12.wrapper ? "not wrapped by ReShade." : "still wrapped by ReShade."));
+#endif
     }
 
     D3D12_FEATURE_DATA_D3D12_OPTIONS5 options{};
@@ -926,6 +931,14 @@ std::function<void(const char*, std::optional<performance::Pass>)> timestampMark
         if (marks.size() >= MaxMarks) return;
 
         list.EndQuery(s.timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * MaxMarks + static_cast<UINT>(marks.size()));
+#if PHANTOM_FX_DEV_TOOLS
+        // The same phases as named ranges for a GPU profiler (PIX's plain-text event: metadata 1, an ANSI string).
+        if (isProfiling())
+        {
+            if (!marks.empty() && *marks.back().phase) list.EndEvent();
+            if (phase) list.BeginEvent(1, phase, static_cast<UINT>(std::strlen(phase) + 1));
+        }
+#endif
         marks.push_back({phase ? phase : "", pass});
     };
 }
@@ -1294,10 +1307,12 @@ Result render(const Frame& frame)
         throw;
     }
 
-    check(s.queue->Wait(s.fence.Get(), frame.waitValue), "Waiting for the global illumination's inputs");
+    check(waitForDirect3D11(s.queue.Get(), s.fence.Get(), frame.waitValue), "Waiting for the global illumination's inputs");
+    if constexpr (DevTools) gpu_trace::beforeSubmit(s.queue.Get());
     ID3D12CommandList* lists[]{s.list.Get()};
     s.queue->ExecuteCommandLists(1, lists);
     check(s.queue->Signal(s.fence.Get(), frame.signalValue), "Signalling the global illumination");
+    if constexpr (DevTools) gpu_trace::afterSubmit(s.queue.Get());
     s.submitted[slot] = frame.signalValue;
     tracesTextures.markWritten();
     lap(RecordStep);
@@ -1362,7 +1377,7 @@ bool traceSurfaces(std::uint64_t waitValue, std::uint64_t signalValue)
         throw;
     }
 
-    check(s.queue->Wait(s.fence.Get(), waitValue), "Waiting for the glass");
+    check(waitForDirect3D11(s.queue.Get(), s.fence.Get(), waitValue), "Waiting for the glass");
     ID3D12CommandList* lists[]{s.surfaceList.Get()};
     s.queue->ExecuteCommandLists(1, lists);
     check(s.queue->Signal(s.fence.Get(), signalValue), "Signalling the glass's reflections");

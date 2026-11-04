@@ -540,6 +540,39 @@ every player's PhantomFX.ini. With it off and no capture running, the recorder a
 
 Compare GPU times, not frame rates: the automation copy's frame rate says little when its window is out of sight.
 
+### GPU Trace
+
+For what a pass's own timer cannot say: a dispatch's occupancy, its stall reasons, its hot lines. Nsight Graphics' GPU Trace
+and Nsight Systems' Direct3D tracing wrap Direct3D 12 in a layer of their own, and two things of the add-on's break them:
+
+- ReShade wraps the device the add-on makes, and a profiler's layer under that wrapper crashes on the first `Map`
+  (`D3D12.dll` writing through a pointer of 0x22).
+- The Direct3D 12 queue waits for a fence Direct3D 11 signals. The layer never sees Direct3D 11's signals and holds the
+  queue's next `ExecuteCommandLists` forever, the game frozen.
+
+With `PHANTOM_FX_PROFILING` set, a dev build makes its devices through `ID3D12DeviceFactory`, which ReShade's
+`D3D12CreateDevice` hook does not see, and waits for Direct3D 11's fence values on the CPU (`waitForDirect3D11`,
+`src/d3d12_helpers.hpp`). The ray tracing's phases (`Recorder::mark`) then also become named ranges (D3D12 `BeginEvent`).
+Release builds have none of it.
+
+GPU Trace marks frames by Direct3D 12 presents, and the add-on's Direct3D 12 work never presents, so its own triggers find
+no frame. The automation's `gputrace [<submits>]` starts a trace before the ray tracing queue's next submission and stops it
+after that many, through Nsight's SDK (`src/dev/gpu_trace.cpp`); `gputrace_result` says how it went. `dev.cmake` finds the
+SDK in the Nsight Graphics install; without one the line says so.
+
+- Launch the automation copy from an elevated prompt (GPU counters need it):
+  `ngfx --activity "GPU Trace Profiler" --no-timeout --env "PHANTOM_FX_PROFILING=1;" --output-dir <folder> --exe <copy>\mgsvtpp.exe --dir <copy> --start-with-ngfx-sdk --stop-with-ngfx-sdk --auto-export`.
+  Leave out `--platform`: its Qt front end takes it as its own option and stops. Started with `--launch-detached`, the
+  game waits at its first submission until a front end attaches. ngfx ends the game once it has written the trace.
+- `PHANTOM_FX_SHADER_DEBUG_INFO=ON` (CMake) puts the HLSL in the kernels (`-Zi -Qembed_debug`) for the per-line view; it
+  doubles the add-on's size, so it is off by default.
+- `ngfx-mcp.exe --transport stdio --profile native` opens a `.ngfx-gputrace` for tools: queue ranges, per-range metrics,
+  the shader profile and its hot lines.
+
+Nsight Systems works without the add-on's help, elevated and system-wide with nothing injected: `--trace=wddm` and GPU
+metrics show the GPU's idle stretches against each queue's packets. Its CPU sampling with context switch stacks slows the
+game's job threads several milliseconds a frame, so record it apart from timing.
+
 ### Weather and time
 
 The overlay's Utility section has **Weather and time** (`src/weather.cpp`), to see the sky in every condition:
