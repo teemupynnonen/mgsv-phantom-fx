@@ -228,7 +228,7 @@ what draws it, when that is the feature's own.
 | File | Purpose |
 | --- | --- |
 | `src/render_scale.cpp`, `src/render_scale.hpp` | Hook on the renderer's per-frame step: the engine renders at the requested size |
-| `src/ui_redirect.cpp`, `src/ui_redirect.hpp` | The draw call every module sees; the grading, the 2D pass and `GammaControl` on output-size targets while the engine renders below them |
+| `src/ui_redirect.cpp`, `src/ui_redirect.hpp`, `src/ui_redirect_shaders.hpp` | The draw call every module sees; the grading, the 2D pass and `GammaControl` on output-size targets while the engine renders below them, with the scene's depth for the 2D pass's depth-tested draws |
 | `src/game_constants.hpp` | The game's constant buffers by name (see "Constant buffers"): the system, scene, sun and lamp light, material, object, bones and probe constants, each with its slot, and a light pass's view space in the world |
 | `src/constant_capture.cpp`, `src/constant_capture.hpp` | The constant capture: what each of the game's threads last wrote to the constant buffers the contact shadows and the ray tracing read, copied at the game's unmap after the upscaler's jitter, read by type and only at the size written |
 | `src/camera.cpp`, `src/camera.hpp` | The main camera in the scene constants: main-view recognition, jitter, reprojection, camera cuts |
@@ -397,6 +397,10 @@ reads state; the frame renders unchanged. Its files go into that folder:
   call lists shaders, targets, depth, viewport, blend, depth state, shader resources, UAVs and
   constant buffers. `frame-<n>-writers.txt` lists the call stacks of constant buffer maps by size.
   Once both are written, a "Frame captured" toast with the file name shows at the right of the screen.
+- `trigger.txt` (a shader hash, or any text of a record line) makes F10 wait for a rare call: it
+  records frame after frame, each over the last, until a line has that text, then keeps that frame
+  and the one before it as `frame-<n>-before.txt`. F10 again stops waiting and keeps the frame.
+  It costs a record a frame while it waits.
 - `dump.txt` (`<checksum> <count>` per line) makes the first calls with those shaders add their
   constant buffer contents (as the game wrote them on that thread) and save their textures as DDS
   in `frame-<n>/` once their command list has run, so a list's textures are as it left them, not as
@@ -1605,8 +1609,30 @@ rate"), the photo mode hooks (see "Photo mode"), the game loop hooks (see "Frame
     `m_viewportSize.xy` copied over from a buffer holding the output size (a partial copy into a
     constant buffer, which Direct3D 11.1 drivers allow). A clear of the scene target from such a
     context goes to the output target.
+  - Only draws whose viewport covers the scene target are made there. As a save loads, the game
+    builds the Mother Base emblem with `Draw2D` shaders in corners of the scene target (1024x1024,
+    512x512 and 256x256 from 0,0, then 128x128 down to 8x8 in a row from 256,0) and reads it back
+    into the BC3 texture the sortie prep shows. Made on the output target, the game read back an
+    empty corner and the emblem was black at every mode until the next load (2026-11-04).
   - Every clear of a render-size depth-stencil also clears the output-size one, so the 2D pass's
     stencil masks work.
+  - A `Draw2D` draw that tests depth gets the scene's depth first: the game's depth-stencil is
+    stretched into the output-size one through a full-screen triangle writing `SV_Depth`, with the
+    stencil left alone. The sortie prep's emblem is the only such draw in the F10 records (frame
+    20182, #874: `Draw2D_Ui2_BL`, `greater_equal`, no depth write); without the scene's depth it
+    passed everywhere and stood in front of Snake and the horse. Depth a redirected 2D draw writes
+    stays on the output-size depth, so a later fill drops it; none writes depth in the records.
+    The stretch takes the upscaler's jitter back out, since the game draws the scene jittered, and
+    closes the one-pixel holes hair leaves in the depth (the same frame, whose hair is a dither
+    pattern the image's upscaler fills and the depth keeps): read nearest, the emblem's edge along a
+    character changed with the jitter every frame (2026-11-04). It reads the four depths bilinearly
+    at the jittered place, each the nearest of its own 2x2, and the test's comparison says which
+    way is nearer, as the game's depth is reversed.
+  - Without upscaling (DLAA), the game draws the emblem itself, against its own render-size depth
+    and so against the jitter; a depth-tested `Draw2D` draw into the scene target is then made by
+    the add-on in place, against the scene's depth without the jitter, on a `D24_UNORM_S8_UINT`
+    depth-stencil of the scene target's size. Only for draws that test depth and leave stencil
+    alone, which that stencil has none of; the rest stay the game's own.
   - `GammaControl` reads the output target's `_SRGB` view in place of the scene target.
   - When `GammaControl`'s viewport has its scene's size and the back buffer is larger (the exclusive
     fullscreen box), every `GammaControl` draw gets the viewport and scissor over the whole back

@@ -902,6 +902,15 @@ void drawGradedScene(ID3D11DeviceContext* context, ID3D11RenderTargetView* scene
     drawStretch(context, *stretch, stretch->pixel.Get(), {output.view.Get()}, scene);
 }
 
+// For ui_redirect::draw2D.
+std::array<float, 2> recordingJitter() noexcept
+{
+    std::lock_guard lock(recordMutex);
+    const auto& frame = frames.current();
+
+    return frame.isJittered ? frame.jitter : std::array<float, 2>{};
+}
+
 std::uint64_t currentRecordingFrame()
 {
     std::lock_guard lock(recordMutex);
@@ -1673,9 +1682,10 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
     {
         // The UI target is used whenever the engine's targets are smaller than the output, whatever the
         // mode, so the UI and GammaControl always agree on where the frame is.
-        if (ui_redirect::drawing2D(context) && ui_redirect::draw2D(context, call))
+        if (ui_redirect::drawing2D(context) && ui_redirect::draw2D(context, call, recordingJitter))
         {
-            recordUiTargetUse(context);
+            // Without upscaling, the draw was made in place.
+            if (ui_redirect::isUpscaling()) recordUiTargetUse(context);
 
             return true;
         }
