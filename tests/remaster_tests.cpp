@@ -1,3 +1,4 @@
+#include "remaster/lamps.hpp"
 #include "remaster/rule_file.hpp"
 #include "remaster/rules.hpp"
 
@@ -125,6 +126,30 @@ void readsBackWhatItWrote()
     expect(parsed.error.empty() && parsed.rules.size() == 1, "A saved file reads.");
     expect(parsed.rules[0].changes[0].from == odd, "A saved value reads back exactly.");
     expect(parseRules(writeRules({})).error.empty(), "A file without rules reads.");
+}
+
+// A lamp's rule reads back to the bit, so a lamp found at a place stays found; files from before lamps still read.
+void readsBackItsLamps()
+{
+    const LampRule corridor{.label = "Corridor spot", .location = 55, .at = {-1.4912f, 3.1734f, 20.9307f}, .brightness = 0.3f};
+    const auto parsed = parseRules(writeRules({}, {corridor}));
+
+    expect(parsed.error.empty() && parsed.lamps == std::vector{corridor}, "A lamp reads back as it was.");
+    expect(parseRules(R"({ "materials": [] })").lamps.empty() && parseRules(R"({ "materials": [] })").error.empty(), "A file without lamps reads.");
+    expect(!parseRules(R"({ "materials": [], "lamps": [{ "location": 55, "at": [1, 2], "brightness": 1 }] })").error.empty(), "A lamp needs three coordinates.");
+    expect(!parseRules(R"({ "materials": [], "lamps": [{ "location": 55, "at": [1, 2, 3], "brightness": -1 }] })").error.empty(),
+        "A lamp's brightness is never below zero.");
+}
+
+// A lamp is its map and its place: a draw's position differs from the file's by rounding, another map's lamp at the same
+// coordinates is another lamp, and so is the next lamp along a corridor.
+void findsALampByItsPlace()
+{
+    const std::vector<LampRule> rules{{.location = 55, .at = {-1.49f, 3.17f, 20.93f}, .brightness = 0}};
+
+    expect(lampRuleAt(rules, 55, {-1.4912f, 3.1734f, 20.9307f}) == &rules[0], "The same lamp, drawn, is the rule's.");
+    expect(lampRuleAt(rules, 50, {-1.49f, 3.17f, 20.93f}) == nullptr, "On another map it is another lamp.");
+    expect(lampRuleAt(rules, 55, {-1.49f, 3.17f, 19.40f}) == nullptr, "The next lamp is not the rule's.");
 }
 
 // A self-lit material as the game holds one (measured in the game, 2026-11-01): the technique's parameters by the
@@ -336,6 +361,8 @@ int main()
         findsTheRulesOfAMaterial();
         tunesASelfLitMaterialAsAFileHasIt();
         aSelfLitRuleNeedsBothValues();
+        readsBackItsLamps();
+        findsALampByItsPlace();
     }
     catch (const std::exception& error)
     {

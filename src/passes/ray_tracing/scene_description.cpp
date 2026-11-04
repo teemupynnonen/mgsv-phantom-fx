@@ -358,20 +358,22 @@ std::uint64_t materialNameOf(const FileReader& file, const FileLayout& layout, s
     return hash;
 }
 
-// A self-lit mesh's light in the game's units, as `selfLight` leaves it; all zero on any other mesh
-// (LeastEmission, which goes by the file's own values).
-std::array<float, 3> emissionOf(const FileReader& file, const FileLayout& layout, std::uint16_t materialInstance, SelfLightFilter selfLight = nullptr)
+std::array<float, 3> emissionOf(const std::array<float, 4>& color, const std::array<float, 4>& intensity)
 {
-    auto color = vectorOf(file, layout, materialInstance, SelfColorParameter);
-    auto intensity = vectorOf(file, layout, materialInstance, SelfColorIntensityParameter);
-    if (!color || !intensity) return {};
+    return {color[0] * intensity[0], color[1] * intensity[0], color[2] * intensity[0]};
+}
 
-    const auto emission = [&] { return std::array{(*color)[0] * (*intensity)[0], (*color)[1] * (*intensity)[0], (*color)[2] * (*intensity)[0]}; };
-    if (const auto light = emission(); std::max({light[0], light[1], light[2]}) < LeastEmission) return {};
+// A self-lit mesh's material as the file has it; none on any other mesh (LeastEmission).
+std::optional<SelfLight> selfLightOf(const FileReader& file, const FileLayout& layout, std::uint16_t materialInstance)
+{
+    const auto color = vectorOf(file, layout, materialInstance, SelfColorParameter);
+    const auto intensity = vectorOf(file, layout, materialInstance, SelfColorIntensityParameter);
+    if (!color || !intensity) return std::nullopt;
 
-    if (selfLight) selfLight(materialNameOf(file, layout, materialInstance), *color, *intensity);
+    const auto light = emissionOf(*color, *intensity);
+    if (std::max({light[0], light[1], light[2]}) < LeastEmission) return std::nullopt;
 
-    return emission();
+    return SelfLight{materialNameOf(file, layout, materialInstance), *color, *intensity};
 }
 
 // Diagnostics: the StrCode64 of a mesh's material's technique (as fox3DDF_Blin_NC): its material
@@ -480,7 +482,7 @@ ModelFile fileKindOf(std::span<const std::uint8_t> file)
 // Each mesh the scene takes (roleOf) with its vertices and their texture coordinates, its mesh group,
 // and the indices of its most detailed triangles, as the game keeps them; a skinned model's vertices
 // also with their bones (readSkin).
-std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const std::uint8_t> bytes, Source source, bool keepsDropped, SelfLightFilter selfLight)
+std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const std::uint8_t> bytes, Source source, bool keepsDropped)
 {
     const FileReader file{bytes};
     const auto layout = layoutOf(file);
@@ -521,8 +523,7 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
             || !file.at(meshAt + 16, firstFace) || !file.at(meshAt + 24, firstFaceInfo))
             return nullptr;
 
-        const auto emission = emissionOf(file, *layout, materialInstance);
-        const bool isSelfLit = emission != std::array<float, 3>{};
+        const bool isSelfLit = selfLightOf(file, *layout, materialInstance).has_value();
         const auto technique = techniqueOf(file, *layout, materialInstance);
         std::optional<MeshRole> materialRole;
         if (technique == MirrorTechnique) materialRole = MeshRole::Mirror;
@@ -602,7 +603,8 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
         part.normalTexture = textureOf(file, *layout, materialInstance, NormalTextureParameter);
         if (const auto index = vectorOf(file, *layout, materialInstance, MaterialIndexParameter))
             part.materialIndex = static_cast<std::uint32_t>(std::clamp((*index)[0], 0.0f, 255.0f));
-        part.emission = emissionOf(file, *layout, materialInstance, selfLight);
+        part.selfLight = selfLightOf(file, *layout, materialInstance);
+        if (part.selfLight) part.emission = emissionOf(part.selfLight->color, part.selfLight->intensity);
 
         const auto& uvs = uvSets[0];
         const bool textured = uvs && uvs->dataType == TwoHalves;
@@ -681,9 +683,16 @@ float uvPerMetreOf(const ModelPart& part)
 }
 }
 
-Material materialOf(const ModelPart& part, const MaterialTextures& textures)
+Material materialOf(const ModelPart& part, const MaterialTextures& textures, SelfLightFilter selfLight)
 {
     Material material{.flags = flagsOf(part.role) | (part.uvs.empty() ? 0u : GI_GEOMETRY_UV), .materialIndex = part.materialIndex, .emission = part.emission};
+    if (part.selfLight && selfLight)
+    {
+        auto [name, color, intensity] = *part.selfLight;
+        selfLight(name, color, intensity);
+        material.emission = emissionOf(color, intensity);
+    }
+
     if (part.uvs.empty()) return material;
 
     if (textures.specular) material.specularTexture = *textures.specular + 1;

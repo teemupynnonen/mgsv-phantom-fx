@@ -1020,7 +1020,9 @@ Result render(Frame& frame)
         .newTextures = frame.newTextures,
         .terrainEye = terrain ? std::optional(frame.eye) : std::nullopt,
         .seaCentre = frame.seaLevel ? std::optional(std::array{frame.eye[0], *frame.seaLevel, frame.eye[2]}) : std::nullopt,
-        .shouldListInstances = frame.debugShadows || std::ranges::any_of(trace::inOrder(), [&](const auto* each) { return each->listsInstances(frame); })};
+        .shouldListInstances = frame.debugShadows || std::ranges::any_of(trace::inOrder(), [&](const auto* each) { return each->listsInstances(frame); }),
+        .selfLight = frame.selfLight,
+        .selfLightVersion = frame.selfLightVersion};
     std::optional<State::SurfaceTrace> surfaceTrace;
     auto update = s.contents->update(std::move(game));
     s.instancedModels[slot] = std::move(update.instanced);

@@ -33,6 +33,14 @@ struct MarkedMaterial
     bool operator==(const MarkedMaterial&) const = default;
 };
 
+// A lamp the game drew at a mark: where it stands and its colour, as its light draw had them before any rule.
+struct MarkedLamp
+{
+    std::array<float, 3> at{}, color{};
+
+    bool operator==(const MarkedLamp&) const = default;
+};
+
 struct Mark
 {
     std::uint16_t location{}, mission{};
@@ -40,6 +48,7 @@ struct Mark
     float rotation{};
     float clock{}; // Seconds since midnight
     std::vector<MarkedMaterial> materials;
+    std::vector<MarkedLamp> lamps;
 
     bool operator==(const Mark&) const = default;
 };
@@ -53,6 +62,9 @@ struct ParsedMarks
 
 ParsedMarks parseMarks(std::string_view text);
 std::string writeMarks(const std::vector<Mark>& marks);
+
+// A map by its vars.locationCode, as "Quarantine platform".
+std::string locationName(std::uint16_t location);
 
 // The map and position, as "Mother Base, at 8, 1, -47". The game has no name for a place.
 std::string placeText(const Mark& mark);
