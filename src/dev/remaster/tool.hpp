@@ -106,7 +106,16 @@ void flashLamp(const std::array<float, 3>& at);
 void editLamp(const LampRow& lamp, float brightness);
 void setLampLabel(const LampRow& lamp, const std::string& label);
 void removeLampRule(const LampRule& rule);
+// Its rule taken away, whatever it was.
+void resetLamp(const LampRow& lamp);
 void holdOriginalLamp(const LampRow& lamp, bool isHeld);
+
+// Every change to the rules, materials' and lamps' alike, is a step back. False when there was none.
+bool undo();
+bool redo();
+
+// The rules still under the label the tool gave them: a reader of the file cannot tell what they are for.
+std::size_t defaultNamedRules();
 
 std::size_t unsavedRules();
 void saveRules();
@@ -123,5 +132,8 @@ bool didSaveFail();
 //   lamp <number> <brightness>           tunes that lamp, as the panel's control does; 1 takes its rule away
 //   compare <number> 0|1                 holds that lamp at its original, as the panel's Compare does
 //   panel <number>                       opens the panel on the last mark's lamps, that lamp chosen
+//   reset <number>                       takes that lamp's rule away, as the panel's R does
+//   undo, redo                           as Ctrl+Z and Ctrl+Y
+//   rules                                every rule's label, and how many are still under the one the tool gave
 std::string runLine(std::string_view line);
 }

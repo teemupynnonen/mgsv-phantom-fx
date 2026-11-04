@@ -63,6 +63,9 @@ struct ParsedMarks
 ParsedMarks parseMarks(std::string_view text);
 std::string writeMarks(const std::vector<Mark>& marks);
 
+// A map by its vars.locationCode, as "Quarantine platform".
+std::string locationName(std::uint16_t location);
+
 // The map and position, as "Mother Base, at 8, 1, -47". The game has no name for a place.
 std::string placeText(const Mark& mark);
 // The time of day, as "22:00".

@@ -22,13 +22,18 @@ Then work down the marks:
 
 1. Pick a mark. **Go there** warps you back and sets the time of day, travelling first if it is another map. A story
    mission comes back as that place in its map's free roam. **Done** takes the mark off the list.
-2. Hover a material or a lamp: it flashes in the game. Click it to tune it. **Lamps** lists the lamps, brightest first,
-   by their place; **Self-lit**, **Glass** and **All** the materials.
-3. Drag **Brightness**, or roll the wheel over it. **Colour** opens a picker, and **More parameters** shows the rest.
-   A lamp has **Brightness** alone: its light times that.
+2. **Lights** lists the mark's lamps (the light on the room) and its glowing materials (how a light itself looks),
+   brightest first. **Glass** and **All** list the other materials. Hover one: it flashes in the game. Click it, or walk
+   the list with **Up** and **Down**.
+3. Drag **Brightness**, roll the wheel over it, or press **[** and **]** to step it by a quarter; **0** puts the light
+   out and **R** takes its rule away. **Colour** opens a picker, and **More parameters** shows the rest. A lamp has
+   **Brightness** alone: its light times that.
 4. Hold **C** or **Hold for original** to see the game's value for this material or lamp alone.
-5. Name it, then press **Save**. That writes `src/remaster/materials.json` in the checkout the build came from.
-   Commit that file.
+5. **Ctrl+Z** undoes any change, **Ctrl+Y** (or **Ctrl+Shift+Z**) redoes it. A drag or a run of the same key is one
+   step.
+6. A new rule gets a label that says where and what, as "Quarantine platform, lamp 1379 at -1.5, 3.2, 20.9". Say what
+   it is for instead; the head counts the rules still under the tool's label. Then press **Save**. That writes
+   `src/remaster/materials.json` in the checkout the build came from. Commit that file.
 
 **Rules** lists every rule, with those whose material the game has not loaded here dimmed. **Back to original** takes a
 rule away.

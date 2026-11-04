@@ -21,6 +21,7 @@
 #include <fstream>
 #include <iterator>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <unordered_map>
 #include <utility>
@@ -54,6 +55,10 @@ constexpr ULONGLONG FlashMilliseconds = 400;
 constexpr std::uint64_t PresentsBetweenTravelChecks = 60;
 // Long enough for the slowest loading screen and the walk out of it.
 constexpr int MostTravelChecks = 180;
+
+// Changes to the same thing closer together than this are one step to undo: a slider's drag, a label's typing.
+constexpr ULONGLONG ChangeGapMilliseconds = 600;
+constexpr std::size_t MostUndoSteps = 200;
 
 // What blinks: the first of these a material has, else its first parameter.
 constexpr std::uint64_t FlashingParameters[]{SelfColorIntensityParameter, GlassColorParameter, ReflectionColorParameter};
@@ -113,6 +118,18 @@ std::optional<Travel> travelling;
 std::uint64_t presents{};
 std::vector<Rule> savedRules;
 std::vector<LampRule> savedLamps;
+
+// The rules before each change, to undo and redo.
+struct Snapshot
+{
+    std::vector<Rule> rules;
+    std::vector<LampRule> lamps;
+};
+std::vector<Snapshot> undoSteps, redoSteps;
+std::string lastChange;
+ULONGLONG lastChangeAt{};
+// The labels the tool gave this session: a rule still under one has not been named.
+std::set<std::string> defaultLabels;
 std::optional<LampRow> chosenLamp;
 bool hasSaveFailed{};
 
@@ -265,6 +282,57 @@ bool isLampDrawnNow(const std::array<float, 3>& at)
     const auto seen = seenLamps.find(lampKey(at));
 
     return seen != seenLamps.end() && game_loop::currentFrame() - seen->second.frame < DrawnNowFrames;
+}
+
+std::uint16_t currentLocation()
+{
+    const auto vars = varsBlock();
+    return vars ? game_memory::read<std::uint16_t>(vars + VarLocation).value_or(0) : 0;
+}
+
+Snapshot snapshot()
+{
+    return {*rulesInForce(), *lampsInForce()};
+}
+
+// Before each change: a step to undo, unless it goes on the last one.
+void noteChange(const std::string& what)
+{
+    const auto now = GetTickCount64();
+    if (what != lastChange || now - lastChangeAt > ChangeGapMilliseconds)
+    {
+        undoSteps.push_back(snapshot());
+        if (undoSteps.size() > MostUndoSteps) undoSteps.erase(undoSteps.begin());
+        redoSteps.clear();
+    }
+
+    lastChange = what;
+    lastChangeAt = now;
+}
+
+// The materials taken off the rules in force and put under these, which go in force.
+void restore(Snapshot to)
+{
+    settleTool();
+    for (const auto& rule : *rulesInForce()) sweep(rule, Direction::Back);
+
+    putInForce(std::move(to.rules));
+    for (const auto& rule : *rulesInForce()) sweep(rule, Direction::Forward);
+
+    putLampsInForce(std::move(to.lamps));
+    lastChange.clear();
+    framesToRefresh = 0;
+}
+
+std::string givenLabel(std::string label)
+{
+    defaultLabels.insert(label);
+    return label;
+}
+
+auto lampRuleOf(std::vector<LampRule>& lamps, const LampRow& lamp)
+{
+    return std::ranges::find_if(lamps, [&](const LampRule& each) { return each.location == lamp.location && isLampAt(each.at, lamp.at); });
 }
 
 std::optional<travel::Map> mapOf(std::uint16_t location)
@@ -610,12 +678,20 @@ void flashLamp(const std::array<float, 3>& at)
 
 void editLamp(const LampRow& lamp, float brightness)
 {
-    auto lamps = *lampsInForce();
-    auto rule = std::ranges::find_if(lamps, [&](const LampRule& each) { return each.location == lamp.location && isLampAt(each.at, lamp.at); });
-    if (rule == lamps.end()) rule = lamps.insert(lamps.end(), LampRule{.location = lamp.location, .at = lamp.at});
+    noteChange(std::format("lamp {}", lampKey(lamp.at)));
 
+    auto lamps = *lampsInForce();
+    auto rule = lampRuleOf(lamps, lamp);
+    if (rule == lamps.end())
+    {
+        const auto& [x, y, z] = lamp.at;
+        const auto label = std::format("{}, lamp {:.0f} at {:.1f}, {:.1f}, {:.1f}", locationName(lamp.location), std::ranges::max(lamp.color), x, y, z);
+        rule = lamps.insert(lamps.end(), LampRule{.label = givenLabel(label), .location = lamp.location, .at = lamp.at});
+    }
+
+    // Back at 1 under no name of its own, there is nothing to keep.
     rule->brightness = brightness;
-    if (brightness == 1 && rule->label.empty()) lamps.erase(rule);
+    if (brightness == 1 && (rule->label.empty() || defaultLabels.contains(rule->label))) lamps.erase(rule);
 
     putLampsInForce(std::move(lamps));
 }
@@ -623,9 +699,10 @@ void editLamp(const LampRow& lamp, float brightness)
 void setLampLabel(const LampRow& lamp, const std::string& label)
 {
     auto lamps = *lampsInForce();
-    const auto rule = std::ranges::find_if(lamps, [&](const LampRule& each) { return each.location == lamp.location && isLampAt(each.at, lamp.at); });
+    const auto rule = lampRuleOf(lamps, lamp);
     if (rule == lamps.end()) return;
 
+    noteChange(std::format("lamp label {}", lampKey(lamp.at)));
     rule->label = label;
     putLampsInForce(std::move(lamps));
 }
@@ -636,8 +713,16 @@ void removeLampRule(const LampRule& rule)
     const auto found = std::ranges::find(lamps, rule);
     if (found == lamps.end()) return;
 
+    noteChange("remove lamp");
     lamps.erase(found);
     putLampsInForce(std::move(lamps));
+}
+
+void resetLamp(const LampRow& lamp)
+{
+    auto lamps = *lampsInForce();
+    const auto rule = lampRuleOf(lamps, lamp);
+    if (rule != lamps.end()) removeLampRule(*rule);
 }
 
 void holdOriginalLamp(const LampRow& lamp, bool isHeld)
@@ -695,9 +780,18 @@ Value originalOf(const Material& material, std::uint64_t parameter, const Value&
 // under the rule as it is now, or a new one.
 void edit(const Material& material, std::uint64_t parameter, const Value& value)
 {
+    noteChange(std::format("material {} {}", material.index, parameter));
+
     auto rules = *rulesInForce();
     auto rule = ruleAppliedTo(material, rules);
-    if (rule == rules.end()) rule = rules.insert(rules.end(), Rule{.material = material.name});
+    if (rule == rules.end())
+    {
+        const auto label = kindOf(material) == MaterialKind::SelfLit
+            ? std::format("{}, glow {:.6g}, {} uses", locationName(currentLocation()), brightnessOf(material), material.uses)
+            : std::format("{}, {} {}, {} uses", locationName(currentLocation()), kindOf(material) == MaterialKind::Glass ? "glass" : "material", hashText(material.name),
+                  material.uses);
+        rule = rules.insert(rules.end(), Rule{.label = givenLabel(label), .material = material.name});
+    }
 
     const auto before = *rule;
     retune(*rule, parameter, valueOf(material.packed, parameter), value);
@@ -726,6 +820,7 @@ void setLabel(const Material& material, const std::string& label)
     const auto rule = ruleAppliedTo(material, rules);
     if (rule == rules.end()) return;
 
+    noteChange(std::format("material label {}", material.index));
     rule->label = label;
     putInForce(std::move(rules));
 }
@@ -736,6 +831,7 @@ void removeRule(const Rule& rule)
     const auto found = std::ranges::find(rules, rule);
     if (found == rules.end()) return;
 
+    noteChange("remove");
     sweep(rule, Direction::Back);
     rules.erase(found);
     putInForce(std::move(rules));
@@ -771,6 +867,37 @@ void holdOriginal(const Material& material, bool isHeld)
 
     compared = *rule;
     sweep(*compared, Direction::Back);
+}
+
+bool undo()
+{
+    if (undoSteps.empty()) return false;
+
+    redoSteps.push_back(snapshot());
+    auto step = std::move(undoSteps.back());
+    undoSteps.pop_back();
+    restore(std::move(step));
+
+    return true;
+}
+
+bool redo()
+{
+    if (redoSteps.empty()) return false;
+
+    undoSteps.push_back(snapshot());
+    auto step = std::move(redoSteps.back());
+    redoSteps.pop_back();
+    restore(std::move(step));
+
+    return true;
+}
+
+std::size_t defaultNamedRules()
+{
+    const auto isDefault = [](const auto& rule) { return defaultLabels.contains(rule.label); };
+
+    return static_cast<std::size_t>(std::ranges::count_if(*rulesInForce(), isDefault) + std::ranges::count_if(*lampsInForce(), isDefault));
 }
 
 bool isComparing() noexcept
@@ -825,6 +952,21 @@ std::string runLine(std::string_view line)
         return markList.empty() ? "error: nothing marked\n" : std::format("mark {}: {} materials\n", markList.size(), markList.back().materials.size());
     }
 
+    if (command == "undo" || command == "redo")
+    {
+        const bool isDone = command == "undo" ? undo() : redo();
+        return std::format("{}: {}; {} material and {} lamp rules\n", command, isDone ? "done" : "nothing to do", rulesInForce()->size(), lampsInForce()->size());
+    }
+
+    if (command == "rules")
+    {
+        std::string text;
+        for (const auto& rule : *rulesInForce()) text += std::format("material {} \"{}\"\n", hashText(rule.material), rule.label);
+        for (const auto& lamp : *lampsInForce()) text += std::format("lamp {} \"{}\"\n", lamp.brightness, lamp.label);
+
+        return std::format("{}{} under default names\n", text, defaultNamedRules());
+    }
+
     if (command == "loaded")
     {
         std::string text;
@@ -871,6 +1013,16 @@ std::string runLine(std::string_view line)
         if (!(words >> number >> brightness) || number < 1 || number > rows.size() || !(brightness >= 0)) return "error: lamp <number> <brightness>\n";
 
         editLamp(rows[number - 1], brightness);
+        return std::format("lamp {} brightness {}\n", number, lampRowsOf(mark)[number - 1].brightness);
+    }
+
+    if (command == "reset")
+    {
+        std::size_t number{};
+        const auto rows = lampRowsOf(mark);
+        if (!(words >> number) || number < 1 || number > rows.size()) return "error: reset <number>\n";
+
+        resetLamp(rows[number - 1]);
         return std::format("lamp {} brightness {}\n", number, lampRowsOf(mark)[number - 1].brightness);
     }
 
