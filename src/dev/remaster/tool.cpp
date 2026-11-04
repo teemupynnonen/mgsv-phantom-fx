@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <mutex>
 #include <set>
@@ -130,6 +131,8 @@ std::string lastChange;
 ULONGLONG lastChangeAt{};
 // The labels the tool gave this session: a rule still under one has not been named.
 std::set<std::string> defaultLabels;
+// Who holds the game without rules (holdWithoutRules), by Holder: the rules come back once none does.
+std::array<bool, 2> isHeldBy{};
 std::optional<LampRow> chosenLamp;
 bool hasSaveFailed{};
 
@@ -911,14 +914,16 @@ bool isComparing() noexcept
     return compared.has_value() || comparedLamp.has_value() || areRulesHeldOff();
 }
 
-void holdWithoutRules(bool isHeld)
+void holdWithoutRules(Holder holder, bool isHeld)
 {
-    if (isHeld == areRulesHeldOff()) return;
+    isHeldBy[static_cast<std::size_t>(holder)] = isHeld;
+    const bool isWanted = std::ranges::any_of(isHeldBy, std::identity{});
+    if (isWanted == areRulesHeldOff()) return;
 
     // A flash or a one-light compare holds its own values: it ends before the rules come off, so they come back right.
-    if (isHeld) settleTool();
+    if (isWanted) settleTool();
 
-    holdRulesOff(isHeld);
+    holdRulesOff(isWanted);
     framesToRefresh = 0;
 }
 
@@ -976,7 +981,7 @@ std::string runLine(std::string_view line)
     {
         int isHeld{};
         words >> isHeld;
-        holdWithoutRules(isHeld != 0);
+        holdWithoutRules(Holder::Line, isHeld != 0);
         return std::format("without rules: {}\n", areRulesHeldOff() ? "held" : "let go");
     }
 

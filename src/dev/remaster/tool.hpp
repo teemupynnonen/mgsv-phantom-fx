@@ -80,8 +80,13 @@ bool hasRule(const game_materials::Material& material);
 
 // Shows the game's values of the rule on the material for as long as it is called with true.
 void holdOriginal(const game_materials::Material& material, bool isHeld);
-// The game without any rule, for as long as it is called with true; editing waits meanwhile (isComparing).
-void holdWithoutRules(bool isHeld);
+// The game without any rule, for as long as any holder holds it; editing waits meanwhile (isComparing).
+enum class Holder : std::uint8_t
+{
+    Panel, // V
+    Line   // Automation's `without`
+};
+void holdWithoutRules(Holder holder, bool isHeld);
 bool isComparing() noexcept;
 
 // A lamp of a mark: its rule's brightness, 1 without one.
