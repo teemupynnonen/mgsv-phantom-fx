@@ -2014,8 +2014,14 @@ the game's lights) is left alone until it runs.
   unbiased estimate. A diffuse ray that meets an emitter takes none of its light, as that would count it twice; a
   specular ray always does, which is how it shows in a reflection. A self-lit mesh left out of the 64, or on a
   character, gives its light to the diffuse rays that meet it. The intensities are set for how a bulb looks, and
-  rooms are lit by the lamps placed beside them: a mesh lights others with at most the sun's radiance
-  (`MostEmission`), and the menu's **Self-lit surfaces** (`path_traced_emission`, 1 by default, 0 to 4) scales it.
+  rooms are lit by the lamps placed beside them: a mesh lights others with 0.3% of its intensity (`SelfLitShare`),
+  at most the sun's radiance (`MostEmission`), and the menu's **Self-lit surfaces** (`path_traced_emission`, 1 by default,
+  0 to 4) scales it. Taken whole, a quarantine platform ceiling tube gave 52,462 at a metre against a median of about 620
+  (163 to 7,953) from the game's lamp at the same fixture, 8 pairs, and its corridors came out 9 to 37 times vanilla's
+  light. At a hundredth a tube lights about as its lamp does, but the lamps already carry it: a corridor with 21 tubes to
+  8 lamps was still 3.3 times vanilla's (1.5 without them). At 0.3% both corridors measured were about twice vanilla's
+  (on the side Snake's back does not cover in vanilla's frame), 2026-11-04. Most of that is light bouncing off the white
+  walls (albedo about 0.58), which the game's exposure does not see: it measures its own light (`light_combine.hpp`).
   A frame at Mother Base at night spends 2.5 to 3 ms on them at 1920 x 1080: about 1.5 ms the shadow rays, about 1 ms choosing
   one, and 0.3 ms the triangle and its texture. Dropping them outright is not free: 15% of the deck
   changes by over 10%. Rolling for their rays as for the moon's below saved 0.8 ms at most, and at that it visibly stirred

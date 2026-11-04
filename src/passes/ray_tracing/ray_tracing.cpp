@@ -275,6 +275,12 @@ constexpr float LightScale = 1.0f / 1024;
 // The most radiance a self-lit mesh lights others with, in the game's units: the sun's light. Their intensities are set
 // for how they look (up to 221,182, a bulb's bloom); their rooms are lit by the lamps placed beside them.
 constexpr float MostEmission = 20000;
+// The share of that intensity a self-lit mesh lights others with at the menu's 1. Read as it looks, a quarantine platform
+// ceiling tube gave 52,462 at a metre, against a median of about 620 (163 to 7,953) from the game's own lamp at the same
+// fixture, 8 pairs; rooms came out 9 to 37 times vanilla's light, blown out (2026-11-04). A hundredth makes a tube about as
+// bright as its lamp, but the lamps already carry the fixtures' light: a corridor with 21 tubes to 8 lamps came out 3.3 times
+// vanilla's. At a third of that, tubes top their lamps up, and both corridors measured were about twice vanilla's.
+constexpr float SelfLitShare = 0.003f;
 
 // The sky's light as PsWork holds it, before exposure, and the exposure the pass had; whether the
 // probe's light stands in for it (the game gave no sky).
@@ -916,7 +922,7 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     frame.frameIndex = ++kicks;
     if (asked.asksRayReconstruction) guidesKick = kicks;
     frame.traces = traces;
-    frame.emissionScale = traces.isPathTraced ? options.emission * LightScale : 0;
+    frame.emissionScale = traces.isPathTraced ? options.emission * SelfLitShare * LightScale : 0;
     frame.emissionCap = MostEmission * LightScale;
     reconstructionsAtKick = reconstructedFrames;
     lastTraces = traces;

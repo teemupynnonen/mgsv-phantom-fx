@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Lamps and glowing signs no longer blow out rooms with path tracing.** Their glow was taken as their light, and a
+  ceiling tube lit its room about 85 times as much as the game's own lamp beside it. Rooms on the quarantine platform came
+  out 9 to 37 times as bright as the game draws them, white even with **Self-lit surfaces** at 0.01. Glowing surfaces now
+  light with 0.3% of that, a third of their lamp's light, as the lamps already light the room. Corridors there are now
+  about twice as bright as the game draws them: readable, and still dim at their far ends. If you had lowered
+  **Self-lit surfaces**, set it back to 1.
 - **Global illumination is a little faster in open country.** Its rays and their bounces, also those of path-traced
   reflections, now look 100 m for what they hit and take the sky's light past it. At 4K that saves about 0.7 ms of an
   18 ms frame in Afghanistan and 0.3 ms in the jungle, and the picture looks the same. Turning off **Short rays** under
