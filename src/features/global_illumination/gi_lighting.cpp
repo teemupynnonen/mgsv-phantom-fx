@@ -29,42 +29,55 @@ int band(int coefficient)
 {
     return coefficient == 0 ? 0 : coefficient < 4 ? 1 : 2;
 }
+
+// What each of a sky matrix's 16 entries adds to each coefficient. The sky's light in a direction is the quadratic
+// c M c with c = (-x, -z, y, 1), so its projection is linear in M: projected light, over the sphere numerically (L2 holds
+// a quadratic exactly), once. Projecting every frame took a sixth of the kick's CPU time (2026-11-04).
+using ProjectionWeights = std::array<std::array<double, 16>, 9>;
+
+const ProjectionWeights& projectionWeights()
+{
+    static const ProjectionWeights weights = [] {
+        constexpr int Rings = 64, Segments = 128;
+        ProjectionWeights projected{};
+        for (int ring = 0; ring < Rings; ++ring)
+        {
+            const double theta = (ring + 0.5) * Pi / Rings;
+            const double weight = std::sin(theta) * (Pi / Rings) * (2 * Pi / Segments);
+            for (int segment = 0; segment < Segments; ++segment)
+            {
+                const double phi = (segment + 0.5) * 2 * Pi / Segments;
+                const double x = std::sin(theta) * std::cos(phi), y = std::sin(theta) * std::sin(phi), z = std::cos(theta);
+                const double c[4]{-x, -z, y, 1};
+                const auto coefficients = basis(x, y, z);
+                for (int k = 0; k < 9; ++k)
+                    for (int row = 0; row < 4; ++row)
+                        for (int column = 0; column < 4; ++column) projected[k][row * 4 + column] += c[row] * c[column] * coefficients[k] * weight;
+            }
+        }
+
+        return projected;
+    }();
+
+    return weights;
+}
 }
 
 SphericalHarmonics skyRadiance(const std::array<std::array<float, 16>, 3>& matrices, float exposure)
 {
-    // Projects the light over the sphere numerically (it is a quadratic, so L2 holds it exactly),
-    // then divides out the clamped cosine's band factors (Ramamoorthi and Hanrahan): pi, 2 pi / 3
+    // The projected light, with the clamped cosine's band factors divided out (Ramamoorthi and Hanrahan): pi, 2 pi / 3
     // and pi / 4, over pi for irradiance over pi.
-    constexpr int Rings = 64, Segments = 128;
-    std::array<std::array<double, 3>, 9> projected{};
-    for (int ring = 0; ring < Rings; ++ring)
-    {
-        const double theta = (ring + 0.5) * Pi / Rings;
-        const double weight = std::sin(theta) * (Pi / Rings) * (2 * Pi / Segments);
-        for (int segment = 0; segment < Segments; ++segment)
-        {
-            const double phi = (segment + 0.5) * 2 * Pi / Segments;
-            const double x = std::sin(theta) * std::cos(phi), y = std::sin(theta) * std::sin(phi), z = std::cos(theta);
-            const double c[4]{-x, -z, y, 1};
-            const auto coefficients = basis(x, y, z);
-            for (int color = 0; color < 3; ++color)
-            {
-                const auto& m = matrices[color];
-                double light = 0;
-                for (int row = 0; row < 4; ++row)
-                    for (int column = 0; column < 4; ++column) light += c[row] * m[row * 4 + column] * c[column];
-
-                light *= exposure;
-                for (int k = 0; k < 9; ++k) projected[k][color] += light * coefficients[k] * weight;
-            }
-        }
-    }
-
+    const auto& weights = projectionWeights();
     constexpr double Deconvolution[]{1.0, 1.5, 4.0};
     SphericalHarmonics radiance{};
     for (int k = 0; k < 9; ++k)
-        for (int color = 0; color < 3; ++color) radiance[k][color] = static_cast<float>(projected[k][color] * Deconvolution[band(k)]);
+        for (int color = 0; color < 3; ++color)
+        {
+            double projected = 0;
+            for (int entry = 0; entry < 16; ++entry) projected += weights[k][entry] * matrices[color][entry];
+
+            radiance[k][color] = static_cast<float>(projected * exposure * Deconvolution[band(k)]);
+        }
 
     return radiance;
 }

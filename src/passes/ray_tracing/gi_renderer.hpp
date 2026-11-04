@@ -157,7 +157,8 @@ bool started() noexcept;
 
 // Records and submits the frame: waits for frame.waitValue on the shared fence, signals
 // frame.signalValue when the output is written. Throws on Direct3D 12 errors.
-Result render(const Frame& frame);
+// Takes the frame's model instances over (frame.modelInstances is left empty).
+Result render(Frame& frame);
 
 // After the game drew this frame's glass and mirrors: their reflections, on the scene render built. Waits for `waitValue` on
 // the shared fence and signals `signalValue` when they are written. False, with nothing submitted, when the last render

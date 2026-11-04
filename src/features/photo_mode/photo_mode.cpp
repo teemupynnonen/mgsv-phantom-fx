@@ -40,6 +40,8 @@ constexpr std::size_t CameraCount = 0x88, Cameras = 0x90, CameraActive = 0xE0, C
 // raises the aperture to a minimum for the focal length (f/3 at 21 mm) unless the camera's byte
 // +0xEA is set.
 constexpr std::size_t CameraFocusDistance = 0x38, CameraAperture = 0x44, CameraAnyAperture = 0xEA;
+// Its focal length in millimetres, which the update copies into GrCamera: the field of view.
+constexpr std::size_t CameraFocalLength = 0x3C;
 
 // The window's raw input, from its WM_INPUT handler: reads the RAWINPUT and hands mouse and keyboard
 // data to the game's devices.
@@ -101,13 +103,14 @@ struct FreeCamera
     float position[3]{};
     float yaw{}, pitch{};
     float focusDistance{};
+    float focalLength{}; // The game camera's lens when photo mode began, or the held camera's
 };
 
 // What the selector's update reads from the active camera that photo mode sets.
 struct CameraState
 {
     float transform[8]{}; // Rotation, position
-    float focusDistance{}, aperture{};
+    float focusDistance{}, aperture{}, focalLength{};
     std::uint8_t anyAperture{};
 };
 
@@ -121,6 +124,7 @@ std::atomic<bool> teleportRequested{};
 // Game thread only.
 FreeCamera freeCamera;
 LONGLONG lastStep{};
+bool isFrozen{}; // Photo mode's pause request is active
 
 // Where the last Enter sends the player: the free camera's pose, taken at the selector update it arrives
 // on, and the warp run at a frame start after leaving photo mode has let the game's time run. The dev
@@ -146,6 +150,7 @@ CameraState stateOf(const std::uint8_t* camera)
     std::memcpy(state.transform, camera + CameraTransform, sizeof(state.transform));
     std::memcpy(&state.focusDistance, camera + CameraFocusDistance, sizeof(state.focusDistance));
     std::memcpy(&state.aperture, camera + CameraAperture, sizeof(state.aperture));
+    std::memcpy(&state.focalLength, camera + CameraFocalLength, sizeof(state.focalLength));
     state.anyAperture = camera[CameraAnyAperture];
 
     return state;
@@ -156,6 +161,7 @@ void apply(std::uint8_t* camera, const CameraState& state)
     std::memcpy(camera + CameraTransform, state.transform, sizeof(state.transform));
     std::memcpy(camera + CameraFocusDistance, &state.focusDistance, sizeof(state.focusDistance));
     std::memcpy(camera + CameraAperture, &state.aperture, sizeof(state.aperture));
+    std::memcpy(camera + CameraFocalLength, &state.focalLength, sizeof(state.focalLength));
     camera[CameraAnyAperture] = state.anyAperture;
 }
 
@@ -167,7 +173,7 @@ FreeCamera fromGame(const CameraState& game)
     const float forward[3]{2 * (x * z + y * w), 2 * (y * z - x * w), 1 - 2 * (x * x + y * y)};
 
     return {{transform[4], transform[5], transform[6]}, std::atan2(forward[0], forward[2]),
-        std::clamp(std::asin(std::clamp(forward[1], -1.0f, 1.0f)), -MaxPitch, MaxPitch), game.focusDistance};
+        std::clamp(std::asin(std::clamp(forward[1], -1.0f, 1.0f)), -MaxPitch, MaxPitch), game.focusDistance, game.focalLength};
 }
 
 void place(FreeCamera& camera, const Pose& pose)
@@ -175,6 +181,7 @@ void place(FreeCamera& camera, const Pose& pose)
     std::memcpy(camera.position, pose.position, sizeof(camera.position));
     camera.yaw = pose.yaw;
     camera.pitch = std::clamp(pose.pitch, -MaxPitch, MaxPitch);
+    if (pose.focalLength > 0) camera.focalLength = pose.focalLength;
 }
 
 [[maybe_unused]] Pose poseOf(const FreeCamera& camera)
@@ -183,6 +190,7 @@ void place(FreeCamera& camera, const Pose& pose)
     std::memcpy(pose.position, camera.position, sizeof(pose.position));
     pose.yaw = camera.yaw;
     pose.pitch = camera.pitch;
+    pose.focalLength = camera.focalLength;
 
     return pose;
 }
@@ -199,6 +207,7 @@ CameraState photoState(const FreeCamera& camera, const CameraState& game, bool i
     std::memcpy(state.transform, rotation, sizeof(rotation));
     std::memcpy(state.transform + 4, camera.position, sizeof(camera.position));
     state.focusDistance = camera.focusDistance;
+    if (camera.focalLength > 0) state.focalLength = camera.focalLength;
     state.aperture = blur && !isSharp ? fNumber.load() : SharpAperture;
     state.anyAperture = 1;
 
@@ -302,15 +311,22 @@ void selectorUpdate(std::uint8_t* selector)
         secondsSince(lastStep);
         mouseX = 0;
         mouseY = 0;
-        pause(true);
         focus::setActive(true);
         flying = true;
     }
     else if (!wanted && flying)
     {
-        pause(false);
         focus::setActive(false);
         flying = false;
+    }
+
+    // A live held camera (automation) lets the game run under it, for timelapses.
+    bool shouldFreeze = flying;
+    if constexpr (DevTools) shouldFreeze = flying && !(heldCamera && held_camera::isLive());
+    if (shouldFreeze != isFrozen)
+    {
+        pause(shouldFreeze);
+        isFrozen = shouldFreeze;
     }
 
     if (!flying || !camera)

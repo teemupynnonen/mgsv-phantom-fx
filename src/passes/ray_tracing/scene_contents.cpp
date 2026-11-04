@@ -140,7 +140,7 @@ SceneContents::SceneContents(SceneMemory& memory) : memory(memory)
     }
 }
 
-Update SceneContents::update(const GameScene& frame)
+Update SceneContents::update(GameScene&& frame)
 {
     Update update;
     updateModels(frame, update);
@@ -333,7 +333,7 @@ void SceneContents::useTextures(const Model& model, bool isUsed, Update& update)
 // The frame's models: new ones registered, the placed ones' meshes into the pool and their structures
 // made (as the frame's upload and the memory allow), those not placed for ModelRetentionFrames let go
 // (Update::releasedModels).
-void SceneContents::updateModels(const GameScene& frame, Update& update)
+void SceneContents::updateModels(GameScene& frame, Update& update)
 {
     for (const auto& model : frame.newModels)
     {
@@ -346,6 +346,7 @@ void SceneContents::updateModels(const GameScene& frame, Update& update)
         record.geometry = model;
         record.lastPlaced = frame.frameIndex;
         record.bounds = {FLT_MAX, FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX, -FLT_MAX};
+        for (const auto& part : model->parts) record.triangles += part.indices.size() / 3;
         for (const auto& part : model->parts)
             for (const auto& vertex : part.vertices)
                 for (int axis = 0; axis < 3; ++axis)
@@ -362,17 +363,20 @@ void SceneContents::updateModels(const GameScene& frame, Update& update)
 
     if (frame.hasNewLists)
     {
-        placements.assign(frame.placements.begin(), frame.placements.end());
+        placements = std::move(frame.placements);
         characterList.assign(frame.characters.begin(), frame.characters.end());
     }
 
-    // Placements come grouped by model (an instance group's, a brush plugin's): one lookup a run.
+    // Placements come grouped by model (an instance group's, a brush plugin's): one lookup a run. The few that hide
+    // mesh groups are noted for their variants below.
     auto found = models.end();
     std::uint64_t lastHash{};
+    std::vector<const ModelInstance*> hiding;
     for (const auto& placement : placements)
     {
         if (placement.hash != lastHash) found = models.find(lastHash = placement.hash);
         if (found != models.end()) found->second.lastPlaced = frame.frameIndex;
+        if (placement.hiddenGroups) hiding.push_back(&placement);
     }
 
     for (const auto& character : characterList)
@@ -440,9 +444,9 @@ void SceneContents::updateModels(const GameScene& frame, Update& update)
     // of its model's other meshes, made once its model's is.
     found = models.end();
     lastHash = 0;
-    for (const auto& placement : placements)
+    for (const auto* hider : hiding)
     {
-        if (!placement.hiddenGroups) continue;
+        const auto& placement = *hider;
         if (placement.hash != lastHash) found = models.find(lastHash = placement.hash);
         if (found == models.end() || !found->second.blas) continue;
 
@@ -463,6 +467,7 @@ void SceneContents::updateModels(const GameScene& frame, Update& update)
             if (group < 64 && ((placement.hiddenGroups >> group) & 1)) continue;
 
             variant.parts.push_back(i);
+            variant.triangles += record.geometry->parts[i].indices.size() / 3;
             geometries.push_back(record.parts[i]);
         }
 
@@ -755,11 +760,7 @@ void SceneContents::addInstances(const GameScene& frame, Update& update)
         if (!record.emitters.empty()) addEmitters(record, placement, isTrimmed ? &*variant : nullptr, *instance, frame.eye, update.emitters);
 
         ++modelInstanceCount;
-        const auto& parts = record.geometry->parts;
-        if (isTrimmed)
-            for (const auto i : variant->parts) modelTriangles += parts[i].indices.size() / 3;
-        else
-            for (const auto& part : parts) modelTriangles += part.indices.size() / 3;
+        modelTriangles += isTrimmed ? variant->triangles : record.triangles;
     }
 
     // The strongest at the eye are the rays' to aim at: the others' light comes through the rays that meet them.

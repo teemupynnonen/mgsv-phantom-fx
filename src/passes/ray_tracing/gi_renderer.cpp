@@ -934,7 +934,7 @@ std::function<void(const char*, std::optional<performance::Pass>)> timestampMark
 }
 }
 
-Result render(const Frame& frame)
+Result render(Frame& frame)
 {
     auto& s = *state;
     const auto started = clock::ticksNow();
@@ -1011,18 +1011,18 @@ Result render(const Frame& frame)
     // ---- The scene's contents: the game's models, textures, characters and terrain, then the frame's
     // instances ----
     const bool terrain = frame.terrain.has_value();
-    const scene_contents::GameScene game{.frameIndex = frame.frameIndex,
+    scene_contents::GameScene game{.frameIndex = frame.frameIndex,
         .eye = frame.eye,
         .newModels = frame.newModels,
         .hasNewLists = frame.modelInstancesUpdated,
-        .placements = frame.modelInstances,
+        .placements = std::move(frame.modelInstances),
         .characters = frame.characters,
         .newTextures = frame.newTextures,
         .terrainEye = terrain ? std::optional(frame.eye) : std::nullopt,
         .seaCentre = frame.seaLevel ? std::optional(std::array{frame.eye[0], *frame.seaLevel, frame.eye[2]}) : std::nullopt,
         .shouldListInstances = frame.debugShadows || std::ranges::any_of(trace::inOrder(), [&](const auto* each) { return each->listsInstances(frame); })};
     std::optional<State::SurfaceTrace> surfaceTrace;
-    auto update = s.contents->update(game);
+    auto update = s.contents->update(std::move(game));
     s.instancedModels[slot] = std::move(update.instanced);
     result.releasedModels = std::move(update.releasedModels);
     result.releasedTextures = std::move(update.releasedTextures);

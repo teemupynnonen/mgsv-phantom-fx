@@ -36,7 +36,7 @@ Cases are in `PhantomFX-automation/cases` beside each game:
 ## The loop
 
 1. **Read the case.** After the user presses F9, run `case.py` with no arguments: it reports their latest case. Read `report.md`, then look at `scene-check.png`, `sun-check.png` and `light-ratio.png`, and `traced.png` next to `vanilla.png`. Any screenshot or words from the user are extra context, not the data.
-2. **Ask more while it is frozen.** The player's game stays frozen on that frame. Each finding gives a pixel: `fx.py probe <x> <y>` lists what the rays meet there and why. Move the camera with `fx.py run "camera <x> <y> <z> <yaw> <pitch>"` to see a fault from another side.
+2. **Ask more while it is frozen.** The player's game stays frozen on that frame. Each finding gives a pixel: `fx.py probe <x> <y>` lists what the rays meet there and why. Move the camera with `fx.py run "camera <x> <y> <z> <yaw> <pitch> [<mm>]"` to see a fault from another side.
 3. **Prove the cause before changing behaviour.** State it as a measured fact. To test a model, force it into the frozen scene:
    ```
    fx.py run "reveal <hash>" "wait 150" "game_shadow 1" "wait 30" "inspect cases/<case>/fix-scene" "image cases/<case>/fix-traced" "game_shadow 0" "reveal off"
@@ -62,6 +62,7 @@ Cases are in `PhantomFX-automation/cases` beside each game:
 | `fx.py [--copy] acc` | From free roam into the helicopter's cabin (the ACC) |
 | `fx.py png <file.dds>`, `fx.py diff <a.dds> <b.dds>` | A texture as a picture; how two captures differ |
 | `check_release.py` | Fails if the tools reached a release build |
+| `scout.py survey/times/shot ...` | The copy only: contact sheets of a place from every side or at several times of day, and shots with Phantom FX on and off kept in `scout/shots.json`. Its docstring has the rest |
 | `perf.py [--copy] log [<file>]` | A play session's costs by place, then its worst seconds |
 | `perf.py [--copy] ab <test> ...` | What each change costs on the frame as it stands, with the drift to judge it by. `--images` also says how far the frame moved |
 

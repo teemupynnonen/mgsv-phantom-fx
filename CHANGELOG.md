@@ -4,8 +4,13 @@
 
 - **Global illumination is a little faster in open country.** Its rays and their bounces, also those of path-traced
   reflections, now look 100 m for what they hit and take the sky's light past it. At 4K that saves about 0.7 ms of an
-  18 ms frame in Afghanistan and 0.3 ms in the jungle, and the picture looks the same. **Short rays** under Global
-  illumination turns it off.
+  18 ms frame in Afghanistan and 0.3 ms in the jungle, and the picture looks the same. Turning off **Short rays** under
+  Global illumination brings back the old rays.
+- **The rays hand the GPU their work sooner.** Each frame the ray tracing worked out the sky's light for global
+  illumination over 8,192 directions on the CPU, and copied the scene's placements, 39,000 of them in the jungle. The sky's
+  light now takes a few hundred multiplications for the same result, and the placements are no longer copied. That work
+  held up the frame's rays, so at Mother Base at night a frame takes about 0.5 ms less (13.9 to 13.4 ms at 1080p with DLSS
+  Quality).
 - **Rays no longer pass what lies right beside a surface.** Global illumination and path-traced reflections could take a
   surface close to the one they left for a copy of it and go through. Where the pixel's surface is known they now skip
   nothing, as the shadow rays do, and a stand-in in front of it no longer hides it. No spot measured looks different, and
