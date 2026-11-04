@@ -22,8 +22,9 @@ Then work down the marks:
 
 1. Pick a mark. **Go there** warps you back and sets the time of day, travelling first if it is another map. A story
    mission comes back as that place in its map's free roam. **Done** takes the mark off the list.
-2. **Lights** lists the mark's lamps (the light on the room) and its glowing materials (how a light itself looks),
-   brightest first. **Glass** and **All** list the other materials. Hover one: it flashes in the game. Click it, or walk
+2. **Lights** lists the mark's lamps (the light on the room), then its glowing materials (how a light itself looks),
+   each brightest first by its value at the mark: a lamp's light at a metre and a glow's intensity are not the same
+   measure. **Glass** and **All** list the other materials. Hover one: it flashes in the game. Click it, or walk
    the list with **Up** and **Down**.
 3. Drag **Brightness**, roll the wheel over it, or press **[** and **]** to step it by a quarter; **0** puts the light
    out and **R** takes its rule away. **Colour** opens a picker, and **More parameters** shows the rest. A lamp has

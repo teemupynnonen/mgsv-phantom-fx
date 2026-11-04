@@ -295,11 +295,12 @@ Snapshot snapshot()
     return {*rulesInForce(), *lampsInForce()};
 }
 
-// Before each change: a step to undo, unless it goes on the last one.
-void noteChange(const std::string& what)
+// Before each change: a step to undo, unless it goes on the last one. A change of nothing named (a removal) is always a
+// step of its own.
+void noteChange(const std::string& what = {})
 {
     const auto now = GetTickCount64();
-    if (what != lastChange || now - lastChangeAt > ChangeGapMilliseconds)
+    if (what.empty() || what != lastChange || now - lastChangeAt > ChangeGapMilliseconds)
     {
         undoSteps.push_back(snapshot());
         if (undoSteps.size() > MostUndoSteps) undoSteps.erase(undoSteps.begin());
@@ -310,14 +311,18 @@ void noteChange(const std::string& what)
     lastChangeAt = now;
 }
 
-// The materials taken off the rules in force and put under these, which go in force.
+// The materials taken off the rules in force and put under these, which go in force. While the enhancements switch (F1)
+// has the rules off, the materials stay as the game made them, and turning it on puts these on.
 void restore(Snapshot to)
 {
     settleTool();
-    for (const auto& rule : *rulesInForce()) sweep(rule, Direction::Back);
+    const bool isOn = areRulesOn();
+    if (isOn)
+        for (const auto& rule : *rulesInForce()) sweep(rule, Direction::Back);
 
     putInForce(std::move(to.rules));
-    for (const auto& rule : *rulesInForce()) sweep(rule, Direction::Forward);
+    if (isOn)
+        for (const auto& rule : *rulesInForce()) sweep(rule, Direction::Forward);
 
     putLampsInForce(std::move(to.lamps));
     lastChange.clear();
@@ -713,7 +718,7 @@ void removeLampRule(const LampRule& rule)
     const auto found = std::ranges::find(lamps, rule);
     if (found == lamps.end()) return;
 
-    noteChange("remove lamp");
+    noteChange();
     lamps.erase(found);
     putLampsInForce(std::move(lamps));
 }
@@ -831,7 +836,7 @@ void removeRule(const Rule& rule)
     const auto found = std::ranges::find(rules, rule);
     if (found == rules.end()) return;
 
-    noteChange("remove");
+    noteChange();
     sweep(rule, Direction::Back);
     rules.erase(found);
     putInForce(std::move(rules));

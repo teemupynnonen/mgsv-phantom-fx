@@ -487,8 +487,16 @@ void undoKeys()
     const auto& io = ImGui::GetIO();
     if (!canTakeKeys() || !io.KeyCtrl) return;
 
-    if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) io.KeyShift ? redo() : undo();
-    else if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) redo();
+    bool isRestored{};
+    if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) isRestored = io.KeyShift ? redo() : undo();
+    else if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) isRestored = redo();
+
+    // The label field reloads from the restored rule, or what was typed would go back in.
+    if (isRestored)
+    {
+        labelFor.reset();
+        lampLabelFor.reset();
+    }
 }
 
 // The arrows walk the list; [ and ] step the chosen light's brightness, 0 puts it out and R takes its rule away.
@@ -735,8 +743,17 @@ void drawMaterials(const Mark& mark)
             const auto rows = rowsOf(mark, view == View::Glass ? std::optional(MaterialKind::Glass) : std::nullopt);
             if (rows.empty()) drawEmpty("None of this kind here.", "Try another view above.");
 
-            const auto selected = selectedMaterial();
-            for (const auto& row : rows) materialNote(row, selected && row.poolRow == selected->index);
+            std::vector<Pick> picks;
+            for (const auto& row : rows)
+                if (row.poolRow) picks.push_back({.material = row});
+
+            pickKeys(picks);
+            for (const auto& row : rows)
+            {
+                const bool isChosenRow = row.poolRow && isChosen({.material = row});
+                materialNote(row, isChosenRow);
+                if (isChosenRow && std::exchange(shouldScrollToChosen, false)) ImGui::SetScrollHereY(0.5f);
+            }
         }
     }
 
