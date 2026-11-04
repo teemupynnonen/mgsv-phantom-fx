@@ -151,8 +151,7 @@ float FFX_DNSR_Shadows_ReadHistory(float2 uv)
 void ShadowRayStart(PixelSurface surface, float3 toLight, out float3 origin, out float3 facing, out float tolerance)
 {
     facing = dot(surface.normal, toLight) >= 0.0f ? surface.normal : -surface.normal;
-    origin = PixelRayOrigin(surface, facing);
-    tolerance = surface.isExact ? 0.0f : CopyTolerance(surface.position);
+    PixelRayStart(surface, facing, origin, tolerance);
 }
 
 // A hit as the probe lists it (GIShadowProbe::lightNearest); zeros for none.

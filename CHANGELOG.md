@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **Characters, the helicopter and swaying trees stay in the ray-traced scene beside other mods.** The scene found the
+  game's list of models in a spot that only held it by chance. With some other mods installed it read an empty list, so
+  Snake, the soldiers, the helicopter's cabin and trees that move in the wind cast no ray-traced shadows and global
+  illumination went through them. The list is now read where the game itself keeps it.
+- **Lamps and glowing signs no longer blow out rooms with path tracing.** Their glow was taken as their light, and a
+  ceiling tube lit its room about 85 times as much as the game's own lamp beside it. Rooms on the quarantine platform came
+  out 9 to 37 times as bright as the game draws them, white even with **Self-lit surfaces** at 0.01. Glowing surfaces now
+  light with 0.3% of that, a third of their lamp's light, as the lamps already light the room. Corridors there are now
+  about twice as bright as the game draws them: readable, and still dim at their far ends. If you had lowered
+  **Self-lit surfaces**, set it back to 1.
+- **Global illumination is a little faster in open country.** Its rays and their bounces, also those of path-traced
+  reflections, now look 100 m for what they hit and take the sky's light past it. At 4K that saves about 0.7 ms of an
+  18 ms frame in Afghanistan and 0.3 ms in the jungle, and the picture looks the same. Turning off **Short rays** under
+  Global illumination brings back the old rays.
+- **The rays hand the GPU their work sooner.** Each frame the ray tracing worked out the sky's light for global
+  illumination over 8,192 directions on the CPU, and copied the scene's placements, 39,000 of them in the jungle. The sky's
+  light now takes a few hundred multiplications for the same result, and the placements are no longer copied. That work
+  held up the frame's rays, so at Mother Base at night a frame takes about 0.5 ms less (13.9 to 13.4 ms at 1080p with DLSS
+  Quality).
+- **Rays no longer pass what lies right beside a surface.** Global illumination and path-traced reflections could take a
+  surface close to the one they left for a copy of it and go through. Where the pixel's surface is known they now skip
+  nothing, as the shadow rays do, and a stand-in in front of it no longer hides it. No spot measured looks different, and
+  the cost is the same.
 - **Rooms no longer light up from inside their walls.** In a room's corners the rays of global illumination and of
   path-traced reflections could start inside the next wall and find the sun there, which drew bright broken lines along
   the seams. Their rays now leave the surface the pixel shows, as the shadow rays do, and white veins on bumpy walls went
@@ -9,6 +32,13 @@
   It costs about 1.4 ms a frame at 1440p under path tracing.
 - **Photo mode crawls with C.** Holding C moves the free camera at 0.5 m/s, next to Shift's 25 m/s, for
   lining up a close shot.
+- **Path tracing can run far faster in the jungle.** Turn on **Opacity micromaps** under Global illumination and restart, on
+  an RTX 40 or newer. Rays then know which parts of leaves and other cut-outs are solid or clear without reading their
+  textures. At night in the jungle that saves about 4 ms of a 22 ms frame, and a few tenths of a millisecond elsewhere. Older
+  RTX cards emulate it and can run slower, so it is off by default. GPUs without DXR 1.2 ignore it.
+- **Path tracing is faster through foliage.** Rays test leaves and other cut-outs against their textures millions of times
+  a frame, and each test worked out afresh how sharp a texture to read. Each mesh now knows that once. The jungle saves
+  about 2 ms a frame and other places up to 1 ms, with the picture unchanged.
 - **Path tracing is faster where many lights burn.** Each pixel and each ray's hit now looks only at the lights that can
   reach it, not at every light in the frame. At Mother Base at night that saves 4.4 ms of a 32 ms frame, about 31 to 36 fps,
   and the picture stays the same.

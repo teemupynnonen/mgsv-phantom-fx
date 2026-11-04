@@ -462,8 +462,7 @@ void ProbeShadows(uint index : SV_GroupIndex)
             probe.view = ProbeHit(TraceClosest(g_Frame.eye.xyz, normalize(farPoint - g_Frame.eye.xyz), 1e5f));
             g_ProbeGBufferNormal = normal;
             g_ProbeSurfaceNormal = r.surface.normal;
-            g_ProbeOrigin = PixelRayOrigin(r.surface, r.surface.normal);
-            g_ProbeTolerance = CopyTolerance(position);
+            PixelRayStart(r.surface, r.surface.normal, g_ProbeOrigin, g_ProbeTolerance);
             g_ProbeValid = 1;
         }
 

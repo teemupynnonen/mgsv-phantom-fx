@@ -474,9 +474,12 @@ float TextureLod(float3 v0, float3 v1, float3 v2, float2 uv0, float2 uv1, float2
 
 // Whether a cut-out geometry (non-opaque, as glass is) stops a ray where the ray crosses it: with its
 // texture, where the texture's alpha is at least the game's threshold at the level of detail the ray's
-// cone (`footprint` metres across there) meets; without, as `untextured` says. Glass never does: a ray towards a light
-// passes it dimmed by its cover (PaneTransmittance), and only a reflection's rays meet it (TraceClosest's `canMeetGlass`).
-bool CutOutBlocks(uint row, uint primitive, float2 barycentrics, bool untextured, float footprint, float3x4 objectToWorld)
+// cone (`footprint` metres across there) meets; without, as `untextured` says. The level comes from the mesh's
+// average texels a metre (GIGeometry::texelsPerMetre), as a jungle's rays run this about 20 million times a frame: working it
+// out from each triangle's vertices and placement took 2 ms of that, and showed no different on the same frozen frame.
+// Glass never does: a ray towards a light passes it dimmed by its cover (PaneTransmittance), and only a reflection's rays
+// meet it (TraceClosest's `canMeetGlass`).
+bool CutOutBlocks(uint row, uint primitive, float2 barycentrics, bool untextured, float footprint)
 {
     GIGeometry geometry = g_Geometries[row];
     if (geometry.flags & GI_GEOMETRY_GLASS) return false;
@@ -486,17 +489,7 @@ bool CutOutBlocks(uint row, uint primitive, float2 barycentrics, bool untextured
     float2 uv0 = VertexUV(geometry, i.x), uv1 = VertexUV(geometry, i.y), uv2 = VertexUV(geometry, i.z);
     float2 uv = (1.0f - barycentrics.x - barycentrics.y) * uv0 + barycentrics.x * uv1 + barycentrics.y * uv2;
     Texture2D<float4> texture = g_SceneTextures[NonUniformResourceIndex(geometry.texture - 1)];
-    float lod = 0.0f;
-    if (footprint > 0.0f)
-    {
-        float3 v0 = mul(objectToWorld, float4(PoolVertex(geometry, i.x).xyz, 1.0f));
-        float3 v1 = mul(objectToWorld, float4(PoolVertex(geometry, i.y).xyz, 1.0f));
-        float3 v2 = mul(objectToWorld, float4(PoolVertex(geometry, i.z).xyz, 1.0f));
-        float2 size;
-        texture.GetDimensions(size.x, size.y);
-        lod = TextureLod(v0, v1, v2, uv0, uv1, uv2, size, footprint);
-    }
-
+    float lod = footprint > 0.0f ? log2(max(footprint * geometry.texelsPerMetre, 1e-6f)) : 0.0f;
     float4 texel = texture.SampleLevel(g_WrapSampler, uv, lod);
     return texel.a >= geometry.alphaThreshold;
 }
@@ -573,7 +566,10 @@ float2 LightCone(float3 origin)
 // `untextured` says; the ray's cone (`cone`: its width at the origin and its growth a metre, metres)
 // picks the texture's level of detail. Without, every triangle is opaque. Every ray tests alpha: the
 // global illumination's rays once took every triangle as opaque, and a bank of grass, a heap of solid
-// cards to them, went dark (2026-10-23). With `canMeetGlass`, glass stops it (GI_GEOMETRY_GLASS).
+// cards to them, went dark (2026-10-23). With `canMeetGlass`, glass stops it (GI_GEOMETRY_GLASS). With micromaps these rays take
+// a micro-triangle that is part solid as what most of it is, and test no alpha on it: 3.4 to 3.8 ms off the jungle with those known
+// to be all one or the other, past what a frame of them shows. A ray to the sun or a lamp past the near stretch tests alpha still,
+// as there 1% of a frame moved by over 10% for 0.5 ms (SurfaceRayBlocked).
 SceneHit TraceClosest(float3 origin, float3 direction, float minDistance, float maxDistance, uint mask, bool alphaTest, bool untextured, float2 cone,
     bool canMeetGlass = false)
 {
@@ -587,13 +583,13 @@ SceneHit TraceClosest(float3 origin, float3 direction, float minDistance, float 
     if (alphaTest)
     {
         RayQuery<RAY_FLAG_NONE> query;
-        query.TraceRayInline(g_Scene, GI_RAY_FLAGS, mask, ray);
+        query.TraceRayInline(g_Scene, GI_RAY_FLAGS | g_Frame.closestRayFlags.x, mask, ray);
         while (query.Proceed())
         {
             uint row = query.CandidateInstanceContributionToHitGroupIndex() + query.CandidateGeometryIndex();
             float footprint = cone.x + query.CandidateTriangleRayT() * cone.y;
             bool isGlassHit = canMeetGlass && (g_Geometries[row].flags & GI_GEOMETRY_GLASS) != 0;
-            if (isGlassHit || CutOutBlocks(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), untextured, footprint, query.CandidateObjectToWorld3x4()))
+            if (isGlassHit || CutOutBlocks(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), untextured, footprint))
                 query.CommitNonOpaqueTriangleHit();
         }
 
@@ -877,6 +873,9 @@ SceneHit TraceFromSurface(float3 origin, float3 normal, float tolerance, float3 
     SceneHit hit;
     for (uint attempt = 0; attempt < 6; ++attempt)
     {
+        // A ray's TMin must not pass its TMax: a hit passed right at the ray's end leaves nothing to look for.
+        if (start >= maxDistance) break;
+
         hit = TraceClosest(origin, direction, start, maxDistance, mask, alphaTest, false, cone, towards == RayAlongReflection);
         bool copy = hit.hit && IsCopyOfSurface(hit, normal, direction, tolerance);
         CountDiagnostic(GI_COUNTER_COPIES, copy);
@@ -974,7 +973,7 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
         }
         bool untextured = false;
         if (chance) untextured = random.rand() < blocking;
-        if (!CutOutBlocks(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), untextured, footprint, query.CandidateObjectToWorld3x4()))
+        if (!CutOutBlocks(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), untextured, footprint))
             continue;
 
         if (IsHair(row)) PassHair(query.CandidateTriangleRayT(), transmittance, nearestHair);
@@ -1013,8 +1012,7 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
         bool untextured = false;
         if (chance) untextured = random.rand() < blocking;
         bool cutOut = (g_Geometries[row].flags & GI_GEOMETRY_CUT_OUT) != 0;
-        if (cutOut && !CutOutBlocks(row, every.CandidatePrimitiveIndex(), every.CandidateTriangleBarycentrics(), untextured, footprint,
-                          every.CandidateObjectToWorld3x4()))
+        if (cutOut && !CutOutBlocks(row, every.CandidatePrimitiveIndex(), every.CandidateTriangleBarycentrics(), untextured, footprint))
             continue;
 
         if (IsHair(row)) PassHair(every.CandidateTriangleRayT(), transmittance, nearestHair);
@@ -1040,9 +1038,8 @@ float VisibilityFromSurface(float3 origin, float3 normal, float tolerance, float
 
 // ---- Where a pixel's rays leave its surface ----
 // The scene's own surface where a ray from the eye through the pixel meets it near the depth's point: its
-// exact point and its triangle's normal, from which a ray leaves past that very surface (LiftOffTriangle).
-// A shadow ray then skips nothing near it, as it passes the undersides of solid surfaces; other rays stop on any
-// face, so they still skip copies of the surface.
+// exact point and its triangle's normal, from which a ray leaves past that very surface (LiftOffTriangle),
+// so nothing near it needs skipping.
 // Where the game drew something the scene lacks or holds at another level of detail, the depth's point
 // and the G-buffer's normal, with copies of the surface skipped ("Copies of a surface"). Until 2026-10-24
 // every ray left that way: the skip took a character pressed to a wall for a copy of the wall, and
@@ -1072,9 +1069,18 @@ PixelSurface PixelSurfaceAt(float3 position, float3 gbufferNormal)
     float surfaceDistance = length(toSurface);
     float3 direction = toSurface / max(surfaceDistance, 1e-6f);
     float tolerance = 0.03f + 0.02f * surfaceDistance;
-    SceneHit hit = TraceClosest(g_Frame.eye.xyz, direction, max(surfaceDistance - tolerance, 0.0f), surfaceDistance + tolerance, GI_MASK_SCENE, true,
-        false, float2(0.0f, g_Frame.rayCone.x));
-    // A stand-in the camera never sees is not the surface (a tarp's slab, 16 cm before its sheet).
+    float searchFrom = max(surfaceDistance - tolerance, 0.0f);
+    SceneHit hit;
+    // A stand-in the camera never sees is not the surface (a tarp's slab, 16 cm before its sheet): what the game drew may lie behind it.
+    for (uint attempt = 0; attempt < 4; ++attempt)
+    {
+        hit = TraceClosest(g_Frame.eye.xyz, direction, searchFrom, surfaceDistance + tolerance, GI_MASK_SCENE, true, false, float2(0.0f, g_Frame.rayCone.x));
+        if (!hit.hit || !IsShadowOnly(hit.instance, hit.geometry)) break;
+
+        // A triangle's hit lies strictly past a ray's TMin, so this one drops out and what lies right behind it stays.
+        searchFrom = hit.distance;
+    }
+
     if (!hit.hit || abs(hit.distance - surfaceDistance) > tolerance || IsShadowOnly(hit.instance, hit.geometry)) return surface;
 
     SceneTriangle t = LoadTriangle(hit.instance, hit.geometry, hit.primitive);
@@ -1110,13 +1116,15 @@ float3 LiftOffTriangle(float3 position, float3 normal)
     return position + normal * (steps * step * largest);
 }
 
-// A pixel's ray leaves on the side `side` points to: off the triangle, or off the depth's point where the scene has no
-// surface there. Until 2026-11-02 the global illumination's and the opaque reflections' always left the depth's point, 4 cm
-// along the bumpy normal at 10 m, which took them through the next wall in a room's corner: a ray from inside the wall
-// reached the sun past the backs of its faces, and the corner lit up in bright seams (a debug case).
-float3 PixelRayOrigin(PixelSurface surface, float3 side)
+// A pixel's ray leaves on the side `side` points to: off the triangle, past that very surface, or off the depth's point
+// with copies of the surface skipped, where the scene has no surface there. Until 2026-11-02 the global illumination's and
+// the opaque reflections' always left the depth's point, 4 cm along the bumpy normal at 10 m, which took them through the
+// next wall in a room's corner: a ray from inside the wall reached the sun past the backs of its faces, and the corner lit
+// up in bright seams (a debug case).
+void PixelRayStart(PixelSurface surface, float3 side, out float3 origin, out float tolerance)
 {
-    return surface.isExact ? LiftOffTriangle(surface.position, side) : OffsetFromScreenSurface(surface.position, side);
+    origin = surface.isExact ? LiftOffTriangle(surface.position, side) : OffsetFromScreenSurface(surface.position, side);
+    tolerance = surface.isExact ? 0.0f : CopyTolerance(surface.position);
 }
 
 // A bumpy normal tilts some of a pixel's rays under the triangle they leave: mirrored back above it. Left there, the

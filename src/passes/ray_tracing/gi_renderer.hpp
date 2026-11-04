@@ -121,8 +121,11 @@ struct Frame
     kick_traces::KickTraces traces; // The one answer to what runs; a texture a trace needs is there when it runs
     bool showScene{}; // The output shows the traced scene instead of the light
     bool logOften{};  // Diagnostics: the light's statistics logged every few frames (as each readback returns), not every ten seconds
-    // Self-lit meshes' light: its scale from the game's units, and the most radiance one lights others with, so scaled.
+    // Self-lit meshes' light: its scale from the game's units, and the most radiance one lights others with, so scaled;
+    // what tunes each and a number that changes with it (scene_contents::GameScene).
     float emissionScale{}, emissionCap{};
+    scene_description::SelfLightFilter selfLight{};
+    std::uint64_t selfLightVersion{};
     // The game's shadow map range (cPSLight c8.x, c8.y, c6.x, and 1 once known) and the tangent of the sun's
     // angular radius.
     std::array<float, 4> shadowRange{};
@@ -134,6 +137,7 @@ struct Frame
     bool twoSidedShadows{};  // Diagnostics: rays towards lights blocked by every surface from both sides, as until 2026-10-26
     LightDebugView lightDebugView{}; // Diagnostics, with textures.lightDebug
     std::uint32_t lightRays{2}; // The light's rays a light pixel, 1 to 4 (TraceLight)
+    bool usesShortLightRays{true}; // They look LightRayReach metres, not without end
     // The chosen lights, at most GI_MAX_LOCAL_LIGHTS, and the shadow rays a pixel they take.
     std::vector<LocalLight> localLights;
     std::uint32_t localLightRays{1};
@@ -151,13 +155,14 @@ struct Result
 };
 
 // Throws when the GPU cannot trace rays (DXR 1.1) or Direct3D 12 fails.
-void start(ID3D11Device* device, HANDLE sharedFence);
+void start(ID3D11Device* device, HANDLE sharedFence, bool usesMicromaps);
 void stop() noexcept;
 bool started() noexcept;
 
 // Records and submits the frame: waits for frame.waitValue on the shared fence, signals
 // frame.signalValue when the output is written. Throws on Direct3D 12 errors.
-Result render(const Frame& frame);
+// Takes the frame's model instances over (frame.modelInstances is left empty).
+Result render(Frame& frame);
 
 // After the game drew this frame's glass and mirrors: their reflections, on the scene render built. Waits for `waitValue` on
 // the shared fence and signals `signalValue` when they are written. False, with nothing submitted, when the last render

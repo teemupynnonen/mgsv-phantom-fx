@@ -256,7 +256,7 @@ what draws it, when that is the feature's own.
 | `src/dev/held_camera.cpp`, `src/dev/held_camera.hpp` | A debug case's camera, which photo mode's camera update takes |
 | `src/dev/perf_record.cpp`, `src/dev/perf_record.hpp` | What frames cost, on file, a row a second and captures for comparing frames (see "Costs on file") |
 | `src/dev/save_redirect.cpp`, `src/dev/save_redirect.hpp` | The automation copy of the game: its saves, backups and display settings kept apart from the player's |
-| `tools/automation/` | Dev builds: `fx.py` talks to the running game, `case.py` reports a debug case, `perf.py` reads and compares the costs on file, `install.ps1` and `launch.ps1` run the automation copy; `check_release.py` fails if any of it reached a release build |
+| `tools/automation/` | Dev builds: `fx.py` talks to the running game, `case.py` reports a debug case, `perf.py` reads and compares the costs on file, `scout.py` scouts showcase shots (a pose, time and weather, Phantom FX on and off, kept in a shot list), `install.ps1` and `launch.ps1` run the automation copy; `check_release.py` fails if any of it reached a release build |
 | `src/resource_dump.cpp`, `src/resource_dump.hpp` | Format names, constant rows, DDS saving for the dumps |
 | `src/shader_bytecode.cpp`, `src/shader_bytecode.hpp` | DXBC checksum (bytes 4 to 20 of the container), the instruction walk, the output saturation patch, the dither patch |
 | `src/log.cpp`, `src/log.hpp` | `PhantomFX.log` beside the add-on, one per game session |
@@ -1327,12 +1327,16 @@ level at Camp Omega's cliffs. No names in the exe: the class names here are desc
   holding its shader resource view at `+8`). The manager's streaming list (`+0x10` to `+0x18`, 24-byte
   nodes whose first word points 0x10 into a record) leaves a few loaded textures out. Neither the model
   objects nor their materials hold the texture: the draws bind it by id.
-- **Every model** (found 2026-10-23): the object registry (vtable `0x20F08C8`; the global at RVA
-  `0x2BA04A8` points to it) keeps a list of each object type's instances: at `+0x1E8` a table of list
-  headers by type number (`+0x38` of an object, a word; models are type 3, the global at RVA
-  `0x29E51B4`), each header the last object, the first and the count; objects are linked first to last
-  through `+0x10` (and back through `+0x18`). In Afghanistan the model list held 882 models: 566 rigid,
-  360 skinned. Characters are among them and in no visibility manager. So, at times, are a few rigid models, the
+- **Every model** (found 2026-10-23, corrected 2026-11-04): object registries, chained from the global at
+  RVA `0x2B73298` through `+0`, each keep a list of each object type's instances: `+0x30` points to a table
+  of pointers to list headers by type number less one (`+0x38` of an object, a word; models are type 3, the global at
+  RVA `0x29E51B4`), each header the first object, the last and the count; objects are linked last to first
+  through `+0x10` (and back through `+0x18`), and hold their registry at `+0x30` (the game's own unlinking,
+  `0x1B5640`). One registry held all 1242 models in Afghanistan, two more held none. The table was first
+  read at `+0x1E8` of the object at RVA `0x2BA04A8`, but that object is 0x1E0 bytes (`0x1B3B80`): the table
+  just happened to be allocated right after it, until another mod changed what the game allocates and
+  the scene lost every character, the helicopter and the swaying trees. On 2026-10-23, an earlier count, the model list held 882 models in Afghanistan: 566
+  rigid, 360 skinned (as noted then; they add up to 926). Characters are among them and in no visibility manager. So, at times, are a few rigid models, the
   scene taking those from here: the helicopter's cabin between missions (`84a2d14c3f28beb5`, `84a3b06a43ea483f`, at
   (0, 1200, 0), 71% of the frame there), 438 models in all there, and none at Mother Base or in Afghanistan. Arriving
   from another map no visibility manager holds it; straight from Mother Base one can. Without them the rays had no
@@ -1391,7 +1395,8 @@ The pixel shaders' `cPSMaterial` (`b4`, `float4 m_materials[8]`) has no copy on 
 memory at every draw, so a write to the pool shows at the next one. Zeroing the self-lit materials from outside
 the running game put out a floodlight panel and a wall lamp's bulb and they came back with the values; the light
 those lamps throw on the walls stayed, as it is a game light of its own (2026-11-01). The remastering tool
-(`src/remaster`, `src/dev/remaster`) stands on this.
+(`src/remaster`, `src/dev/remaster`) stands on this, and tunes those game lights apart, by their place, where the add-on
+records their light draws (its README, "Lamps").
 
 - **The pool.** At `[0x2B743B0]`: its rows at `+0x8`, their number at `+0x10` (5248), those in use at `+0x14`, a slot
   for each row at `+0x20` (12 bytes: the next in its hash bucket at `+2`, its uses at `+4`, its state at `+8`). A handle
@@ -2022,8 +2027,14 @@ the game's lights) is left alone until it runs.
   unbiased estimate. A diffuse ray that meets an emitter takes none of its light, as that would count it twice; a
   specular ray always does, which is how it shows in a reflection. A self-lit mesh left out of the 64, or on a
   character, gives its light to the diffuse rays that meet it. The intensities are set for how a bulb looks, and
-  rooms are lit by the lamps placed beside them: a mesh lights others with at most the sun's radiance
-  (`MostEmission`), and the menu's **Self-lit surfaces** (`path_traced_emission`, 1 by default, 0 to 4) scales it.
+  rooms are lit by the lamps placed beside them: a mesh lights others with 0.3% of its intensity (`SelfLitShare`),
+  at most the sun's radiance (`MostEmission`), and the menu's **Self-lit surfaces** (`path_traced_emission`, 1 by default,
+  0 to 4) scales it. Taken whole, a quarantine platform ceiling tube gave 52,462 at a metre against a median of about 620
+  (163 to 7,953) from the game's lamp at the same fixture, 8 pairs, and its corridors came out 9 to 37 times vanilla's
+  light. At a hundredth a tube lights about as its lamp does, but the lamps already carry it: a corridor with 21 tubes to
+  8 lamps was still 3.3 times vanilla's (1.5 without them). At 0.3% both corridors measured were about twice vanilla's
+  (on the side Snake's back does not cover in vanilla's frame), 2026-11-04. Most of that is light bouncing off the white
+  walls (albedo about 0.58), which the game's exposure does not see: it measures its own light (`light_combine.hpp`).
   A frame at Mother Base at night spends 2.5 to 3 ms on them at 1920 x 1080: about 1.5 ms the shadow rays, about 1 ms choosing
   one, and 0.3 ms the triangle and its texture. Dropping them outright is not free: 15% of the deck
   changes by over 10%. Rolling for their rays as for the moon's below saved 0.8 ms at most, and at that it visibly stirred
@@ -2632,7 +2643,7 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
 - **Geometry table** (`GIGeometry`, `t16`). A row per geometry, a structure's rows contiguous and in its
   order: the vertices' and indices' offsets, `GI_GEOMETRY_CUT_OUT`, `GI_GEOMETRY_UV`, its base texture
   (1 + its index in `g_SceneTextures`) and, for cut-out geometry with one (`GI_GEOMETRY_ALPHA_TEXTURE`),
-  the alpha below which light passes. The CPU keeps the table and copies the rows changed each frame.
+  the alpha below which light passes and the texels of its texture along a metre of it. The CPU keeps the table and copies the rows changed each frame.
   The learnt mean albedo (`LearnAlbedo`) is kept by row, for geometry without a texture, and starts
   over for each new row (`ClearNewGeometries`).
 - **Textures** (added 2026-10-23; draws no longer involved). A model mesh's base texture is its material
@@ -2702,14 +2713,58 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   mapped per draw); the G-buffer below `m_param.w` times a dither averaging a half. Measured at the draws
   (the 64-byte buffer's Map): `m_param` is (0, 0, 0, 1) on cut-out meshes' shadow draws and (0, 0, 0, 0)
   where nothing is tested. The rays test a cut-out geometry's alpha
-  against `CutOutThreshold` (0.5) at the level of detail its ray cone meets (`TextureLod`: Akenine-Moller
+  against `CutOutThreshold` (0.5) at the level of detail its ray cone meets (Akenine-Moller
   et al., Ray Tracing Gems chapter 20; the cone a pixel wide at the receiver, not spreading: rays to the
   sun run parallel, and its disc comes from the rays' spread over it). Spreading the cone as the sun's
   disc as well, as first built, read coarse levels of detail far from the receiver: at the default
   0.53 degrees a pylon's thin bars 20 to 40 m up fell under the threshold and its shadow broke into the
   bars' joints (2026-10-23).
+  The level comes from the mesh's average texels a metre (`GIGeometry::texelsPerMetre`, worked out when its texture
+  arrives), not its triangle's: a jungle frame runs about 20 million of these tests, and reading each candidate's vertices and
+  transform for it took 2 ms there, 0.8 to 1.1 ms elsewhere (2026-11-02). A placement's scale is left out too: it cost 0.3 ms more and
+  changed nothing. On one frozen frame the stored level and the worked-out one differ by no more than two frames of either.
+  Compare such things within one run: plants sway on the wind, so frames from two runs differ in their leaves and in the
+  moonlight through them, 2% of the jungle's frame by over 10%, with nothing changed.
   Reading `b0` back at the kick, as the first alpha copies did, gave the last draw's constants (0, so every
   texel blocked: the pylon's solid shadow).
+- **Opacity micromaps** (2026-11-02). Each triangle of a cut-out mesh carries 4^6 micro-triangles, each solid, clear or part of
+  both, baked from its texture's alpha at full detail (`BakeMicromaps`, the curve in `gi_micromap.hlsli`). A ray that lands on a
+  known one is settled by the hardware, with no alpha test. A mesh of over 3,900 triangles goes coarser, as each is baked whole in
+  one frame (`micromapLevelOf`); the largest seen has 1,990.
+  - **Runtime.** They need DXR 1.2 and Shader Model 6.9, and the system's Direct3D 12 stops at 6.8, so a device factory loads the
+    Agility SDK 1.620.1 runtime from `PhantomFX\D3D12` (`createAgilityDevice`). The kernels stay `cs_6_5` under the pipeline flag
+    `RAYQUERY_ALLOW_OPACITY_MICROMAPS_ON_PRE_SM69_SHADERS`. Without the DLL, or on a GPU that lacks them, the rays stay on the
+    system's runtime and test alpha as before. Only an RTX 5080 has run this.
+  - **The setting.** **Opacity micromaps** under Global illumination (`opacity_micromaps`, off by default) is read when the
+    renderer starts, as it picks the runtime. Off, the Agility SDK runtime never loads. It is a setting because no query tells
+    hardware from emulation: Microsoft's Agility SDK 1.619 table has RTX 40 and newer in hardware and older RTX cards emulating,
+    and both report the same raytracing tier. A test build on an RTX 3090 only lost time, so nobody gets it unasked.
+  - **One a mesh.** `Scene::micromaps` holds one for all that show a mesh, static or moving: a pose does not change how a texture
+    lies on a triangle. The key is its index buffer's address and its texture's slot. Moving meshes matter most: the jungle's 258
+    plants are characters. Refits read the indices, so they stay in the geometry pool, copied out of the frame's bake buffer.
+  - **Not hair or glass.** Hair must see each hit (`PassHair`). Glass carries `GI_GEOMETRY_CUT_OUT` and often an alpha that is no
+    hole: a micromap would let its solid parts stop sun rays that pass it (`CutOutBlocks`).
+  - **All or none.** A structure has room for no micromaps or all of them (`createBlas`), and `linkMicromaps` gives it one or the
+    other. With only some, it needed up to 19 kB more than either case, and its build wrote into the next structure. The GPU
+    hung with no page fault, on whichever operation met the damage, in about half of the launches where a texture came late.
+    `GetRaytracingAccelerationStructurePrebuildInfo` on the structure as built shows it.
+  - **The wait.** A static structure waits up to 90 frames for its textures (`MicromapWaitFrames`), then builds without: 45 at the
+    jungle's start against 126 with them. It never gets them later. A wait of 300 frames left none out in the one scene tried.
+  - **Two states.** Closest-hit rays (`TraceClosest`: bounces, reflections, the near stretch of rays to lights) take a part-solid
+    micro-triangle as what most of it is, and test no alpha (`closestRayFlags`). Rays past the near stretch to the sun or a lamp
+    keep testing it: that shadow is what a pixel shows directly.
+
+    | Jungle, one frozen frame, 1920 x 1080 | Saved | Frame moved over 10% |
+    | --- | --- | --- |
+    | Doing nothing | 0 | 0.5% |
+    | Four states | 2.1 ms | 0.5% |
+    | Two states on closest hits | 3.8 ms | 0.6% |
+    | Two states on every ray | 4.3 ms | 0.6%, south view 0.3% against 0 |
+
+    That is at the level used, 6. Levels 2, 4 and 5 moved 5.1, 4.7 and 1.8% of the frame with two states on every ray, and four
+    states saved less at each. Level 6 costs 16 MB in the jungle.
+  - **Baselines.** Compare with the setting off and the game restarted. `D3D12_RAYTRACING_INSTANCE_FLAG_DISABLE_OMMS` is no
+    baseline: it cost 0.35 ms over no micromaps at all.
 - **Instances.** The frame's `D3D12_RAYTRACING_INSTANCE_DESC`s (up to 131,072) are both the top
   level's input and what the kernels read (`t5`): one per placement of a model and per character, with
   its transform; the terrain rings with identity. `InstanceID` holds the kind (`GI_INSTANCE_*`, low 8
@@ -2719,7 +2774,7 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   instance, row, indices, vertices, transform. A hit the global illumination keeps packs its instance (20
   bits) and its geometry within the structure (12 bits) into one word.
 - **Recording order.** The pool's uploads and the table's rows; `ClearNewGeometries`, `TerrainGrid`,
-  `Skin`; the bottom levels and compactions; the instances' copy; the top level. Between frames the pool, the table and the instances are in the non-pixel shader resource state.
+  `Skin`; `BakeMicromaps` and the micromap arrays; the bottom levels and compactions; the instances' copy; the top level. Between frames the pool, the table and the instances are in the non-pixel shader resource state.
 - **Hidden mesh groups** (2026-10-26). A rigid model has its mesh groups' states too, as a character
   does (`hiddenGroupsOf` in `engine_scene.cpp`: the same count and state bytes on the model object, a
   group hidden while any of bits 0x33 is set), and a placement carries the groups its model hides
@@ -2912,12 +2967,13 @@ denoiser (see "Ray Reconstruction").
   rest, glass, mirrors and rivers, keeps its own start, as its surface is not in the opaque depth, while
   the sea, in the G-buffer, leaves as any surface does). A ray from the eye through the pixel looks for
   the scene's own surface near the depth's point (within 3 cm plus 2% of the distance; cut-out geometry
-  by its alpha), searching that stretch alone: the game hides what comes between the camera and the
-  player (a bush the camera backs into) and the scene keeps it. Searched from the eye, the ray stopped on its leaves and those pixels left from the depth's point,
-  inside the coarser rock behind for some, so the hidden bush's leaves showed as shadows on what lay
+  by its alpha, stand-ins passed), searching that stretch alone: the game hides what comes between the
+  camera and the player (a bush the camera backs into) and the scene keeps it. Searched from the eye,
+  the ray stopped on its leaves and those pixels left from the depth's point, inside the coarser rock
+  behind for some, so the hidden bush's leaves showed as shadows on what lay
   behind (the shadow probe, 2026-10-24: the camera's ray met leaves 0.1 to 1.4 m away, the game's
-  surface 2.4 to 5.9 m). Found, the shadow ray leaves its exact
-  point on the triangle, from the side facing the light, lifted off it along the normal by 16 float
+  surface 2.4 to 5.9 m). Found, the ray leaves its exact
+  point on the triangle, a shadow ray from the side facing the light, lifted off it along the normal by 16 float
   steps of the point's largest coordinate (`LiftOffTriangle`; coordinates under 128 m count as 128),
   and nothing near it is skipped. That is about 2 mm at 1,200 m from the map's origin, where the game's
   maps reach. The point comes from the triangle's corners and the ray is traced in the instance's own
@@ -2936,13 +2992,22 @@ denoiser (see "Ray Reconstruction").
   every ray left that way: a lamp's hard shadow showed the skip taking a character pressed to a wall
   for a copy of the wall, light through his back in patches ragged along the wall's bumpy normals.
   The global illumination's and the opaque reflections' first rays all left that way until 2026-11-02,
-  and do now only where the scene has no surface near the depth's point. In a room's inside corner the lift, 4 cm at 10 m, followed a bumpy normal through the next wall; from inside a wall
-  a ray towards the sun passes the backs of its faces, so whatever those rays met was sunlit, and the
+  and do now only where the scene has no surface near the depth's point. In a room's inside corner the
+  lift, 4 cm at 10 m, followed a bumpy normal through the next wall; from inside a wall a ray towards
+  the sun passes the backs of its faces, so whatever those rays met was sunlit, and the
   corners lit up in bright seams (a debug case: 0 of 64 rays reached the room from those pixels, 60 to
   64 from their neighbours), and that room's back wall took about half its light that way. A bumpy
   normal also tilts some rays under the triangle they leave. They are mirrored back above it
   (`MirrorAboveSurface`): left there, the reflections' showed as white veins along the bumps of a dark
   wall, whether copies of the surface were skipped or not.
+  They went on skipping copies from their new start until 2026-11-03, as their rays stop on any face
+  where a shadow ray passes undersides. That risked what it had done to the shadow rays: a wall's next
+  facet in a shallow crease, or a character against a wall, taken for a copy and passed. Without the
+  skip no fault was measured gone and no dark undersides appeared: in that debug case's room the skips
+  a frame fell from 280,000 to 211,000 while its light and cost stayed within two runs' noise, and the
+  ruins' and Snake's boots on a deck read the same. The stretch passes stand-ins since then too: a pixel
+  behind one left from the depth's point, though only 48 of 134 recorded debug cases had any there, the
+  worst 0.47% of its frame.
 - **Cut-out meshes.** A model mesh the game alpha-tests (FMDL alpha bits 5 and 7, see "Scene objects",
   mesh flags) is cut-out geometry: non-opaque in its structure, so only it reaches the rays' candidate
   code. In the captured-mesh era the shadow rays' alpha test on the captured grass and bushes' cards (5
@@ -3897,6 +3962,14 @@ F2 does nothing.
   +y: 5 m/s, 25 m/s with Shift, 0.5 m/s with C, by real time (`QueryPerformanceCounter`, at most 0.1 s
   a step). The active camera's rotation and position are replaced for the original update and put back
   after it, so the game's camera keeps its own.
+- **Lens.** The free camera keeps the focal length the game camera had when photo mode began (21 mm
+  with the player standing; the game changes it with what the player does, which moved repeated
+  automation shots of one pose). A held camera can give its own (`camera ... <mm>`); either way it is
+  written to the active camera's `+0x3C` for the update with the rest.
+- **Live (dev build only).** After the automation line `live 1`, a held camera leaves the game running
+  under it until released, for timelapses: frozen, the sky keeps its time of day even when the clock
+  is set (`vars.clock` changes, the light does not). The clock's speed is the game's
+  `TppCommand.Weather.SetClockTimeScale` (20 normally).
 - **Teleport (dev build only).** Enter leaves photo mode and warps the player to the free camera's
   position, facing the camera's yaw. The game's warp needs game time, so the request is taken at the
   next selector update (which also clears the pause), and a held camera, as a debug case leaves behind,

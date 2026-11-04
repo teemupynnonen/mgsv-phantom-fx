@@ -92,8 +92,15 @@ struct Layer
 // the first lowest). For path tracing's hits: its SRM and normal textures' path hashes (SpecularMap_Tex_LIN,
 // NormalMap_Tex_NRM, 0 without), its row of the game's material table (MatParamIndex_0), each vertex's normal
 // and tangent (four halves each, as the file has them) and a self-lit mesh's light (SelfColor x
-// SelfColorIntensity, in the game's units, none on any other). Its layer, unless it has none, its technique is not known to
-// read one or its vertices lack the coordinates that takes.
+// SelfColorIntensity, in the game's units, none on any other) with what the file says of it. Its layer, unless it has none,
+// its technique is not known to read one or its vertices lack the coordinates that takes.
+// A self-lit material as its model file has it: its name's StrCode64, its SelfColor and SelfColorIntensity.
+struct SelfLight
+{
+    std::uint64_t material{};
+    std::array<float, 4> color{}, intensity{};
+};
+
 struct ModelPart
 {
     std::uint32_t mesh{};
@@ -105,6 +112,7 @@ struct ModelPart
     std::optional<Layer> layer;
     std::uint32_t materialIndex{};
     std::array<float, 3> emission{};
+    std::optional<SelfLight> selfLight;
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> uvs;
     std::vector<std::array<std::uint16_t, 8>> normals;
@@ -173,6 +181,7 @@ struct Material
 {
     std::uint32_t flags{}, texture{};
     float alphaThreshold{};
+    float texelsPerMetre{}; // Where its alpha is tested: the texture's texels along a metre of the mesh, on average
     std::uint32_t specularTexture{}, normalTexture{}, materialIndex{};
     std::array<float, 3> emission{};
     std::uint32_t layerTexture{}, layerMaskTexture{};
@@ -182,19 +191,19 @@ struct Material
 struct MaterialTextures
 {
     std::optional<std::uint32_t> base, specular, normal, layer, layerMask;
+    float baseTexelsAcross{}; // The square root of the base texture's copy's texels
 };
 
 ModelFile fileKindOf(std::span<const std::uint8_t> file);
 
 // What the caller makes of a self-lit material's SelfColor and SelfColorIntensity, the material by its
-// name's StrCode64: the mesh's light (ModelPart::emission) follows, its role does not.
+// name's StrCode64: the mesh's light in its material (materialOf) follows, its role does not.
 using SelfLightFilter = void (*)(std::uint64_t material, std::array<float, 4>& color, std::array<float, 4>& intensity);
 
 // The model in `file` as the scene takes it, found at `source`; null when the bytes are no FMDL 2.0x
 // the scene reads. With `keepsDropped`, for a revealed scene, the meshes the scene drops are kept as
 // solid ones, marked ModelPart::isDropped.
-std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const std::uint8_t> file, Source source, bool keepsDropped = false,
-    SelfLightFilter selfLight = nullptr);
+std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const std::uint8_t> file, Source source, bool keepsDropped = false);
 
 // Cut-out, leaf and hair meshes: the rays test their texture's alpha.
 bool isCutOut(MeshRole role);
@@ -204,6 +213,6 @@ std::array<std::uint64_t, 5> texturePathsOf(const ModelPart& part);
 
 // The mesh's material, with its textures once the game's are copied into the scene's textures: its base
 // texture's colour and, with its mask, its layer for the hits' albedo, a cut-out mesh's alpha for the shadow rays' test,
-// and the SRM and normal textures path tracing's hits read.
-Material materialOf(const ModelPart& part, const MaterialTextures& textures);
+// and the SRM and normal textures path tracing's hits read. A self-lit mesh's light is as `selfLight` leaves it.
+Material materialOf(const ModelPart& part, const MaterialTextures& textures, SelfLightFilter selfLight = nullptr);
 }

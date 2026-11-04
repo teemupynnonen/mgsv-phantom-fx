@@ -33,6 +33,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 
 // The kernels' DXIL, in gi_d3d12::Kernel's order (CMakeLists.txt).
@@ -61,10 +62,83 @@ constexpr float DefaultAlbedo = 0.2f;
 // yet, or a mesh without texture coordinates) blocks beyond the game's shadow map, and how far the rays
 // look for what blocks the sun.
 constexpr float AlphaTestedBlocking = 0.5f, ShadowRayLength = 5000;
+// How far global illumination's diffuse rays look for a hit with Short rays, metres (LightRayReach in gi_hit_light.hlsli):
+// what lies further out lights little, and the long rays cost the most to trace.
+constexpr std::uint32_t LightRayReach = 100;
 // Diagnostics: the most phases a frame's list times.
 constexpr std::uint32_t MaxMarks = 32;
 
 using Shared = OpenedTexture;
+
+// Opacity micromaps need the Agility SDK runtime the build puts beside the add-on (PhantomFX\D3D12,
+// CMakeLists.txt). The game's exe exports no SDK version, so a device factory loads it. Its Shader
+// Model 6.9 lets the kernels' RayQuery (6.5) meet opacity micromaps through a pipeline flag.
+constexpr UINT AgilitySdkVersion = 620;
+constexpr GUID AgilityConfiguration{0x7cda6aca, 0xa03e, 0x49c8, {0x94, 0x58, 0x03, 0x34, 0xd2, 0x0e, 0x07, 0xce}}; // CLSID_D3D12SDKConfiguration
+constexpr auto RayQueryAllowsMicromaps = static_cast<D3D12_PIPELINE_STATE_FLAGS>(0x80); // ..._RAYQUERY_ALLOW_OPACITY_MICROMAPS_ON_PRE_SM69_SHADERS
+
+// A device of the Agility SDK runtime on Direct3D 11's GPU, for a GPU that can use micromaps; null, with the reason logged,
+// otherwise, and the rays stay with the system's runtime.
+ComPtr<ID3D12Device> createAgilityDevice(ID3D11Device* device11)
+{
+    HMODULE addon{};
+    wchar_t path[MAX_PATH]{};
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(&createAgilityDevice), &addon)
+        || !GetModuleFileNameW(addon, path, MAX_PATH))
+        return nullptr;
+
+    // Direct3D takes the runtime's folder in the system's code page, which not every folder's name fits.
+    const auto directory = std::filesystem::path(path).parent_path() / "PhantomFX" / "D3D12";
+    std::string sdkPath;
+    try
+    {
+        sdkPath = directory.string() + "\\";
+    }
+    catch (const std::system_error&)
+    {
+        log("Opacity micromaps: the system's code page cannot name the add-on's folder; the system's Direct3D 12 traces without them.");
+        return nullptr;
+    }
+
+    if (!std::filesystem::exists(directory / "D3D12Core.dll"))
+    {
+        log("Opacity micromaps: no Agility SDK runtime at " + sdkPath + "; the system's Direct3D 12 traces without them.");
+        return nullptr;
+    }
+
+    ComPtr<ID3D12SDKConfiguration1> configuration;
+    ComPtr<ID3D12DeviceFactory> factory;
+    auto result = D3D12GetInterface(AgilityConfiguration, IID_PPV_ARGS(&configuration));
+    if (SUCCEEDED(result)) result = configuration->CreateDeviceFactory(AgilitySdkVersion, sdkPath.c_str(), IID_PPV_ARGS(&factory));
+
+    ComPtr<IDXGIDevice> dxgi;
+    ComPtr<IDXGIAdapter> adapter;
+    if (SUCCEEDED(result)) result = device11->QueryInterface(IID_PPV_ARGS(&dxgi));
+    if (SUCCEEDED(result)) result = dxgi->GetAdapter(adapter.GetAddressOf());
+
+    ComPtr<ID3D12Device> device;
+    if (SUCCEEDED(result)) result = factory->CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device));
+    if (FAILED(result))
+    {
+        log("Opacity micromaps: the Agility SDK runtime did not start (" + hex(static_cast<std::uint32_t>(result)) + "); the system's Direct3D 12 traces without them.");
+        return nullptr;
+    }
+
+    D3D12_FEATURE_DATA_D3D12_OPTIONS5 options{};
+    D3D12_FEATURE_DATA_SHADER_MODEL shaderModel{D3D_SHADER_MODEL_6_9};
+    device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options, sizeof(options));
+    const bool hasShaderModel69 = SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &shaderModel, sizeof(shaderModel)))
+        && shaderModel.HighestShaderModel >= D3D_SHADER_MODEL_6_9;
+    if (options.RaytracingTier < D3D12_RAYTRACING_TIER_1_2 || !hasShaderModel69)
+    {
+        log("Opacity micromaps: unavailable (needs DXR 1.2 and Shader Model 6.9).");
+        return nullptr;
+    }
+
+    log("Opacity micromaps: on (DXR 1.2, Shader Model 6.9).");
+    return device;
+}
 
 // Diagnostics: the steps of a frame's CPU time.
 enum CpuStep { WaitStep, ProbeStep, ContentsStep, RecordStep, CpuSteps };
@@ -81,6 +155,7 @@ struct State
 {
     ComPtr<ID3D12Device> wrapper;
     ComPtr<ID3D12Device5> device;
+    bool hasMicromapSupport{}; // The Agility SDK runtime, on a GPU with DXR 1.2
     ComPtr<ID3D12CommandQueue> queue;
     ComPtr<ID3D12Fence> fence;
     std::array<ComPtr<ID3D12CommandAllocator>, FramesInFlight> allocators;
@@ -240,6 +315,7 @@ void createPipelines(State& s)
         D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline{};
         pipeline.pRootSignature = s.rootSignature.Get();
         pipeline.CS = {Bytecode[kernel].data(), Bytecode[kernel].size()};
+        if (s.hasMicromapSupport) pipeline.Flags = RayQueryAllowsMicromaps;
         check(s.device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&s.pipelines[kernel])), "Creating a kernel");
     }
 
@@ -265,7 +341,7 @@ void createResources(State& s)
     // The game's textures' descriptors follow the frames' tables.
     auto textureRange = s.heap->GetCPUDescriptorHandleForHeapStart();
     textureRange.ptr += std::size_t{TableSize} * FramesInFlight * s.descriptorSize;
-    s.scene = std::make_unique<gi_scene::Scene>(device, textureRange, s.descriptorSize);
+    s.scene = std::make_unique<gi_scene::Scene>(device, textureRange, s.descriptorSize, s.hasMicromapSupport);
     s.contents = std::make_unique<scene_contents::SceneContents>(*s.scene);
     s.geometryAlbedo = createStorage(device, std::uint64_t{MaxGeometries} * 16, "Creating the geometry albedo");
     s.counters = createStorage(device, GI_COUNTER_COUNT * 4, "Creating the counters");
@@ -438,14 +514,25 @@ gi_denoiser::Camera denoiserCamera(const Frame& frame)
 }
 }
 
-void start(ID3D11Device* device11, HANDLE sharedFence)
+void start(ID3D11Device* device11, HANDLE sharedFence, bool usesMicromaps)
 {
     if (state) return;
 
     auto s = std::make_unique<State>();
-    const auto d3d12 = createDevice12(device11);
-    s->wrapper = d3d12.wrapper;
-    check(d3d12.native.As(&s->device), "Finding Direct3D 12 ray tracing");
+    if (!usesMicromaps) log("Opacity micromaps: off in the settings; the system's Direct3D 12 traces without them.");
+    if (const auto agility = usesMicromaps ? createAgilityDevice(device11) : nullptr)
+    {
+        s->wrapper = agility;
+        check(agility.As(&s->device), "Finding Direct3D 12 ray tracing");
+        s->hasMicromapSupport = true;
+    }
+    else
+    {
+        const auto d3d12 = createDevice12(device11);
+        s->wrapper = d3d12.wrapper;
+        check(d3d12.native.As(&s->device), "Finding Direct3D 12 ray tracing");
+    }
+
     D3D12_FEATURE_DATA_D3D12_OPTIONS5 options{};
     s->device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options, sizeof(options));
     if (options.RaytracingTier < D3D12_RAYTRACING_TIER_1_1) throw std::runtime_error("The GPU or its driver cannot trace rays from compute shaders (DXR 1.1).");
@@ -669,6 +756,16 @@ std::string percentOf(std::uint64_t used, std::uint64_t capacity)
     return std::to_string(capacity ? used * 100 / capacity : 0) + "%";
 }
 
+// The scene's opacity micromaps.
+std::string micromapStatus(const gi_scene::Scene::Stats& stats, bool hasMicromapSupport)
+{
+    if (!hasMicromapSupport) return "opacity micromaps unavailable";
+
+    return std::format("opacity micromaps on {} meshes of {} structures ({}M micro-triangles; pool {} of {} MB), {} waiting, {} built without, {} refused room",
+        stats.micromapMeshes, stats.micromapStructures, stats.microTriangles / 1'000'000, stats.micromapUsed >> 20, stats.micromapCapacity >> 20,
+        stats.waitingForMicromaps, stats.builtWithoutMicromaps, stats.micromapsRefused);
+}
+
 // The probe as text, and a key that changes when what blocks its ray changes.
 std::pair<std::string, std::string> describeProbe(const State& s, std::span<const InstancedModel> instancedModels, const GIShadowProbe& probe)
 {
@@ -783,6 +880,7 @@ void readProbe(State& s, std::uint32_t slot)
     }
 }
 
+
 // Diagnostics: every ten seconds, what a frame cost on average.
 void logTally(State& s)
 {
@@ -844,7 +942,7 @@ std::function<void(const char*, std::optional<performance::Pass>)> timestampMark
 }
 }
 
-Result render(const Frame& frame)
+Result render(Frame& frame)
 {
     auto& s = *state;
     const auto started = clock::ticksNow();
@@ -921,18 +1019,20 @@ Result render(const Frame& frame)
     // ---- The scene's contents: the game's models, textures, characters and terrain, then the frame's
     // instances ----
     const bool terrain = frame.terrain.has_value();
-    const scene_contents::GameScene game{.frameIndex = frame.frameIndex,
+    scene_contents::GameScene game{.frameIndex = frame.frameIndex,
         .eye = frame.eye,
         .newModels = frame.newModels,
         .hasNewLists = frame.modelInstancesUpdated,
-        .placements = frame.modelInstances,
+        .placements = std::move(frame.modelInstances),
         .characters = frame.characters,
         .newTextures = frame.newTextures,
         .terrainEye = terrain ? std::optional(frame.eye) : std::nullopt,
         .seaCentre = frame.seaLevel ? std::optional(std::array{frame.eye[0], *frame.seaLevel, frame.eye[2]}) : std::nullopt,
-        .shouldListInstances = frame.debugShadows || std::ranges::any_of(trace::inOrder(), [&](const auto* each) { return each->listsInstances(frame); })};
+        .shouldListInstances = frame.debugShadows || std::ranges::any_of(trace::inOrder(), [&](const auto* each) { return each->listsInstances(frame); }),
+        .selfLight = frame.selfLight,
+        .selfLightVersion = frame.selfLightVersion};
     std::optional<State::SurfaceTrace> surfaceTrace;
-    auto update = s.contents->update(game);
+    auto update = s.contents->update(std::move(game));
     s.instancedModels[slot] = std::move(update.instanced);
     result.releasedModels = std::move(update.releasedModels);
     result.releasedTextures = std::move(update.releasedTextures);
@@ -1010,6 +1110,10 @@ Result render(const Frame& frame)
         const auto paletteRows = palettes.size() / 4;
         const auto paletteOffset = uploads.reserve(16, paletteRows);
         std::memcpy(uploads.data + paletteOffset, palettes.data(), palettes.size() * sizeof(float));
+        const auto micromapJobs = scene.micromapJobs();
+        const auto micromapJobCount = static_cast<std::uint32_t>(micromapJobs.size());
+        const auto micromapJobsOffset = uploads.reserve(sizeof(GIMicromapJob), micromapJobCount);
+        std::memcpy(uploads.data + micromapJobsOffset, micromapJobs.data(), micromapJobs.size_bytes());
 
         const auto parity = frame.frameIndex & 1;
         const auto constantsOffset = uploads.reserve(256, (sizeof(GIFrameConstants) + 255) / 256);
@@ -1037,6 +1141,7 @@ Result render(const Frame& frame)
         constants.lightDiagnostics = {0, 0, lightDebug ? static_cast<std::uint32_t>(frame.lightDebugView) : 0u, 0};
         constants.reconstruction = {traces.isForReconstruction ? 1u : 0u, materialSpecular ? 1u : 0u, skyCube ? 1u : 0u, 0};
         constants.emission = {frame.emissionScale, frame.emissionCap, 0, 0};
+        constants.closestRayFlags = {s.hasMicromapSupport ? GI_RAY_FLAG_FORCE_OMM_2_STATE : 0u, 0, 0, 0};
         if (traces.isPathTraced)
         {
             const auto emitters = std::min<std::size_t>(update.emitters.size(), GI_MAX_EMITTERS);
@@ -1046,7 +1151,7 @@ Result render(const Frame& frame)
 
         // A ray a render pixel for Ray Reconstruction, whatever the ray quality: as many rays as High's four a
         // 2 x 2, the most a sample can take apart.
-        constants.lightRays = {traces.isForReconstruction ? 1u : frame.lightRays, 0, 0, 0};
+        constants.lightRays = {traces.isForReconstruction ? 1u : frame.lightRays, frame.usesShortLightRays ? LightRayReach : 0u, 0, 0};
 
         // ---- Descriptors ----
         descriptors.texture(binding::Depth, depth, DXGI_FORMAT_R32_FLOAT);
@@ -1063,6 +1168,8 @@ Result render(const Frame& frame)
         descriptors.outputBuffer(binding::Counters, s.counters.Get(), 4, GI_COUNTER_COUNT);
         descriptors.outputBuffer(binding::DispatchArgs, s.dispatchArguments.Get(), 16, GI_DISPATCH_SLOTS);
         descriptors.outputBuffer(binding::GeometryAlbedo, s.geometryAlbedo.Get(), 16, MaxGeometries);
+        descriptors.buffer(binding::MicromapJobs, s.upload[slot].Get(), micromapJobsOffset, sizeof(GIMicromapJob), micromapJobCount);
+        if (scene.bakeBuffer()) descriptors.outputRawBuffer(binding::MicromapBake, scene.bakeBuffer(), gi_scene::Scene::BakeBytes);
         if (terrain)
         {
             descriptors.texture(binding::TerrainPages, terrainPages, frame.terrain->pagesFormat);
@@ -1128,6 +1235,14 @@ Result render(const Frame& frame)
             if (update.terrain[r].isRemade) recorder.dispatch(Kernel::TerrainGrid, groups(GI_TERRAIN_CELLS, 8), groups(GI_TERRAIN_CELLS, 8), {r});
 
         if (skinCount) recorder.dispatch(Kernel::Skin, groups(skinVertices, 64), 1, {skinVertices, skinCount});
+
+        // The new meshes' micromaps: baked, a group a triangle, then their arrays.
+        recorder.mark("micromaps", performance::Pass::RayTracedScene);
+        scene.recordGeometryReady(list);
+        if (const auto bakeGroups = scene.micromapGroups())
+            recorder.dispatch(Kernel::BakeMicromaps, std::min(bakeGroups, 65535u), groups(bakeGroups, 65535), {bakeGroups, micromapJobCount});
+
+        scene.recordMicromaps(list);
 
         recorder.mark("bottom-level structures", performance::Pass::RayTracedScene);
         scene.recordBottomLevels(list);
@@ -1294,6 +1409,6 @@ std::string status()
         + percentOf(stats.poolUsed, stats.poolCapacity) + ", structures " + percentOf(stats.blasUsed, stats.blasCapacity) + " (" + std::to_string(stats.structures)
         + ", " + std::to_string(stats.compacted) + " compacted to " + compactedShare + " of their size, " + std::to_string(stats.waiting) + " waiting), "
         + std::to_string(stats.geometriesUsed) + " geometries; GPU: scene " + milliseconds(s.sceneMilliseconds) + ", light " + milliseconds(s.lightMilliseconds)
-        + ", shadows " + milliseconds(s.shadowMilliseconds) + "; " + s.contents->status();
+        + ", shadows " + milliseconds(s.shadowMilliseconds) + "; " + micromapStatus(stats, s.hasMicromapSupport) + "; " + s.contents->status();
 }
 }

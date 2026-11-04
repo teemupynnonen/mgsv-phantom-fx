@@ -11,6 +11,7 @@
 #include <wrl/client.h>
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -39,6 +40,13 @@ ComPtr<ID3D11ComputeShader> addLightShader;
 ComPtr<ID3D11Buffer> parameterBuffer;
 DrawTarget gameProbeLight;
 visibility_bitmask::Progress progress{"Global illumination"};
+// The last combine's traced light and strength, and the present it was recorded before.
+ComPtr<ID3D11ShaderResourceView> lastLight;
+float lastStrength{};
+std::uint64_t lastCombine{};
+std::atomic<std::uint64_t> presents{};
+// A combine older than this many presents is not this frame's.
+constexpr std::uint64_t AmbientFrames = 2;
 
 // Compiles the shader once; call with resourceMutex held. Returns false when it is unavailable.
 bool ensurePipeline()
@@ -78,6 +86,7 @@ void detach() noexcept
     addLightShader.Reset();
     parameterBuffer.Reset();
     gameProbeLight = {};
+    lastLight.Reset();
     device.Reset();
     pipelineFailed = false;
 }
@@ -97,6 +106,7 @@ void configure(const Configuration& configuration) noexcept
 void present() noexcept
 {
     latch.present();
+    presents.fetch_add(1, std::memory_order_relaxed);
 }
 
 void drawProbeLightAside(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call)
@@ -158,6 +168,21 @@ bool combine(ID3D11DeviceContext* context, ID3D11ShaderResourceView* diffuse, ID
     context->Dispatch(groups(width), groups(height), 1);
     progress.ran();
 
+    if (hasProbeLight && !settings.shownAlone)
+    {
+        lastLight = light;
+        lastStrength = settings.strength;
+        lastCombine = presents.load(std::memory_order_relaxed);
+    }
+
     return true;
+}
+
+std::optional<Ambient> ambient()
+{
+    std::lock_guard lock(resourceMutex);
+    if (!lastLight || !gameProbeLight.view || presents.load(std::memory_order_relaxed) - lastCombine > AmbientFrames) return std::nullopt;
+
+    return Ambient{lastLight, gameProbeLight.view, lastStrength};
 }
 }

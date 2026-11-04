@@ -140,9 +140,10 @@ SceneContents::SceneContents(SceneMemory& memory) : memory(memory)
     }
 }
 
-Update SceneContents::update(const GameScene& frame)
+Update SceneContents::update(GameScene&& frame)
 {
     Update update;
+    retuneSelfLight(frame);
     updateModels(frame, update);
     updateCharacters(frame, update);
     if (frame.terrainEye) planTerrain(*frame.terrainEye, frame.frameIndex, update);
@@ -163,7 +164,52 @@ scene_description::Material SceneContents::materialOf(const ModelPart& part) con
     };
 
     const auto [base, specular, normal, layer, layerMask] = texturePathsOf(part);
-    return scene_description::materialOf(part, {slotOf(base), slotOf(specular), slotOf(normal), slotOf(layer), slotOf(layerMask)});
+    const auto baseTexture = textures.find(base);
+    const float baseTexelsAcross = baseTexture != textures.end() ? baseTexture->second.texelsAcross : 0.0f;
+
+    return scene_description::materialOf(part, {slotOf(base), slotOf(specular), slotOf(normal), slotOf(layer), slotOf(layerMask), baseTexelsAcross},
+        selfLight);
+}
+
+// The self-lit meshes' light again when what tunes it has changed (the remastering tool), so the rays follow at once.
+void SceneContents::retuneSelfLight(const GameScene& frame)
+{
+    const bool isFirst = !selfLight;
+    selfLight = frame.selfLight;
+    if (isFirst || frame.selfLightVersion == std::exchange(selfLightVersion, frame.selfLightVersion)) return;
+
+    for (auto& [hash, record] : models)
+    {
+        const auto& parts = record.geometry->parts;
+        for (std::uint32_t i = 0; i < parts.size() && i < MaxModelParts && i < record.parts.size(); ++i)
+        {
+            if (!parts[i].selfLight) continue;
+
+            const auto material = materialOf(parts[i]);
+            if (material.emission != record.parts[i].material.emission) setPartMaterial(record, hash, i, material);
+        }
+    }
+}
+
+// A mesh's material, in the model's structure, its variants' and, for a skinned model, its characters' that show it.
+void SceneContents::setPartMaterial(ModelRecord& record, std::uint64_t hash, std::uint32_t part, const scene_description::Material& material)
+{
+    if (record.blas) memory.setMaterial(*record.blas, part, material);
+    if (part >= record.parts.size()) return;
+
+    record.parts[part].material = material;
+    for (const auto& variant : record.variants)
+    {
+        const auto shown = std::find(variant.parts.begin(), variant.parts.end(), part);
+        if (variant.blas && shown != variant.parts.end()) memory.setMaterial(*variant.blas, static_cast<std::uint32_t>(shown - variant.parts.begin()), material);
+    }
+
+    for (const auto& [id, character] : characters)
+    {
+        const auto shown = std::find(character.parts.begin(), character.parts.end(), part);
+        if (character.hash == hash && shown != character.parts.end())
+            memory.setMaterial(character.blas, static_cast<std::uint32_t>(shown - character.parts.begin()), material);
+    }
 }
 
 // The model's meshes laid out from `poolOffset` into `bytes`, and their geometries; a skinned model's
@@ -257,6 +303,7 @@ void SceneContents::updateTextures(const GameScene& frame)
         else ++texturesHeld;
 
         record.slot = slot;
+        record.texelsAcross = std::sqrt(static_cast<float>(made.width) * static_cast<float>(made.height));
         for (const auto user : record.users)
         {
             const auto model = models.find(user);
@@ -269,26 +316,7 @@ void SceneContents::updateTextures(const GameScene& frame)
                 const auto paths = texturePathsOf(parts[i]);
                 if (std::ranges::find(paths, made.path) == paths.end()) continue;
 
-                const auto material = materialOf(parts[i]);
-                if (modelRecord.blas) memory.setMaterial(*modelRecord.blas, i, material);
-                if (i >= modelRecord.parts.size()) continue;
-
-                // Its variants' structures, and a skinned model's characters' structures, that have it among
-                // the meshes they show.
-                modelRecord.parts[i].material = material;
-                for (const auto& variant : modelRecord.variants)
-                {
-                    const auto shown = std::find(variant.parts.begin(), variant.parts.end(), i);
-                    if (variant.blas && shown != variant.parts.end())
-                        memory.setMaterial(*variant.blas, static_cast<std::uint32_t>(shown - variant.parts.begin()), material);
-                }
-
-                for (const auto& [id, character] : characters)
-                {
-                    const auto shown = std::find(character.parts.begin(), character.parts.end(), i);
-                    if (character.hash == user && shown != character.parts.end())
-                        memory.setMaterial(character.blas, static_cast<std::uint32_t>(shown - character.parts.begin()), material);
-                }
+                setPartMaterial(modelRecord, user, i, materialOf(parts[i]));
             }
         }
     }
@@ -329,7 +357,7 @@ void SceneContents::useTextures(const Model& model, bool isUsed, Update& update)
 // The frame's models: new ones registered, the placed ones' meshes into the pool and their structures
 // made (as the frame's upload and the memory allow), those not placed for ModelRetentionFrames let go
 // (Update::releasedModels).
-void SceneContents::updateModels(const GameScene& frame, Update& update)
+void SceneContents::updateModels(GameScene& frame, Update& update)
 {
     for (const auto& model : frame.newModels)
     {
@@ -342,6 +370,7 @@ void SceneContents::updateModels(const GameScene& frame, Update& update)
         record.geometry = model;
         record.lastPlaced = frame.frameIndex;
         record.bounds = {FLT_MAX, FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX, -FLT_MAX};
+        for (const auto& part : model->parts) record.triangles += part.indices.size() / 3;
         for (const auto& part : model->parts)
             for (const auto& vertex : part.vertices)
                 for (int axis = 0; axis < 3; ++axis)
@@ -358,17 +387,20 @@ void SceneContents::updateModels(const GameScene& frame, Update& update)
 
     if (frame.hasNewLists)
     {
-        placements.assign(frame.placements.begin(), frame.placements.end());
+        placements = std::move(frame.placements);
         characterList.assign(frame.characters.begin(), frame.characters.end());
     }
 
-    // Placements come grouped by model (an instance group's, a brush plugin's): one lookup a run.
+    // Placements come grouped by model (an instance group's, a brush plugin's): one lookup a run. The few that hide
+    // mesh groups are noted for their variants below.
     auto found = models.end();
     std::uint64_t lastHash{};
+    std::vector<const ModelInstance*> hiding;
     for (const auto& placement : placements)
     {
         if (placement.hash != lastHash) found = models.find(lastHash = placement.hash);
         if (found != models.end()) found->second.lastPlaced = frame.frameIndex;
+        if (placement.hiddenGroups) hiding.push_back(&placement);
     }
 
     for (const auto& character : characterList)
@@ -436,9 +468,9 @@ void SceneContents::updateModels(const GameScene& frame, Update& update)
     // of its model's other meshes, made once its model's is.
     found = models.end();
     lastHash = 0;
-    for (const auto& placement : placements)
+    for (const auto* hider : hiding)
     {
-        if (!placement.hiddenGroups) continue;
+        const auto& placement = *hider;
         if (placement.hash != lastHash) found = models.find(lastHash = placement.hash);
         if (found == models.end() || !found->second.blas) continue;
 
@@ -459,6 +491,7 @@ void SceneContents::updateModels(const GameScene& frame, Update& update)
             if (group < 64 && ((placement.hiddenGroups >> group) & 1)) continue;
 
             variant.parts.push_back(i);
+            variant.triangles += record.geometry->parts[i].indices.size() / 3;
             geometries.push_back(record.parts[i]);
         }
 
@@ -751,11 +784,7 @@ void SceneContents::addInstances(const GameScene& frame, Update& update)
         if (!record.emitters.empty()) addEmitters(record, placement, isTrimmed ? &*variant : nullptr, *instance, frame.eye, update.emitters);
 
         ++modelInstanceCount;
-        const auto& parts = record.geometry->parts;
-        if (isTrimmed)
-            for (const auto i : variant->parts) modelTriangles += parts[i].indices.size() / 3;
-        else
-            for (const auto& part : parts) modelTriangles += part.indices.size() / 3;
+        modelTriangles += isTrimmed ? variant->triangles : record.triangles;
     }
 
     // The strongest at the eye are the rays' to aim at: the others' light comes through the rays that meet them.

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -15,4 +17,8 @@ std::string hookTool() noexcept;
 
 // A flash or a compare holds a material away from its values, and a sweep goes by value: they end first.
 void settleTool() noexcept;
+
+// A lamp's light draw, for the marks: where it is and its colour. A flash or a compare may change what the rules made
+// of its brightness. On the game's render threads.
+void noteLamp(std::uint16_t location, const std::array<float, 3>& at, const std::array<float, 3>& color, float& brightness) noexcept;
 }

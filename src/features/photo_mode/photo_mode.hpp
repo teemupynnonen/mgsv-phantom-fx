@@ -16,11 +16,12 @@ struct Controls
 };
 
 // A camera in world space: yaw 0 looks along +z, turning towards +x; the pitch is positive upwards.
-// Radians; roll is not kept.
+// Radians; roll is not kept. The lens's focal length in millimetres, 0 for the game camera's own.
 struct Pose
 {
     float position[3]{};
     float yaw{}, pitch{};
+    float focalLength{};
 };
 
 // Hooks the camera selector and the game's raw input on the supported build, with MinHook

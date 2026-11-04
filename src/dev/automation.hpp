@@ -22,8 +22,9 @@ struct ID3D11Resource;
 //   case [<name>]                 records a case (caseLines in automation.cpp)
 //   freeze                        photo mode frozen at the camera now
 //   release                       leaves the frozen camera, `probe`'s pixel and the debug view it turned on
-//   camera <x> <y> <z> <yaw> <pitch>  photo mode frozen at that pose (held_camera.hpp), radians
-//   move <x> <y> <z> <yaw> <pitch> <frames>  from the frozen camera there, one step each camera update
+//   camera <x> <y> <z> <yaw> <pitch> [<mm>]  photo mode frozen at that pose (held_camera.hpp), radians, through
+//                                 a lens of that focal length (the game camera's own without one)
+//   move <x> <y> <z> <yaw> <pitch> <frames> [<mm>]  from the frozen camera there, one step each camera update
 //   wait <frames>                 lets that many frames present
 //   wait_scene                    until the scene's work to do has stopped changing
 //   probe <x> <y>                 the shadow and lamp probes' text at that render pixel
@@ -36,14 +37,16 @@ struct ID3D11Resource;
 //   reveal off|all|<hash> ...     restarts the scene, taking what it leaves out: all of it or those models
 //   enhancements 0|1              the F1 switch
 //   setting <key>=<value>         a PhantomFX.ini line, applied at once (and saved, as the overlay does)
-//   diagnostic <name> <value>     debug_view, show_scene, two_sided_shadows or no_jitter
+//   diagnostic <name> <value>     debug_view, show_scene, two_sided_shadows, no_jitter or river_light
 //   lua <code>                    runs `code` in the game's Lua (game_lua.hpp), its value or error
 //   travel <map> [<x> <y> <z>]    afghanistan, africa or motherbase free roam (travel.hpp), at that place
-//   clock <seconds>               the time of day, its clock stopped there (weather.hpp)
+//   clock <seconds> [run]         the time of day, its clock stopped there (weather.hpp), or running on from it
+//   live 0|1                      a held camera leaves the game running, until released (timelapses)
 //   weather <type> [<fog>]|off    forces TppDefine.WEATHER's type, with the fog's density for Foggy; or lets go
 //   status                        frame counts, the camera, the scene
 //   peek <address|game+rva> [bytes]  the game's memory there, 256 bytes without saying, 4096 at most
 //   drawn <x> <y> <z> <radius>    where the main camera's rigid model draws of the next 10 frames put their models, near there
+//   remaster <line>               the remastering tool's own actions (remaster::runLine in dev/remaster/tool.hpp)
 //   owner <hash>                  every placement of that model the next snapshot finds: its owner, fields and raw bytes
 namespace phantom_fx::automation
 {

@@ -512,12 +512,14 @@ void selfLitMeshes()
         "An ordinary mesh keeps its role, with its row of the material table.");
 }
 
-// A self-lit material another part of the add-on tunes: the scene's light follows, by the material's name, and however dim
-// it gets the mesh stays what the file makes it.
+// A self-lit material another part of the add-on tunes: the light in its material follows, by the material's name, and
+// however dim it gets the mesh stays what the file makes it.
 void tunedSelfLight()
 {
     constexpr std::uint64_t Lamp = 0xE45333B9516F;
     const auto file = modelFile({{.alpha = 0x10, .shadow = 0x25, .hasUvs = true, .textureParameter = BaseTexture, .selfIntensity = 80, .materialName = Lamp}});
+    const auto model = describeModel(1, file, Source::VisibilityManager);
+    expect(model && partOf(*model, 0).role == MeshRole::Emissive, "A self-lit mesh is a lamp.");
 
     static float intensityWanted{};
     const SelfLightFilter tuneLamp = [](std::uint64_t material, std::array<float, 4>& color, std::array<float, 4>& intensity) {
@@ -527,18 +529,17 @@ void tunedSelfLight()
         intensity[0] = intensityWanted;
     };
 
+    const auto& lamp = partOf(*model, 0);
     intensityWanted = 10;
-    const auto tuned = describeModel(1, file, Source::VisibilityManager, false, tuneLamp);
-    expect(tuned && partOf(*tuned, 0).emission == std::array{10.0f, 5.0f, 0.0f}, "The light is what the filter leaves of its colour and intensity.");
+    expect(materialOf(lamp, {}, tuneLamp).emission == std::array{10.0f, 5.0f, 0.0f}, "The light is what the filter leaves of its colour and intensity.");
 
     intensityWanted = 0;
-    const auto dark = describeModel(1, file, Source::VisibilityManager, false, tuneLamp);
-    expect(dark && partOf(*dark, 0).role == MeshRole::Emissive, "A lamp tuned to nothing is still a lamp.");
-    expect(partOf(*dark, 0).emission == std::array{0.0f, 0.0f, 0.0f}, "It gives no light.");
+    expect(materialOf(lamp, {}, tuneLamp).emission == std::array{0.0f, 0.0f, 0.0f}, "Tuned to nothing, it gives no light.");
+    expect(materialOf(lamp, {}).emission == std::array{80.0f, 40.0f, 20.0f}, "Without a filter it has the file's light.");
 
-    const auto other = modelFile({{.alpha = 0x10, .shadow = 0x25, .hasUvs = true, .textureParameter = BaseTexture, .selfIntensity = 80, .materialName = 1}});
-    const auto untuned = describeModel(1, other, Source::VisibilityManager, false, tuneLamp);
-    expect(untuned && partOf(*untuned, 0).emission == std::array{80.0f, 40.0f, 20.0f}, "Another material's name is no match.");
+    const auto other = describeModel(1, modelFile({{.alpha = 0x10, .shadow = 0x25, .hasUvs = true, .textureParameter = BaseTexture, .selfIntensity = 80, .materialName = 1}}),
+        Source::VisibilityManager);
+    expect(other && materialOf(partOf(*other, 0), {}, tuneLamp).emission == std::array{80.0f, 40.0f, 20.0f}, "Another material's name is no match.");
 }
 
 // A mesh's layer (the white base of Kaz's beige coat, whose colour is all in its layer): what a hit needs of it, once its
@@ -633,6 +634,22 @@ void skinThroughBoneGroup()
 }
 
 // A debug case's revealed scene: a mesh the rules drop is kept as solid and marked, and still listed as dropped.
+// The rays read a cut-out's level of detail from this. A right triangle of 2 m sides over a whole 512-texel side of its texture has
+// its coordinates run half their length along a metre: 256 texels.
+void aCutOutMeshKnowsItsTexelsAMetre()
+{
+    ModelPart part;
+    part.role = MeshRole::CutOut;
+    part.vertices = {{0, 0, 0}, {2, 0, 0}, {0, 0, 2}};
+    constexpr std::uint32_t HalfOne = 0x3C00;
+    part.uvs = {0, HalfOne, HalfOne << 16};
+    part.indices = {0, 1, 2};
+
+    const auto material = materialOf(part, {.base = 6, .baseTexelsAcross = 512});
+    expect(std::abs(material.texelsPerMetre - 256.0f) < 1e-3f, "A cut-out mesh's texels a metre are its texture's over its coordinates' run along a metre.");
+    expect(materialOf(part, {}).texelsPerMetre == 0.0f, "A cut-out mesh waiting for its texture has none yet.");
+}
+
 void revealedSceneKeepsDroppedMeshes()
 {
     const auto file = modelFile({{16, 5}, {0, 0}}, false);
@@ -649,6 +666,7 @@ int main()
     try
     {
         revealedSceneKeepsDroppedMeshes();
+        aCutOutMeshKnowsItsTexelsAMetre();
         tarpSheetsCastThroughStandIn();
         solidStandInsCastTheSunAlone();
         pylonLattice();

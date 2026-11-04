@@ -358,7 +358,7 @@ void onFrameStart() noexcept
         const auto sky = weather::state();
         read.clock = sky.clock;
         read.weather = sky.requested ? static_cast<int>(*sky.requested) : -1;
-        read.isFrozen = held_camera::isHeld();
+        read.isFrozen = held_camera::isHeld() && !held_camera::isLive();
         read.camera = held_camera::lastCamera();
 
         std::lock_guard lock(recordMutex);

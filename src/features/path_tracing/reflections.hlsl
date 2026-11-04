@@ -227,7 +227,7 @@ float3 ReflectedLight(float3 origin, float3 normal, float tolerance, float3 dire
         float3 side = BounceSide(material.geometric, material.isLeaf, random, weight);
         float3 bounceDirection = mapToCosineHemisphere(random.rand2(), side);
         float3 bounceOrigin = all(side == material.geometric) ? origin : OffsetFromTriangle(material.world, side);
-        SceneHit bounce = TraceFromSurface(bounceOrigin, side, tolerance, bounceDirection, MAX_HIT_DISTANCE);
+        SceneHit bounce = TraceFromSurface(bounceOrigin, side, tolerance, bounceDirection, LightRayReach());
         throughput *= material.albedo * (weight / (1.0f - specularShare));
         if (!bounce.hit) return light + throughput * SkyRadiance(bounceDirection);
 
@@ -270,10 +270,12 @@ void TraceReflections(uint2 did : SV_DispatchThreadID)
     float cosineToEye;
     PixelSurface surface = PixelSurfaceAt(world, normal);
     float3 direction = MirrorAboveSurface(SpecularDirection(normal, toEye, alpha, random.rand2(), cosineToEye), surface.normal);
-    float3 origin = PixelRayOrigin(surface, surface.normal);
+    float3 origin;
+    float tolerance;
+    PixelRayStart(surface, surface.normal, origin, tolerance);
     float hitDistance;
     bool isRough = normalRoughness.w >= RoughSurface;
-    float3 light = ReflectedLight(origin, surface.normal, CopyTolerance(world), direction, PixelCone(world, g_Frame.rayCone.x + alpha), isRough, random, hitDistance);
+    float3 light = ReflectedLight(origin, surface.normal, tolerance, direction, PixelCone(world, g_Frame.rayCone.x + alpha), isRough, random, hitDistance);
     float3 exposed = RemoveNaNs(light) * g_Frame.nearFar.w;
     bool isGameBlended = hitDistance < SkyHitDistance && specularAlbedo.a > 0.0f;
     float fresnel = GameFresnel(normalRoughness.w, saturate(dot(normal, toEye)));

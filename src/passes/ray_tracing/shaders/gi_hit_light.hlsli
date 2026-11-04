@@ -30,6 +30,13 @@ RWStructuredBuffer<uint> g_HashGridCache_LightBuffer : register(u29); // Hits to
 #define kHashGridCache_FloatQuantize 1e3f
 #define MAX_HIT_DISTANCE 1e9f
 
+// How far global illumination's diffuse rays look for a hit: the light's, their bounces, the cache's third hits and the
+// reflections' bounces. Past it a ray takes the sky's light, as one that gets away does (GIFrameConstants::lightRays).
+float LightRayReach()
+{
+    return g_Frame.lightRays.y ? float(g_Frame.lightRays.y) : MAX_HIT_DISTANCE;
+}
+
 // Capsaicin's names for this frame's constants.
 #define g_BufferDimensions g_Frame.dimensions.xy
 #define g_FrameIndex g_Frame.dimensions.z

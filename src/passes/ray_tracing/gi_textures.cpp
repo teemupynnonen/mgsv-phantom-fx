@@ -164,7 +164,7 @@ std::optional<gi_renderer::SceneTexture> copyOf(ID3D11Device* device, ID3D11Devi
     copy.texture = made;
     copy.bytes = bytes;
     copy.source = reinterpret_cast<std::uintptr_t>(source);
-    return gi_renderer::SceneTexture{path, made.Get(), copy.isData ? dataViewOf(desc.Format) : formatsOf(desc.Format).second, wanted.MipLevels};
+    return gi_renderer::SceneTexture{path, made.Get(), copy.isData ? dataViewOf(desc.Format) : formatsOf(desc.Format).second, wanted.MipLevels, wanted.Width, wanted.Height};
 }
 }
 

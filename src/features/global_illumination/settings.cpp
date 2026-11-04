@@ -37,5 +37,18 @@ void describe(GlobalIllumination& light, SettingVisitor& visit)
             .max = 3,
             .standard = Defaults.strength,
             .tip = "1 is physically based; higher brightens the indirect light, 0 leaves only the sun and the lamps."});
+    visit.toggle(light.usesOpacityMicromaps,
+        {.iniKey = "opacity_micromaps",
+            .label = "Opacity micromaps",
+            .tip = "Rays pass leaves, fences and other cut-outs much faster, knowing which parts of them are solid or clear without reading "
+                   "their textures. RTX 40 and newer do this in hardware: turn it on there. Older RTX cards emulate it and can run slower. "
+                   "GPUs without DXR 1.2 ignore this. Takes a restart.",
+            .needsRayTracing = true});
+    visit.toggle(light.usesShortRays,
+        {.iniKey = "global_illumination_short_rays",
+            .label = "Short rays",
+            .tip = "The light's rays and their bounces look 100 m for what they hit, also those of path-traced reflections, and take the "
+                   "sky's light past it. What lies further out lights little, and the long rays cost the most: about 0.3 ms in the jungle "
+                   "and 0.7 ms in open country at 4K. Off looks however far."});
 }
 }
