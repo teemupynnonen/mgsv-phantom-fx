@@ -3674,8 +3674,8 @@ at `t14` with `s15`; `cPSMaterial` at `b4`, whose `[0]` holds the normal map's t
 - **Shadow.** Where the rays took the shadow's place on the ground, the river's draw takes a 1x1 white shadow map and a
   sampler that always passes, so the map's shadow, which no longer matches the rays' scene, does not darken the
   surface. The water takes no sun shadow of its own: its reflection is what the eye reads, and the bed's shadow stays
-  in the deferred lighting under it. Glass keeps the game's: it barely shows there, and a shadow of its own would take a
-  sun ray for each pixel of glass.
+  in the deferred lighting under it. Glass takes the rays' shadow too, a sun ray for each of its pixels (the forward
+  surfaces' composite).
 - **Reflection.** While the reflections are traced, the river's draw leaves its cube map out and records the water as a
   surface: its depth, its ripples' normal and, in the normal's `w`, negative, the share of what it reflects that
   shows. The sign marks water. The share is there and not in the weights because those blend: a pane drawn over a river
