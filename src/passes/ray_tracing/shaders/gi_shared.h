@@ -181,7 +181,7 @@ struct GIFrameConstants
     // The light (gi_light.hlsl): its rays, from a grid half the render size each way, and the hash grid
     // cache (AMD Capsaicin's HashGridCacheConstants).
     uint4 lightLayout;        // xy: the light's size; z: its pixels; w: frame parity
-    uint4 lightRays;          // x: rays a light pixel, 1, 2 or 4, twice on foliage (TraceLight)
+    uint4 lightRays;          // x: rays a light pixel, 1, 2 or 4, twice on foliage (TraceLight); y: how far they look, metres (0: no end)
     float4 cellSizes;         // y: hash cell size; z: smallest hash cell; w: hash tile size
     uint4 hashCounts;         // x: buckets; y: tiles; z: cells; w: tiles per bucket
     uint4 hashTileSizes;      // Cells across a tile, mips 0 to 3

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Global illumination is a little faster in open country.** Its rays and their bounces, also those of path-traced
+  reflections, now look 100 m for what they hit and take the sky's light past it. At 4K that saves about 0.7 ms of an
+  18 ms frame in Afghanistan and 0.3 ms in the jungle, and the picture looks the same. **Short rays** under Global
+  illumination turns it off.
 - **Rays no longer pass what lies right beside a surface.** Global illumination and path-traced reflections could take a
   surface close to the one they left for a copy of it and go through. Where the pixel's surface is known they now skip
   nothing, as the shadow rays do, and a stand-in in front of it no longer hides it. No spot measured looks different, and

@@ -62,6 +62,7 @@ struct Options
     int lightRays{4};   // The point and spot lights' shadow rays a pixel
     float sunSize{0.53f}; // The sun's angular diameter for the shadows and the light's hits, in degrees
     int lightPixelRays{2}; // The light's rays a light pixel (a 2 x 2 of render pixels): 1, 2 or 4
+    bool usesShortLightRays{true}; // The light's rays look LightRayReach metres (gi_renderer.cpp), not without end
     bool debugShadows{}; // Diagnostics: the shadow debug view and probe (shadowDebug, shadowProbe), with the shadows
     bool shadowStarts{}; // Diagnostics: the debug view shows where the shadow rays leave each pixel
     bool twoSidedShadows{}; // Diagnostics: every surface blocks rays towards lights from both sides, as until 2026-10-26
@@ -930,6 +931,7 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     frame.twoSidedShadows = options.twoSidedShadows;
     frame.lightDebugView = options.lightDebugView;
     frame.lightRays = static_cast<std::uint32_t>(std::clamp(options.lightPixelRays, 1, 4));
+    frame.usesShortLightRays = options.usesShortLightRays;
     // The lights' colours in the sun's units for the hits (gi_light.hlsl, LocalLightAt).
     for (auto& localLight : localLightsToTrace)
         for (auto& value : localLight.color) value *= LightScale;
@@ -1045,6 +1047,7 @@ void configure(const Configuration& configuration) noexcept
         .lightRays = settings.rayTracedLights.shadowRaysPerPixel,
         .sunSize = settings.sun.diameterDegrees,
         .lightPixelRays = settings.globalIllumination.raysPerLightPixel,
+        .usesShortLightRays = settings.globalIllumination.usesShortRays,
         .debugShadows = diagnostics.debugView == DebugView::ShadowRays || diagnostics.debugView == DebugView::ShadowStarts,
         .shadowStarts = diagnostics.debugView == DebugView::ShadowStarts,
         .twoSidedShadows = diagnostics.twoSidedShadows,

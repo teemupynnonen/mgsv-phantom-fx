@@ -10,6 +10,7 @@ struct GlobalIllumination
     float strength{1};
     int raysPerLightPixel{2};
     bool usesOpacityMicromaps{};
+    bool usesShortRays{true};
 
     bool operator==(const GlobalIllumination&) const = default;
 };
