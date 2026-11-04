@@ -256,7 +256,7 @@ what draws it, when that is the feature's own.
 | `src/dev/held_camera.cpp`, `src/dev/held_camera.hpp` | A debug case's camera, which photo mode's camera update takes |
 | `src/dev/perf_record.cpp`, `src/dev/perf_record.hpp` | What frames cost, on file, a row a second and captures for comparing frames (see "Costs on file") |
 | `src/dev/save_redirect.cpp`, `src/dev/save_redirect.hpp` | The automation copy of the game: its saves, backups and display settings kept apart from the player's |
-| `tools/automation/` | Dev builds: `fx.py` talks to the running game, `case.py` reports a debug case, `perf.py` reads and compares the costs on file, `install.ps1` and `launch.ps1` run the automation copy; `check_release.py` fails if any of it reached a release build |
+| `tools/automation/` | Dev builds: `fx.py` talks to the running game, `case.py` reports a debug case, `perf.py` reads and compares the costs on file, `scout.py` scouts showcase shots (a pose, time and weather, Phantom FX on and off, kept in a shot list), `install.ps1` and `launch.ps1` run the automation copy; `check_release.py` fails if any of it reached a release build |
 | `src/resource_dump.cpp`, `src/resource_dump.hpp` | Format names, constant rows, DDS saving for the dumps |
 | `src/shader_bytecode.cpp`, `src/shader_bytecode.hpp` | DXBC checksum (bytes 4 to 20 of the container), the instruction walk, the output saturation patch, the dither patch |
 | `src/log.cpp`, `src/log.hpp` | `PhantomFX.log` beside the add-on, one per game session |
@@ -3943,6 +3943,14 @@ F2 does nothing.
   +y: 5 m/s, 25 m/s with Shift, 0.5 m/s with C, by real time (`QueryPerformanceCounter`, at most 0.1 s
   a step). The active camera's rotation and position are replaced for the original update and put back
   after it, so the game's camera keeps its own.
+- **Lens.** The free camera keeps the focal length the game camera had when photo mode began (21 mm
+  with the player standing; the game changes it with what the player does, which moved repeated
+  automation shots of one pose). A held camera can give its own (`camera ... <mm>`); either way it is
+  written to the active camera's `+0x3C` for the update with the rest.
+- **Live (dev build only).** After the automation line `live 1`, a held camera leaves the game running
+  under it until released, for timelapses: frozen, the sky keeps its time of day even when the clock
+  is set (`vars.clock` changes, the light does not). The clock's speed is the game's
+  `TppCommand.Weather.SetClockTimeScale` (20 normally).
 - **Teleport (dev build only).** Enter leaves photo mode and warps the player to the free camera's
   position, facing the camera's yaw. The game's warp needs game time, so the request is taken at the
   next selector update (which also clears the pause), and a held camera, as a debug case leaves behind,

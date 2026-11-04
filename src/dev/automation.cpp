@@ -165,9 +165,10 @@ bool isSameValue(std::string_view a, std::string_view b)
 
 std::string text(const held_camera::Pose& pose)
 {
-    return std::format("{} {} {} {} {}", pose.position[0], pose.position[1], pose.position[2], pose.yaw, pose.pitch);
+    return std::format("{} {} {} {} {} {}", pose.position[0], pose.position[1], pose.position[2], pose.yaw, pose.pitch, pose.focalLength);
 }
 
+// A pose's five numbers; its focal length is read apart, as `move` puts its frames before it.
 std::optional<held_camera::Pose> readPose(std::istream& numbers)
 {
     held_camera::Pose pose;
@@ -176,10 +177,18 @@ std::optional<held_camera::Pose> readPose(std::istream& numbers)
     return std::nullopt;
 }
 
+// An optional last number: the focal length, or 0 (the game camera's lens) without one.
+float readFocalLength(std::istream& numbers)
+{
+    float millimetres{};
+
+    return numbers >> millimetres ? millimetres : 0.0f;
+}
+
 std::string status()
 {
     const auto camera = held_camera::lastCamera();
-    auto line = std::format("frame {}, presented {}, {}, ", game_loop::currentFrame(), presents.load(), held_camera::isHeld() ? "frozen" : "running");
+    auto line = std::format("frame {}, presented {}, {}, ", game_loop::currentFrame(), presents.load(), !held_camera::isHeld() ? "running" : held_camera::isLive() ? "held live" : "frozen");
     line += camera ? "camera " + text(*camera) : std::string("no camera yet");
 
     return line + "\n" + ray_tracing::status();
@@ -293,16 +302,24 @@ void run(Script& running, const std::string& line)
     else if (command == "camera")
     {
         std::istringstream numbers(rest);
-        if (const auto pose = readPose(numbers)) held_camera::hold(*pose);
-        else running.output += "error: camera <x> <y> <z> <yaw> <pitch>\n";
+        if (auto pose = readPose(numbers))
+        {
+            pose->focalLength = readFocalLength(numbers);
+            held_camera::hold(*pose);
+        }
+        else running.output += "error: camera <x> <y> <z> <yaw> <pitch> [<mm>]\n";
     }
     else if (command == "move")
     {
         std::istringstream numbers(rest);
-        const auto pose = readPose(numbers);
+        auto pose = readPose(numbers);
         int frames{};
-        if (pose && numbers >> frames) held_camera::move(*pose, frames);
-        else running.output += "error: move <x> <y> <z> <yaw> <pitch> <frames>\n";
+        if (pose && numbers >> frames)
+        {
+            pose->focalLength = readFocalLength(numbers);
+            held_camera::move(*pose, frames);
+        }
+        else running.output += "error: move <x> <y> <z> <yaw> <pitch> <frames> [<mm>]\n";
     }
     else if (command == "wait")
     {
@@ -519,13 +536,20 @@ void run(Script& running, const std::string& line)
     }
     else if (command == "clock")
     {
+        std::istringstream arguments(rest);
         float seconds{};
-        if (std::istringstream(rest) >> seconds)
+        std::string run;
+        if (arguments >> seconds)
         {
             weather::setClock(seconds);
-            weather::stopClock(true);
+            weather::stopClock(!(arguments >> run && run == "run"));
         }
-        else running.output += "error: clock <seconds>\n";
+        else running.output += "error: clock <seconds> [run]\n";
+    }
+    else if (command == "live")
+    {
+        if (rest == "0" || rest == "1") held_camera::setLive(rest == "1");
+        else running.output += "error: live 0|1\n";
     }
     else if (command == "weather" && rest == "off") weather::release();
     else if (command == "weather")
