@@ -1,6 +1,7 @@
 #pragma once
 
 #include "remaster/game_materials.hpp"
+#include "remaster/lamps.hpp"
 #include "dev/remaster/marks.hpp"
 #include "dev/remaster/tool_hooks.hpp"
 
@@ -8,6 +9,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Inside the remastering tool, which only a dev build has: its state and actions in tool.cpp, for the panel that draws
@@ -80,8 +82,46 @@ bool hasRule(const game_materials::Material& material);
 void holdOriginal(const game_materials::Material& material, bool isHeld);
 bool isComparing() noexcept;
 
+// A lamp of a mark: its rule's brightness, 1 without one.
+struct LampRow
+{
+    std::uint16_t location{};
+    std::array<float, 3> at{}, color{};
+    float brightness{1};
+    std::string label;
+    bool isTuned{};
+    bool isDrawn{}; // The game draws it now
+};
+
+// The marked lamps, brightest first.
+std::vector<LampRow> lampRowsOf(const Mark& mark);
+// For automation (runLine): the panel open on a mark's lamps, with that lamp chosen.
+void showLamp(std::size_t mark, const LampRow& lamp);
+std::vector<LampRule> lampRules();
+
+void selectLamp(const LampRow& lamp);
+std::optional<LampRow> selectedLamp();
+void flashLamp(const std::array<float, 3>& at);
+// The lamp's light times `brightness`, under a rule on the lamp; 1 with no label takes the rule away.
+void editLamp(const LampRow& lamp, float brightness);
+void setLampLabel(const LampRow& lamp, const std::string& label);
+void removeLampRule(const LampRule& rule);
+void holdOriginalLamp(const LampRow& lamp, bool isHeld);
+
 std::size_t unsavedRules();
 void saveRules();
 // Since the last save that worked.
 bool didSaveFail();
+
+// An automation line (automation.hpp, `remaster`), on the render thread as the panel: what it did, as text.
+//   mark                                 a mark here, as F6
+//   loaded                               every self-lit material loaded and every material drawn now, with its parameters
+//   rows [self-lit|glass|all]            the last mark's materials of that kind
+//   set <material> <parameter> <value>   tunes the material (the last mark's, else any loaded of the name), as the panel's controls do
+//   original <material>                  takes its rule away
+//   lamps                                the last mark's lamps, numbered
+//   lamp <number> <brightness>           tunes that lamp, as the panel's control does; 1 takes its rule away
+//   compare <number> 0|1                 holds that lamp at its original, as the panel's Compare does
+//   panel <number>                       opens the panel on the last mark's lamps, that lamp chosen
+std::string runLine(std::string_view line);
 }

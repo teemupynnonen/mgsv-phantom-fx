@@ -1,5 +1,6 @@
 #pragma once
 
+#include "remaster/lamps.hpp"
 #include "remaster/rules.hpp"
 
 #include <memory>
@@ -12,6 +13,9 @@ std::shared_ptr<const std::vector<Rule>> rulesInForce();
 
 // For materials made from now on, as sortRules has them.
 void putInForce(std::vector<Rule> rules);
+
+std::shared_ptr<const std::vector<LampRule>> lampsInForce();
+void putLampsInForce(std::vector<LampRule> lamps);
 
 // Whether the rules are on the materials: not while the enhancements switch (F1) is off.
 bool areRulesOn() noexcept;

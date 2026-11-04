@@ -20,6 +20,8 @@
 #include <format>
 #include <fstream>
 #include <iterator>
+#include <mutex>
+#include <sstream>
 #include <unordered_map>
 #include <utility>
 
@@ -80,7 +82,21 @@ struct Travel
     bool isChecking{};
 };
 
+// A lamp's light draw seen lately (noteLamp).
+struct SeenLamp
+{
+    std::uint16_t location{};
+    std::array<float, 3> at{}, color{};
+    std::uint32_t frame{};
+};
+
 std::array<std::atomic<std::uint32_t>, PacketMaterialBits + 1> lastDrawn{};
+
+// The lamps' light draws come on the game's render threads: what they read here, under this.
+std::mutex lampMutex;
+std::unordered_map<std::uint64_t, SeenLamp> seenLamps; // By where the lamp is, to the centimetre
+std::optional<std::array<float, 3>> lampFlashWanted, flashingLamp;
+std::optional<LampRule> comparedLamp;
 
 using Replay = void (*)(void* state, const std::uint64_t* packet, std::uint32_t first, std::uint32_t second);
 Replay originalReplay{};
@@ -96,6 +112,8 @@ std::optional<Rule> compared;
 std::optional<Travel> travelling;
 std::uint64_t presents{};
 std::vector<Rule> savedRules;
+std::vector<LampRule> savedLamps;
+std::optional<LampRow> chosenLamp;
 bool hasSaveFailed{};
 
 void replayDraw(void* state, const std::uint64_t* packet, std::uint32_t first, std::uint32_t second)
@@ -233,6 +251,22 @@ return "arrived")",
         mark.location, mark.position[0], mark.position[1], mark.position[2], mark.rotation);
 }
 
+std::uint64_t lampKey(const std::array<float, 3>& at)
+{
+    std::uint64_t key = 0xCBF29CE484222325;
+    for (const float coordinate : at) key = (key ^ static_cast<std::uint64_t>(std::llround(coordinate * 100))) * 0x100000001B3;
+
+    return key;
+}
+
+bool isLampDrawnNow(const std::array<float, 3>& at)
+{
+    std::lock_guard lock(lampMutex);
+    const auto seen = seenLamps.find(lampKey(at));
+
+    return seen != seenLamps.end() && game_loop::currentFrame() - seen->second.frame < DrawnNowFrames;
+}
+
 std::optional<travel::Map> mapOf(std::uint16_t location)
 {
     if (location == 10) return travel::Map::Afghanistan;
@@ -260,6 +294,7 @@ std::string hookTool() noexcept
 
     registerPanel();
     savedRules = *rulesInForce();
+    savedLamps = *lampsInForce();
     try
     {
         loadMarks();
@@ -272,8 +307,27 @@ std::string hookTool() noexcept
     return "";
 }
 
+void noteLamp(std::uint16_t location, const std::array<float, 3>& at, const std::array<float, 3>& color, float& brightness) noexcept
+{
+    try
+    {
+        std::lock_guard lock(lampMutex);
+        seenLamps[lampKey(at)] = {location, at, color, game_loop::currentFrame()};
+        if (comparedLamp && comparedLamp->location == location && isLampAt(comparedLamp->at, at)) brightness = 1;
+        if (flashingLamp && isLampAt(*flashingLamp, at)) brightness = 0;
+    }
+    catch (...)
+    {
+    }
+}
+
 void endFlash() noexcept
 {
+    {
+        std::lock_guard lock(lampMutex);
+        flashingLamp.reset();
+    }
+
     if (!flashing) return;
 
     if (const auto material = game_materials::materialAt(flashing->poolRow)) setValue(material->packed, flashing->parameter, flashing->held);
@@ -284,6 +338,11 @@ void endFlash() noexcept
 void settleTool() noexcept
 {
     endFlash();
+    {
+        std::lock_guard lock(lampMutex);
+        comparedLamp.reset();
+    }
+
     if (compared) sweep(*compared, Direction::Forward);
 
     compared.reset();
@@ -321,6 +380,12 @@ void addMark()
         if (isDrawnNow(material.index)) mark.materials.push_back({material.name, fingerprintOf(material.packed, material.name, *rules), kindOf(material), brightnessOf(material), material.uses});
     });
 
+    {
+        std::lock_guard lock(lampMutex);
+        for (const auto& [key, lamp] : seenLamps)
+            if (lamp.location == mark.location && game_loop::currentFrame() - lamp.frame < DrawnNowFrames) mark.lamps.push_back({lamp.at, lamp.color});
+    }
+
     if (mark.materials.empty())
     {
         fxui::toast(Tone::Warn, "Nothing to mark", "The game has drawn no materials.");
@@ -330,7 +395,8 @@ void addMark()
     const auto selfLit = countOf(mark, MaterialKind::SelfLit);
     markList.push_back(std::move(mark));
     saveMarks();
-    fxui::toast(Tone::Ok, std::format("Mark {}", markList.size()), std::format("{} self-lit. F7 opens the marks.", selfLit));
+    const auto lamps = markList.back().lamps.size();
+    fxui::toast(Tone::Ok, std::format("Mark {}", markList.size()), std::format("{} self-lit, {} lamps. F7 opens the marks.", selfLit, lamps));
 }
 
 const std::vector<Mark>& marks()
@@ -474,15 +540,110 @@ std::vector<RuleRow> ruleRows()
     return rows;
 }
 
+std::vector<LampRow> lampRowsOf(const Mark& mark)
+{
+    std::vector<LampRow> rows;
+    const auto rules = lampsInForce();
+    for (const auto& lamp : mark.lamps)
+    {
+        LampRow row{.location = mark.location, .at = lamp.at, .color = lamp.color, .isDrawn = isLampDrawnNow(lamp.at)};
+        if (const auto* rule = lampRuleAt(*rules, mark.location, lamp.at))
+        {
+            row.brightness = rule->brightness;
+            row.label = rule->label;
+            row.isTuned = true;
+        }
+
+        rows.push_back(std::move(row));
+    }
+
+    // By their colour at the mark, which no rule changes.
+    std::ranges::sort(rows, [](const LampRow& a, const LampRow& b) { return std::ranges::max(a.color) > std::ranges::max(b.color); });
+
+    return rows;
+}
+
+std::vector<LampRule> lampRules()
+{
+    return *lampsInForce();
+}
+
 void select(std::uint32_t poolRow, std::uint64_t name)
 {
     selectedRow = poolRow;
     selectedName = name;
+    chosenLamp.reset();
 }
 
 void clearSelection()
 {
     selectedRow.reset();
+    chosenLamp.reset();
+}
+
+void selectLamp(const LampRow& lamp)
+{
+    selectedRow.reset();
+    chosenLamp = lamp;
+}
+
+std::optional<LampRow> selectedLamp()
+{
+    if (!chosenLamp) return std::nullopt;
+
+    auto lamp = *chosenLamp;
+    const auto rules = lampsInForce();
+    const auto* rule = lampRuleAt(*rules, lamp.location, lamp.at);
+    lamp.brightness = rule ? rule->brightness : 1;
+    lamp.label = rule ? rule->label : std::string{};
+    lamp.isTuned = rule != nullptr;
+    lamp.isDrawn = isLampDrawnNow(lamp.at);
+
+    return lamp;
+}
+
+void flashLamp(const std::array<float, 3>& at)
+{
+    std::lock_guard lock(lampMutex);
+    lampFlashWanted = at;
+}
+
+void editLamp(const LampRow& lamp, float brightness)
+{
+    auto lamps = *lampsInForce();
+    auto rule = std::ranges::find_if(lamps, [&](const LampRule& each) { return each.location == lamp.location && isLampAt(each.at, lamp.at); });
+    if (rule == lamps.end()) rule = lamps.insert(lamps.end(), LampRule{.location = lamp.location, .at = lamp.at});
+
+    rule->brightness = brightness;
+    if (brightness == 1 && rule->label.empty()) lamps.erase(rule);
+
+    putLampsInForce(std::move(lamps));
+}
+
+void setLampLabel(const LampRow& lamp, const std::string& label)
+{
+    auto lamps = *lampsInForce();
+    const auto rule = std::ranges::find_if(lamps, [&](const LampRule& each) { return each.location == lamp.location && isLampAt(each.at, lamp.at); });
+    if (rule == lamps.end()) return;
+
+    rule->label = label;
+    putLampsInForce(std::move(lamps));
+}
+
+void removeLampRule(const LampRule& rule)
+{
+    auto lamps = *lampsInForce();
+    const auto found = std::ranges::find(lamps, rule);
+    if (found == lamps.end()) return;
+
+    lamps.erase(found);
+    putLampsInForce(std::move(lamps));
+}
+
+void holdOriginalLamp(const LampRow& lamp, bool isHeld)
+{
+    std::lock_guard lock(lampMutex);
+    comparedLamp = isHeld && lamp.isTuned ? std::optional(LampRule{.location = lamp.location, .at = lamp.at}) : std::nullopt;
 }
 
 std::optional<Material> selectedMaterial()
@@ -502,6 +663,12 @@ void flash(std::uint32_t poolRow)
 
 void startFlash()
 {
+    {
+        std::lock_guard lock(lampMutex);
+        const auto lamp = std::exchange(lampFlashWanted, std::nullopt);
+        if (lamp && !comparedLamp && !(GetTickCount64() / FlashMilliseconds % 2)) flashingLamp = lamp;
+    }
+
     const auto wanted = std::exchange(flashWanted, std::nullopt);
     if (!wanted || compared || GetTickCount64() / FlashMilliseconds % 2) return;
 
@@ -608,18 +775,25 @@ void holdOriginal(const Material& material, bool isHeld)
 
 bool isComparing() noexcept
 {
-    return compared.has_value();
+    std::lock_guard lock(lampMutex);
+    return compared.has_value() || comparedLamp.has_value();
 }
 
 std::size_t unsavedRules()
 {
-    return unsavedCount(savedRules, *rulesInForce());
+    const auto lamps = lampsInForce();
+    const auto missing = [](const std::vector<LampRule>& set, const std::vector<LampRule>& other) {
+        return static_cast<std::size_t>(std::ranges::count_if(set, [&](const LampRule& rule) { return std::ranges::find(other, rule) == other.end(); }));
+    };
+
+    return unsavedCount(savedRules, *rulesInForce()) + std::max(missing(*lamps, savedLamps), missing(savedLamps, *lamps));
 }
 
 void saveRules()
 {
     const auto rules = rulesInForce();
-    hasSaveFailed = !writeFile(rulesFile(), writeRules(*rules));
+    const auto lamps = lampsInForce();
+    hasSaveFailed = !writeFile(rulesFile(), writeRules(*rules, *lamps));
     if (hasSaveFailed)
     {
         fxui::toast(Tone::Bad, "Materials not saved", rulesFile().string());
@@ -627,12 +801,136 @@ void saveRules()
     }
 
     savedRules = *rules;
+    savedLamps = *lamps;
     fxui::toast(Tone::Ok, "Materials saved", rulesFile().string());
 }
 
 bool didSaveFail()
 {
     return hasSaveFailed;
+}
+
+std::string runLine(std::string_view line)
+{
+    std::istringstream words{std::string(line)};
+    std::string command;
+    words >> command;
+
+    framesToRefresh = 0;
+    refreshLoaded();
+
+    if (command == "mark")
+    {
+        addMark();
+        return markList.empty() ? "error: nothing marked\n" : std::format("mark {}: {} materials\n", markList.size(), markList.back().materials.size());
+    }
+
+    if (command == "loaded")
+    {
+        std::string text;
+        game_materials::forEachMaterial([&](const Material& material) {
+            if (kindOf(material) != MaterialKind::SelfLit && !isDrawnNow(material.index)) return;
+
+            text += std::format("{} row {} brightness {:.6g} uses {} technique {:x}{}:", hashText(material.name), material.index, brightnessOf(material),
+                material.uses, material.technique, isDrawnNow(material.index) ? " drawn" : "");
+            for (const auto lowHalf : material.packed.parameters)
+            {
+                const auto parameter = parameterOfLowHalf(lowHalf);
+                const auto value = valueOf(material.packed, parameter);
+                text += " " + parameterText(parameter) + "=" + (value.empty() ? std::string("-") : std::format("{:.4g}", value[0]));
+            }
+            text += "\n";
+        });
+
+        return text;
+    }
+
+    if (markList.empty()) return "error: no mark yet\n";
+
+    const auto& mark = markList.back();
+    if (command == "lamps")
+    {
+        std::string text;
+        const auto rows = lampRowsOf(mark);
+        for (std::size_t i = 0; i < rows.size(); ++i)
+        {
+            const auto& [x, y, z] = rows[i].at;
+            text += std::format("{} at {:.2f} {:.2f} {:.2f} colour {:.4g} brightness {:.4g}{}{}\n", i + 1, x, y, z, std::ranges::max(rows[i].color), rows[i].brightness,
+                rows[i].isTuned ? " tuned" : "", rows[i].isDrawn ? " drawn" : "");
+        }
+
+        return text.empty() ? "no lamps at the last mark\n" : text;
+    }
+
+    if (command == "lamp")
+    {
+        std::size_t number{};
+        float brightness{};
+        const auto rows = lampRowsOf(mark);
+        if (!(words >> number >> brightness) || number < 1 || number > rows.size()) return "error: lamp <number> <brightness>\n";
+
+        editLamp(rows[number - 1], brightness);
+        return std::format("lamp {} brightness {}\n", number, lampRowsOf(mark)[number - 1].brightness);
+    }
+
+    if (command == "compare" || command == "panel")
+    {
+        std::size_t number{};
+        int isHeld{};
+        const auto rows = lampRowsOf(mark);
+        if (!(words >> number) || number < 1 || number > rows.size() || (command == "compare" && !(words >> isHeld))) return "error: compare|panel <number> ...\n";
+
+        if (command == "panel") showLamp(markList.size() - 1, rows[number - 1]);
+        else holdOriginalLamp(rows[number - 1], isHeld != 0);
+
+        return "done\n";
+    }
+    if (command == "rows")
+    {
+        std::string kindWord;
+        words >> kindWord;
+        const auto kind = kindWord == "all" ? std::nullopt : kindWord == "glass" ? std::optional(MaterialKind::Glass) : std::optional(MaterialKind::SelfLit);
+        std::string text;
+        for (const auto& row : rowsOf(mark, kind))
+            text += std::format("{} {} brightness {:.6g} uses {}{}{}\n", hashText(row.name), row.poolRow ? std::format("row {}", *row.poolRow) : "not loaded",
+                row.brightness, row.uses, row.isTuned ? " tuned" : "", row.label.empty() ? "" : " \"" + row.label + "\"");
+
+        return text;
+    }
+
+    std::string name;
+    words >> name;
+    const auto hash = hashOf(name);
+    const auto rows = rowsOf(mark, std::nullopt);
+    const auto row = std::ranges::find_if(rows, [&](const MaterialRow& each) { return each.name == hash && each.poolRow; });
+    auto material = row != rows.end() ? game_materials::materialAt(*row->poolRow) : std::nullopt;
+    // A mark takes only what its hooked draws drew: a material it missed is still found by its name.
+    if (!material && hash)
+        game_materials::forEachMaterial([&](const Material& each) {
+            if (!material && each.name == *hash) material = each;
+        });
+    if (!material) return "error: no such material loaded\n";
+
+    if (command == "original")
+    {
+        removeRuleOn(*material);
+        return "back to the original\n";
+    }
+
+    if (command == "set")
+    {
+        std::string parameterName;
+        words >> parameterName;
+        const auto parameter = parameterOf(parameterName);
+        Value value;
+        for (float component{}; words >> component;) value.push_back(component);
+        if (!parameter || value.empty()) return "error: set <material> <parameter> <value>\n";
+
+        edit(*material, *parameter, value);
+        return std::format("{} {} now {}\n", name, parameterName, valueOf(game_materials::materialAt(material->index)->packed, *parameter)[0]);
+    }
+
+    return "error: unknown remaster line\n";
 }
 
 void drawTool()

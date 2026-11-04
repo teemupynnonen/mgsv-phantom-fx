@@ -29,6 +29,9 @@ using game_materials::Material;
 constexpr float PanelWidth = 404, LabelWidth = 96, Margin = 12, MostTuneShare = 0.55f, FontSize = 13;
 constexpr ImU32 Ground = IM_COL32(0x0f, 0x11, 0x14, 0xf2);
 constexpr int RightMouse = 1, MouseButtons = 5;
+// How far below its original a wide value goes. A self-lit material's intensity is what it looks like times the exposure:
+// a quarantine platform ceiling tube of 221,182 stayed white down to about 200 and began to dim below 100 (2026-11-04).
+constexpr float LeastShare = 1e-6f;
 constexpr std::uint32_t FirstKey = 0x08, LastKey = 0xFE;
 
 enum class Tab : std::uint8_t
@@ -41,10 +44,12 @@ bool isOpen{}, isMoving{}, isTyping{}, isBlocking{}, hasDrawnCursor{};
 Tab tab{};
 std::size_t chosenMark{};
 std::optional<MaterialKind> shownKind{MaterialKind::SelfLit};
+bool showsLamps{};
 bool showsMore{};
 float tuneHeight{};
 std::array<char, 96> labelText{};
 std::optional<std::uint32_t> labelFor;
+std::optional<std::array<float, 3>> lampLabelFor;
 bool isCompareDrawn{};
 
 float px(float value)
@@ -203,7 +208,7 @@ void drawParameter(const Material& material, std::uint64_t parameter)
         const float start = component < original.size() ? original[component] : value[component];
         const float size = std::abs(start);
         const bool isWide = size >= 10;
-        const float low = isWide ? size / 1000 : std::min(0.0f, start * 4), high = std::max(1.0f, size * 4);
+        const float low = isWide ? size * LeastShare : std::min(0.0f, start * 4), high = std::max(1.0f, size * 4);
         const auto label = value.size() == 1 ? name : std::format("{}.{}", name, "xyzw"[component]);
 
         ImGui::PushID(static_cast<int>(component));
@@ -227,12 +232,12 @@ void drawBrightness(const Material& material)
     const float start = original[0], size = std::max(start, 1.0f);
 
     rowLabel("Brightness");
-    const bool isChanged = track("##brightness", value[0], size / 1000, size * 4, size, true);
+    const bool isChanged = track("##brightness", value[0], size * LeastShare, size * 4, size, true);
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + px(2));
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + px(LabelWidth + 10));
 
     const ImVec2 at = ImGui::GetCursorScreenPos();
-    const auto of = std::format("{:.0f} of {:.0f}", value[0], start);
+    const auto of = std::format("{:.4g} of {:.6g}", value[0], start);
     text(at, colour::Text, isComparing() ? std::string("Showing the original") : std::format("{:.3g} x original", start > 0 ? value[0] / start : 1));
     text({at.x + ImGui::GetContentRegionAvail().x - widthOf(of), at.y}, colour::TextDim, of);
     ImGui::Dummy({1, ImGui::GetTextLineHeight() + px(10)});
@@ -324,12 +329,79 @@ void drawMore(const Material& material)
     for (const auto parameter : others) drawParameter(material, parameter);
 }
 
+std::string lampPlace(const std::array<float, 3>& at)
+{
+    return std::format("{:.1f}, {:.1f}, {:.1f}", at[0], at[1], at[2]);
+}
+
+void drawLampTune(const LampRow& lamp)
+{
+    text(ImGui::GetCursorScreenPos(), colour::TextDim, std::format("Lamp at {}{}", lampPlace(lamp.at), lamp.isDrawn ? "" : ", not drawn now"));
+    ImGui::Dummy({1, ImGui::GetTextLineHeight() + px(8)});
+
+    ImGui::BeginDisabled(isComparing());
+    if (lamp.isTuned)
+    {
+        if (lampLabelFor != lamp.at)
+        {
+            lampLabelFor = lamp.at;
+            labelText = {};
+            lamp.label.copy(labelText.data(), labelText.size() - 1);
+        }
+
+        rowLabel("Label");
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        if (ImGui::InputTextWithHint("##lampLabel", "Name this rule", labelText.data(), labelText.size())) setLampLabel(lamp, labelText.data());
+
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + px(10));
+    }
+
+    // Its light times this: the colour the game gives it stays.
+    float brightness = lamp.brightness;
+    rowLabel("Brightness");
+    const bool isChanged = track("##lampBrightness", brightness, 0.001f, 8, 1, true);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + px(2));
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + px(LabelWidth + 10));
+    text(ImGui::GetCursorScreenPos(), colour::Text, isComparing() ? std::string("Showing the original") : std::format("{:.3g} x original", brightness));
+    ImGui::Dummy({1, ImGui::GetTextLineHeight() + px(10)});
+    if (isChanged) editLamp(lamp, brightness);
+
+    ImGui::EndDisabled();
+
+    isCompareDrawn = true;
+    const bool isKeyHeld = ImGui::IsKeyDown(ImGuiKey_C) && !ImGui::GetIO().WantTextInput && !isMoving;
+    rowLabel("Compare");
+    ImGui::BeginDisabled(!lamp.isTuned);
+    ImGui::Button("Hold for original");
+    const bool isHeld = ImGui::IsItemActive() || isKeyHeld;
+    ImGui::EndDisabled();
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + px(10));
+    holdOriginalLamp(lamp, isHeld && lamp.isTuned);
+
+    if (!lamp.isTuned) return;
+
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::SetCursorScreenPos({at.x + ImGui::GetContentRegionAvail().x - widthOf("Back to original"), at.y});
+    ImGui::BeginDisabled(isComparing());
+    if (actionWord("Back to original"))
+        for (const auto& rule : lampRules())
+            if (rule.location == lamp.location && isLampAt(rule.at, lamp.at)) removeLampRule(rule);
+    ImGui::EndDisabled();
+    ImGui::SetCursorScreenPos({at.x, at.y + ImGui::GetTextLineHeight()});
+}
+
 void drawTune()
 {
+    if (const auto lamp = selectedLamp())
+    {
+        drawLampTune(*lamp);
+        return;
+    }
+
     const auto material = selectedMaterial();
     if (!material)
     {
-        text(ImGui::GetCursorScreenPos(), colour::TextDim, "Pick a material. Hover one to see it flash.");
+        text(ImGui::GetCursorScreenPos(), colour::TextDim, "Pick a material or a lamp. Hover one to see it flash.");
         ImGui::Dummy({1, ImGui::GetTextLineHeight()});
         return;
     }
@@ -380,6 +452,34 @@ void materialRow(const MaterialRow& row, bool isChosen, std::string_view note)
     if (isPressed && row.poolRow) select(*row.poolRow, row.name);
 }
 
+void lampRow(const LampRow& row, bool isChosen)
+{
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float width = ImGui::GetContentRegionAvail().x, height = px(26), left = at.x + px(Margin), line = at.y + (height - ImGui::GetTextLineHeight()) / 2;
+
+    ImGui::PushID(static_cast<int>(std::lround(row.at[0] * 100) ^ std::lround(row.at[1] * 1000) ^ std::lround(row.at[2] * 10000)));
+    const bool isPressed = ImGui::InvisibleButton("##lamp", {width, height});
+    const bool isHovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+
+    auto* draw = ImGui::GetWindowDrawList();
+    if (isChosen || isHovered) draw->AddRectFilled(at, {at.x + width, at.y + height}, isChosen ? colour::Frame : colour::Raise);
+
+    // Its colour as a swatch, scaled to its brightest channel, and that channel's value: the game's light at a metre.
+    const float strongest = std::max(std::ranges::max(row.color), 1e-6f);
+    const ImU32 ink = row.isDrawn ? colour::Text : colour::TextFaint;
+    draw->AddRectFilled({left, line + px(1)}, {left + px(12), line + px(13)}, swatchOf({row.color[0] / strongest, row.color[1] / strongest, row.color[2] / strongest}));
+    text({left + px(16), line}, ink, std::format("{:.0f}", strongest));
+    text({left + px(78), line}, row.label.empty() ? colour::TextDim : ink, row.label.empty() ? lampPlace(row.at) : row.label);
+
+    const auto note = row.isTuned ? std::format("{:.2g} x", row.brightness) : row.isDrawn ? std::string() : std::string("not drawn now");
+    text({at.x + width - px(Margin) - widthOf(note), line}, row.isTuned ? colour::Warn : colour::TextFaint, note);
+    hairline(at.y + height - 1);
+
+    if (isHovered) flashLamp(row.at);
+    if (isPressed) selectLamp(row);
+}
+
 // A mark's two lines, and its buttons at the right.
 void markRow(std::size_t index, const Mark& mark, bool isChosen)
 {
@@ -403,7 +503,8 @@ void markRow(std::size_t index, const Mark& mark, bool isChosen)
     text({left, at.y + px(7)}, colour::TextDim, std::to_string(index + 1));
     text({left + px(26), at.y + px(7)}, colour::Text, placeText(mark));
     const auto tuned = tunedCount(mark);
-    text({left + px(26), at.y + px(26)}, colour::TextFaint, std::format("{}, {} self-lit{}", timeText(mark.clock), countOf(mark, MaterialKind::SelfLit), tuned ? std::format(", {} tuned", tuned) : ""));
+    text({left + px(26), at.y + px(26)}, colour::TextFaint,
+        std::format("{}, {} self-lit, {} lamps{}", timeText(mark.clock), countOf(mark, MaterialKind::SelfLit), mark.lamps.size(), tuned ? std::format(", {} tuned", tuned) : ""));
 
     ImGui::SetCursorScreenPos({at.x + width - px(Margin + 72), at.y + px(6)});
     ImGui::BeginDisabled(!canGo);
@@ -441,9 +542,19 @@ void drawEmpty(std::string_view first, std::string_view second)
 
 void kindWord(const char* word, std::optional<MaterialKind> kind)
 {
-    if (!switchWord(word, shownKind == kind) || shownKind == kind) return;
+    const bool isShown = !showsLamps && shownKind == kind;
+    if (!switchWord(word, isShown) || isShown) return;
 
     shownKind = kind;
+    showsLamps = false;
+    clearSelection();
+}
+
+void lampsWord()
+{
+    if (!switchWord("Lamps", showsLamps) || showsLamps) return;
+
+    showsLamps = true;
     clearSelection();
 }
 
@@ -453,7 +564,10 @@ void drawMaterials(const Mark& mark)
     const float height = px(26), line = at.y + (height - ImGui::GetTextLineHeight()) / 2, right = at.x + ImGui::GetContentRegionAvail().x - px(Margin);
     text({at.x + px(Margin), line}, colour::TextFaint, std::format("Seen at mark {}", chosenMark + 1));
 
-    const float gap = px(14), all = right - widthOf("All"), glass = all - gap - widthOf("Glass"), selfLit = glass - gap - widthOf("Self-lit");
+    const float gap = px(14), all = right - widthOf("All"), glass = all - gap - widthOf("Glass"), selfLit = glass - gap - widthOf("Self-lit"),
+                lamps = selfLit - gap - widthOf("Lamps");
+    ImGui::SetCursorScreenPos({lamps, line});
+    lampsWord();
     ImGui::SetCursorScreenPos({selfLit, line});
     kindWord("Self-lit", MaterialKind::SelfLit);
     ImGui::SetCursorScreenPos({glass, line});
@@ -463,6 +577,21 @@ void drawMaterials(const Mark& mark)
 
     ImGui::SetCursorScreenPos({at.x, at.y + height});
     hairline(at.y + height - 1);
+
+    if (showsLamps)
+    {
+        const auto lampRows = lampRowsOf(mark);
+        if (ImGui::BeginChild("##lamps", {0, ImGui::GetContentRegionAvail().y - tuneHeight - hintsHeight()}))
+        {
+            if (lampRows.empty()) drawEmpty("No lamps marked here.", "Lamps show with ray-traced lights or path tracing on.");
+
+            const auto chosen = selectedLamp();
+            for (const auto& lamp : lampRows) lampRow(lamp, chosen && chosen->at == lamp.at);
+        }
+
+        ImGui::EndChild();
+        return;
+    }
 
     const auto rows = rowsOf(mark, shownKind);
     if (ImGui::BeginChild("##materials", {0, ImGui::GetContentRegionAvail().y - tuneHeight - hintsHeight()}))
@@ -505,7 +634,8 @@ bool drawMarks()
 bool drawRules()
 {
     const auto rows = ruleRows();
-    if (rows.empty())
+    const auto lamps = lampRules();
+    if (rows.empty() && lamps.empty())
     {
         drawEmpty("No rules yet.", "Tune a material and it shows here.");
         return false;
@@ -528,6 +658,22 @@ bool drawRules()
             ImGui::SetCursorScreenPos({at.x + ImGui::GetContentRegionAvail().x - px(Margin) - width, at.y + (px(26) - ImGui::GetFrameHeight()) / 2});
             ImGui::PushID(&row);
             if (ImGui::Button("Remove")) removeRule(row.rule);
+
+            ImGui::PopID();
+            ImGui::SetCursorPosY(next);
+        }
+
+        // A lamp has nothing to load: its rule shows wherever it is, to tune where it is drawn.
+        for (std::size_t i = 0; i < lamps.size(); ++i)
+        {
+            const auto& rule = lamps[i];
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            ImGui::PushID(static_cast<int>(i) + 0x10000);
+            lampRow({.location = rule.location, .at = rule.at, .color = {1, 1, 1}, .brightness = rule.brightness, .label = rule.label, .isTuned = true, .isDrawn = true},
+                false);
+            const float width = widthOf("Remove") + px(16), next = ImGui::GetCursorPosY();
+            ImGui::SetCursorScreenPos({at.x + ImGui::GetContentRegionAvail().x - px(Margin) - width - px(48), at.y + (px(26) - ImGui::GetFrameHeight()) / 2});
+            if (ImGui::Button("Remove")) removeLampRule(rule);
 
             ImGui::PopID();
             ImGui::SetCursorPosY(next);
@@ -679,6 +825,15 @@ void onPresent(reshade::api::effect_runtime* runtime)
     isBlocking = !isMoving && (isBlocking || !isAnyInputDown(runtime));
     if (isBlocking) runtime->block_input_next_frame();
 }
+}
+
+void showLamp(std::size_t mark, const LampRow& lamp)
+{
+    setOpen(true);
+    tab = Tab::Marks;
+    chosenMark = mark;
+    showsLamps = true;
+    selectLamp(lamp);
 }
 
 void registerPanel() noexcept

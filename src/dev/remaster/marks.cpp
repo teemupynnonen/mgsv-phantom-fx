@@ -83,6 +83,16 @@ Mark parsedMark(const Json& entry)
         .clock = entry.at("clock").get<float>()};
     for (const auto& material : entry.at("materials")) mark.materials.push_back(parsedMaterial(material));
 
+    // Marks from before lamps have none.
+    if (entry.contains("lamps"))
+        for (const auto& lamp : entry.at("lamps"))
+        {
+            const auto at = lamp.at("at").get<std::vector<float>>(), color = lamp.at("color").get<std::vector<float>>();
+            if (at.size() != 3 || color.size() != 3) throw std::runtime_error("a lamp's place and colour have three components");
+
+            mark.lamps.push_back({{at[0], at[1], at[2]}, {color[0], color[1], color[2]}});
+        }
+
     return mark;
 }
 
@@ -100,12 +110,16 @@ Json markJson(const Mark& mark)
     Json materials = Json::array();
     for (const auto& material : mark.materials) materials.push_back(materialJson(material));
 
+    Json lamps = Json::array();
+    for (const auto& lamp : mark.lamps) lamps.push_back({{"at", lamp.at}, {"color", lamp.color}});
+
     return {{"location", mark.location},
         {"mission", mark.mission},
         {"position", mark.position},
         {"rotation", mark.rotation},
         {"clock", mark.clock},
-        {"materials", std::move(materials)}};
+        {"materials", std::move(materials)},
+        {"lamps", std::move(lamps)}};
 }
 }
 
