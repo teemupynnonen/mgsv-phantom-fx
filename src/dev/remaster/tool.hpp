@@ -80,6 +80,13 @@ bool hasRule(const game_materials::Material& material);
 
 // Shows the game's values of the rule on the material for as long as it is called with true.
 void holdOriginal(const game_materials::Material& material, bool isHeld);
+// The game without any rule, for as long as any holder holds it; editing waits meanwhile (isComparing).
+enum class Holder : std::uint8_t
+{
+    Panel, // V
+    Line   // Automation's `without`
+};
+void holdWithoutRules(Holder holder, bool isHeld);
 bool isComparing() noexcept;
 
 // A lamp of a mark: its rule's brightness, 1 without one.
@@ -106,7 +113,18 @@ void flashLamp(const std::array<float, 3>& at);
 void editLamp(const LampRow& lamp, float brightness);
 void setLampLabel(const LampRow& lamp, const std::string& label);
 void removeLampRule(const LampRule& rule);
+// Its rule taken away, whatever it was.
+void resetLamp(const LampRow& lamp);
 void holdOriginalLamp(const LampRow& lamp, bool isHeld);
+
+// Every change to the rules, materials' and lamps' alike, is a step back. False when there was none.
+bool undo();
+bool redo();
+// Counts the undos and redos done, by any hand, so what shows a rule knows to read it again.
+std::uint64_t restores();
+
+// The rules still under the label the tool gave them: a reader of the file cannot tell what they are for.
+std::size_t defaultNamedRules();
 
 std::size_t unsavedRules();
 void saveRules();
@@ -123,5 +141,9 @@ bool didSaveFail();
 //   lamp <number> <brightness>           tunes that lamp, as the panel's control does; 1 takes its rule away
 //   compare <number> 0|1                 holds that lamp at its original, as the panel's Compare does
 //   panel <number>                       opens the panel on the last mark's lamps, that lamp chosen
+//   reset <number>                       takes that lamp's rule away, as the panel's R does
+//   undo, redo                           as Ctrl+Z and Ctrl+Y
+//   without 0|1                          holds the game without any rule, as the panel's V does
+//   rules                                every rule's label, and how many are still under the one the tool gave
 std::string runLine(std::string_view line);
 }

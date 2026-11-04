@@ -78,7 +78,9 @@ void saysWhereAMarkIs()
     expect(placeText(HelipadMark) == "Mother Base, at 9, 2, -48", "A mark's place is its map and position in whole metres.");
     expect(placeText({.location = 10}) == "Afghanistan, at 0, 0, 0", "Afghanistan is location 10.");
     expect(placeText({.location = 20}) == "Africa, at 0, 0, 0", "Africa is location 20.");
-    expect(placeText({.location = 40}) == "Location 40, at 0, 0, 0", "A location without a name shows its number.");
+    expect(placeText({.location = 55}) == "Quarantine platform, at 0, 0, 0", "The quarantine platform is location 55.");
+    expect(placeText({.location = 40}) == "GNTN, at 0, 0, 0", "A location without a known place keeps the game's name for it.");
+    expect(placeText({.location = 99}) == "Location 99, at 0, 0, 0", "A location the game does not name shows its number.");
 }
 
 void saysWhenAMarkWas()

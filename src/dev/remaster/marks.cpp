@@ -27,7 +27,10 @@ struct NamedLocation
     const char* name;
 };
 
-constexpr NamedLocation NamedLocations[]{{10, "Afghanistan"}, {20, "Africa"}, {50, "Mother Base"}};
+// TppDefine.LOCATION_ID as the game has it (asked of its Lua, 2026-11-04). Those whose place is known by name have
+// it; the rest keep the game's own.
+constexpr NamedLocation NamedLocations[]{{10, "Afghanistan"}, {20, "Africa"}, {30, "Cyprus"}, {40, "GNTN"}, {45, "OMBS"}, {50, "Mother Base"},
+    {55, "Quarantine platform"}, {60, "Helicopter"}, {70, "FLYK"}, {91, "SAND_AFGH"}, {92, "SAND_MAFR"}, {95, "SAND_MTBS"}};
 
 constexpr std::size_t MostRegisterComponents = 32;
 constexpr int SecondsInMinute = 60;
@@ -153,13 +156,18 @@ std::string writeMarks(const std::vector<Mark>& marks)
     return file.dump(2) + "\n";
 }
 
+std::string locationName(std::uint16_t location)
+{
+    const auto known = std::ranges::find(NamedLocations, location, &NamedLocation::location);
+
+    return known != std::end(NamedLocations) ? std::string(known->name) : std::format("Location {}", location);
+}
+
 std::string placeText(const Mark& mark)
 {
-    const auto known = std::ranges::find(NamedLocations, mark.location, &NamedLocation::location);
-    const auto map = known != std::end(NamedLocations) ? std::string(known->name) : std::format("Location {}", mark.location);
     const auto& [x, y, z] = mark.position;
 
-    return std::format("{}, at {}, {}, {}", map, std::lround(x), std::lround(y), std::lround(z));
+    return std::format("{}, at {}, {}, {}", locationName(mark.location), std::lround(x), std::lround(y), std::lround(z));
 }
 
 std::string timeText(float clock)

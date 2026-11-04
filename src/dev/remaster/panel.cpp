@@ -29,6 +29,10 @@ using game_materials::Material;
 constexpr float PanelWidth = 404, LabelWidth = 96, Margin = 12, MostTuneShare = 0.55f, FontSize = 13;
 constexpr ImU32 Ground = IM_COL32(0x0f, 0x11, 0x14, 0xf2);
 constexpr int RightMouse = 1, MouseButtons = 5;
+// The marks list shows at most this many rows: the lights below it are what gets worked on.
+constexpr float MostMarkRows = 3;
+// What [ and ] multiply a brightness by, and where ] starts from a light put out (a share of its original).
+constexpr float BrightnessStep = 1.25f, FromOff = 0.01f;
 // How far below its original a wide value goes. A self-lit material's intensity is what it looks like times the exposure:
 // a quarantine platform ceiling tube of 221,182 stayed white down to about 200 and began to dim below 100 (2026-11-04).
 constexpr float LeastShare = 1e-6f;
@@ -40,16 +44,33 @@ enum class Tab : std::uint8_t
     Rules
 };
 
+// What a mark's list shows: its lamps and glowing materials together, or its materials by kind.
+enum class View : std::uint8_t
+{
+    Lights,
+    Glass,
+    All
+};
+
+// A row of the Lights list: a lamp or a material, for the arrow keys to walk.
+struct Pick
+{
+    std::optional<LampRow> lamp;
+    std::optional<MaterialRow> material;
+};
+
 bool isOpen{}, isMoving{}, isTyping{}, isBlocking{}, hasDrawnCursor{};
+bool wasVHeld{}; // Last frame: the panel's hold on the game without rules (holdWithoutRules)
 Tab tab{};
 std::size_t chosenMark{};
-std::optional<MaterialKind> shownKind{MaterialKind::SelfLit};
-bool showsLamps{};
+View view{};
 bool showsMore{};
+bool shouldScrollToChosen{};
 float tuneHeight{};
 std::array<char, 96> labelText{};
 std::optional<std::uint32_t> labelFor;
 std::optional<std::array<float, 3>> lampLabelFor;
+std::uint64_t seenRestores{}; // The undos and redos the label field has reloaded after
 bool isCompareDrawn{};
 
 float px(float value)
@@ -77,6 +98,21 @@ void text(ImVec2 at, ImU32 color, std::string_view line)
 float widthOf(std::string_view line)
 {
     return ImGui::CalcTextSize(line.data(), line.data() + line.size()).x;
+}
+
+// Text cut off at `right`, so a long name leaves the note beside it readable.
+void clippedText(ImVec2 at, float right, ImU32 color, std::string_view line)
+{
+    auto* draw = ImGui::GetWindowDrawList();
+    draw->PushClipRect({at.x, at.y}, {right, at.y + ImGui::GetTextLineHeight()}, true);
+    text(at, color, line);
+    draw->PopClipRect();
+}
+
+// A light's strength: whole above 10, two digits below, so a weak lamp does not read as 0.
+std::string strengthText(float value)
+{
+    return value >= 10 ? std::format("{:.0f}", value) : std::format("{:.2g}", value);
 }
 
 void hairline(float y, ImU32 color = colour::Line)
@@ -387,9 +423,7 @@ void drawLampTune(const LampRow& lamp)
     const ImVec2 at = ImGui::GetCursorScreenPos();
     ImGui::SetCursorScreenPos({at.x + ImGui::GetContentRegionAvail().x - widthOf("Back to original"), at.y});
     ImGui::BeginDisabled(isComparing());
-    if (actionWord("Back to original"))
-        for (const auto& rule : lampRules())
-            if (rule.location == lamp.location && isLampAt(rule.at, lamp.at)) removeLampRule(rule);
+    if (actionWord("Back to original")) resetLamp(lamp);
     ImGui::EndDisabled();
     ImGui::SetCursorScreenPos({at.x, at.y + ImGui::GetTextLineHeight()});
 }
@@ -424,6 +458,92 @@ void drawTune()
     ImGui::EndDisabled();
 }
 
+bool isChosen(const Pick& pick)
+{
+    if (pick.lamp)
+    {
+        const auto lamp = selectedLamp();
+        return lamp && lamp->at == pick.lamp->at;
+    }
+
+    const auto material = selectedMaterial();
+    return material && pick.material->poolRow == material->index;
+}
+
+void choose(const Pick& pick)
+{
+    if (pick.lamp) selectLamp(*pick.lamp);
+    else if (pick.material->poolRow) select(*pick.material->poolRow, pick.material->name);
+
+    shouldScrollToChosen = true;
+}
+
+bool canTakeKeys()
+{
+    return !isMoving && !ImGui::GetIO().WantTextInput && !isComparing();
+}
+
+// Ctrl+Z and Ctrl+Y (or Ctrl+Shift+Z), over either tab.
+void undoKeys()
+{
+    const auto& io = ImGui::GetIO();
+    if (!canTakeKeys() || !io.KeyCtrl) return;
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) io.KeyShift ? redo() : undo();
+    else if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) redo();
+}
+
+// After an undo or redo, the keys' or automation's, the label field reloads from the restored rule, or what was typed
+// would go back in.
+void reloadLabelsAfterRestore()
+{
+    if (std::exchange(seenRestores, restores()) == restores()) return;
+
+    labelFor.reset();
+    lampLabelFor.reset();
+}
+
+// The arrows walk the list; [ and ] step the chosen light's brightness, 0 puts it out and R takes its rule away.
+void pickKeys(const std::vector<Pick>& picks)
+{
+    if (!canTakeKeys() || ImGui::GetIO().KeyCtrl || picks.empty()) return;
+
+    const auto chosen = std::ranges::find_if(picks, isChosen);
+    const auto at = static_cast<std::ptrdiff_t>(chosen - picks.begin());
+    const bool isPicked = chosen != picks.end();
+    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) choose(picks[isPicked ? std::min<std::size_t>(at + 1, picks.size() - 1) : 0]);
+    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) choose(picks[isPicked ? std::max<std::ptrdiff_t>(at - 1, 0) : 0]);
+    if (!isPicked) return;
+
+    const float step = ImGui::IsKeyPressed(ImGuiKey_RightBracket) ? BrightnessStep : ImGui::IsKeyPressed(ImGuiKey_LeftBracket) ? 1 / BrightnessStep : 0;
+    const bool isOff = ImGui::IsKeyPressed(ImGuiKey_0, false) || ImGui::IsKeyPressed(ImGuiKey_Keypad0, false);
+    const bool isReset = ImGui::IsKeyPressed(ImGuiKey_R, false);
+    if (const auto lamp = selectedLamp())
+    {
+        if (isReset) resetLamp(*lamp);
+        else if (isOff) editLamp(*lamp, 0);
+        else if (step) editLamp(*lamp, lamp->brightness > 0 ? lamp->brightness * step : FromOff);
+
+        return;
+    }
+
+    const auto material = selectedMaterial();
+    if (!material) return;
+
+    if (isReset)
+    {
+        removeRuleOn(*material);
+        return;
+    }
+
+    auto value = valueOf(material->packed, SelfColorIntensityParameter);
+    if (value.empty() || (!step && !isOff)) return;
+
+    const float original = originalOf(*material, SelfColorIntensityParameter, value)[0];
+    value[0] = isOff ? 0 : value[0] > 0 ? value[0] * step : original * FromOff;
+    edit(*material, SelfColorIntensityParameter, value);
+}
+
 void materialRow(const MaterialRow& row, bool isChosen, std::string_view note)
 {
     const ImVec2 at = ImGui::GetCursorScreenPos();
@@ -444,12 +564,13 @@ void materialRow(const MaterialRow& row, bool isChosen, std::string_view note)
     if (isLit)
     {
         draw->AddRectFilled({left, line + px(1)}, {left + px(12), line + px(13)}, row.poolRow ? swatchOf(row.color) : colour::LineStrong);
-        text({left + px(16), line}, ink, std::format("{:.0f}", row.brightness));
+        text({left + px(16), line}, ink, strengthText(row.brightness));
     }
 
-    const float nameAt = isLit ? left + px(78) : left;
-    text({nameAt, line}, row.label.empty() ? (row.poolRow ? colour::TextDim : colour::TextFaint) : ink, row.label.empty() ? hashText(row.name) : row.label);
-    text({at.x + width - px(Margin) - widthOf(note), line}, row.isTuned ? colour::Warn : colour::TextFaint, note);
+    const float nameAt = isLit ? left + px(78) : left, noteAt = at.x + width - px(Margin) - widthOf(note);
+    clippedText({nameAt, line}, noteAt - px(8), row.label.empty() ? (row.poolRow ? colour::TextDim : colour::TextFaint) : ink,
+        row.label.empty() ? hashText(row.name) : row.label);
+    text({noteAt, line}, row.isTuned ? colour::Warn : colour::TextFaint, note);
     hairline(at.y + height - 1);
 
     if (isHovered && row.poolRow) flash(*row.poolRow);
@@ -473,11 +594,12 @@ void lampRow(const LampRow& row, bool isChosen)
     const float strongest = std::max(std::ranges::max(row.color), 1e-6f);
     const ImU32 ink = row.isDrawn ? colour::Text : colour::TextFaint;
     draw->AddRectFilled({left, line + px(1)}, {left + px(12), line + px(13)}, swatchOf({row.color[0] / strongest, row.color[1] / strongest, row.color[2] / strongest}));
-    text({left + px(16), line}, ink, std::format("{:.0f}", strongest));
-    text({left + px(78), line}, row.label.empty() ? colour::TextDim : ink, row.label.empty() ? lampPlace(row.at) : row.label);
+    text({left + px(16), line}, ink, strengthText(strongest));
 
     const auto note = row.isTuned ? std::format("{:.2g} x", row.brightness) : row.isDrawn ? std::string() : std::string("not drawn now");
-    text({at.x + width - px(Margin) - widthOf(note), line}, row.isTuned ? colour::Warn : colour::TextFaint, note);
+    const float noteAt = at.x + width - px(Margin) - widthOf(note);
+    clippedText({left + px(78), line}, noteAt - px(8), row.label.empty() ? colour::TextDim : ink, row.label.empty() ? lampPlace(row.at) : row.label);
+    text({noteAt, line}, row.isTuned ? colour::Warn : colour::TextFaint, note);
     hairline(at.y + height - 1);
 
     if (isHovered) flashLamp(row.at);
@@ -508,7 +630,7 @@ void markRow(std::size_t index, const Mark& mark, bool isChosen)
     text({left + px(26), at.y + px(7)}, colour::Text, placeText(mark));
     const auto tuned = tunedCount(mark);
     text({left + px(26), at.y + px(26)}, colour::TextFaint,
-        std::format("{}, {} self-lit, {} lamps{}", timeText(mark.clock), countOf(mark, MaterialKind::SelfLit), mark.lamps.size(), tuned ? std::format(", {} tuned", tuned) : ""));
+        std::format("{}, {} lamps, {} glows{}", timeText(mark.clock), mark.lamps.size(), countOf(mark, MaterialKind::SelfLit), tuned ? std::format(", {} tuned", tuned) : ""));
 
     ImGui::SetCursorScreenPos({at.x + width - px(Margin + 72), at.y + px(6)});
     ImGui::BeginDisabled(!canGo);
@@ -533,7 +655,7 @@ void markRow(std::size_t index, const Mark& mark, bool isChosen)
 
 float hintsHeight()
 {
-    return ImGui::GetTextLineHeight() + px(10);
+    return ImGui::GetTextLineHeight() * 3 + px(18);
 }
 
 void drawEmpty(std::string_view first, std::string_view second)
@@ -544,22 +666,60 @@ void drawEmpty(std::string_view first, std::string_view second)
     text({at.x + px(Margin), at.y + ImGui::GetTextLineHeight() + px(4)}, colour::TextDim, second);
 }
 
-void kindWord(const char* word, std::optional<MaterialKind> kind)
+void viewWord(const char* word, View shown)
 {
-    const bool isShown = !showsLamps && shownKind == kind;
-    if (!switchWord(word, isShown) || isShown) return;
+    if (!switchWord(word, view == shown) || view == shown) return;
 
-    shownKind = kind;
-    showsLamps = false;
+    view = shown;
     clearSelection();
 }
 
-void lampsWord()
+// A faint line naming the rows below it.
+void sectionLine(const char* name)
 {
-    if (!switchWord("Lamps", showsLamps) || showsLamps) return;
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    text({at.x + px(Margin), at.y + px(6)}, colour::TextFaint, name);
+    ImGui::Dummy({1, ImGui::GetTextLineHeight() + px(8)});
+}
 
-    showsLamps = true;
-    clearSelection();
+void materialNote(const MaterialRow& row, bool isChosen)
+{
+    const auto note = row.isTuned ? std::string("tuned") : row.poolRow ? std::format("used {}", row.uses) : std::string("not loaded here");
+    materialRow(row, isChosen, note);
+}
+
+void drawLights(const Mark& mark)
+{
+    const auto lamps = lampRowsOf(mark);
+    const auto glows = rowsOf(mark, MaterialKind::SelfLit);
+    std::vector<Pick> picks;
+    for (const auto& lamp : lamps) picks.push_back({.lamp = lamp});
+    for (const auto& glow : glows)
+        if (glow.poolRow) picks.push_back({.material = glow});
+
+    pickKeys(picks);
+
+    if (lamps.empty() && glows.empty()) drawEmpty("No lights marked here.", "Lamps show with ray-traced lights or path tracing on.");
+
+    const auto scrollToChosen = [](bool isChosenRow) {
+        if (isChosenRow && std::exchange(shouldScrollToChosen, false)) ImGui::SetScrollHereY(0.5f);
+    };
+
+    if (!lamps.empty()) sectionLine("Lamps: the light on the room");
+    for (const auto& lamp : lamps)
+    {
+        const bool isChosenRow = isChosen({.lamp = lamp});
+        lampRow(lamp, isChosenRow);
+        scrollToChosen(isChosenRow);
+    }
+
+    if (!glows.empty()) sectionLine("Glows: how the light itself looks");
+    for (const auto& glow : glows)
+    {
+        const bool isChosenRow = glow.poolRow && isChosen({.material = glow});
+        materialNote(glow, isChosenRow);
+        scrollToChosen(isChosenRow);
+    }
 }
 
 void drawMaterials(const Mark& mark)
@@ -568,45 +728,36 @@ void drawMaterials(const Mark& mark)
     const float height = px(26), line = at.y + (height - ImGui::GetTextLineHeight()) / 2, right = at.x + ImGui::GetContentRegionAvail().x - px(Margin);
     text({at.x + px(Margin), line}, colour::TextFaint, std::format("Seen at mark {}", chosenMark + 1));
 
-    const float gap = px(14), all = right - widthOf("All"), glass = all - gap - widthOf("Glass"), selfLit = glass - gap - widthOf("Self-lit"),
-                lamps = selfLit - gap - widthOf("Lamps");
-    ImGui::SetCursorScreenPos({lamps, line});
-    lampsWord();
-    ImGui::SetCursorScreenPos({selfLit, line});
-    kindWord("Self-lit", MaterialKind::SelfLit);
+    const float gap = px(14), all = right - widthOf("All"), glass = all - gap - widthOf("Glass"), lights = glass - gap - widthOf("Lights");
+    ImGui::SetCursorScreenPos({lights, line});
+    viewWord("Lights", View::Lights);
     ImGui::SetCursorScreenPos({glass, line});
-    kindWord("Glass", MaterialKind::Glass);
+    viewWord("Glass", View::Glass);
     ImGui::SetCursorScreenPos({all, line});
-    kindWord("All", std::nullopt);
+    viewWord("All", View::All);
 
     ImGui::SetCursorScreenPos({at.x, at.y + height});
     hairline(at.y + height - 1);
 
-    if (showsLamps)
+    if (ImGui::BeginChild("##list", {0, ImGui::GetContentRegionAvail().y - tuneHeight - hintsHeight()}))
     {
-        const auto lampRows = lampRowsOf(mark);
-        if (ImGui::BeginChild("##lamps", {0, ImGui::GetContentRegionAvail().y - tuneHeight - hintsHeight()}))
+        if (view == View::Lights) drawLights(mark);
+        else
         {
-            if (lampRows.empty()) drawEmpty("No lamps marked here.", "Lamps show with ray-traced lights or path tracing on.");
+            const auto rows = rowsOf(mark, view == View::Glass ? std::optional(MaterialKind::Glass) : std::nullopt);
+            if (rows.empty()) drawEmpty("None of this kind here.", "Try another view above.");
 
-            const auto chosen = selectedLamp();
-            for (const auto& lamp : lampRows) lampRow(lamp, chosen && chosen->at == lamp.at);
-        }
+            std::vector<Pick> picks;
+            for (const auto& row : rows)
+                if (row.poolRow) picks.push_back({.material = row});
 
-        ImGui::EndChild();
-        return;
-    }
-
-    const auto rows = rowsOf(mark, shownKind);
-    if (ImGui::BeginChild("##materials", {0, ImGui::GetContentRegionAvail().y - tuneHeight - hintsHeight()}))
-    {
-        if (rows.empty()) drawEmpty("None of this kind here.", "Try another kind above.");
-
-        const auto selected = selectedMaterial();
-        for (const auto& row : rows)
-        {
-            const auto note = row.isTuned ? std::string("tuned") : row.poolRow ? std::format("used {}", row.uses) : std::string("not loaded here");
-            materialRow(row, selected && row.poolRow == selected->index, note);
+            pickKeys(picks);
+            for (const auto& row : rows)
+            {
+                const bool isChosenRow = row.poolRow && isChosen({.material = row});
+                materialNote(row, isChosenRow);
+                if (isChosenRow && std::exchange(shouldScrollToChosen, false)) ImGui::SetScrollHereY(0.5f);
+            }
         }
     }
 
@@ -623,7 +774,7 @@ bool drawMarks()
     }
 
     chosenMark = std::min(chosenMark, list.size() - 1);
-    const float rowHeight = px(48), shown = std::min(static_cast<float>(list.size()) * rowHeight, ImGui::GetContentRegionAvail().y / 3);
+    const float rowHeight = px(48), shown = std::min(static_cast<float>(list.size()), MostMarkRows) * rowHeight;
     if (ImGui::BeginChild("##marks", {0, shown}))
         for (std::size_t i = 0; i < list.size(); ++i) markRow(i, list[i], i == chosenMark);
 
@@ -702,9 +853,17 @@ void drawHead()
 
     const auto unsaved = unsavedRules();
     const float save = widthOf("Save") + px(16);
-    if (unsaved)
+    if (areRulesHeldOff())
     {
-        const auto state = didSaveFail() ? std::string("Save failed") : std::format("{} unsaved", unsaved);
+        constexpr std::string_view Without = "Without any rule";
+        text({right - save - px(10) - widthOf(Without), line}, colour::Warn, Without);
+    }
+    else if (unsaved)
+    {
+        // A default name says only where and what: name them before they go in the file.
+        const auto unnamed = defaultNamedRules();
+        const auto state = didSaveFail() ? std::string("Save failed")
+                                         : std::format("{} unsaved{}", unsaved, unnamed ? std::format(", {} not named", unnamed) : std::string());
         text({right - save - px(10) - widthOf(state), line}, didSaveFail() ? colour::Bad : colour::Warn, state);
     }
 
@@ -737,7 +896,11 @@ void drawHints(float windowBottom)
     const float top = windowBottom - hintsHeight();
 
     hairline(top);
-    text({ImGui::GetWindowPos().x + px(Margin), top + px(5)}, colour::TextFaint, "F6 marks   Right mouse moves   C original   F7 closes");
+    const float left = ImGui::GetWindowPos().x + px(Margin);
+    const float line = ImGui::GetTextLineHeight() + px(4);
+    text({left, top + px(5)}, colour::TextFaint, "Up/Down pick  [ ] brightness  0 off  R reset");
+    text({left, top + px(5) + line}, colour::TextFaint, "Ctrl+Z undo  C original  V without any rule");
+    text({left, top + px(5) + line * 2}, colour::TextFaint, "Right mouse moves  F6 marks  F7 closes");
 }
 
 void drawPanel()
@@ -760,7 +923,16 @@ void drawPanel()
         const float bottom = ImGui::GetWindowPos().y + ImGui::GetWindowHeight();
         ImGui::GetWindowDrawList()->AddLine(ImGui::GetWindowPos(), {ImGui::GetWindowPos().x, bottom}, colour::LineStrong);
 
+        // Held, the game shows as it would with no rule at all.
+        // The panel holds for V alone; a hold from automation's `without` is its own and stays.
+        const bool isVHeld = ImGui::IsKeyDown(ImGuiKey_V) && !ImGui::GetIO().WantTextInput && !isMoving && areRulesOn();
+        if (isVHeld != wasVHeld) holdWithoutRules(Holder::Panel, isVHeld);
+
+        wasVHeld = isVHeld;
+
         drawHead();
+        undoKeys();
+        reloadLabelsAfterRestore();
         if (!areRulesOn()) drawEmpty("The rules are off.", "F1 turns the enhancements back on.");
         else if (tab == Tab::Marks ? drawMarks() : drawRules()) drawTuning(bottom);
 
@@ -771,8 +943,8 @@ void drawPanel()
     ImGui::PopStyleColor(StyleColours);
     ImGui::PopStyleVar(StyleVars);
 
-    // Only the compare's own control lets it go, so without that control nothing else would.
-    if (!isCompareDrawn && isComparing()) settleTool();
+    // Only the compare's own control lets it go, so without that control nothing else would. V lets itself go.
+    if (!isCompareDrawn && !areRulesHeldOff() && isComparing()) settleTool();
 }
 
 void setOpen(bool open)
@@ -782,6 +954,9 @@ void setOpen(bool open)
 
     isBlocking = false;
     settleTool();
+
+    // Its own hold goes with it; one automation started stays until `without 0`.
+    if (std::exchange(wasVHeld, false)) holdWithoutRules(Holder::Panel, false);
 }
 
 bool isAnyInputDown(reshade::api::effect_runtime* runtime)
@@ -836,7 +1011,7 @@ void showLamp(std::size_t mark, const LampRow& lamp)
     setOpen(true);
     tab = Tab::Marks;
     chosenMark = mark;
-    showsLamps = true;
+    view = View::Lights;
     selectLamp(lamp);
 }
 

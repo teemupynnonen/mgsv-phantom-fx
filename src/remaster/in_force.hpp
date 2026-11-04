@@ -22,4 +22,9 @@ bool areRulesOn() noexcept;
 
 // Takes a rule on or off the materials already made.
 void sweep(const Rule& rule, Direction direction);
+
+// For as long as it is held, the game shows without any rule, materials, lamps and the rays' self-lit light alike; the rules
+// stay in force. Nothing while the enhancements switch has them off.
+void holdRulesOff(bool isHeld);
+bool areRulesHeldOff() noexcept;
 }
