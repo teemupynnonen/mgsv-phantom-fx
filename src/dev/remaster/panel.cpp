@@ -950,6 +950,9 @@ void setOpen(bool open)
 
     isBlocking = false;
     settleTool();
+
+    // Its own hold goes with it; one automation started stays until `without 0`.
+    if (std::exchange(isWithoutRules, false)) holdWithoutRules(false);
 }
 
 bool isAnyInputDown(reshade::api::effect_runtime* runtime)

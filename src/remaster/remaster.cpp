@@ -175,7 +175,8 @@ void configure(const Configuration& configuration) noexcept
     const bool isTurnedOn = configuration.areEnhancementsOn;
     if (isOn.load() == isTurnedOn) return;
 
-    // A flash, a compare or a hold ends first, putting back what it held, while the rules are still as they were.
+    // A flash or a compare ends first, putting back what it held, while the rules are still as they were. A hold stays:
+    // the rules are applied only with the switch on and no hold.
     if constexpr (DevTools) settleTool();
 
     const bool wasApplied = areRulesApplied();

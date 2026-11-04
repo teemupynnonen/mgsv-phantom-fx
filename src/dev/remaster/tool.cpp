@@ -419,13 +419,6 @@ void settleTool() noexcept
     if (compared) sweep(*compared, Direction::Forward);
 
     compared.reset();
-    try
-    {
-        holdRulesOff(false);
-    }
-    catch (...)
-    {
-    }
 }
 
 void refreshLoaded()
