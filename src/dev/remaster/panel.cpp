@@ -60,6 +60,7 @@ struct Pick
 };
 
 bool isOpen{}, isMoving{}, isTyping{}, isBlocking{}, hasDrawnCursor{};
+bool isWithoutRules{}; // V held: the game without any rule
 Tab tab{};
 std::size_t chosenMark{};
 View view{};
@@ -651,7 +652,7 @@ void markRow(std::size_t index, const Mark& mark, bool isChosen)
 
 float hintsHeight()
 {
-    return ImGui::GetTextLineHeight() * 2 + px(14);
+    return ImGui::GetTextLineHeight() * 3 + px(18);
 }
 
 void drawEmpty(std::string_view first, std::string_view second)
@@ -849,7 +850,12 @@ void drawHead()
 
     const auto unsaved = unsavedRules();
     const float save = widthOf("Save") + px(16);
-    if (unsaved)
+    if (isWithoutRules)
+    {
+        constexpr std::string_view Without = "Without any rule";
+        text({right - save - px(10) - widthOf(Without), line}, colour::Warn, Without);
+    }
+    else if (unsaved)
     {
         // A default name says only where and what: name them before they go in the file.
         const auto unnamed = defaultNamedRules();
@@ -888,8 +894,10 @@ void drawHints(float windowBottom)
 
     hairline(top);
     const float left = ImGui::GetWindowPos().x + px(Margin);
+    const float line = ImGui::GetTextLineHeight() + px(4);
     text({left, top + px(5)}, colour::TextFaint, "Up/Down pick  [ ] brightness  0 off  R reset");
-    text({left, top + px(9) + ImGui::GetTextLineHeight()}, colour::TextFaint, "Ctrl+Z undo  C original  Right mouse moves  F7 closes");
+    text({left, top + px(5) + line}, colour::TextFaint, "Ctrl+Z undo  C original  V without any rule");
+    text({left, top + px(5) + line * 2}, colour::TextFaint, "Right mouse moves  F6 marks  F7 closes");
 }
 
 void drawPanel()
@@ -912,6 +920,10 @@ void drawPanel()
         const float bottom = ImGui::GetWindowPos().y + ImGui::GetWindowHeight();
         ImGui::GetWindowDrawList()->AddLine(ImGui::GetWindowPos(), {ImGui::GetWindowPos().x, bottom}, colour::LineStrong);
 
+        // Held, the game shows as it would with no rule at all.
+        isWithoutRules = ImGui::IsKeyDown(ImGuiKey_V) && !ImGui::GetIO().WantTextInput && !isMoving && areRulesOn();
+        holdWithoutRules(isWithoutRules);
+
         drawHead();
         undoKeys();
         if (!areRulesOn()) drawEmpty("The rules are off.", "F1 turns the enhancements back on.");
@@ -924,8 +936,8 @@ void drawPanel()
     ImGui::PopStyleColor(StyleColours);
     ImGui::PopStyleVar(StyleVars);
 
-    // Only the compare's own control lets it go, so without that control nothing else would.
-    if (!isCompareDrawn && isComparing()) settleTool();
+    // Only the compare's own control lets it go, so without that control nothing else would. V lets itself go.
+    if (!isCompareDrawn && !isWithoutRules && isComparing()) settleTool();
 }
 
 void setOpen(bool open)

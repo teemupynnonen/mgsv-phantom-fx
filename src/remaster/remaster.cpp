@@ -31,6 +31,8 @@ const game_code::Expected LocationChecked[]{{0x996F53, LocationCode}};
 
 std::atomic<std::shared_ptr<const std::vector<Rule>>> inForce{std::make_shared<const std::vector<Rule>>()};
 std::atomic<bool> isOn{true};
+// The tool's "without any rules" hold (dev builds): the rules stay in force but off everything while it lasts.
+std::atomic<bool> isHeldOff{};
 std::atomic<std::uint64_t> version{};
 std::atomic<std::shared_ptr<const std::vector<LampRule>>> lampsInForceNow{std::make_shared<const std::vector<LampRule>>()};
 
@@ -71,9 +73,15 @@ void applyFirstRule(const game_materials::Material& material, const std::vector<
         if (applyRule(material.packed, rule, direction)) return;
 }
 
+// Whether the rules are on the game now: the enhancements switch (F1) is on and no hold has them off.
+bool areRulesApplied() noexcept
+{
+    return isOn.load(std::memory_order_relaxed) && !isHeldOff.load(std::memory_order_relaxed);
+}
+
 void onNewMaterial(const game_materials::Material& material) noexcept
 {
-    if (isOn.load(std::memory_order_relaxed)) applyFirstRule(material, *inForce.load(), Direction::Forward);
+    if (areRulesApplied()) applyFirstRule(material, *inForce.load(), Direction::Forward);
 }
 
 void sweep(const std::vector<Rule>& rules, Direction direction)
@@ -113,6 +121,21 @@ void sweep(const Rule& rule, Direction direction)
 {
     sweep(std::vector{rule}, direction);
 }
+
+bool areRulesHeldOff() noexcept
+{
+    return isHeldOff.load(std::memory_order_relaxed);
+}
+
+void holdRulesOff(bool isHeld)
+{
+    const bool wasApplied = areRulesApplied();
+    isHeldOff = isHeld;
+    if (wasApplied == areRulesApplied()) return;
+
+    sweep(*inForce.load(), wasApplied ? Direction::Back : Direction::Forward);
+    ++version; // The rays' self-lit light follows (tuneFileSelfLight)
+}
 #endif
 
 std::string hook() noexcept
@@ -150,11 +173,14 @@ std::string hook() noexcept
 void configure(const Configuration& configuration) noexcept
 {
     const bool isTurnedOn = configuration.areEnhancementsOn;
-    if (isOn.exchange(isTurnedOn) == isTurnedOn) return;
+    if (isOn.load() == isTurnedOn) return;
 
+    // A flash, a compare or a hold ends first, putting back what it held, while the rules are still as they were.
     if constexpr (DevTools) settleTool();
 
-    sweep(*inForce.load(), isTurnedOn ? Direction::Forward : Direction::Back);
+    const bool wasApplied = areRulesApplied();
+    isOn = isTurnedOn;
+    if (wasApplied != areRulesApplied()) sweep(*inForce.load(), wasApplied ? Direction::Back : Direction::Forward);
 }
 
 std::uint64_t rulesVersion() noexcept
@@ -166,7 +192,7 @@ float lampBrightness(const std::array<float, 3>& at, const std::array<float, 3>&
 {
     const auto location = currentLocation();
     float brightness = 1;
-    if (location && isOn.load(std::memory_order_relaxed))
+    if (location && areRulesApplied())
         if (const auto* rule = lampRuleAt(*lampsInForceNow.load(), *location, at)) brightness = rule->brightness;
 
     if constexpr (DevTools) noteLamp(location.value_or(0), at, color, brightness);
@@ -176,6 +202,6 @@ float lampBrightness(const std::array<float, 3>& at, const std::array<float, 3>&
 
 void tuneFileSelfLight(std::uint64_t material, std::array<float, 4>& color, std::array<float, 4>& intensity)
 {
-    tuneSelfLight(*inForce.load(), material, color, intensity);
+    if (areRulesApplied()) tuneSelfLight(*inForce.load(), material, color, intensity);
 }
 }

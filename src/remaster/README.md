@@ -29,7 +29,8 @@ Then work down the marks:
 3. Drag **Brightness**, roll the wheel over it, or press **[** and **]** to step it by a quarter; **0** puts the light
    out and **R** takes its rule away. **Colour** opens a picker, and **More parameters** shows the rest. A lamp has
    **Brightness** alone: its light times that.
-4. Hold **C** or **Hold for original** to see the game's value for this material or lamp alone.
+4. Hold **C** or **Hold for original** to see the game's value for this material or lamp alone. Hold **V** to see the
+   game without any rule at all, lamps, materials and the rays' glow alike.
 5. **Ctrl+Z** undoes any change, **Ctrl+Y** (or **Ctrl+Shift+Z**) redoes it. A drag or a run of the same key is one
    step.
 6. A new rule gets a label that says where and what, as "Quarantine platform, lamp 1379 at -1.5, 3.2, 20.9". Say what

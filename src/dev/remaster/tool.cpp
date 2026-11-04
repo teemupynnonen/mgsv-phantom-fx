@@ -316,7 +316,7 @@ void noteChange(const std::string& what = {})
 void restore(Snapshot to)
 {
     settleTool();
-    const bool isOn = areRulesOn();
+    const bool isOn = areRulesOn() && !areRulesHeldOff();
     if (isOn)
         for (const auto& rule : *rulesInForce()) sweep(rule, Direction::Back);
 
@@ -419,6 +419,13 @@ void settleTool() noexcept
     if (compared) sweep(*compared, Direction::Forward);
 
     compared.reset();
+    try
+    {
+        holdRulesOff(false);
+    }
+    catch (...)
+    {
+    }
 }
 
 void refreshLoaded()
@@ -908,7 +915,18 @@ std::size_t defaultNamedRules()
 bool isComparing() noexcept
 {
     std::lock_guard lock(lampMutex);
-    return compared.has_value() || comparedLamp.has_value();
+    return compared.has_value() || comparedLamp.has_value() || areRulesHeldOff();
+}
+
+void holdWithoutRules(bool isHeld)
+{
+    if (isHeld == areRulesHeldOff()) return;
+
+    // A flash or a one-light compare holds its own values: it ends before the rules come off, so they come back right.
+    if (isHeld) settleTool();
+
+    holdRulesOff(isHeld);
+    framesToRefresh = 0;
 }
 
 std::size_t unsavedRules()
@@ -955,6 +973,14 @@ std::string runLine(std::string_view line)
     {
         addMark();
         return markList.empty() ? "error: nothing marked\n" : std::format("mark {}: {} materials\n", markList.size(), markList.back().materials.size());
+    }
+
+    if (command == "without")
+    {
+        int isHeld{};
+        words >> isHeld;
+        holdWithoutRules(isHeld != 0);
+        return std::format("without rules: {}\n", areRulesHeldOff() ? "held" : "let go");
     }
 
     if (command == "undo" || command == "redo")

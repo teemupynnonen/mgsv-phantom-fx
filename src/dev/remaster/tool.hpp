@@ -80,6 +80,8 @@ bool hasRule(const game_materials::Material& material);
 
 // Shows the game's values of the rule on the material for as long as it is called with true.
 void holdOriginal(const game_materials::Material& material, bool isHeld);
+// The game without any rule, for as long as it is called with true; editing waits meanwhile (isComparing).
+void holdWithoutRules(bool isHeld);
 bool isComparing() noexcept;
 
 // A lamp of a mark: its rule's brightness, 1 without one.
@@ -134,6 +136,7 @@ bool didSaveFail();
 //   panel <number>                       opens the panel on the last mark's lamps, that lamp chosen
 //   reset <number>                       takes that lamp's rule away, as the panel's R does
 //   undo, redo                           as Ctrl+Z and Ctrl+Y
+//   without 0|1                          holds the game without any rule, as the panel's V does
 //   rules                                every rule's label, and how many are still under the one the tool gave
 std::string runLine(std::string_view line);
 }
