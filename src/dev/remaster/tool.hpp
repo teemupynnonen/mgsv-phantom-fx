@@ -120,6 +120,8 @@ void holdOriginalLamp(const LampRow& lamp, bool isHeld);
 // Every change to the rules, materials' and lamps' alike, is a step back. False when there was none.
 bool undo();
 bool redo();
+// Counts the undos and redos done, by any hand, so what shows a rule knows to read it again.
+std::uint64_t restores();
 
 // The rules still under the label the tool gave them: a reader of the file cannot tell what they are for.
 std::size_t defaultNamedRules();

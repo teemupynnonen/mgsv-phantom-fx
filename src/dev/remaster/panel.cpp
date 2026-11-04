@@ -70,6 +70,7 @@ float tuneHeight{};
 std::array<char, 96> labelText{};
 std::optional<std::uint32_t> labelFor;
 std::optional<std::array<float, 3>> lampLabelFor;
+std::uint64_t seenRestores{}; // The undos and redos the label field has reloaded after
 bool isCompareDrawn{};
 
 float px(float value)
@@ -488,16 +489,18 @@ void undoKeys()
     const auto& io = ImGui::GetIO();
     if (!canTakeKeys() || !io.KeyCtrl) return;
 
-    bool isRestored{};
-    if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) isRestored = io.KeyShift ? redo() : undo();
-    else if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) isRestored = redo();
+    if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) io.KeyShift ? redo() : undo();
+    else if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) redo();
+}
 
-    // The label field reloads from the restored rule, or what was typed would go back in.
-    if (isRestored)
-    {
-        labelFor.reset();
-        lampLabelFor.reset();
-    }
+// After an undo or redo, the keys' or automation's, the label field reloads from the restored rule, or what was typed
+// would go back in.
+void reloadLabelsAfterRestore()
+{
+    if (std::exchange(seenRestores, restores()) == restores()) return;
+
+    labelFor.reset();
+    lampLabelFor.reset();
 }
 
 // The arrows walk the list; [ and ] step the chosen light's brightness, 0 puts it out and R takes its rule away.
@@ -929,6 +932,7 @@ void drawPanel()
 
         drawHead();
         undoKeys();
+        reloadLabelsAfterRestore();
         if (!areRulesOn()) drawEmpty("The rules are off.", "F1 turns the enhancements back on.");
         else if (tab == Tab::Marks ? drawMarks() : drawRules()) drawTuning(bottom);
 

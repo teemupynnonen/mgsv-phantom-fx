@@ -129,6 +129,7 @@ struct Snapshot
 std::vector<Snapshot> undoSteps, redoSteps;
 std::string lastChange;
 ULONGLONG lastChangeAt{};
+std::uint64_t restoreCount{};
 // The labels the tool gave this session: a rule still under one has not been named.
 std::set<std::string> defaultLabels;
 // Who holds the game without rules (holdWithoutRules), by Holder: the rules come back once none does.
@@ -330,6 +331,7 @@ void restore(Snapshot to)
     putLampsInForce(std::move(to.lamps));
     lastChange.clear();
     framesToRefresh = 0;
+    ++restoreCount;
 }
 
 std::string givenLabel(std::string label)
@@ -875,6 +877,11 @@ void holdOriginal(const Material& material, bool isHeld)
 
     compared = *rule;
     sweep(*compared, Direction::Back);
+}
+
+std::uint64_t restores()
+{
+    return restoreCount;
 }
 
 bool undo()
