@@ -181,7 +181,10 @@ void configure(const Configuration& configuration) noexcept
 
     const bool wasApplied = areRulesApplied();
     isOn = isTurnedOn;
-    if (wasApplied != areRulesApplied()) sweep(*inForce.load(), wasApplied ? Direction::Back : Direction::Forward);
+    if (wasApplied == areRulesApplied()) return;
+
+    sweep(*inForce.load(), wasApplied ? Direction::Back : Direction::Forward);
+    ++version; // The rays' self-lit light follows (tuneFileSelfLight)
 }
 
 std::uint64_t rulesVersion() noexcept

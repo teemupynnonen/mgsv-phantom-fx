@@ -60,7 +60,8 @@ struct Pick
 };
 
 bool isOpen{}, isMoving{}, isTyping{}, isBlocking{}, hasDrawnCursor{};
-bool isWithoutRules{}; // V held, and the hold the panel started with it
+// V down last frame, and whether the panel holds the game without rules: only a hold it started is its to end.
+bool wasVHeld{}, ownsWithoutHold{};
 Tab tab{};
 std::size_t chosenMark{};
 View view{};
@@ -923,9 +924,18 @@ void drawPanel()
         // Held, the game shows as it would with no rule at all.
         // V goes down and up: only then, so a hold started elsewhere (automation's `without`) stays.
         const bool isVHeld = ImGui::IsKeyDown(ImGuiKey_V) && !ImGui::GetIO().WantTextInput && !isMoving && areRulesOn();
-        if (isVHeld != isWithoutRules) holdWithoutRules(isVHeld);
+        if (isVHeld && !wasVHeld && !areRulesHeldOff())
+        {
+            holdWithoutRules(true);
+            ownsWithoutHold = true;
+        }
+        else if (!isVHeld && ownsWithoutHold)
+        {
+            holdWithoutRules(false);
+            ownsWithoutHold = false;
+        }
 
-        isWithoutRules = isVHeld;
+        wasVHeld = isVHeld;
 
         drawHead();
         undoKeys();
@@ -952,7 +962,8 @@ void setOpen(bool open)
     settleTool();
 
     // Its own hold goes with it; one automation started stays until `without 0`.
-    if (std::exchange(isWithoutRules, false)) holdWithoutRules(false);
+    wasVHeld = false;
+    if (std::exchange(ownsWithoutHold, false)) holdWithoutRules(false);
 }
 
 bool isAnyInputDown(reshade::api::effect_runtime* runtime)
