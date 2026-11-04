@@ -40,7 +40,8 @@ struct GameScene
     // A newer list came: `placements` and `characters` replace the last, even when empty. Without one
     // the last placements and poses stand.
     bool hasNewLists{};
-    std::span<const ModelInstance> placements;
+    // Taken over by the update, not copied: 38,792 in the jungle, the update's largest cost (2026-11-04).
+    std::vector<ModelInstance> placements;
     std::span<const CharacterInstance> characters;
     // Copied, or copied again as the game streamed more of it in, since the last frame.
     std::span<const SceneTexture> newTextures;
@@ -103,7 +104,7 @@ public:
 
     // The frame's contents: its models, textures, characters and terrain, the memory's builds planned,
     // then its instances. Once a frame, between the memory's frame start and its recording.
-    Update update(const GameScene& frame);
+    Update update(GameScene&& frame);
 
     // ---- Diagnostics ----
     // For the overlay and the log: the game's models, textures, characters and terrain rings held and traced.
@@ -144,6 +145,7 @@ private:
             std::optional<BlasId> blas;
             std::vector<std::uint32_t> parts;
             std::uint32_t lastUsed{};
+            std::uint64_t triangles{}; // Diagnostics
         };
 
         std::shared_ptr<const Model> geometry;
@@ -163,6 +165,7 @@ private:
         std::vector<std::uint64_t> skins;
         std::vector<Variant> variants;
         std::uint32_t lastPlaced{};
+        std::uint64_t triangles{}; // Diagnostics
         std::array<float, 6> bounds{}; // Diagnostics (the shadow probe): object space, lowest then highest
         std::vector<Emitter> emitters;
     };
@@ -205,7 +208,7 @@ private:
     std::vector<Geometry> stageModel(const Model& model, std::uint64_t poolOffset, std::vector<std::uint8_t>& bytes, std::vector<std::uint64_t>& skins) const;
     void updateTextures(const GameScene& frame);
     void useTextures(const Model& model, bool isUsed, Update& update);
-    void updateModels(const GameScene& frame, Update& update);
+    void updateModels(GameScene& frame, Update& update); // Takes frame.placements
     void updateCharacters(const GameScene& frame, Update& update);
     void planTerrain(const std::array<float, 3>& eye, std::uint32_t frameIndex, Update& update);
     void makeSea();
