@@ -288,6 +288,8 @@ void drawLabel(const Material& material)
         return;
     }
 
+    // The label field is a lamp's or a material's: whichever it was last for reloads it.
+    lampLabelFor.reset();
     if (labelFor != material.index)
     {
         labelFor = material.index;
@@ -340,7 +342,9 @@ void drawLampTune(const LampRow& lamp)
     ImGui::Dummy({1, ImGui::GetTextLineHeight() + px(8)});
 
     ImGui::BeginDisabled(isComparing());
-    if (lamp.isTuned)
+    labelFor.reset();
+    if (!lamp.isTuned) lampLabelFor.reset();
+    else
     {
         if (lampLabelFor != lamp.at)
         {

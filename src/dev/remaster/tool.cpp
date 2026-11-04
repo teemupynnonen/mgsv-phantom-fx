@@ -867,7 +867,8 @@ std::string runLine(std::string_view line)
         std::size_t number{};
         float brightness{};
         const auto rows = lampRowsOf(mark);
-        if (!(words >> number >> brightness) || number < 1 || number > rows.size()) return "error: lamp <number> <brightness>\n";
+        // As the rule file reads it: a value it refuses would cost every rule at the next start.
+        if (!(words >> number >> brightness) || number < 1 || number > rows.size() || !(brightness >= 0)) return "error: lamp <number> <brightness>\n";
 
         editLamp(rows[number - 1], brightness);
         return std::format("lamp {} brightness {}\n", number, lampRowsOf(mark)[number - 1].brightness);
