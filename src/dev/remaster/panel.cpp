@@ -60,7 +60,7 @@ struct Pick
 };
 
 bool isOpen{}, isMoving{}, isTyping{}, isBlocking{}, hasDrawnCursor{};
-bool isWithoutRules{}; // V held: the game without any rule
+bool isWithoutRules{}; // V held, and the hold the panel started with it
 Tab tab{};
 std::size_t chosenMark{};
 View view{};
@@ -850,7 +850,7 @@ void drawHead()
 
     const auto unsaved = unsavedRules();
     const float save = widthOf("Save") + px(16);
-    if (isWithoutRules)
+    if (areRulesHeldOff())
     {
         constexpr std::string_view Without = "Without any rule";
         text({right - save - px(10) - widthOf(Without), line}, colour::Warn, Without);
@@ -921,8 +921,11 @@ void drawPanel()
         ImGui::GetWindowDrawList()->AddLine(ImGui::GetWindowPos(), {ImGui::GetWindowPos().x, bottom}, colour::LineStrong);
 
         // Held, the game shows as it would with no rule at all.
-        isWithoutRules = ImGui::IsKeyDown(ImGuiKey_V) && !ImGui::GetIO().WantTextInput && !isMoving && areRulesOn();
-        holdWithoutRules(isWithoutRules);
+        // V goes down and up: only then, so a hold started elsewhere (automation's `without`) stays.
+        const bool isVHeld = ImGui::IsKeyDown(ImGuiKey_V) && !ImGui::GetIO().WantTextInput && !isMoving && areRulesOn();
+        if (isVHeld != isWithoutRules) holdWithoutRules(isVHeld);
+
+        isWithoutRules = isVHeld;
 
         drawHead();
         undoKeys();
@@ -937,7 +940,7 @@ void drawPanel()
     ImGui::PopStyleVar(StyleVars);
 
     // Only the compare's own control lets it go, so without that control nothing else would. V lets itself go.
-    if (!isCompareDrawn && !isWithoutRules && isComparing()) settleTool();
+    if (!isCompareDrawn && !areRulesHeldOff() && isComparing()) settleTool();
 }
 
 void setOpen(bool open)

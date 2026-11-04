@@ -969,6 +969,10 @@ std::string runLine(std::string_view line)
     framesToRefresh = 0;
     refreshLoaded();
 
+    // The panel waits while the game shows without rules, and so do these: a rule is matched by the values the game holds.
+    constexpr std::string_view Edits[]{"set", "original", "lamp", "reset", "compare", "undo", "redo"};
+    if (areRulesHeldOff() && std::ranges::find(Edits, command) != std::end(Edits)) return "error: the game is held without rules: without 0 first\n";
+
     if (command == "mark")
     {
         addMark();
