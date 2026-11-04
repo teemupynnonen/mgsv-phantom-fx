@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Characters, the helicopter and swaying trees stay in the ray-traced scene beside other mods.** The scene found the
+  game's list of models in a spot that only held it by chance. With some other mods installed it read an empty list, so
+  Snake, the soldiers, the helicopter's cabin and trees that move in the wind cast no ray-traced shadows and global
+  illumination went through them. The list is now read where the game itself keeps it.
 - **Lamps and glowing signs no longer blow out rooms with path tracing.** Their glow was taken as their light, and a
   ceiling tube lit its room about 85 times as much as the game's own lamp beside it. Rooms on the quarantine platform came
   out 9 to 37 times as bright as the game draws them, white even with **Self-lit surfaces** at 0.01. Glowing surfaces now
