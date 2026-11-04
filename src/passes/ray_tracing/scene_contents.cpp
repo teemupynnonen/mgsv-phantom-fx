@@ -333,7 +333,7 @@ void SceneContents::useTextures(const Model& model, bool isUsed, Update& update)
 // The frame's models: new ones registered, the placed ones' meshes into the pool and their structures
 // made (as the frame's upload and the memory allow), those not placed for ModelRetentionFrames let go
 // (Update::releasedModels).
-void SceneContents::updateModels(const GameScene& frame, Update& update)
+void SceneContents::updateModels(GameScene& frame, Update& update)
 {
     for (const auto& model : frame.newModels)
     {

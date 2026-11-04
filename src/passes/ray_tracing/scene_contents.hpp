@@ -208,7 +208,7 @@ private:
     std::vector<Geometry> stageModel(const Model& model, std::uint64_t poolOffset, std::vector<std::uint8_t>& bytes, std::vector<std::uint64_t>& skins) const;
     void updateTextures(const GameScene& frame);
     void useTextures(const Model& model, bool isUsed, Update& update);
-    void updateModels(const GameScene& frame, Update& update);
+    void updateModels(GameScene& frame, Update& update); // Takes frame.placements
     void updateCharacters(const GameScene& frame, Update& update);
     void planTerrain(const std::array<float, 3>& eye, std::uint32_t frameIndex, Update& update);
     void makeSea();
