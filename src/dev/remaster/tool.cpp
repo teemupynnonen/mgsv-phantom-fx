@@ -19,7 +19,11 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <iterator>
+#include <mutex>
+#include <set>
+#include <sstream>
 #include <unordered_map>
 #include <utility>
 
@@ -53,6 +57,10 @@ constexpr std::uint64_t PresentsBetweenTravelChecks = 60;
 // Long enough for the slowest loading screen and the walk out of it.
 constexpr int MostTravelChecks = 180;
 
+// Changes to the same thing closer together than this are one step to undo: a slider's drag, a label's typing.
+constexpr ULONGLONG ChangeGapMilliseconds = 600;
+constexpr std::size_t MostUndoSteps = 200;
+
 // What blinks: the first of these a material has, else its first parameter.
 constexpr std::uint64_t FlashingParameters[]{SelfColorIntensityParameter, GlassColorParameter, ReflectionColorParameter};
 
@@ -80,7 +88,21 @@ struct Travel
     bool isChecking{};
 };
 
+// A lamp's light draw seen lately (noteLamp).
+struct SeenLamp
+{
+    std::uint16_t location{};
+    std::array<float, 3> at{}, color{};
+    std::uint32_t frame{};
+};
+
 std::array<std::atomic<std::uint32_t>, PacketMaterialBits + 1> lastDrawn{};
+
+// The lamps' light draws come on the game's render threads: what they read here, under this.
+std::mutex lampMutex;
+std::unordered_map<std::uint64_t, SeenLamp> seenLamps; // By where the lamp is, to the centimetre
+std::optional<std::array<float, 3>> lampFlashWanted, flashingLamp;
+std::optional<LampRule> comparedLamp;
 
 using Replay = void (*)(void* state, const std::uint64_t* packet, std::uint32_t first, std::uint32_t second);
 Replay originalReplay{};
@@ -96,6 +118,23 @@ std::optional<Rule> compared;
 std::optional<Travel> travelling;
 std::uint64_t presents{};
 std::vector<Rule> savedRules;
+std::vector<LampRule> savedLamps;
+
+// The rules before each change, to undo and redo.
+struct Snapshot
+{
+    std::vector<Rule> rules;
+    std::vector<LampRule> lamps;
+};
+std::vector<Snapshot> undoSteps, redoSteps;
+std::string lastChange;
+ULONGLONG lastChangeAt{};
+std::uint64_t restoreCount{};
+// The labels the tool gave this session: a rule still under one has not been named.
+std::set<std::string> defaultLabels;
+// Who holds the game without rules (holdWithoutRules), by Holder: the rules come back once none does.
+std::array<bool, 2> isHeldBy{};
+std::optional<LampRow> chosenLamp;
 bool hasSaveFailed{};
 
 void replayDraw(void* state, const std::uint64_t* packet, std::uint32_t first, std::uint32_t second)
@@ -233,6 +272,79 @@ return "arrived")",
         mark.location, mark.position[0], mark.position[1], mark.position[2], mark.rotation);
 }
 
+std::uint64_t lampKey(const std::array<float, 3>& at)
+{
+    std::uint64_t key = 0xCBF29CE484222325;
+    for (const float coordinate : at) key = (key ^ static_cast<std::uint64_t>(std::llround(coordinate * 100))) * 0x100000001B3;
+
+    return key;
+}
+
+bool isLampDrawnNow(const std::array<float, 3>& at)
+{
+    std::lock_guard lock(lampMutex);
+    const auto seen = seenLamps.find(lampKey(at));
+
+    return seen != seenLamps.end() && game_loop::currentFrame() - seen->second.frame < DrawnNowFrames;
+}
+
+std::uint16_t currentLocation()
+{
+    const auto vars = varsBlock();
+    return vars ? game_memory::read<std::uint16_t>(vars + VarLocation).value_or(0) : 0;
+}
+
+Snapshot snapshot()
+{
+    return {*rulesInForce(), *lampsInForce()};
+}
+
+// Before each change: a step to undo, unless it goes on the last one. A change of nothing named (a removal) is always a
+// step of its own.
+void noteChange(const std::string& what = {})
+{
+    const auto now = GetTickCount64();
+    if (what.empty() || what != lastChange || now - lastChangeAt > ChangeGapMilliseconds)
+    {
+        undoSteps.push_back(snapshot());
+        if (undoSteps.size() > MostUndoSteps) undoSteps.erase(undoSteps.begin());
+        redoSteps.clear();
+    }
+
+    lastChange = what;
+    lastChangeAt = now;
+}
+
+// The materials taken off the rules in force and put under these, which go in force. While the enhancements switch (F1)
+// has the rules off, the materials stay as the game made them, and turning it on puts these on.
+void restore(Snapshot to)
+{
+    settleTool();
+    const bool isOn = areRulesOn() && !areRulesHeldOff();
+    if (isOn)
+        for (const auto& rule : *rulesInForce()) sweep(rule, Direction::Back);
+
+    putInForce(std::move(to.rules));
+    if (isOn)
+        for (const auto& rule : *rulesInForce()) sweep(rule, Direction::Forward);
+
+    putLampsInForce(std::move(to.lamps));
+    lastChange.clear();
+    framesToRefresh = 0;
+    ++restoreCount;
+}
+
+std::string givenLabel(std::string label)
+{
+    defaultLabels.insert(label);
+    return label;
+}
+
+auto lampRuleOf(std::vector<LampRule>& lamps, const LampRow& lamp)
+{
+    return std::ranges::find_if(lamps, [&](const LampRule& each) { return each.location == lamp.location && isLampAt(each.at, lamp.at); });
+}
+
 std::optional<travel::Map> mapOf(std::uint16_t location)
 {
     if (location == 10) return travel::Map::Afghanistan;
@@ -260,6 +372,7 @@ std::string hookTool() noexcept
 
     registerPanel();
     savedRules = *rulesInForce();
+    savedLamps = *lampsInForce();
     try
     {
         loadMarks();
@@ -272,8 +385,27 @@ std::string hookTool() noexcept
     return "";
 }
 
+void noteLamp(std::uint16_t location, const std::array<float, 3>& at, const std::array<float, 3>& color, float& brightness) noexcept
+{
+    try
+    {
+        std::lock_guard lock(lampMutex);
+        seenLamps[lampKey(at)] = {location, at, color, game_loop::currentFrame()};
+        if (comparedLamp && comparedLamp->location == location && isLampAt(comparedLamp->at, at)) brightness = 1;
+        if (flashingLamp && isLampAt(*flashingLamp, at)) brightness = 0;
+    }
+    catch (...)
+    {
+    }
+}
+
 void endFlash() noexcept
 {
+    {
+        std::lock_guard lock(lampMutex);
+        flashingLamp.reset();
+    }
+
     if (!flashing) return;
 
     if (const auto material = game_materials::materialAt(flashing->poolRow)) setValue(material->packed, flashing->parameter, flashing->held);
@@ -284,6 +416,11 @@ void endFlash() noexcept
 void settleTool() noexcept
 {
     endFlash();
+    {
+        std::lock_guard lock(lampMutex);
+        comparedLamp.reset();
+    }
+
     if (compared) sweep(*compared, Direction::Forward);
 
     compared.reset();
@@ -321,6 +458,12 @@ void addMark()
         if (isDrawnNow(material.index)) mark.materials.push_back({material.name, fingerprintOf(material.packed, material.name, *rules), kindOf(material), brightnessOf(material), material.uses});
     });
 
+    {
+        std::lock_guard lock(lampMutex);
+        for (const auto& [key, lamp] : seenLamps)
+            if (lamp.location == mark.location && game_loop::currentFrame() - lamp.frame < DrawnNowFrames) mark.lamps.push_back({lamp.at, lamp.color});
+    }
+
     if (mark.materials.empty())
     {
         fxui::toast(Tone::Warn, "Nothing to mark", "The game has drawn no materials.");
@@ -330,7 +473,8 @@ void addMark()
     const auto selfLit = countOf(mark, MaterialKind::SelfLit);
     markList.push_back(std::move(mark));
     saveMarks();
-    fxui::toast(Tone::Ok, std::format("Mark {}", markList.size()), std::format("{} self-lit. F7 opens the marks.", selfLit));
+    const auto lamps = markList.back().lamps.size();
+    fxui::toast(Tone::Ok, std::format("Mark {}", markList.size()), std::format("{} self-lit, {} lamps. F7 opens the marks.", selfLit, lamps));
 }
 
 const std::vector<Mark>& marks()
@@ -474,15 +618,127 @@ std::vector<RuleRow> ruleRows()
     return rows;
 }
 
+std::vector<LampRow> lampRowsOf(const Mark& mark)
+{
+    std::vector<LampRow> rows;
+    const auto rules = lampsInForce();
+    for (const auto& lamp : mark.lamps)
+    {
+        LampRow row{.location = mark.location, .at = lamp.at, .color = lamp.color, .isDrawn = isLampDrawnNow(lamp.at)};
+        if (const auto* rule = lampRuleAt(*rules, mark.location, lamp.at))
+        {
+            row.brightness = rule->brightness;
+            row.label = rule->label;
+            row.isTuned = true;
+        }
+
+        rows.push_back(std::move(row));
+    }
+
+    // By their colour at the mark, which no rule changes.
+    std::ranges::sort(rows, [](const LampRow& a, const LampRow& b) { return std::ranges::max(a.color) > std::ranges::max(b.color); });
+
+    return rows;
+}
+
+std::vector<LampRule> lampRules()
+{
+    return *lampsInForce();
+}
+
 void select(std::uint32_t poolRow, std::uint64_t name)
 {
     selectedRow = poolRow;
     selectedName = name;
+    chosenLamp.reset();
 }
 
 void clearSelection()
 {
     selectedRow.reset();
+    chosenLamp.reset();
+}
+
+void selectLamp(const LampRow& lamp)
+{
+    selectedRow.reset();
+    chosenLamp = lamp;
+}
+
+std::optional<LampRow> selectedLamp()
+{
+    if (!chosenLamp) return std::nullopt;
+
+    auto lamp = *chosenLamp;
+    const auto rules = lampsInForce();
+    const auto* rule = lampRuleAt(*rules, lamp.location, lamp.at);
+    lamp.brightness = rule ? rule->brightness : 1;
+    lamp.label = rule ? rule->label : std::string{};
+    lamp.isTuned = rule != nullptr;
+    lamp.isDrawn = isLampDrawnNow(lamp.at);
+
+    return lamp;
+}
+
+void flashLamp(const std::array<float, 3>& at)
+{
+    std::lock_guard lock(lampMutex);
+    lampFlashWanted = at;
+}
+
+void editLamp(const LampRow& lamp, float brightness)
+{
+    noteChange(std::format("lamp {}", lampKey(lamp.at)));
+
+    auto lamps = *lampsInForce();
+    auto rule = lampRuleOf(lamps, lamp);
+    if (rule == lamps.end())
+    {
+        const auto& [x, y, z] = lamp.at;
+        const auto label = std::format("{}, lamp {:.0f} at {:.1f}, {:.1f}, {:.1f}", locationName(lamp.location), std::ranges::max(lamp.color), x, y, z);
+        rule = lamps.insert(lamps.end(), LampRule{.label = givenLabel(label), .location = lamp.location, .at = lamp.at});
+    }
+
+    // Back at 1 under no name of its own, there is nothing to keep.
+    rule->brightness = brightness;
+    if (brightness == 1 && (rule->label.empty() || defaultLabels.contains(rule->label))) lamps.erase(rule);
+
+    putLampsInForce(std::move(lamps));
+}
+
+void setLampLabel(const LampRow& lamp, const std::string& label)
+{
+    auto lamps = *lampsInForce();
+    const auto rule = lampRuleOf(lamps, lamp);
+    if (rule == lamps.end()) return;
+
+    noteChange(std::format("lamp label {}", lampKey(lamp.at)));
+    rule->label = label;
+    putLampsInForce(std::move(lamps));
+}
+
+void removeLampRule(const LampRule& rule)
+{
+    auto lamps = *lampsInForce();
+    const auto found = std::ranges::find(lamps, rule);
+    if (found == lamps.end()) return;
+
+    noteChange();
+    lamps.erase(found);
+    putLampsInForce(std::move(lamps));
+}
+
+void resetLamp(const LampRow& lamp)
+{
+    auto lamps = *lampsInForce();
+    const auto rule = lampRuleOf(lamps, lamp);
+    if (rule != lamps.end()) removeLampRule(*rule);
+}
+
+void holdOriginalLamp(const LampRow& lamp, bool isHeld)
+{
+    std::lock_guard lock(lampMutex);
+    comparedLamp = isHeld && lamp.isTuned ? std::optional(LampRule{.location = lamp.location, .at = lamp.at}) : std::nullopt;
 }
 
 std::optional<Material> selectedMaterial()
@@ -502,6 +758,12 @@ void flash(std::uint32_t poolRow)
 
 void startFlash()
 {
+    {
+        std::lock_guard lock(lampMutex);
+        const auto lamp = std::exchange(lampFlashWanted, std::nullopt);
+        if (lamp && !comparedLamp && !(GetTickCount64() / FlashMilliseconds % 2)) flashingLamp = lamp;
+    }
+
     const auto wanted = std::exchange(flashWanted, std::nullopt);
     if (!wanted || compared || GetTickCount64() / FlashMilliseconds % 2) return;
 
@@ -528,9 +790,18 @@ Value originalOf(const Material& material, std::uint64_t parameter, const Value&
 // under the rule as it is now, or a new one.
 void edit(const Material& material, std::uint64_t parameter, const Value& value)
 {
+    noteChange(std::format("material {} {}", material.index, parameter));
+
     auto rules = *rulesInForce();
     auto rule = ruleAppliedTo(material, rules);
-    if (rule == rules.end()) rule = rules.insert(rules.end(), Rule{.material = material.name});
+    if (rule == rules.end())
+    {
+        const auto label = kindOf(material) == MaterialKind::SelfLit
+            ? std::format("{}, glow {:.6g}, {} uses", locationName(currentLocation()), brightnessOf(material), material.uses)
+            : std::format("{}, {} {}, {} uses", locationName(currentLocation()), kindOf(material) == MaterialKind::Glass ? "glass" : "material", hashText(material.name),
+                  material.uses);
+        rule = rules.insert(rules.end(), Rule{.label = givenLabel(label), .material = material.name});
+    }
 
     const auto before = *rule;
     retune(*rule, parameter, valueOf(material.packed, parameter), value);
@@ -559,6 +830,7 @@ void setLabel(const Material& material, const std::string& label)
     const auto rule = ruleAppliedTo(material, rules);
     if (rule == rules.end()) return;
 
+    noteChange(std::format("material label {}", material.index));
     rule->label = label;
     putInForce(std::move(rules));
 }
@@ -569,6 +841,7 @@ void removeRule(const Rule& rule)
     const auto found = std::ranges::find(rules, rule);
     if (found == rules.end()) return;
 
+    noteChange();
     sweep(rule, Direction::Back);
     rules.erase(found);
     putInForce(std::move(rules));
@@ -606,20 +879,76 @@ void holdOriginal(const Material& material, bool isHeld)
     sweep(*compared, Direction::Back);
 }
 
+std::uint64_t restores()
+{
+    return restoreCount;
+}
+
+bool undo()
+{
+    if (undoSteps.empty()) return false;
+
+    redoSteps.push_back(snapshot());
+    auto step = std::move(undoSteps.back());
+    undoSteps.pop_back();
+    restore(std::move(step));
+
+    return true;
+}
+
+bool redo()
+{
+    if (redoSteps.empty()) return false;
+
+    undoSteps.push_back(snapshot());
+    auto step = std::move(redoSteps.back());
+    redoSteps.pop_back();
+    restore(std::move(step));
+
+    return true;
+}
+
+std::size_t defaultNamedRules()
+{
+    const auto isDefault = [](const auto& rule) { return defaultLabels.contains(rule.label); };
+
+    return static_cast<std::size_t>(std::ranges::count_if(*rulesInForce(), isDefault) + std::ranges::count_if(*lampsInForce(), isDefault));
+}
+
 bool isComparing() noexcept
 {
-    return compared.has_value();
+    std::lock_guard lock(lampMutex);
+    return compared.has_value() || comparedLamp.has_value() || areRulesHeldOff();
+}
+
+void holdWithoutRules(Holder holder, bool isHeld)
+{
+    isHeldBy[static_cast<std::size_t>(holder)] = isHeld;
+    const bool isWanted = std::ranges::any_of(isHeldBy, std::identity{});
+    if (isWanted == areRulesHeldOff()) return;
+
+    // A flash or a one-light compare holds its own values: it ends before the rules come off, so they come back right.
+    if (isWanted) settleTool();
+
+    holdRulesOff(isWanted);
+    framesToRefresh = 0;
 }
 
 std::size_t unsavedRules()
 {
-    return unsavedCount(savedRules, *rulesInForce());
+    const auto lamps = lampsInForce();
+    const auto missing = [](const std::vector<LampRule>& set, const std::vector<LampRule>& other) {
+        return static_cast<std::size_t>(std::ranges::count_if(set, [&](const LampRule& rule) { return std::ranges::find(other, rule) == other.end(); }));
+    };
+
+    return unsavedCount(savedRules, *rulesInForce()) + std::max(missing(*lamps, savedLamps), missing(savedLamps, *lamps));
 }
 
 void saveRules()
 {
     const auto rules = rulesInForce();
-    hasSaveFailed = !writeFile(rulesFile(), writeRules(*rules));
+    const auto lamps = lampsInForce();
+    hasSaveFailed = !writeFile(rulesFile(), writeRules(*rules, *lamps));
     if (hasSaveFailed)
     {
         fxui::toast(Tone::Bad, "Materials not saved", rulesFile().string());
@@ -627,12 +956,174 @@ void saveRules()
     }
 
     savedRules = *rules;
+    savedLamps = *lamps;
     fxui::toast(Tone::Ok, "Materials saved", rulesFile().string());
 }
 
 bool didSaveFail()
 {
     return hasSaveFailed;
+}
+
+std::string runLine(std::string_view line)
+{
+    std::istringstream words{std::string(line)};
+    std::string command;
+    words >> command;
+
+    framesToRefresh = 0;
+    refreshLoaded();
+
+    // The panel waits while the game shows without rules, and so do these: a rule is matched by the values the game holds.
+    constexpr std::string_view Edits[]{"set", "original", "lamp", "reset", "compare", "undo", "redo"};
+    if (areRulesHeldOff() && std::ranges::find(Edits, command) != std::end(Edits)) return "error: the game is held without rules: without 0 first\n";
+
+    if (command == "mark")
+    {
+        addMark();
+        return markList.empty() ? "error: nothing marked\n" : std::format("mark {}: {} materials\n", markList.size(), markList.back().materials.size());
+    }
+
+    if (command == "without")
+    {
+        int isHeld{};
+        words >> isHeld;
+        holdWithoutRules(Holder::Line, isHeld != 0);
+        return std::format("without rules: {}\n", areRulesHeldOff() ? "held" : "let go");
+    }
+
+    if (command == "undo" || command == "redo")
+    {
+        const bool isDone = command == "undo" ? undo() : redo();
+        return std::format("{}: {}; {} material and {} lamp rules\n", command, isDone ? "done" : "nothing to do", rulesInForce()->size(), lampsInForce()->size());
+    }
+
+    if (command == "rules")
+    {
+        std::string text;
+        for (const auto& rule : *rulesInForce()) text += std::format("material {} \"{}\"\n", hashText(rule.material), rule.label);
+        for (const auto& lamp : *lampsInForce()) text += std::format("lamp {} \"{}\"\n", lamp.brightness, lamp.label);
+
+        return std::format("{}{} under default names\n", text, defaultNamedRules());
+    }
+
+    if (command == "loaded")
+    {
+        std::string text;
+        game_materials::forEachMaterial([&](const Material& material) {
+            if (kindOf(material) != MaterialKind::SelfLit && !isDrawnNow(material.index)) return;
+
+            text += std::format("{} row {} brightness {:.6g} uses {} technique {:x}{}:", hashText(material.name), material.index, brightnessOf(material),
+                material.uses, material.technique, isDrawnNow(material.index) ? " drawn" : "");
+            for (const auto lowHalf : material.packed.parameters)
+            {
+                const auto parameter = parameterOfLowHalf(lowHalf);
+                const auto value = valueOf(material.packed, parameter);
+                text += " " + parameterText(parameter) + "=" + (value.empty() ? std::string("-") : std::format("{:.4g}", value[0]));
+            }
+            text += "\n";
+        });
+
+        return text;
+    }
+
+    if (markList.empty()) return "error: no mark yet\n";
+
+    const auto& mark = markList.back();
+    if (command == "lamps")
+    {
+        std::string text;
+        const auto rows = lampRowsOf(mark);
+        for (std::size_t i = 0; i < rows.size(); ++i)
+        {
+            const auto& [x, y, z] = rows[i].at;
+            text += std::format("{} at {:.2f} {:.2f} {:.2f} colour {:.4g} brightness {:.4g}{}{}\n", i + 1, x, y, z, std::ranges::max(rows[i].color), rows[i].brightness,
+                rows[i].isTuned ? " tuned" : "", rows[i].isDrawn ? " drawn" : "");
+        }
+
+        return text.empty() ? "no lamps at the last mark\n" : text;
+    }
+
+    if (command == "lamp")
+    {
+        std::size_t number{};
+        float brightness{};
+        const auto rows = lampRowsOf(mark);
+        // As the rule file reads it: a value it refuses would cost every rule at the next start.
+        if (!(words >> number >> brightness) || number < 1 || number > rows.size() || !(brightness >= 0)) return "error: lamp <number> <brightness>\n";
+
+        editLamp(rows[number - 1], brightness);
+        return std::format("lamp {} brightness {}\n", number, lampRowsOf(mark)[number - 1].brightness);
+    }
+
+    if (command == "reset")
+    {
+        std::size_t number{};
+        const auto rows = lampRowsOf(mark);
+        if (!(words >> number) || number < 1 || number > rows.size()) return "error: reset <number>\n";
+
+        resetLamp(rows[number - 1]);
+        return std::format("lamp {} brightness {}\n", number, lampRowsOf(mark)[number - 1].brightness);
+    }
+
+    if (command == "compare" || command == "panel")
+    {
+        std::size_t number{};
+        int isHeld{};
+        const auto rows = lampRowsOf(mark);
+        if (!(words >> number) || number < 1 || number > rows.size() || (command == "compare" && !(words >> isHeld))) return "error: compare|panel <number> ...\n";
+
+        if (command == "panel") showLamp(markList.size() - 1, rows[number - 1]);
+        else holdOriginalLamp(rows[number - 1], isHeld != 0);
+
+        return "done\n";
+    }
+    if (command == "rows")
+    {
+        std::string kindWord;
+        words >> kindWord;
+        const auto kind = kindWord == "all" ? std::nullopt : kindWord == "glass" ? std::optional(MaterialKind::Glass) : std::optional(MaterialKind::SelfLit);
+        std::string text;
+        for (const auto& row : rowsOf(mark, kind))
+            text += std::format("{} {} brightness {:.6g} uses {}{}{}\n", hashText(row.name), row.poolRow ? std::format("row {}", *row.poolRow) : "not loaded",
+                row.brightness, row.uses, row.isTuned ? " tuned" : "", row.label.empty() ? "" : " \"" + row.label + "\"");
+
+        return text;
+    }
+
+    std::string name;
+    words >> name;
+    const auto hash = hashOf(name);
+    const auto rows = rowsOf(mark, std::nullopt);
+    const auto row = std::ranges::find_if(rows, [&](const MaterialRow& each) { return each.name == hash && each.poolRow; });
+    auto material = row != rows.end() ? game_materials::materialAt(*row->poolRow) : std::nullopt;
+    // A mark takes only what its hooked draws drew: a material it missed is still found by its name.
+    if (!material && hash)
+        game_materials::forEachMaterial([&](const Material& each) {
+            if (!material && each.name == *hash) material = each;
+        });
+    if (!material) return "error: no such material loaded\n";
+
+    if (command == "original")
+    {
+        removeRuleOn(*material);
+        return "back to the original\n";
+    }
+
+    if (command == "set")
+    {
+        std::string parameterName;
+        words >> parameterName;
+        const auto parameter = parameterOf(parameterName);
+        Value value;
+        for (float component{}; words >> component;) value.push_back(component);
+        if (!parameter || value.empty()) return "error: set <material> <parameter> <value>\n";
+
+        edit(*material, *parameter, value);
+        return std::format("{} {} now {}\n", name, parameterName, valueOf(game_materials::materialAt(material->index)->packed, *parameter)[0]);
+    }
+
+    return "error: unknown remaster line\n";
 }
 
 void drawTool()

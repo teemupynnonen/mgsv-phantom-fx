@@ -1391,7 +1391,8 @@ The pixel shaders' `cPSMaterial` (`b4`, `float4 m_materials[8]`) has no copy on 
 memory at every draw, so a write to the pool shows at the next one. Zeroing the self-lit materials from outside
 the running game put out a floodlight panel and a wall lamp's bulb and they came back with the values; the light
 those lamps throw on the walls stayed, as it is a game light of its own (2026-11-01). The remastering tool
-(`src/remaster`, `src/dev/remaster`) stands on this.
+(`src/remaster`, `src/dev/remaster`) stands on this, and tunes those game lights apart, by their place, where the add-on
+records their light draws (its README, "Lamps").
 
 - **The pool.** At `[0x2B743B0]`: its rows at `+0x8`, their number at `+0x10` (5248), those in use at `+0x14`, a slot
   for each row at `+0x20` (12 bytes: the next in its hash bucket at `+2`, its uses at `+4`, its state at `+8`). A handle

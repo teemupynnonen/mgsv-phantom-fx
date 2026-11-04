@@ -46,6 +46,7 @@ struct ID3D11Resource;
 //   status                        frame counts, the camera, the scene
 //   peek <address|game+rva> [bytes]  the game's memory there, 256 bytes without saying, 4096 at most
 //   drawn <x> <y> <z> <radius>    where the main camera's rigid model draws of the next 10 frames put their models, near there
+//   remaster <line>               the remastering tool's own actions (remaster::runLine in dev/remaster/tool.hpp)
 //   owner <hash>                  every placement of that model the next snapshot finds: its owner, fields and raw bytes
 namespace phantom_fx::automation
 {

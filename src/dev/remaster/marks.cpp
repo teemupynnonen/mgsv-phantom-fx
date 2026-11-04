@@ -27,7 +27,10 @@ struct NamedLocation
     const char* name;
 };
 
-constexpr NamedLocation NamedLocations[]{{10, "Afghanistan"}, {20, "Africa"}, {50, "Mother Base"}};
+// TppDefine.LOCATION_ID as the game has it (asked of its Lua, 2026-11-04). Those whose place is known by name have
+// it; the rest keep the game's own.
+constexpr NamedLocation NamedLocations[]{{10, "Afghanistan"}, {20, "Africa"}, {30, "Cyprus"}, {40, "GNTN"}, {45, "OMBS"}, {50, "Mother Base"},
+    {55, "Quarantine platform"}, {60, "Helicopter"}, {70, "FLYK"}, {91, "SAND_AFGH"}, {92, "SAND_MAFR"}, {95, "SAND_MTBS"}};
 
 constexpr std::size_t MostRegisterComponents = 32;
 constexpr int SecondsInMinute = 60;
@@ -83,6 +86,16 @@ Mark parsedMark(const Json& entry)
         .clock = entry.at("clock").get<float>()};
     for (const auto& material : entry.at("materials")) mark.materials.push_back(parsedMaterial(material));
 
+    // Marks from before lamps have none.
+    if (entry.contains("lamps"))
+        for (const auto& lamp : entry.at("lamps"))
+        {
+            const auto at = lamp.at("at").get<std::vector<float>>(), color = lamp.at("color").get<std::vector<float>>();
+            if (at.size() != 3 || color.size() != 3) throw std::runtime_error("a lamp's place and colour have three components");
+
+            mark.lamps.push_back({{at[0], at[1], at[2]}, {color[0], color[1], color[2]}});
+        }
+
     return mark;
 }
 
@@ -100,12 +113,16 @@ Json markJson(const Mark& mark)
     Json materials = Json::array();
     for (const auto& material : mark.materials) materials.push_back(materialJson(material));
 
+    Json lamps = Json::array();
+    for (const auto& lamp : mark.lamps) lamps.push_back({{"at", lamp.at}, {"color", lamp.color}});
+
     return {{"location", mark.location},
         {"mission", mark.mission},
         {"position", mark.position},
         {"rotation", mark.rotation},
         {"clock", mark.clock},
-        {"materials", std::move(materials)}};
+        {"materials", std::move(materials)},
+        {"lamps", std::move(lamps)}};
 }
 }
 
@@ -139,13 +156,18 @@ std::string writeMarks(const std::vector<Mark>& marks)
     return file.dump(2) + "\n";
 }
 
+std::string locationName(std::uint16_t location)
+{
+    const auto known = std::ranges::find(NamedLocations, location, &NamedLocation::location);
+
+    return known != std::end(NamedLocations) ? std::string(known->name) : std::format("Location {}", location);
+}
+
 std::string placeText(const Mark& mark)
 {
-    const auto known = std::ranges::find(NamedLocations, mark.location, &NamedLocation::location);
-    const auto map = known != std::end(NamedLocations) ? std::string(known->name) : std::format("Location {}", mark.location);
     const auto& [x, y, z] = mark.position;
 
-    return std::format("{}, at {}, {}, {}", map, std::lround(x), std::lround(y), std::lround(z));
+    return std::format("{}, at {}, {}, {}", locationName(mark.location), std::lround(x), std::lround(y), std::lround(z));
 }
 
 std::string timeText(float clock)

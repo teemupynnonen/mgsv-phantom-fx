@@ -26,6 +26,7 @@
 #include "passes/ray_tracing/shaders/gi_shared.h"
 #include "passes/ray_tracing/trace.hpp"
 #include "performance.hpp"
+#include "remaster/remaster.hpp"
 #include "resource_dump.hpp"
 
 #include <Windows.h>
@@ -924,6 +925,8 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     frame.traces = traces;
     frame.emissionScale = traces.isPathTraced ? options.emission * SelfLitShare * LightScale : 0;
     frame.emissionCap = MostEmission * LightScale;
+    frame.selfLight = remaster::tuneFileSelfLight;
+    frame.selfLightVersion = remaster::rulesVersion();
     reconstructionsAtKick = reconstructedFrames;
     lastTraces = traces;
     frame.showScene = asked.showsScene;
