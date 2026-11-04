@@ -62,6 +62,9 @@ constexpr float DefaultAlbedo = 0.2f;
 // yet, or a mesh without texture coordinates) blocks beyond the game's shadow map, and how far the rays
 // look for what blocks the sun.
 constexpr float AlphaTestedBlocking = 0.5f, ShadowRayLength = 5000;
+// How far global illumination's diffuse rays look for a hit with Short rays, metres (LightRayReach in gi_hit_light.hlsli):
+// what lies further out lights little, and the long rays cost the most to trace.
+constexpr std::uint32_t LightRayReach = 100;
 // Diagnostics: the most phases a frame's list times.
 constexpr std::uint32_t MaxMarks = 32;
 
@@ -1137,7 +1140,7 @@ Result render(Frame& frame)
 
         // A ray a render pixel for Ray Reconstruction, whatever the ray quality: as many rays as High's four a
         // 2 x 2, the most a sample can take apart.
-        constants.lightRays = {traces.isForReconstruction ? 1u : frame.lightRays, 0, 0, 0};
+        constants.lightRays = {traces.isForReconstruction ? 1u : frame.lightRays, frame.usesShortLightRays ? LightRayReach : 0u, 0, 0};
 
         // ---- Descriptors ----
         descriptors.texture(binding::Depth, depth, DXGI_FORMAT_R32_FLOAT);

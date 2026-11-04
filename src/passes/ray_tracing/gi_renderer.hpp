@@ -133,6 +133,7 @@ struct Frame
     bool twoSidedShadows{};  // Diagnostics: rays towards lights blocked by every surface from both sides, as until 2026-10-26
     LightDebugView lightDebugView{}; // Diagnostics, with textures.lightDebug
     std::uint32_t lightRays{2}; // The light's rays a light pixel, 1 to 4 (TraceLight)
+    bool usesShortLightRays{true}; // They look LightRayReach metres, not without end
     // The chosen lights, at most GI_MAX_LOCAL_LIGHTS, and the shadow rays a pixel they take.
     std::vector<LocalLight> localLights;
     std::uint32_t localLightRays{1};

@@ -226,7 +226,7 @@ float3 ReflectedLight(float3 origin, float3 normal, float tolerance, float3 dire
         float3 side = BounceSide(material.geometric, material.isLeaf, random, weight);
         float3 bounceDirection = mapToCosineHemisphere(random.rand2(), side);
         float3 bounceOrigin = all(side == material.geometric) ? origin : OffsetFromTriangle(material.world, side);
-        SceneHit bounce = TraceFromSurface(bounceOrigin, side, tolerance, bounceDirection, MAX_HIT_DISTANCE);
+        SceneHit bounce = TraceFromSurface(bounceOrigin, side, tolerance, bounceDirection, LightRayReach());
         throughput *= material.albedo * (weight / (1.0f - specularShare));
         if (!bounce.hit) return light + throughput * SkyRadiance(bounceDirection);
 
