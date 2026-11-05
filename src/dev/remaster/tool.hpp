@@ -56,9 +56,12 @@ std::vector<MaterialRow> rowsOf(const Mark& mark, std::optional<MaterialKind> ki
 // A rule, with the material it is on when one is loaded here.
 struct RuleRow
 {
-    Rule rule;
+    Rule rule; // In force, or the file's when it was removed
+    std::optional<Rule> saved;
     MaterialRow material;
+    RuleState state{};
 };
+// The rules in force and the file's removed ones.
 std::vector<RuleRow> ruleRows();
 
 void select(std::uint32_t poolRow, std::uint64_t name);
@@ -104,7 +107,14 @@ struct LampRow
 std::vector<LampRow> lampRowsOf(const Mark& mark);
 // For automation (runLine): the panel open on a mark's lamps, with that lamp chosen.
 void showLamp(std::size_t mark, const LampRow& lamp);
-std::vector<LampRule> lampRules();
+struct LampRuleRow
+{
+    LampRule rule; // In force, or the file's when it was removed
+    std::optional<LampRule> saved;
+    RuleState state{};
+};
+// The lamp rules in force and the file's removed ones.
+std::vector<LampRuleRow> lampRuleRows();
 
 void selectLamp(const LampRow& lamp);
 std::optional<LampRow> selectedLamp();
@@ -128,6 +138,10 @@ std::size_t defaultNamedRules();
 
 std::size_t unsavedRules();
 void saveRules();
+// One rule, or every one, back as the file has it: a new rule goes, a removed one comes back. Each is a step to undo.
+void revertRule(const RuleRow& row);
+void revertLampRule(const LampRuleRow& row);
+void discardUnsaved();
 // Since the last save that worked.
 bool didSaveFail();
 
@@ -144,6 +158,7 @@ bool didSaveFail();
 //   reset <number>                       takes that lamp's rule away, as the panel's R does
 //   undo, redo                           as Ctrl+Z and Ctrl+Y
 //   without 0|1                          holds the game without any rule, as the panel's V does
-//   rules                                every rule's label, and how many are still under the one the tool gave
+//   rules                                every rule's label and state against the file, and how many are still under the one the tool gave
+//   discard                              every rule back as the file has it, as the panel's Discard
 std::string runLine(std::string_view line);
 }
