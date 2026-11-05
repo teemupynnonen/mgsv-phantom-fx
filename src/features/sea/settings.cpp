@@ -22,14 +22,6 @@ void describe(Sea& sea, SettingVisitor& visit)
             .keywords = "sea ocean water waves foam mother base",
             .effect = Effect::Sea,
             .needsSupportedBuild = true});
-    visit.slider(sea.waves,
-        {.iniKey = "sea_waves",
-            .label = "Waves",
-            .min = 0.25f,
-            .max = 2,
-            .standard = Defaults.waves,
-            .tip = "How strong the wind that raises the waves is, against the weather's. 1 is the weather's own: a breeze in the sun, a gale "
-                   "in rain."});
     visit.slider(sea.speed,
         {.iniKey = "sea_speed",
             .label = "Wave speed",

@@ -17,6 +17,8 @@
   waves. **Wavelength**, **Height**, **Ripples**, **Choppiness**, **Long waves**, **Wave speed** and **Foam** on the
   Sea item set each while the game runs, and **Foam** brings the crests' lace back after the longer waves left them
   barely breaking.
+- **The sea's first slider, Waves, is gone.** It scaled the wind against the weather's, and the sea it drew never matched
+  what it promised. The weather alone sets the wind now, and **Wavelength**, **Height** and **Long waves** shape the sea.
 - **The sea's Height slider moves the water, not its shading.** Raising it used to steepen every wave with the
   geometry, which warped the crests' light. It now raises the geometry alone, so the sea keeps its normals, its
   roughness and its foam at any height.
@@ -87,7 +89,7 @@
   ocean spectrum that rise and roll with the wind, bigger in rain, with foam where their crests break. It is
   lit like the rest of the world, so it reflects the sky, the sun and the platforms and takes their shadows;
   with path tracing its reflections are traced. The ray-traced light under the platforms now bounces off the
-  water instead of the sky. A **Waves** slider sets the wind against the weather's. It costs about 0.3 ms.
+  water instead of the sky. It costs about 0.3 ms.
 - **Path tracing.** A new **Path tracing** switch under lighting, with DLSS Ray Reconstruction and the
   global illumination on: reflections are traced on every surface, sharp on smooth ones and spread on
   rough ones, in place of the game's screen-space and sky reflections (water keeps the game's;

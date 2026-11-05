@@ -685,7 +685,8 @@ Constants constantsAfter(double elapsed, const Sea& sea)
     const double waveElapsed = elapsed * sea.speed;
     seconds += waveElapsed;
     const auto weather = weather::state();
-    const float target = WindOf(weather.requested.value_or(weather::Type::Sunny)) * sea.waves;
+    // The wind is the weather's own: no setting raises it against that.
+    const float target = WindOf(weather.requested.value_or(weather::Type::Sunny));
     if (wind <= 0) wind = target;
     wind += (target - wind) * (1 - std::exp(-static_cast<float>(elapsed) / WindSeconds));
 

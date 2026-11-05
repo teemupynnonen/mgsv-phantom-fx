@@ -8,15 +8,14 @@ namespace phantom_fx
 struct Sea
 {
     bool on{};
-    float waves{1};
-    // How fast the waves' time runs against real time; PhantomFX.ini only, for matching the game's sea.
+    // How fast the waves travel against real time; the game's own sea rolls at about half.
     float speed{0.5f};
-    // The waves' shape against the weather's sea, in the ini alone: the peak frequency (below 1, longer waves),
-    // the height (1 is JONSWAP's), the ripples too short for the tiles, the crests' sharpness, and where one
-    // tile's waves end and the next's begin (larger, the longer waves take more of the spectrum).
+    // The waves' shape against the weather's sea: the peak frequency (below 1, longer waves), the geometry's
+    // height, the ripples too short for the tiles, the crests' sharpness, and where one tile's waves end and the
+    // next's begin (larger, the longer waves take more of the spectrum).
     float peak{0.7f};
-    float height{0.85f};
-    float ripples{0.5f};
+    float height{1.1f};
+    float ripples{2};
     float chop{0.9f};
     float split{4};
     // How far short of folding foam shows on the crests: 1 is only where the waves squeeze hardest.

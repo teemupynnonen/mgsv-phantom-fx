@@ -3679,7 +3679,8 @@ screen-space reflections, the global illumination and path tracing take it as an
   and the slopes' squares with the foam, whose levels give the spread of slopes a pixel covers (LEAN mapping,
   Olano and Baker 2010; for the sea, Bruneton et al. 2010). Foam gathers where the displacement's Jacobian
   falls below 0.55 and fades over 2.5 s. The wind is the weather's, 6 m/s in sun, 8 cloudy, 14 in rain, 10 in
-  sandstorms, 4 in fog, turning over about 20 s, times **Waves** (`sea_waves`); its direction the game's.
+  sandstorms, 4 in fog, turning over about 20 s; its direction the game's. A **Waves** slider scaled that wind,
+  and it never agreed with the sea it drew, so it is gone (2026-11-05).
   A wave moves at the deep-water speed of its length, faster than the game's sea showed (2026-11-05), so the
   waves' clock runs at **Wave speed** (`sea_speed`) of real time (0.5, half), the foam fading on it too. Beside
   it, `sea_albedo_r`, `_g` and `_b` set the water's albedo in the ini alone.
