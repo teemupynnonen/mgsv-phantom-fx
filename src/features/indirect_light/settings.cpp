@@ -13,12 +13,12 @@ void describe(IndirectLight& light, SettingVisitor& visit)
         {.menuId = "indirectLight",
             .iniKey = "indirect_light",
             .section = Section::Lighting,
-            .name = "Indirect lighting",
+            .name = "Bounce light",
             .tech = "SSILVB",
             .tip = "Screen-space indirect lighting with visibility bitmask: light bounces off nearby surfaces onto others, taking their "
                    "colour, such as sunlit ground brightening the underside of a jeep. It only knows what is on screen. Off leaves the game's "
                    "indirect light unchanged.",
-            .summary = "Light bounces off nearby surfaces and takes their colour. It only knows what is on screen.",
+            .summary = "Light picks up colour from nearby surfaces.",
             .keywords = "SSGI bounce radius strength",
             .effect = Effect::IndirectLight,
             .replacedBy = Effect::GlobalIllumination,

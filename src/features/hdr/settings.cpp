@@ -12,12 +12,12 @@ void describe(Hdr& hdr, SettingVisitor& visit)
     visit.feature(hdr.on,
         {.menuId = "hdr",
             .iniKey = "hdr",
-            .section = Section::Display,
+            .section = Section::Image,
             .name = "HDR output",
             .tech = "HDR10",
             .tip = "The game in HDR10 on an HDR display: the sun, lamps, fire and reflections shine brighter than the game's white. It needs HDR "
                    "on for the display in Windows. Turning it on or off takes a restart; the brightness applies at once.",
-            .summary = "The sun, lamps and fire shine brighter than the game's white. Needs HDR on for the display in Windows.",
+            .summary = "Brighter sun, lamps and fire. Turn HDR on in Windows first.",
             .keywords = "peak brightness paper white nits"});
     visit.slider(hdr.peakNits,
         {.iniKey = "hdr_peak_nits",

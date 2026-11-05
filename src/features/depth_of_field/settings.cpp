@@ -15,13 +15,14 @@ void describe(DepthOfField& depthOfField, SettingVisitor& visit)
     visit.feature({.menuId = "depthOfField",
         .section = Section::Camera,
         .name = "Depth of field",
-        .summary = "How the background blurs. It needs Depth of Field on in the game's graphics settings.",
+        .summary = "How the background blurs. Turn Depth of Field on in the game first.",
         .keywords = "DOF blur bokeh focus lens background cutscene"});
     visit.choice(depthOfField.farBlur,
         {.iniKey = "depth_of_field_far_blur",
             .label = "Background blur",
             .choices = FarBlurs,
             .tip = "Lens blurs the background as a lens does, each point spread over a smooth disc. MGSV keeps the game's own softer blur. Edges in "
-                   "focus stay sharp with either, and what is in front of the focus keeps the game's blur."});
+                   "focus stay sharp with either, and what is in front of the focus keeps the game's blur.",
+            .isItemValue = true});
 }
 }

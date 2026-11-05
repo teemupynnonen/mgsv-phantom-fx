@@ -147,7 +147,7 @@ void onCaseKey() noexcept
 
 void drawPage()
 {
-    const fxui::Page page(Section::Developer, "Tools for testing in the game. Only the dev build has this page.");
+    const fxui::Page page(Section::Developer);
     if (!page) return;
 
     drawTravel();

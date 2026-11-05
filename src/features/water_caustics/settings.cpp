@@ -12,11 +12,11 @@ void describe(WaterCaustics& caustics, SettingVisitor& visit)
     visit.feature(caustics.on,
         {.menuId = "waterCaustics",
             .iniKey = "water_caustics",
-            .section = Section::Atmosphere,
+            .section = Section::World,
             .name = "Water caustics",
             .tip = "The sunlight a river's waves focus on the bed under them: a web of bright cells in the sun, strongest just under the "
                    "surface, fading where the water is deep and gone where it meets the shore or anything standing in it.",
-            .summary = "The sunlight a river's waves focus on the bed under them.",
+            .summary = "Rippling sunlight on riverbeds.",
             .keywords = "caustics river water bed waves sun refraction",
             .effect = Effect::WaterCaustics,
             .needsSupportedBuild = true});

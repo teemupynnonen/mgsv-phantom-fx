@@ -12,7 +12,8 @@ void describe(PhotoMode& photoMode, SettingVisitor& visit)
     visit.feature({.menuId = "photoMode",
         .section = Section::Camera,
         .name = "Photo mode",
-        .summary = "F2 opens it. Fly with WASD and the mouse, Space and Ctrl for up and down, Shift for faster. F3 hides the HUD, F4 the blur.",
+        .tip = "Fly with WASD and the mouse, Space and Ctrl for up and down, Shift for faster.",
+        .summary = "F2 opens it. F3 hides the HUD, F4 the blur.",
         .keywords = "f-stop aperture blur camera depth of field DOF"});
     visit.slider(photoMode.fNumber,
         {.iniKey = "f_number",

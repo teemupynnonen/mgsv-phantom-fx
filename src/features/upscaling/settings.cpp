@@ -73,10 +73,10 @@ template<class E> std::string_view labelIn(std::span<const SettingChoice> choice
 void describe(Upscaling& upscaling, SettingVisitor& visit)
 {
     visit.feature({.menuId = "upscaler",
-        .section = Section::Upscaling,
+        .section = Section::Image,
         .name = "Upscaler",
         .tip = "NVIDIA DLSS needs an NVIDIA RTX GPU. AMD FSR runs on any GPU: FSR 4 on Radeon RX 7000 and 9000, FSR 3.1 on the rest.",
-        .summary = "Replaces the game's FXAA, at full resolution or upscaled from a lower one. The HUD stays at full resolution.",
+        .summary = "Replaces the game's FXAA anti-aliasing.",
         .keywords = "DLSS FSR DLAA native AA mode quality balanced performance preset ray reconstruction sharpening texture detail bias render scale"});
     visit.choice(upscaling.upscaler, {.iniKey = "upscaler", .label = "Upscaler", .choices = Upscalers});
     visit.choice(upscaling.mode,
@@ -85,7 +85,8 @@ void describe(Upscaling& upscaling, SettingVisitor& visit)
             .choices = modesFor(upscaling.upscaler),
             .control = ChoiceControl::Dropdown,
             .tip = "DLAA and Native AA replace the game's FXAA at full resolution. Quality to Ultra Performance render the 3D scene below the "
-                   "output resolution and upscale it; the HUD and menus stay at full resolution. Off leaves the game unchanged."});
+                   "output resolution and upscale it; the HUD and menus stay at full resolution. Off leaves the game unchanged.",
+            .isItemValue = true});
     visit.slider(upscaling.customRenderScale,
         {.iniKey = "custom_scale",
             .label = "Render scale",
@@ -111,19 +112,19 @@ void describe(Upscaling& upscaling, SettingVisitor& visit)
         {.iniKey = "ray_reconstruction",
             .label = "Ray Reconstruction",
             .tip = "DLSS Ray Reconstruction in place of DLSS: one NVIDIA model that cleans up the ray-traced light and upscales. It runs while a "
-                   "ray-traced effect is on (global illumination, shadows or lights) and needs an NVIDIA RTX GPU.",
+                   "ray-traced effect is on (bounce light, shadows or lights) and needs an NVIDIA RTX GPU. Ray traced: Ultra needs it.",
             .visible = upscaling.upscaler == Upscaler::Dlss,
             .enabled = on,
-            .needsRayTracing = true});
+            .isRaySetting = true});
     visit.choice(upscaling.reconstructionPreset,
         {.iniKey = "ray_reconstruction_preset",
-            .label = "Ray Reconstruction preset",
+            .label = "Reconstruction preset",
             .choices = ReconstructionPresets,
             .control = ChoiceControl::Dropdown,
             .tip = "Default lets Ray Reconstruction choose (F). D takes no depth of field guide, so noise can show through the game's depth of field.",
             .visible = upscaling.upscaler == Upscaler::Dlss && upscaling.rayReconstruction,
             .enabled = on,
-            .needsRayTracing = true});
+            .isRaySetting = true});
     visit.slider(upscaling.sharpness,
         {.iniKey = "sharpness",
             .label = "Sharpening",
@@ -141,7 +142,7 @@ void describe(Upscaling& upscaling, SettingVisitor& visit)
             .format = "%+.2f",
             .onRelease = true,
             .tip = "Added to the automatic texture LOD bias for the render size. Lower is sharper but can shimmer. Applies when released.",
-            .hint = "Lower is sharper but can shimmer. Applies when released.",
+            .hint = "Lower is sharper, but can shimmer.",
             .enabled = on});
 }
 

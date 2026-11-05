@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **A simpler menu, like a game's own graphics menu.** Tabs across the top replace the list of sections: **Graphics**,
+  **Sandbox**, **Budget** and **Diagnostics**. Graphics holds every effect, one line each: its name, its value (‹ On ›,
+  or a mode) and its cost. Click a line and it folds out to its settings; the one open before folds back. The long
+  descriptions under every effect are gone: a line's one sentence shows when it folds out, the rest on hovering its
+  name. A dot after a name says a setting in it is off its default; each such setting has its own reset, and
+  **Reset all** puts them all back. Lighting starts with its **Mode**: Off, Screen-space, Ray traced or Ray traced:
+  Ultra (path tracing), and shows only that mode's effects. Ray traced keeps the screen-space effects beneath it: switch
+  one of its effects off and its screen-space one takes over, which Mode shows as your own mix. The settings every
+  ray-traced effect shares, Ray Reconstruction among them, sit together in **Rays**. Under Lighting come **Image**
+  (upscaling, frame generation, the frame rate and HDR), **World** (fog, sky and water) and **Camera**. The modes
+  replace the Budget page's presets, and unlike them leave the frame rate and the fog as they are.
+- **One switch for the sun's and the lamps' soft shadows, and one for their contact shadows.** The lamps' own switches
+  are gone, and `soft_local_shadows` and `light_screen_space_shadows` in PhantomFX.ini are no longer read: the lamps
+  follow `soft_shadows` and `sun_screen_space_shadows`. So Screen-space now gives the lamps soft shadows too.
+
 - **Characters, the helicopter and swaying trees stay in the ray-traced scene beside other mods.** The scene found the
   game's list of models in a spot that only held it by chance. With some other mods installed it read an empty list, so
   Snake, the soldiers, the helicopter's cabin and trees that move in the wind cast no ray-traced shadows and global

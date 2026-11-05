@@ -160,7 +160,7 @@ The code is laid out by what it does for the player:
 | `src/menu_budget.cpp`, `src/menu_budget.hpp` | The window's sections, and each effect as a budget line: its state, its switch and its timed passes |
 | `src/fxui/` | fxui, the reusable frame budget settings window for ReShade add-ons (see its README.md) |
 | `src/performance.cpp`, `src/performance.hpp` | The passes' GPU costs: timestamp queries, the averages, the real cost measurement, `PhantomFX-performance.txt` (see "Costs") |
-| `src/performance_menu.cpp` | The budget page, the costs over the game, and the costs as text |
+| `src/performance_menu.cpp` | The Budget tab, the costs over the game, and the costs as text |
 
 ### Features
 
@@ -172,11 +172,11 @@ what draws it, when that is the feature's own.
 | `upscaling/` | `upscaler.*`: DLSS or FSR before the grading, in place of FXAA: NGX, composite, the grading at the output size, texture LOD bias. `frames.*`: the frames the upscaler runs on: when one starts, its main view and its jitter. `render_size_plan.*`: the render size plan, from the upscaler, mode and output size, with DLSS's own size from NGX. `d3d12_host.*`: Direct3D 12 work at a point of the immediate context, for FSR and Ray Reconstruction (see "FSR upscaling"). `upscaler_shaders.hpp`: the upscaler's inputs and motion vectors, composite with RCAS and debug views, stretch fallback. `fsr_upscaler.*`: FSR upscaling on Direct3D 12. `ray_reconstruction.*`: DLSS Ray Reconstruction on Direct3D 12 (see "Ray Reconstruction"). `fxaa.*`: hook on the FXAA plugin, the FXAA pass at any post processing setting |
 | `frame_generation/` | `presenter.*`: the game's stand-in swap chain, presented through Direct3D 12. `frame_generation.*`: DLSS Frame Generation, Streamline, its inputs and camera, Reflex. `fsr_frame_generation.*`: AMD's swap chain and its inputs |
 | `sun/` | Settings only: the sun size the soft and ray-traced shadows and the global illumination share |
-| `soft_shadows/` | Settings only: a mode of the sun light pass's shaders (`passes/sun_light_pass.*`) |
+| `soft_shadows/` | Settings only: one switch for the sun's soft shadows, a mode of the sun light pass's shaders (`passes/sun_light_pass.*`), and the lamps' (`lamp_soft_shadows/`) |
 | `sun_contact_shadows/` | `sun_contact_shadows.*`: the sun's screen-space shadow, traced once per depth a command list records |
 | `lamp_contact_shadows/` | `lamp_contact_shadows.*`: a shadow-mapped point or spot light's screen-space shadow, drawn into the light targets' alpha between its two draws. `lamp_contact_shadows_shaders.hpp`: that draw |
 | `lamp_soft_shadows/` | `lamp_soft_shadows.*`: the replacement shaders a point or spot light with a shadow map lights with, and their options. `lamp_soft_shadows_shaders.hpp`: the game's `SSLighting2_Point` and `SSLighting2_Spot` rebuilt, with the light's shadow map filtered by contact-hardening soft shadows |
-| `contact_shadow_shape/` | Settings only: the contrast, reach, thickness and fade of the contact shadow trace (`passes/contact_shadow_trace.*`), which the sun's and the lamps' share |
+| `contact_shadows/` | Settings only: one switch for the sun's and the lamps' contact shadows, and the contrast, reach, thickness and fade of their trace (`passes/contact_shadow_trace.*`) |
 | `ray_traced_shadows/` | `gi_shadow.*`: the sun's shadow rays and the FidelityFX Shadow Denoiser on Direct3D 12. `gi_shadow.hlsl`, `gi_shadow_filter.hlsl`: the rays, the denoiser's temporal pass and filters |
 | `ray_traced_lights/` | `local_lights.*`: the game's point and spot light draws kept for their stencil, their light drawn again at the sun pass's list with specular and the rays' shadow (see "Ray-traced lights"). `light_choice.*`: which lights a kick gives the rays (each light's reach, the light cap) and each light as the rays take it. `lamp_shadow_rays.*`, `light_shadows.hlsl`: the lamps' shadow rays and filter, a trace (see "What a kick traces") |
 | `global_illumination/` | `gi_light.*`, `gi_light.hlsl`: the light on Direct3D 12, its rays, the denoiser's inputs and the render size (see "Global illumination"); their hits' light and the hash grid cache in `passes/ray_tracing/shaders/gi_hit_light.hlsli`. `gi_denoiser.*`: NVIDIA NRD's RELAX denoiser without NRI. `gi_lighting.*`: the game's sky and sun in the light's terms. `light_combine.*`: the traced light in place of the game's probe light at the resolve |
@@ -239,7 +239,7 @@ what draws it, when that is the feature's own.
 | `src/game_memory.hpp` | Guarded reads of the game's objects |
 | `src/game_loop.cpp`, `src/game_loop.hpp` | Hooks on the main loop's frame start and end, for Reflex and the weather menu |
 | `src/fidelityfx.cpp`, `src/fidelityfx.hpp` | Loads the AMD FSR API, for FSR upscaling and frame generation |
-| `src/weather.cpp`, `src/weather.hpp` | The overlay's weather and time control, in Utility (see "Weather and time") |
+| `src/weather.cpp`, `src/weather.hpp` | The overlay's weather and time control, on the Sandbox tab (see "Weather and time") |
 | `src/sun_movement.cpp`, `src/sun_movement.hpp` | The sun and moon move every frame instead of in the game's steps (see "Sun movement") |
 | `src/game_dither.cpp`, `src/game_dither.hpp` | The game's colour dither taken out of its shaders as they are made (see "Dither") |
 | `src/dev_tools.hpp` | Whether the build has the Developer page (the dev preset) |
@@ -276,7 +276,13 @@ A new lighting effect takes:
    `describe()`, which gives their `PhantomFX.ini` keys, ranges, controls and menu text, and what
    the effect replaces or builds on (`needs`, `needsRayReconstruction`: it runs only while that runs); and what draws it. The settings file goes in `PHANTOM_FX_FEATURES` and the
    renderer's in `add_library` (`CMakeLists.txt`), its settings in `Settings` and `forEachFeature`
-   (`src/phantom_fx_settings.hpp`), and its switch in the presets where it belongs.
+   (`src/phantom_fx_settings.hpp`), and its `Effect` in the lighting step that switches it on (`effectsAddedBy`):
+   the step's menu shows its item. Two effects the player switches as one, such as the
+   sun's and the lamps' soft shadows, are two features with one switch: the second takes the first's `menuId` and no
+   `iniKey`, and shares its item and budget line. A setting every ray-traced effect shares takes `isRaySetting`: the
+   menu shows it in Lighting's Rays item. A feature without a switch can give its item's line a value instead: one
+   choice with `isItemValue`, such as the upscaler's mode. Each setting's reset gives back what `Settings{}` holds,
+   with the lighting step the menu shows applied.
 2. Its `Effect`, at its place in the cost measurement's order (`src/effects.hpp`).
 3. Its renderer's row in `Modules` (`src/modules.cpp`): its `attach`, `configure`, `present` and
    `detach`. Its `configure` keeps its settings (in a `FrameLatch`) and whether the effect plan
@@ -542,7 +548,7 @@ Compare GPU times, not frame rates: the automation copy's frame rate says little
 
 ### Weather and time
 
-The overlay's Utility section has **Weather and time** (`src/weather.cpp`), to see the sky in every condition:
+The overlay's Sandbox tab has **Weather and time** (`src/weather.cpp`), to see the sky in every condition:
 a 24-hour time-of-day slider, a clock stop, and a weather override with fog density for Foggy.
 It calls what the game's `WeatherManager` script functions call, on the game thread at the main
 loop's frame start (the game loop is hooked with or without frame generation for this), and reads
@@ -2273,8 +2279,8 @@ draws with replacement shaders. With soft shadows off too, the game's own shader
 then only checks a flag on each full-screen draw. **Lamp contact shadows** give every point and spot
 light a short shadow of its own, marched through the depth buffer inside the light's own draw
 (`drawMarking` in `src/features/lamp_contact_shadows/lamp_contact_shadows.cpp`, from the local light
-pass), so they are a toggle of their own: the sun's is one Bend trace a frame, the lamps' a march per
-light, in the light's own volume draw.
+pass), so they are a feature of their own, on the sun's switch: the sun's is one Bend trace a frame, the
+lamps' a march per light, in the light's own volume draw.
 
 - **Replacement shaders** (`src/passes/sun_light_pass_shaders.hpp`). `SunLight_DL_CS_ES` and
   `SunLight_DL_ES`, and their rain pair without the sky reflection (`SKY_REFLECTION 0`),
@@ -2387,7 +2393,7 @@ Not handled:
 
 ## Lamp soft shadows
 
-With **Lamp soft shadows (PCSS)** on, a point light whose shader is `SSLighting2_Point` draws with the
+With **Soft shadows (PCSS)** on, a point light whose shader is `SSLighting2_Point` draws with the
 add-on's replacement (`src/features/lamp_soft_shadows/lamp_soft_shadows_shaders.hpp`) instead of the game's, and its own shadow map is
 filtered with contact-hardening soft shadows: sharp where the object meets the light, wider the
 further the shadow falls, as a real bulb's is.
@@ -3636,7 +3642,7 @@ planet's centre is the origin, in km; the game's world has y up in metres.
 
 ## Sea
 
-With **Sea** (`sea=1`, under atmosphere; `Effect::Sea`, first in a cost measurement's order) the sea around
+With **Sea** (`sea=1`, under World; `Effect::Sea`, first in a cost measurement's order) the sea around
 Mother Base is the add-on's (`src/features/sea/`), drawn into the G-buffer, so the game's lighting, fog and
 screen-space reflections, the global illumination and path tracing take it as any surface.
 
@@ -3781,7 +3787,7 @@ at `t14` with `s15`; `cPSMaterial` at `b4`, whose `[0]` holds the normal map's t
   morning, 0.3 in the rain and none at dusk and night (measured at the Africa river, 2026-11-01), so they are full by day and go
   with it. The rays' sun shadow on the bed
   (`ray_tracing::sunShadow`) takes them off whatever stands in the sun's way, and without the rays nothing does. The fog in
-  front of the bed takes them too, as it hides the bed. `Atmosphere > Water caustics` holds the switch and the **Intensity**.
+  front of the bed takes them too, as it hides the bed. `World > Water caustics` holds the switch and the **Intensity**.
 
 The surfaces take one ray a pixel. Ray Reconstruction sees what the composite added, as the composite runs before the
 exposure, and its guides are told where a surface dominates (`forward_surfaces::guideReconstruction`).
