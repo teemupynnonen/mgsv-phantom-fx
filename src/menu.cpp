@@ -494,7 +494,7 @@ constexpr std::array<StepText, static_cast<std::size_t>(LightingStep::Count)> St
     {"Ray traced: Ultra", "NVIDIA RTX, with DLSS", "Ray traced, plus traced reflections, sunlight and lamplight."},
 }};
 
-constexpr const char* UltraNeedsDlss = "Needs DLSS Ray Reconstruction. Pick DLSS under Image > Upscaler.";
+constexpr const char* UltraNeedsDlss = "Needs DLSS Ray Reconstruction. Under Image > Upscaler, pick DLSS and a mode other than Off.";
 
 // A step shows the items of the effects it adds. Ultra also shows bounce light's: path tracing needs
 // it, and replaces the other ray-traced effects.
@@ -573,8 +573,14 @@ void drawLighting(Settings& wanted, const fxui::Budget& budget, const MenuFrame&
         }
     }
 
-    drawFeatures(Section::Lighting, wanted, frame, [step](const FeatureInfo& feature) {
-        return fxui::isSearching() || (feature.effect && isShownInStep(*feature.effect, step));
+    // Also an effect beneath the step that runs in place of a ray-traced one switched off, such as
+    // SSILVB with bounce light off: it is on and nothing replaces it.
+    const auto plan = planEffects(wanted, {});
+    drawFeatures(Section::Lighting, wanted, frame, [&](const FeatureInfo& feature) {
+        if (fxui::isSearching()) return true;
+        if (!feature.effect) return false;
+
+        return isShownInStep(*feature.effect, step) || (switchOf(wanted, *feature.effect) && !plan.replacers[*feature.effect]);
     });
     if (fxui::isSearching() || step == LightingStep::RayTraced || step == LightingStep::Ultra) drawRays(wanted, frame);
 }
