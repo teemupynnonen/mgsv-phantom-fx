@@ -573,14 +573,25 @@ void drawLighting(Settings& wanted, const fxui::Budget& budget, const MenuFrame&
         }
     }
 
-    // Also an effect beneath the step that runs in place of a ray-traced one switched off, such as
-    // SSILVB with bounce light off: it is on and nothing replaces it.
+    // Also an effect a step beneath adds that nothing replaces, on or off: such as SSILVB with bounce
+    // light off, which runs in its place.
     const auto plan = planEffects(wanted, {});
+    const auto isShown = [&](Effect effect) {
+        if (isShownInStep(effect, step)) return true;
+
+        for (int below = 1; below < static_cast<int>(step); ++below)
+        {
+            const auto added = effectsAddedBy(static_cast<LightingStep>(below));
+            if (std::ranges::find(added, effect) != added.end()) return !plan.replacers[effect];
+        }
+
+        return false;
+    };
+    // Features that share a switch show with either effect, under the first one's name (FeatureInfo::menuId).
     drawFeatures(Section::Lighting, wanted, frame, [&](const FeatureInfo& feature) {
         if (fxui::isSearching()) return true;
-        if (!feature.effect) return false;
 
-        return isShownInStep(*feature.effect, step) || (switchOf(wanted, *feature.effect) && !plan.replacers[*feature.effect]);
+        return std::ranges::any_of(AllEffects, [&](Effect effect) { return std::string_view(featureOf(effect).menuId) == feature.menuId && isShown(effect); });
     });
     if (fxui::isSearching() || step == LightingStep::RayTraced || step == LightingStep::Ultra) drawRays(wanted, frame);
 }
