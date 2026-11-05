@@ -30,5 +30,10 @@ void describe(Sea& sea, SettingVisitor& visit)
             .standard = Defaults.waves,
             .tip = "How strong the wind that raises the waves is, against the weather's. 1 is the weather's own: a breeze in the sun, a gale "
                    "in rain."});
+    visit.slider(sea.speed, {.iniKey = "sea_speed", .label = "Wave speed", .min = 0.1f, .max = 2, .standard = Defaults.speed, .visible = false});
+    constexpr std::string_view AlbedoKeys[]{"sea_albedo_r", "sea_albedo_g", "sea_albedo_b"};
+    for (int channel = 0; channel < 3; ++channel)
+        visit.slider(sea.albedo[channel],
+            {.iniKey = AlbedoKeys[channel], .label = "Water albedo", .min = 0, .max = 1, .standard = Defaults.albedo[channel], .format = "%.3f", .visible = false});
 }
 }

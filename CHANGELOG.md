@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **The sea's foam is the game's own again.** The waves' breaking crests were flat white patches. They now take the
+  game's foam textures, lacy where a crest just breaks and denser where it breaks hard, drifting with the wind and
+  thinning into the distance, as on the game's own sea.
+- **The sea is as bright as the game's.** It came out two to three times darker than the game's own sea. Looking down
+  it now matches it; towards the horizon it stays a little darker, as its reflections are the sky's own. The light
+  it bounces up under the platforms rises with it.
+- **The sea's waves move at the game's pace.** They ran at the real speed of their length on the open sea, quicker than
+  the game's sea. The waves' clock now runs at half that (`sea_speed` in `PhantomFX.ini`, no menu item), and the foam
+  fades on the same clock, so a crest stays white as long against the waves rolling.
 - **Characters, the helicopter and swaying trees stay in the ray-traced scene beside other mods.** The scene found the
   game's list of models in a spot that only held it by chance. With some other mods installed it read an empty list, so
   Snake, the soldiers, the helicopter's cabin and trees that move in the wind cast no ray-traced shadows and global

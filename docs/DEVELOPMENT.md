@@ -3680,6 +3680,9 @@ screen-space reflections, the global illumination and path tracing take it as an
   Olano and Baker 2010; for the sea, Bruneton et al. 2010). Foam gathers where the displacement's Jacobian
   falls below 0.55 and fades over 2.5 s. The wind is the weather's, 6 m/s in sun, 8 cloudy, 14 in rain, 10 in
   sandstorms, 4 in fog, turning over about 20 s, times **Waves** (`sea_waves`); its direction the game's.
+  A wave moves at the deep-water speed of its length, faster than the game's sea showed (2026-11-05), so the
+  waves' clock runs at `sea_speed` of real time (0.5, half; PhantomFX.ini only, no menu item), the foam fading on
+  it too. Beside it, `sea_albedo_r`, `_g` and `_b` set the water's albedo in the ini alone.
 - **The surface**, into the G-buffer at the frame's first draw of the main view's G-buffer: the add-on
   watches the render target binds for three 8-bit targets of one size with depth, and the viewport filling
   them (the intro's mirror draws into a corner). It draws with the game's own camera constants (`b2`, the
@@ -3689,10 +3692,27 @@ screen-space reflections, the global illumination and path tracing take it as an
   edge a ring's odd vertices slide onto the next ring's grid (Strugar's CDLOD morph, 2009), their
   displacement's level of detail the same on both sides. The Earth's curve, and past the game's 4 km far
   plane the depth 1e-7, so the sea meets the sky at the horizon. As the game's objects write it: the albedo
-  (sRGB values) from water's, linear (0.002, 0.012, 0.03) (`GI_SEA_ALBEDO`), to foam's 0.7; the normal in
+  (sRGB values) from water's, linear (0.012, 0.066, 0.123) (`GI_SEA_ALBEDO`), to foam's 0.7. The water's was
+  (0.002, 0.012, 0.03), a deep clear sea's, and the sea came out 2 to 3 times darker than the game's (2026-11-05,
+  Mother Base at noon, the same view with the enhancements off and on). The light looking down rises linearly
+  with the albedo, so two runs (1x and 3x) gave the albedo per channel at which it matches the game's: 0.025
+  against the game's 0.024 in luminance. Towards the horizon, where the reflection decides, it is 82% of the
+  game's at 15 to 35% of the frame's height and 57% at the top; the normal in
   view space (`EncodeViewSpaceNormal`) from the slopes, tilted back where it faces away from the eye; the
   roughness from the slopes' spread with Cox and Munk's slope variance the tiles leave out; specular
-  intensity 1; material 106 (white, F0 0.027, the table's nearest to water's 0.02). Its own depth goes to a
+  intensity 1; material 106 (white, F0 0.027, the table's nearest to water's 0.02). The foam is the game's own
+  (its shader's source is in the dump's debug data: `shader\Primitive_TppFourierOcean.shdr`, `NCalculate`): the
+  near patches' `inFoamTexture` (`t3`, a noise, at `uv x 0.2` plus the scroll `c0.xy`) and `inFoamTexture2`
+  (`t5`, three patterns, light to dense, at `uv` plus the scroll times `c1.z` x 2), `uv` the world's xz over the
+  tile size (`c1.w`), and the pixel material's foam amount `c4.w`. The game weighs the patterns by its CPU's
+  whitecap mask (`grad.w`, `w`, `w^2`, `w^4`); here by the folds above plus where the surface is squeezed, its
+  Jacobian from 0.9 down to 0.55 (`moments.z`): weighed by the folds alone, about 1% of the sea at 12 m/s, no
+  foam showed (2026-11-05, Mother Base at noon). They fade between 100 m and 1.6 km as the game's. The draw that
+  copies the level also takes the two textures (BC1, 512 x 512 noise and 1024 x 1024 patterns once streamed in;
+  while a map loads a render target can sit in those slots, so only textures with levels are taken) and copies
+  the pixel material (`cPSMaterial`, `b4`) to the surface's `b11`; until it has, the foam is the folds alone.
+  Read back at Mother Base: tile 32 m, speed 1, amount from 0 to 0.95, changing over seconds. The game's foam
+  where the sea meets the pillars (its `foamPilars`, from the scene's depth) is not drawn. Its own depth goes to a
   fourth target (`sea::surfaceDepth`). The game's sea draws are skipped while the add-on's is drawn: while the
   game drew its sea in the last 60 s, decided at present for the frames recorded after it; a second without
   the main view's G-buffer (a loading screen) forgets it. Sea on or off takes effect at a present too, so the

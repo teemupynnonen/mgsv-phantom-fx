@@ -27,9 +27,10 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_INSTANCE_SEA       8u // The sea's plane at its level under the eye (sea.hpp): one-sided, its front up, water's albedo
 #define GI_INSTANCE_KINDS     0xFFu
 
-// Water's albedo, linear (sea_shaders.hpp): deep, clear tropical sea, the light it sends back up as a share of
-// what falls on it, about 3% in blue and under 1% in red. The sea's own surface and its plane's hits share it.
-#define GI_SEA_ALBEDO 0.002f, 0.012f, 0.03f
+// Water's albedo, linear (sea_shaders.hpp): the light it sends back up as a share of what falls on it, set so the
+// sea looking down matches the game's own at Mother Base (docs/DEVELOPMENT.md, "Sea"). The sea's own surface and
+// its plane's hits share it.
+#define GI_SEA_ALBEDO 0.012f, 0.066f, 0.123f
 
 // What a geometry is (GIGeometry::flags).
 #define GI_GEOMETRY_CUT_OUT       1u // Its texture cuts holes in it (leaves, nets, a pylon's lattice): non-opaque in its structure
