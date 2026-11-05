@@ -49,6 +49,7 @@ void TraceSunShadows(uint2 gtid : SV_GroupThreadID, uint2 gid : SV_GroupID, uint
 
     uint2 did = gid * uint2(8, 4) + gtid;
     bool lit = true;
+    float light = 1.0f;
     if (all(did < g_Frame.dimensions.xy))
     {
         float depth = g_Depth.Load(int3(did, 0));
@@ -68,12 +69,14 @@ void TraceSunShadows(uint2 gtid : SV_GroupThreadID, uint2 gid : SV_GroupID, uint
             float blocker, transmittance;
             bool blocked = SurfaceRayBlocked(origin, facing, tolerance, toSun, g_Frame.shadowParams.z, PixelCone(position, 0.0f), true, blocking, ShadowRayTowards(RayTowardsSun),
                 random, blocker, transmittance);
-            // The denoiser takes a pixel as lit or not: past hair, lit with the chance its light gets through.
+            // The denoiser takes a pixel as lit or not: past hair and glass, lit with the chance its light gets through.
+            light = blocked ? 0.0f : transmittance;
             lit = !blocked && random.rand() < transmittance;
         }
 
-        // DLSS Ray Reconstruction denoises the image: the sun pass reads the ray as it is.
-        if (g_Frame.reconstruction.x != 0u) g_Shadow_Output[did] = lit ? 1.0f : 0.0f;
+        // DLSS Ray Reconstruction denoises the image: the sun pass reads the ray as it is, with what hair and glass let
+        // through as it is too. Drawn as a coin toss, a pane's dirt boiled under it, half its pixels flipping each frame.
+        if (g_Frame.reconstruction.x != 0u) g_Shadow_Output[did] = light;
     }
 
     if (lit) InterlockedOr(g_TileMask, FFX_DNSR_Shadows_GetBitMaskFromPixelPosition(did));
@@ -417,6 +420,39 @@ void ProbeShadows(uint index : SV_GroupIndex)
             if (liftLength > 0.0f)
                 probe.crossed = ProbeHit(TraceClosest(r.origin, -lift / liftLength, 0.0f, 0.95f * liftLength, GI_MASK_SCENE, true, false,
                     PixelCone(position, 0.0f)));
+
+            // The pane the sun's ray crosses, and what it lets through: the first glass along it, as a ray towards a light
+            // meets it (PaneTransmittance).
+            {
+                float footprint = LightCone(r.origin).x;
+                for (uint step = 0; step < 4; ++step)
+                {
+                    SceneHit pane = TraceClosest(r.origin, r.direction, step == 0 ? 0.0f : 0.0001f, 1e4f, GI_MASK_SCENE, true, false,
+                        PixelCone(position, 0.0f), true);
+                    if (!pane.hit) break;
+                    uint row = FirstGeometry(g_Instances[pane.instance]) + pane.geometry;
+                    if ((g_Geometries[row].flags & GI_GEOMETRY_GLASS) == 0) break;
+
+                    float3x4 toWorld = (float3x4)0;
+                    const uint geometry = pane.geometry;
+                    GIGeometry paneGeometry = g_Geometries[row];
+                    float cover = 0.0f;
+                    if (paneGeometry.texture && (paneGeometry.flags & GI_GEOMETRY_UV))
+                    {
+                        uint3 i = TriangleIndices(paneGeometry, pane.primitive);
+                        float2 uv0 = VertexUV(paneGeometry, i.x), uv1 = VertexUV(paneGeometry, i.y), uv2 = VertexUV(paneGeometry, i.z);
+                        float2 uv = (1.0f - pane.barycentrics.x - pane.barycentrics.y) * uv0 + pane.barycentrics.x * uv1 + pane.barycentrics.y * uv2;
+                        Texture2D<float4> mask = g_SceneTextures[NonUniformResourceIndex(paneGeometry.texture - 1)];
+                        cover = GlassCover(mask.SampleLevel(g_WrapSampler, uv, 0.0f));
+                    }
+
+                    // At the mask's sharpest level (footprint 0), so the probe says what the mask holds there.
+                    probe.glass = float4(cover, PaneTransmittance(row, pane.primitive, pane.barycentrics, 0.0f, toWorld), float(row),
+                        pane.frontFace ? 1.0f : 0.0f);
+                    probe.glassHit = uint4(pane.instance + 1, geometry, pane.primitive, paneGeometry.texture);
+                    break;
+                }
+            }
 
             uint tile = FFX_DNSR_Shadows_LinearTileIndex(FFX_DNSR_Shadows_GetTileIndexFromPixelPosition(centre), g_Frame.dimensions.x);
             bool rayLit = (g_Shadow_Masks[tile] & FFX_DNSR_Shadows_GetBitMaskFromPixelPosition(centre)) != 0;

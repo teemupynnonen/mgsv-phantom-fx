@@ -65,8 +65,10 @@ ComPtr<ID3D11PixelShader> waterShaders[2][2][2]; // [isLayeredRiver][hasTwoChann
 ComPtr<ID3D11BlendState> surfaceBlend, colorOnly;
 ComPtr<ID3D11DepthStencilState> behindGameDepth;
 ComPtr<ID3D11Buffer> compositeParameters;
+ComPtr<ID3D11ShaderResourceView> lit;      // 1x1, so the map's comparison always passes: no map shadow
+ComPtr<ID3D11SamplerState> litSampler;     // comparison ALWAYS
 Target depthTarget, normalTarget, weightTarget;
-ComputeTexture reflection;
+ComputeTexture reflection, forwardShadow;
 // The scene, as the composite reads it while it draws into it.
 ComPtr<ID3D11Texture2D> sceneCopy;
 ComPtr<ID3D11ShaderResourceView> sceneCopyView;
@@ -119,6 +121,28 @@ bool ensurePipeline()
         depth.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
         depth.DepthFunc = D3D11_COMPARISON_GREATER_EQUAL;
         check(device->CreateDepthStencilState(&depth, behindGameDepth.ReleaseAndGetAddressOf()), "Creating the surfaces' depth test");
+
+        // The sun's shadow for a pane: the game's map can no longer cast it (the rays' shadow replaced the scene's), so
+        // the pane leaves the map out and the composite dims it by the rays' shadow.
+        D3D11_TEXTURE2D_DESC white{};
+        white.Width = white.Height = 1;
+        white.MipLevels = white.ArraySize = 1;
+        white.Format = DXGI_FORMAT_R8_UNORM;
+        white.SampleDesc.Count = 1;
+        white.Usage = D3D11_USAGE_IMMUTABLE;
+        white.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        const std::uint8_t litValue = 0xFF;
+        const D3D11_SUBRESOURCE_DATA whiteData{&litValue, 1, 0};
+        ComPtr<ID3D11Texture2D> whiteTexture;
+        check(device->CreateTexture2D(&white, &whiteData, whiteTexture.GetAddressOf()), "Creating the surfaces' lit shadow map");
+        check(device->CreateShaderResourceView(whiteTexture.Get(), nullptr, lit.ReleaseAndGetAddressOf()), "Creating the surfaces' lit shadow map");
+
+        D3D11_SAMPLER_DESC always{};
+        always.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR;
+        always.AddressU = always.AddressV = always.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        always.ComparisonFunc = D3D11_COMPARISON_ALWAYS;
+        always.MaxLOD = D3D11_FLOAT32_MAX;
+        check(device->CreateSamplerState(&always, litSampler.ReleaseAndGetAddressOf()), "Creating the surfaces' lit sampler");
 
         const D3D_SHADER_MACRO color[]{{"COLOR_TEXTURE", "1"}, {}};
         glassShader = surfaceShader(surface_shaders::GlassSurface, "glass-surface");
@@ -217,7 +241,7 @@ void composite(ID3D11DeviceContext* immediate, ID3D11RenderTargetView* target, f
     immediate->CopyResource(sceneCopy.Get(), sceneTexture.Get());
 
     ID3D11ShaderResourceView* const inputs[]{sceneCopyView.Get(), weightTarget.texture.view.Get(), reflection.view.Get(),
-        normalTarget.texture.view.Get()};
+        forwardShadow.view.Get(), normalTarget.texture.view.Get()};
     const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(desc.Width), static_cast<float>(desc.Height), 0, 1};
     immediate->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     immediate->IASetInputLayout(nullptr);
@@ -225,7 +249,7 @@ void composite(ID3D11DeviceContext* immediate, ID3D11RenderTargetView* target, f
     immediate->GSSetShader(nullptr, nullptr, 0);
     immediate->PSSetShader(compositeShader.Get(), nullptr, 0);
     immediate->PSSetConstantBuffers(0, 1, compositeParameters.GetAddressOf());
-    immediate->PSSetShaderResources(0, 4, inputs);
+    immediate->PSSetShaderResources(0, 5, inputs);
     immediate->OMSetRenderTargets(1, &target, nullptr);
     immediate->OMSetBlendState(colorOnly.Get(), nullptr, 0xFFFFFFFF);
     immediate->OMSetDepthStencilState(nullptr, 0);
@@ -233,8 +257,8 @@ void composite(ID3D11DeviceContext* immediate, ID3D11RenderTargetView* target, f
     immediate->RSSetViewports(1, &viewport);
     immediate->Draw(3, 0);
 
-    ID3D11ShaderResourceView* unbound[4]{};
-    immediate->PSSetShaderResources(0, 4, unbound);
+    ID3D11ShaderResourceView* unbound[5]{};
+    immediate->PSSetShaderResources(0, 5, unbound);
     immediate->OMSetRenderTargets(0, nullptr, nullptr);
 }
 }
@@ -263,8 +287,10 @@ void detach() noexcept
     colorOnly.Reset();
     behindGameDepth.Reset();
     compositeParameters.Reset();
+    lit.Reset();
+    litSampler.Reset();
     depthTarget = normalTarget = weightTarget = {};
-    reflection = {};
+    reflection = forwardShadow = {};
     sceneCopy.Reset();
     sceneCopyView.Reset();
     scene.Reset();
@@ -353,7 +379,6 @@ void recorded(std::uint64_t into, std::uint64_t from) noexcept
 {
     notes.recorded(into, from);
 }
-
 void forget(std::uint64_t contextOrList) noexcept
 {
     notes.forget(contextOrList);
@@ -364,6 +389,23 @@ ComPtr<ID3D11ShaderResourceView> surfaceWeights(UINT width, UINT height) noexcep
     std::lock_guard lock(resourceMutex);
     const auto& weights = weightTarget.texture;
     return weights.width == width && weights.height == height ? weights.view : nullptr;
+}
+
+bool tracedShadow(ID3D11ShaderResourceView** whiteMap, ID3D11SamplerState** alwaysPass) noexcept
+{
+    try
+    {
+        std::lock_guard lock(resourceMutex);
+        if (!ensurePipeline()) return false;
+
+        *whiteMap = lit.Get();
+        *alwaysPass = litSampler.Get();
+        return lit && litSampler;
+    }
+    catch (...)
+    {
+        return false;
+    }
 }
 
 SurfaceTextures beginFrame(ID3D11DeviceContext* immediate, UINT width, UINT height) noexcept
@@ -379,16 +421,20 @@ SurfaceTextures beginFrame(ID3D11DeviceContext* immediate, UINT width, UINT heig
             normalTarget = makeTarget(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the surfaces' normals");
             weightTarget = makeTarget(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the surfaces' weights");
             reflection = makeComputeTexture(device.Get(), width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the surfaces' reflections", SharedWithD3D12);
+            forwardShadow = makeComputeTexture(device.Get(), width, height, DXGI_FORMAT_R16_FLOAT, "Creating the surfaces' shadow", SharedWithD3D12);
             areTargetsDrawn = true;
         }
 
         if (std::exchange(areTargetsDrawn, false))
             for (const auto* target : {&depthTarget, &normalTarget, &weightTarget}) immediate->ClearRenderTargetView(target->renderTarget.Get(), ClearColor);
+        // The trace writes it only where a surface is: lit everywhere else.
+        const float unshadowed[4]{1, 1, 1, 1};
+        immediate->ClearUnorderedAccessViewFloat(forwardShadow.access.Get(), unshadowed);
 
         hasSurfaces = hasReflected = false;
         scene.Reset();
 
-        return {depthTarget.texture.texture.Get(), normalTarget.texture.texture.Get(), reflection.texture.Get()};
+        return {depthTarget.texture.texture.Get(), normalTarget.texture.texture.Get(), reflection.texture.Get(), forwardShadow.texture.Get()};
     }
     catch (const std::exception& error)
     {

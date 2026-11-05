@@ -68,6 +68,7 @@ struct Textures
     ID3D11Texture2D* surfaceDepth{};
     ID3D11Texture2D* surfaceNormal{};
     ID3D11Texture2D* surfaceReflection{};
+    ID3D11Texture2D* forwardShadow{};
 };
 
 using Matrix = std::array<float, 16>; // Rows applied as dot(row, v), as the engine's

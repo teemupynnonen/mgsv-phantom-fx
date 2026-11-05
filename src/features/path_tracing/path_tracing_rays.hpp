@@ -26,6 +26,7 @@ struct Textures
     ID3D12Resource* surfaceDepth{}; // Glass and mirrors (forward_surfaces.hpp); null while not traced
     ID3D12Resource* surfaceNormal{};
     ID3D12Resource* surfaceReflection{};
+    ID3D12Resource* forwardShadow{}; // The sun's visibility at the surface, for the composite (u97)
 };
 
 // Their views in the frame's tables.

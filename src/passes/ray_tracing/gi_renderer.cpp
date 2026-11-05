@@ -170,6 +170,7 @@ struct State
         std::uint32_t slot{}, width{}, height{};
         FrameBinding binding;
         ID3D12Resource* reflection{};
+        ID3D12Resource* shadow{}; // The sun's visibility at the surface, written beside the reflection
     };
     std::optional<SurfaceTrace> surfaceTrace;
     HANDLE event{};
@@ -232,7 +233,7 @@ struct State
     std::uint64_t statsFence{}, lastStats{};
     Shared depth, normal, albedo, output, shadow, shadowDebug, velocity, terrainPages, terrainHeights, lightDebug, materialSpecular, skyCube, guideNormals,
         guideSpecular, reflection, reflectionDistance, reflectionMap, guideMaterial, guideLobe, specularTable, lampMasks, lampDiffuse, lampSpecular, surfaceDepth,
-        surfaceNormal, surfaceReflection;
+        surfaceNormal, surfaceReflection, forwardShadow;
 
     ~State()
     {
@@ -819,6 +820,13 @@ std::pair<std::string, std::string> describeProbe(const State& s, std::span<cons
     else
         text += "with every instance: nothing in the scene blocks it\n";
 
+    if (probe.glass.w > 0.5f)
+        text += std::format("the sun's ray crosses a pane: instance {}, geometry {}, its mask {}, cover {:.2f}, lets through {:.2f} (at the mask's "
+            "sharpest level)\n",
+            probe.glassHit.x - 1, probe.glassHit.y, probe.glassHit.w, probe.glass.x, probe.glass.y);
+    else
+        text += "the sun's ray crosses no pane\n";
+
     const auto& g = probe.lightRays;
     text += std::format("its global illumination rays ({}): {} hit within 1 m, {} within 10 m, {} get away, {} hit a back face; the nearest hit: {}\n",
         GI_PROBE_LIGHT_RAYS, g.x, g.y, g.z, g.w, s.contents->describeHit(instancedModels, probe.lightNearest));
@@ -1070,6 +1078,7 @@ Result render(Frame& frame)
                 traced.surfaceDepth = openShared(s, s.surfaceDepth, frame.textures.surfaceDepth, "Opening the glass's depth").Get();
                 traced.surfaceNormal = openShared(s, s.surfaceNormal, frame.textures.surfaceNormal, "Opening the glass's normals").Get();
                 traced.surfaceReflection = openShared(s, s.surfaceReflection, frame.textures.surfaceReflection, "Opening the glass's reflections").Get();
+                traced.forwardShadow = openShared(s, s.forwardShadow, frame.textures.forwardShadow, "Opening the surfaces' shadow").Get();
             }
         }
         if (traces.tracesLampLight)
@@ -1270,7 +1279,7 @@ Result render(Frame& frame)
 
         if (traces.tracesReflections) path_tracing_rays::recordReflections(recorder, frame.width, frame.height);
 
-        if (traces.tracesGlass) surfaceTrace = State::SurfaceTrace{slot, frame.width, frame.height, frameBinding, traced.surfaceReflection};
+        if (traces.tracesGlass) surfaceTrace = State::SurfaceTrace{slot, frame.width, frame.height, frameBinding, traced.surfaceReflection, traced.forwardShadow};
 
         if constexpr (DiagnosticLog)
         {
@@ -1352,7 +1361,9 @@ bool traceSurfaces(std::uint64_t waitValue, std::uint64_t signalValue)
         const auto firstMark = static_cast<UINT>(marks.size());
         recorder.marker = timestampMarker(s, list, trace.slot);
         recorder.transition(trace.reflection, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        recorder.transition(trace.shadow, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         path_tracing_rays::recordSurfaceReflections(recorder, trace.width, trace.height);
+        recorder.transition(trace.shadow, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
         recorder.transition(trace.reflection, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
         recorder.mark(nullptr);
         const auto marked = static_cast<UINT>(marks.size()) - firstMark;

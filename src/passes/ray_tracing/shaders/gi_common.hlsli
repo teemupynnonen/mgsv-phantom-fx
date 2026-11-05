@@ -477,8 +477,8 @@ float TextureLod(float3 v0, float3 v1, float3 v2, float2 uv0, float2 uv1, float2
 // cone (`footprint` metres across there) meets; without, as `untextured` says. The level comes from the mesh's
 // average texels a metre (GIGeometry::texelsPerMetre), as a jungle's rays run this about 20 million times a frame: working it
 // out from each triangle's vertices and placement took 2 ms of that, and showed no different on the same frozen frame.
-// Glass never does: the sun's and a lamp's light come through it, and only a reflection's rays meet it (TraceClosest's
-// `canMeetGlass`).
+// Glass never does: a ray towards a light passes it dimmed by its cover (PaneTransmittance), and only a reflection's rays
+// meet it (TraceClosest's `canMeetGlass`).
 bool CutOutBlocks(uint row, uint primitive, float2 barycentrics, bool untextured, float footprint)
 {
     GIGeometry geometry = g_Geometries[row];
@@ -492,6 +492,43 @@ bool CutOutBlocks(uint row, uint primitive, float2 barycentrics, bool untextured
     float lod = footprint > 0.0f ? log2(max(footprint * geometry.texelsPerMetre, 1e-6f)) : 0.0f;
     float4 texel = texture.SampleLevel(g_WrapSampler, uv, lod);
     return texel.a >= geometry.alphaThreshold;
+}
+
+// A pane's cover in a texel of its mask (fox3dfw_glass*'s): a colour texture holds it in alpha, a plain one, whose alpha
+// is 1, in red. Its dirt and frosting are cover: they are what the game's draw shows of the pane.
+float GlassCover(float4 texel)
+{
+    return texel.a < 1.0f ? texel.a : texel.r;
+}
+
+// What a pane lets through of a ray towards a light where the ray crosses it: what it neither reflects nor covers, its
+// cover by its row of the game's material table, as a reflection's ray reflects off it (HitMaterialOf). A mirror, and a
+// pane without its mask, let it all through, as before.
+float PaneTransmittance(uint row, uint primitive, float2 barycentrics, float footprint, float3x4 objectToWorld)
+{
+    GIGeometry geometry = g_Geometries[row];
+    if ((geometry.flags & GI_GEOMETRY_MIRROR) || !geometry.texture || !(geometry.flags & GI_GEOMETRY_UV)) return 1.0f;
+
+    uint3 i = TriangleIndices(geometry, primitive);
+    float2 uv0 = VertexUV(geometry, i.x), uv1 = VertexUV(geometry, i.y), uv2 = VertexUV(geometry, i.z);
+    float2 uv = (1.0f - barycentrics.x - barycentrics.y) * uv0 + barycentrics.x * uv1 + barycentrics.y * uv2;
+    Texture2D<float4> texture = g_SceneTextures[NonUniformResourceIndex(geometry.texture - 1)];
+    float lod = 0.0f;
+    if (footprint > 0.0f)
+    {
+        float3 v0 = mul(objectToWorld, float4(PoolVertex(geometry, i.x).xyz, 1.0f));
+        float3 v1 = mul(objectToWorld, float4(PoolVertex(geometry, i.y).xyz, 1.0f));
+        float3 v2 = mul(objectToWorld, float4(PoolVertex(geometry, i.z).xyz, 1.0f));
+        float2 size;
+        texture.GetDimensions(size.x, size.y);
+        lod = TextureLod(v0, v1, v2, uv0, uv1, uv2, size, footprint);
+    }
+
+    // What the mask covers, alone: the pane's own table row is the specular's, and read here it left a pane whose row is
+    // empty or unread (its F0 0) casting no shadow at all, its light as clean as a hidden pane's. Glass's dirt and frost
+    // are its cover, and the sun does not get past them.
+    float cover = GlassCover(texture.SampleLevel(g_WrapSampler, uv, lod));
+    return saturate(1.0f - cover);
 }
 
 // Every ray's flags. The terrain is one-sided, as the game draws it: where its heightmap runs across a
@@ -795,6 +832,35 @@ void PassHair(float distance, inout float transmittance, inout float nearestHair
     nearestHair = min(nearestHair, distance);
 }
 
+// Whether a ray towards a light (not one towards a surface or along a reflection) is dimmed by the panes it crosses
+// (PaneTransmittance). Glass is non-opaque and never committed, so each candidate pane is met once
+// (NO_DUPLICATE_ANYHIT_INVOCATION) and the ray goes on.
+bool DimsThroughGlass(uint row, uint towards)
+{
+    return (towards == RayTowardsSun || towards == RayTowardsLamp) && (g_Geometries[row].flags & GI_GEOMETRY_GLASS) != 0;
+}
+
+// Whether a pane a ray meets is the one it left. A ray towards the sun or a lamp starts a couple of centimetres off a
+// surface, so from a pane it crosses that pane at once: dimmed by its own cover, every pane cast its dirt's shadow onto
+// itself, and the mask's frame and streaks read as a shadow of the window on the glass, from the side the eye is on.
+// A pane that the ray goes through lies further from the plane it started on.
+bool IsOwnPane(float3 origin, float3 direction, float distance, float3 normal)
+{
+    const float OwnPlane = 0.05f;
+    return distance * abs(dot(direction, normal)) < OwnPlane;
+}
+
+// How wide a patch of a pane a ray towards a light reads its mask over. One fixed width, whatever the camera and the
+// distance: read at the camera's pixel, the mask's detail came and went with the camera, and each frame's point on the
+// sun's disc crossed a sharper level at another texel, so a pane's dirt's shadow appeared in patches and boiled near.
+// The width is the sun's disc at a room's distance (2 x tan of its radius x 2 m), soft enough to hold still.
+static const float PaneShadowBlur = 0.02f;
+
+float PaneFootprint(float footprint, float distance, uint towards)
+{
+    return towards == RayTowardsSurface || towards == RayAlongReflection ? footprint : PaneShadowBlur;
+}
+
 // The closest hit of a ray leaving a surface of `normal` from `origin`, past copies of the surface, and
 // in `copies` how many it skipped; `alphaTest` as TraceClosest. Past what does not stop it too (StopsRay:
 // by what it goes `towards`). With `throughHair`, past hair too, which takes its share of
@@ -894,6 +960,17 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
     {
         uint row = query.CandidateInstanceContributionToHitGroupIndex() + query.CandidateGeometryIndex();
         float footprint = cone.x + query.CandidateTriangleRayT() * cone.y;
+        if (DimsThroughGlass(row, towards))
+        {
+            if (StopsRay(query.CandidateInstanceIndex(), query.CandidateGeometryIndex(), query.CandidateTriangleFrontFace(), towards)
+                && !IsOwnPane(origin, direction, query.CandidateTriangleRayT(), normal))
+            {
+                transmittance *= PaneTransmittance(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(),
+                    PaneFootprint(footprint, query.CandidateTriangleRayT(), towards), query.CandidateObjectToWorld3x4());
+                nearestHair = min(nearestHair, query.CandidateTriangleRayT());
+            }
+            continue;
+        }
         bool untextured = false;
         if (chance) untextured = random.rand() < blocking;
         if (!CutOutBlocks(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), untextured, footprint))
@@ -921,9 +998,19 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
         if (!StopsRay(instance, geometry, every.CandidateTriangleFrontFace(), towards)) continue;
 
         uint row = every.CandidateInstanceContributionToHitGroupIndex() + geometry;
+        float footprint = cone.x + every.CandidateTriangleRayT() * cone.y;
+        if (DimsThroughGlass(row, towards))
+        {
+            if (!IsOwnPane(origin, direction, every.CandidateTriangleRayT(), normal))
+            {
+                transmittance *= PaneTransmittance(row, every.CandidatePrimitiveIndex(), every.CandidateTriangleBarycentrics(),
+                    PaneFootprint(footprint, every.CandidateTriangleRayT(), towards), every.CandidateObjectToWorld3x4());
+                nearestHair = min(nearestHair, every.CandidateTriangleRayT());
+            }
+            continue;
+        }
         bool untextured = false;
         if (chance) untextured = random.rand() < blocking;
-        float footprint = cone.x + every.CandidateTriangleRayT() * cone.y;
         bool cutOut = (g_Geometries[row].flags & GI_GEOMETRY_CUT_OUT) != 0;
         if (cutOut && !CutOutBlocks(row, every.CandidatePrimitiveIndex(), every.CandidateTriangleBarycentrics(), untextured, footprint))
             continue;
