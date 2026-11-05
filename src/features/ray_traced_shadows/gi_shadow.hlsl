@@ -61,7 +61,7 @@ void TraceSunShadows(uint2 gtid : SV_GroupThreadID, uint2 gid : SV_GroupID, uint
             float3 toSun = SunSample(random.rand2());
             float3 origin, facing;
             float tolerance;
-            ShadowRayStart(PixelSurfaceAt(position, normal), toSun, origin, facing, tolerance);
+            ShadowRayStart(PixelSurfaceAt(did, position, normal), toSun, origin, facing, tolerance);
             float blocking = BeyondShadowMap(position, depth) * g_Frame.shadowParams.y;
             // Rays to the sun run parallel: each keeps its pixel's footprint. The sun's size comes from
             // spreading the rays over its disc; a cone widened by it as well took cut-out alpha from
@@ -288,11 +288,11 @@ struct DebugRay
     SceneHit anyHit;  // The whole ray, past copies near the surface; cut-outs without their texture let it through
 };
 
-DebugRay TraceDebugRay(float3 position, float3 normal, float depth)
+DebugRay TraceDebugRay(uint2 pixel, float3 position, float3 normal, float depth)
 {
     DebugRay r;
     r.direction = g_Frame.sunDirection.xyz;
-    r.surface = PixelSurfaceAt(position, normal);
+    r.surface = PixelSurfaceAt(pixel, position, normal);
     ShadowRayStart(r.surface, r.direction, r.origin, r.normal, r.tolerance);
     r.beyond = BeyondShadowMap(position, depth);
     float rayLength = g_Frame.shadowParams.z;
@@ -312,9 +312,9 @@ DebugRay TraceDebugRay(float3 position, float3 normal, float depth)
 // the G-buffer's normal. Grey: from the depth's point, the scene having no surface near it. Blue: the
 // scene's surface there faces over 60 degrees away from the game's normal. Otherwise red where it lies
 // nearer the eye than the depth's point, cyan where farther, clear up to 5 mm apart and full from 3 cm.
-float4 ShadowStartColor(float3 position, float3 normal)
+float4 ShadowStartColor(uint2 pixel, float3 position, float3 normal)
 {
-    PixelSurface surface = PixelSurfaceAt(position, normal);
+    PixelSurface surface = PixelSurfaceAt(pixel, position, normal);
     if (!surface.isExact) return float4(0.5f, 0.5f, 0.5f, 0.6f);
     if (dot(surface.normal, normal) < 0.5f) return float4(0.2f, 0.3f, 1.0f, 0.75f);
 
@@ -341,11 +341,11 @@ void DebugShadows(uint2 did : SV_DispatchThreadID)
         float3 normal = DecodeNormal(g_Normal.Load(int3(did, 0)));
         if (g_Frame.shadowDiagnostics.y)
         {
-            g_ShadowDebug[did] = ShadowStartColor(position, normal);
+            g_ShadowDebug[did] = ShadowStartColor(did, position, normal);
             return;
         }
 
-        DebugRay r = TraceDebugRay(position, normal, depth);
+        DebugRay r = TraceDebugRay(did, position, normal, depth);
         SceneHit real = r.farHit;
         if (r.nearHit.hit) real = r.nearHit;
         if (real.hit)
@@ -389,7 +389,7 @@ void ProbeShadows(uint index : SV_GroupIndex)
         {
             float3 position = DepthPosition(centre, depth);
             float3 normal = DecodeNormal(g_Normal.Load(int3(centre, 0)));
-            DebugRay r = TraceDebugRay(position, normal, depth);
+            DebugRay r = TraceDebugRay(centre, position, normal, depth);
             probe.receiver.xyz = position;
             probe.normal = float4(normal, distance(position, g_Frame.eye.xyz));
             probe.ray = float4(r.direction, r.beyond);

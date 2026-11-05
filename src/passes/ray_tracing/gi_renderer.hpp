@@ -115,7 +115,7 @@ struct Frame
     bool modelInstancesUpdated{};
     std::vector<SceneTexture> newTextures; // Copied, or copied again as the game streamed more of it in, since the last frame
     std::optional<Terrain> terrain; // Absent until the game's terrain draws give its inputs
-    std::optional<float> seaLevel;  // The sea's (sea::level); absent in a frame without the add-on's sea
+    std::optional<float> seaLevel;  // The sea plane's (sea::planeLevel); absent in a frame without the add-on's sea
     std::uint32_t frameIndex{};
     kick_traces::KickTraces traces; // The one answer to what runs; a texture a trace needs is there when it runs
     bool showScene{}; // The output shows the traced scene instead of the light
