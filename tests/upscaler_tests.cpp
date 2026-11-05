@@ -839,7 +839,7 @@ void photoModeSettingsPersist(const fs::path& root)
 
     expect(saveRejected(path, chosen, Settings{.photoMode = {.fNumber = 64}}), "An invalid f-stop cannot replace a valid saved one.");
 
-    const Settings noNearClip{.photoMode = {.noNearClip = true}};
+    const Settings noNearClip{.photoMode = {.noNearClip = false}};
     saveSettings(path, noNearClip);
     expect(loadSettings(path) == noNearClip, "Restart restores photo mode's near clip plane switch.");
 }
