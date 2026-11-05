@@ -701,11 +701,12 @@ Material materialOf(const ModelPart& part, const MaterialTextures& textures, Sel
 
     material.texture = *textures.base + 1;
     if (part.textureIsMask) material.flags |= GI_GEOMETRY_MASK;
+    // A pane's mask is read where a ray towards a light crosses it (PaneTransmittance), at a level from the same measure.
+    if (isCutOut(part.role) || part.role == MeshRole::Glass) material.texelsPerMetre = uvPerMetreOf(part) * textures.baseTexelsAcross;
     if (isCutOut(part.role))
     {
         material.flags |= GI_GEOMETRY_ALPHA_TEXTURE;
         material.alphaThreshold = CutOutThreshold;
-        material.texelsPerMetre = uvPerMetreOf(part) * textures.baseTexelsAcross;
     }
 
     // Before its mask's copy comes a layer would lie on all of the mesh.

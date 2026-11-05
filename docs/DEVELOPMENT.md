@@ -1953,9 +1953,6 @@ the game's lights) is left alone until it runs.
     its vertex shader gives none). The last drawn is the nearest, as the game sorts what blends; the weights blend as the
     game blends, so a pane drawn twice, as many are, weighs as it shows. A mirror with the live picture stays the game's
     (its texture is a render target), and so does whatever a smaller camera's view draws.
-    Its shadow map leaves the draw too (`t8`, `s15`), replaced by a 1x1 lit one and the sampler that always compares
-    (`forward_surfaces::tracedShadow`): the map's shadow no longer matches a scene the rays shaded, and the composite
-    dims the pane by the rays' shadow at its own pixels instead.
   - **The trace** (`ray_tracing::traceSurfaces`). Before the exposure's list, a frame that drew a surface signals the fence,
     and Direct3D 12 traces the marked pixels on the scene the kick built, in a list of their own (`gi_renderer::traceSurfaces`), up to
     `SpecularRays` as any glossy surface; Direct3D 11 waits. The rays' hits come from the same `ReflectedLight`. So
@@ -1965,17 +1962,21 @@ the game's lights) is left alone until it runs.
     encoded and added by the surface's alpha, in the scene's encoded values, as the game blends its glass, over a copy of the
     scene, before the exposure, the depth of field and the upscaler read it. So a particle in front of a pane has the
     reflection over it. A traced reflection is added to what the draw left, as encoding the sum of the two would need
-    each pane's own colour. The rays' shadow on the pane itself (`TraceSurfaceReflections`, `g_ForwardShadow`: a ray from
-    the surface towards the sun's disc, one sample) dims it as the sun's absence does, to 0.85: a pane is mostly what it
-    reflects and the sky behind it, so blocking the sun barely changes it.
+    each pane's own colour.
   - **The rays.** Glass used to be left out for its alpha and shadow bytes. It is now `MeshRole::Glass`, taken by its material: any
     with a `GlassColor` vector, which four techniques have and no other (`fox3DFW_Glass_CommonRef`, `_CommonRef_LNM`,
     `_LNM` and two unnamed); mirrors are `MeshRole::Mirror`, by their technique, `fox3DFW_ParallaxReflection`. They are non-opaque
-    in their structures, so `CutOutBlocks` lets every ray through in one place. A ray towards the sun or a lamp keeps, past
-    each pane it crosses, what the pane neither reflects nor covers (`PaneTransmittance`: 1 - its cover, `GlassCover`, by
-    its row of the table, the same split a reflection's ray takes), so a pane's dirt and frosting dim the light behind it,
-    as hair does (`NO_DUPLICATE_ANYHIT_INVOCATION`, so each pane counts once). A mirror lets it through; the global
-    illumination's rays and the camera's pass as before. Only a reflection's rays meet them
+    in their structures, so `CutOutBlocks` lets every ray through in one place, and the global illumination's rays and the
+    camera's pass as before. A ray towards the sun or a lamp keeps, past each pane it crosses (`PassPane`, past the pane it
+    left, `IsOwnPane`), what the pane lets through (`PaneTransmittance`): what clean glass's two faces do not reflect at the
+    ray's angle (`ClearGlassTransmittance`, Schlick with F0 0.04: 92% head-on, a third at 80 degrees), less half of what the
+    mask covers (`DirtLoss`: dirt scatters much of its light on through, and a covered texel is no wall; the 0.5 is a
+    judgement), read over a fixed 2 cm patch (`PaneShadowBlur`) at the level its texels a metre give. As hair, each pane
+    counts once (`NO_DUPLICATE_ANYHIT_INVOCATION`), and so does a sheet drawn as a quad for each side: a pane within
+    `SamePane` (1 cm) of the one last crossed is its other side. The Afghan huts' windows are such (84a2aa9c6ae74858 mesh 1,
+    4 triangles a sash): counted twice, their sun on the floor read 0.54 where one sheet lets through 0.73. A mirror lets
+    the light through. The pane's own dirt keeps the game's shadow map in its draw, which shades only what the pane itself
+    shows, not what is seen through it. Only a reflection's rays meet them
     (`RayAlongReflection`, `TraceReflectionRay`): by chance, as much as a pane's cover (`Base_Tex_LIN`, red, or alpha in a colour
     texture) by its table's row gives, a ray reflects as from a mirror, and otherwise goes on, through at most `MostPanes`, with
     nothing behind the pane taken for a copy of it. A mirror reflects all of a ray: it has no row of the table, and its mask is
@@ -3739,8 +3740,8 @@ at `t14` with `s15`; `cPSMaterial` at `b4`, whose `[0]` holds the normal map's t
 - **Shadow.** Where the rays took the shadow's place on the ground, the river's draw takes a 1x1 white shadow map and a
   sampler that always passes, so the map's shadow, which no longer matches the rays' scene, does not darken the
   surface. The water takes no sun shadow of its own: its reflection is what the eye reads, and the bed's shadow stays
-  in the deferred lighting under it. Glass takes the rays' shadow too, a sun ray for each of its pixels (the forward
-  surfaces' composite).
+  in the deferred lighting under it. Glass keeps the game's: it barely shows there, and a shadow of its own would take a
+  sun ray for each pixel of glass.
 - **Reflection.** While the reflections are traced, the river's draw leaves its cube map out and records the water as a
   surface: its depth, its ripples' normal and, in the normal's `w`, negative, the share of what it reflects that
   shows. The sign marks water. The share is there and not in the weights because those blend: a pane drawn over a river

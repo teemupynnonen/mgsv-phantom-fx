@@ -879,7 +879,6 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         textures.surfaceDepth = surfaces.depth;
         textures.surfaceNormal = surfaces.normal;
         textures.surfaceReflection = surfaces.reflection;
-        textures.forwardShadow = surfaces.forwardShadow;
     }
 
     frame.width = depthOut.width;
