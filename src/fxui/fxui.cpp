@@ -851,9 +851,16 @@ Window::Window(std::span<const Section> sections, const Budget& budget, const Ch
 Window::~Window()
 {
     if (frame.searching && !frame.matched) textLine("No setting matches that search.", colour::TextDim);
-    // An item jumped to that this frame did not draw, such as one its page hides now, is not scrolled
-    // to later, when it shows.
-    nav.scrollTo.clear();
+    // An item jumped to that this frame did not draw, such as one its page hides now, is searched for:
+    // the next frame shows it among the results, scrolled to. Not found by a search either, the jump ends.
+    const Line* missed = nav.scrollTo.empty() || frame.searching ? nullptr : frame.budget->find(nav.scrollTo);
+    if (missed)
+    {
+        const auto length = std::min(missed->name.size(), sizeof(nav.search) - 1);
+        std::copy_n(missed->name.data(), length, nav.search);
+        nav.search[length] = 0;
+    }
+    else nav.scrollTo.clear();
     ImGui::EndChild();
     ImGui::PopStyleColor(static_cast<int>(std::size(styleColours)));
     ImGui::PopStyleVar(StyleVars);
