@@ -2980,14 +2980,25 @@ denoiser (see "Ray Reconstruction").
   water jumped between the two as the waves moved, and the water beside a hull took the hull's wall behind it
   (a debug case at Mother Base, 2026-11-05, the shadow-start debug view). Nor is the plane any other pixel's
   surface: it is passed as a stand-in. Nor is the terrain's top where the game drew a surface facing the other way
-  (`IsTerrainFacingAway`): the terrain stands 1 to 3 cm above the ground the game draws, so a prone Snake's arm
-  dipped under it, the search took the terrain 4 cm before the arm's underside as its surface, and the rays left
+  (`IsTerrainFacingAway`): the terrain stands up to 3 cm off the ground the game draws, above it there, so a prone
+  Snake's arm dipped under it, the search took the terrain 4 cm before the arm's underside as its surface, and the rays left
   upwards into the sky, a pale band along the arm at 2.4x the arm's light (a debug case, 2026-11-05). From the
   arm itself, the rays heading down passed under the one-sided terrain and met the sky too (58 of 64 escaped), so
   the global illumination's and the opaque reflections' first rays from a model or character sunk under the
   terrain by less than a quarter metre (`SunkUnderTerrain`) that head down and meet nothing take no light: they
   meet the game's ground just below, which the scene lacks. The arm's underside's light fell from 0.35 to 0.12, the
-  open ground's being 0.30; the rest of the frame stayed within 2%. A ray from the eye through the pixel looks for
+  open ground's being 0.30; the rest of the frame stayed within 2%. The gap is the game's own: its terrain shader
+  (`NewTerrain_Depth`) samples the same heightmap as `TerrainHeight` with no morph or displacement, but at the vertices
+  of its patches, whose grid coarsens with distance (32, 16, 8 or 4 cells a patch, a patch 1/128 of the heightmap and
+  up), where the scene's ring cells are 1 m; between the vertices each draws a straight line, so the two part by up to
+  3 cm, the game's ground above the scene's in one place and below in the next (the probe, 2026-11-05: within 0.3 cm
+  under a metre from the camera, 1 to 2.5 cm below 1.4 to 2.3 m away on a slope). Along a camera ray grazing the
+  ground that gap is about 10 cm, past the search's reach, and pixels by a boot resting on a slope left from the
+  depth's point, lifted 2.3 cm into the boot: their ground was black, 7x darker than the game's. Where the search
+  misses, a second one takes the terrain alone (`TerrainUnderPixel`, instance mask `GI_MASK_TERRAIN`) within 3 cm of
+  the depth's point along the terrain's own normal (not the G-buffer's, whose bumps read 3.6 cm for a 1.8 cm gap),
+  where the G-buffer's normal is within 60 degrees of the terrain's, and only for pixels within 6 cm of the scene's
+  terrain height: traced for every missed pixel, it cost 0.3 ms at 4K on a tin roof the scene leaves out. A ray from the eye through the pixel looks for
   the scene's own surface near the depth's point (within 3 cm plus 2% of the distance; cut-out geometry
   by its alpha, stand-ins passed), searching that stretch alone: the game hides what comes between the
   camera and the player (a bush the camera backs into) and the scene keeps it. Searched from the eye,

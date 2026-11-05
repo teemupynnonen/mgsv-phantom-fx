@@ -63,8 +63,10 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_TERRAIN_RINGS 4u
 #define GI_TERRAIN_CELLS 256u
 
-// The instances' mask: every ray takes them all.
+// The instances' masks: every ray takes the scene; the terrain's rings carry GI_MASK_TERRAIN too, for a search of the terrain
+// alone (TerrainUnderPixel).
 #define GI_MASK_SCENE 1u
+#define GI_MASK_TERRAIN 2u
 
 // The shadow probe's global illumination rays, one a thread of its group.
 #define GI_PROBE_LIGHT_RAYS 64u
