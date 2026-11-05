@@ -9,7 +9,7 @@
   it now matches it; towards the horizon it stays a little darker, as its reflections are the sky's own. The light
   it bounces up under the platforms rises with it.
 - **The sea's waves move at the game's pace.** They ran at the real speed of their length on the open sea, quicker than
-  the game's sea. The waves' clock now runs at half that (`sea_speed` in `PhantomFX.ini`, no menu item), and the foam
+  the game's sea. The waves' clock now runs at half that, on the **Wave speed** slider, and the foam
   fades on the same clock, so a crest stays white as long against the waves rolling.
 - **The sea's waves are longer and lower, as the game's own.** The add-on's were shorter and steeper all over: fewer
   of the long swells the game draws, more of the small chop. The waves now run 30% longer, a little lower, with

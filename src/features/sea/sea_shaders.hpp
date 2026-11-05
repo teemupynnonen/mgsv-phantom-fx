@@ -242,13 +242,19 @@ void main(uint3 id : SV_DispatchThreadID)
     uint kept = SpectrumIndex(id.xy, id.z);
     float foam = g_Foam[kept] * g_FoamLeft;
     // Where the surface is squeezed, short of folding: the crests' fronts, which the game's whitecap mask covers.
+    // The setting reaches both the folds and the squeeze, so 0 leaves no foam at all, not just the squeeze's.
     float squeezed = 0;
-    if (id.z < CASCADES - 1)
+    float coverage = saturate(g_FoamCoverage);
+    if (id.z < CASCADES - 1 && coverage > 0)
     {
-        foam = max(foam, saturate((FoamBelow - jacobian) * FoamSharpness));
-        // Higher waves fold more and show their foam over more of the sea; `g_FoamCoverage` widens that reach.
-        float squeezedBelow = FoamBelow + (SqueezedBelow - FoamBelow) * g_FoamCoverage;
+        foam = max(foam, saturate((FoamBelow - jacobian) * FoamSharpness) * coverage);
+        // Higher waves fold more and show their foam over more of the sea; the setting widens that reach.
+        float squeezedBelow = FoamBelow + (SqueezedBelow - FoamBelow) * coverage;
         squeezed = saturate((squeezedBelow - jacobian) / (squeezedBelow - FoamBelow));
+    }
+    else
+    {
+        foam = 0;
     }
     g_Foam[kept] = foam;
 
