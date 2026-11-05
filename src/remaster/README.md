@@ -37,8 +37,10 @@ Then work down the marks:
    it is for instead; the head counts the rules still under the tool's label. Then press **Save**. That writes
    `src/remaster/materials.json` in the checkout the build came from. Commit that file.
 
-**Rules** lists every rule, with those whose material the game has not loaded here dimmed. **Back to original** takes a
-rule away.
+**Rules** lists the lamps' rules, then the materials', with those whose material the game has not loaded here dimmed.
+**Unsaved**, **Saved** and **All** at its top pick which show. An unsaved rule says how it differs from the file (new,
+changed or removed), and **Revert** puts it back as the file has it. **Remove** takes a saved rule away. **Discard**
+in the head puts every rule back as the file has it, after asking. Ctrl+Z undoes a revert or a discard like any change.
 
 The rules are off with the visual enhancements (F1), and the panel waits until they are back on.
 
