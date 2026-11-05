@@ -42,7 +42,7 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_GEOMETRY_SHADOW_ONLY   128u // The game draws it into its shadow maps only (a tarp's stand-in): only rays towards lights meet it (StopsRay)
 #define GI_GEOMETRY_SUN_ONLY      256u // With GI_GEOMETRY_SHADOW_ONLY (a building's stand-in): of the rays towards lights, only the sun's meet it (StopsShadowRay)
 #define GI_GEOMETRY_EMISSIVE      512u // With GI_GEOMETRY_NO_SHADOW: it gives light (GIGeometry::emission) and takes none, its texture its light's colour
-#define GI_GEOMETRY_GLASS         1024u // With GI_GEOMETRY_CUT_OUT: every ray passes it (CutOutBlocks) but a reflection's, which it reflects by its mask (TraceReflectionRay)
+#define GI_GEOMETRY_GLASS         1024u // With GI_GEOMETRY_CUT_OUT: every ray passes it (CutOutBlocks), a light's dimmed by its mask (PaneTransmittance), but a reflection's, which it reflects by its mask (TraceReflectionRay)
 #define GI_GEOMETRY_MIRROR        2048u // With GI_GEOMETRY_GLASS: it reflects all of a reflection's rays
 #define GI_GEOMETRY_LAYER_BLEND   4096u // Its layer takes the base texture's place where it lies, not multiplying it (LayeredAlbedo)
 #define GI_GEOMETRY_LAYER_LINEAR  8192u // With GI_GEOMETRY_LAYER_BLEND: in linear light, not on the encoded values
@@ -270,7 +270,7 @@ struct GIGeometry
     uint layerTexture;    // 1 + its layer's index (rgb its colour, a how much of it lies), 0 without
     uint layerMaskTexture; // 1 + its layer's mask's index (how much of it lies), 0 without
     float4 layerMapping;  // The layer's coordinates: (second coordinates + zw) x xy
-    float texelsPerMetre; // With GI_GEOMETRY_ALPHA_TEXTURE: its texture's texels along a metre of its surface, on average
+    float texelsPerMetre; // With GI_GEOMETRY_ALPHA_TEXTURE or GI_GEOMETRY_GLASS: its texture's texels along a metre of its surface, on average
     float3 unused;
 };
 
@@ -314,6 +314,10 @@ struct GIShadowProbe
     uint4 startHit;  // On the scene's own surface, its triangle: x its instance + 1, y its geometry, z its primitive; w the
                      // primitive of the whole ray's first hit (hits.w)
     uint4 crossed;   // The first thing between the lifted start and the surface, from the start, as lightNearest; zeros for none
+    // The pane the sun's ray crosses there, if any: what its mask covers and what reaches the start through it.
+    float4 glass;    // x: the pane's cover (PaneCover), y: what it lets through (PaneTransmittance), z: the pane's geometry row,
+                     // w: 1 where the ray meets a pane first, 0 where it does not
+    uint4 glassHit;  // x its instance + 1, y its geometry, z its primitive; w its mask texture's id, 0 without one
 };
 
 // The lamp probe: the point and spot lights at the screen's centre pixel, each with a ray from there to

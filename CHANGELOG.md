@@ -35,6 +35,9 @@
 - **Path tracing is faster where many lights burn.** Each pixel and each ray's hit now looks only at the lights that can
   reach it, not at every light in the frame. At Mother Base at night that saves 4.4 ms of a 32 ms frame, about 31 to 36 fps,
   and the picture stays the same.
+- **Sunlight and lamplight through windows lose what glass takes.** They went through every pane untouched. Clean glass
+  now lets through about 92% head-on and less as the light grazes it, a low sun's light a third, as real glass reflects
+  it, and a pane's dirt takes half of the light where it lies, so the light on the floor behind a dirty window shows it.
 - **Destroyed props leave the ray-traced scene.** A barrel or window pane you broke kept casting its shadow and bouncing
   light as if whole, and props near you were in the scene twice. The rays now see what the game draws.
 - **Path tracing is a little faster at night.** Bounced light's rays chase moonlight too faint to show only some of the time,

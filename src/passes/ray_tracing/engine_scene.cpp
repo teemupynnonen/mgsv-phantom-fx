@@ -7,7 +7,6 @@
 #include "game_loop.hpp"
 #include "passes/ray_tracing/engine_brush.hpp"
 #include "passes/ray_tracing/scene_description.hpp"
-#include "remaster/remaster.hpp"
 
 #include <Windows.h>
 #include <MinHook.h>
@@ -92,13 +91,13 @@ constexpr std::size_t ModelFade = 0x1B8;
 // its root-weighted vertices streaked from the soldier to the player.
 constexpr std::size_t ModelLayer = 0x1AC;
 constexpr std::uint32_t MarkerSilhouetteLayer = 0x20;
-// Every model, characters too, is on the object registry's model list (docs/DEVELOPMENT.md, "Every
-// model"): the global pointing to the registry, its table of list headers by type number (a header:
-// the last object, then the first), the global holding the models' type number, and the link from
-// one object to the next.
-constexpr std::uintptr_t RegistryGlobal = 0x2BA04A8, RegistryVtable = 0x20F08C8, ModelTypeGlobal = 0x29E51B4;
-constexpr std::size_t RegistryLists = 0x1E8, ListFirst = 8, ObjectNext = 0x10;
-constexpr std::uint32_t MaxTypes = 256, MaxListedModels = 1 << 16;
+// Every model, characters too, is on an object registry's model list (docs/DEVELOPMENT.md, "Every
+// model"): the global holding the first registry, each registry's link to the next and its table of pointers to
+// list headers by type number less one (a header: the first object, then the last), the global holding the models'
+// type number, and the link from one object to the one before it.
+constexpr std::uintptr_t FirstRegistryGlobal = 0x2B73298, ModelTypeGlobal = 0x29E51B4;
+constexpr std::size_t RegistryNext = 0, RegistryLists = 0x30, ListLast = 8, ObjectNext = 0x10;
+constexpr std::uint32_t MaxTypes = 256, MaxRegistries = 16, MaxListedModels = 1 << 16;
 // A skinned model (docs/DEVELOPMENT.md, "Characters"): its bone count (16 bits: a flag above it is set
 // on animals' and some characters' models, the dog's 0x1004E for 78 bones), the object whose +0x78 holds
 // its skinning palette, and its mesh groups' count and state, a byte each: drawn while none of
@@ -388,28 +387,46 @@ std::optional<std::uint64_t> rigidModel(std::uintptr_t model)
     return resource ? modelResource(*resource, ModelFile::Rigid, Source::VisibilityManager) : std::nullopt;
 }
 
-// The game's characters: every skinned model on the object registry's model list the game shows,
-// in its pose this frame (docs/DEVELOPMENT.md, "Every model", "Characters"), each rigid model on the list
-// handed to `listedRigid`; false without the list. A revealed scene also takes the hidden ones.
+// Every model on the object registries' model lists; nothing without a registry. The first registry's
+// table used to be read at +0x1E8 of the object at RVA 0x2BA04A8, a 0x1E0-byte object the table happened
+// to follow in memory: with another mod installed something else followed it, and the scene lost
+// every character, the helicopter and the swaying trees (2026-11-04, debug cases).
+std::optional<std::vector<std::uintptr_t>> listedModels()
+{
+    const auto type = read<std::uint32_t>(base + ModelTypeGlobal);
+    auto registry = read<std::uintptr_t>(base + FirstRegistryGlobal);
+    if (!type || !*type || *type > MaxTypes || !registry || !*registry) return std::nullopt;
+
+    std::vector<std::uintptr_t> models;
+    for (std::uint32_t r = 0; registry && *registry && r < MaxRegistries; ++r)
+    {
+        const auto lists = read<std::uintptr_t>(*registry + RegistryLists);
+        const auto list = lists && *lists ? read<std::uintptr_t>(*lists + 8ull * (*type - 1)) : std::nullopt;
+        auto node = list && *list ? read<std::uintptr_t>(*list + ListLast) : std::nullopt;
+        while (node && *node && isA(*node, ModelVtable) && models.size() < MaxListedModels)
+        {
+            models.push_back(*node);
+            node = read<std::uintptr_t>(*node + ObjectNext);
+        }
+
+        registry = read<std::uintptr_t>(*registry + RegistryNext);
+    }
+
+    return models;
+}
+
+// The game's characters: every skinned model on the object registries' model lists the game shows,
+// in its pose this frame (docs/DEVELOPMENT.md, "Every model", "Characters"), each rigid model on the lists
+// handed to `listedRigid`; false without a list. A revealed scene also takes the hidden ones.
 bool collectCharacters(std::vector<scene_description::CharacterInstance>& characters, std::uint32_t& listed, const Reveal& reveal,
     const std::function<void(std::uintptr_t model, bool isHidden)>& listedRigid)
 {
-    const auto registry = read<std::uintptr_t>(base + RegistryGlobal);
-    const auto type = read<std::uint32_t>(base + ModelTypeGlobal);
-    if (!registry || !type || *type >= MaxTypes || !isA(*registry, RegistryVtable)) return false;
+    const auto models = listedModels();
+    if (!models) return false;
 
-    const auto list = read<std::uintptr_t>(*registry + RegistryLists + 8ull * *type);
-    auto node = list && *list ? read<std::uintptr_t>(*list + ListFirst) : std::nullopt;
-    if (!node) return false;
-
-    for (listed = 0; *node && listed < MaxListedModels; ++listed)
+    listed = static_cast<std::uint32_t>(models->size());
+    for (const auto model : *models)
     {
-        const auto model = *node;
-        if (!isA(model, ModelVtable)) break;
-
-        node = read<std::uintptr_t>(model + ObjectNext);
-        if (!node) break;
-
         const bool isHidden = read<std::uint32_t>(model + ModelHiddenPasses) == HiddenFromEveryPass;
         if (isHidden && !reveal.isAny()) continue;
         if (read<std::uint32_t>(model + ModelLayer).value_or(0) & MarkerSilhouetteLayer) continue;
@@ -927,7 +944,7 @@ void take(Snapshot& snapshot, const std::vector<gi_inputs::DrawnBones>& drawn)
     const auto reveal = currentReveal();
     for (const auto& file : files)
     {
-        auto parsed = scene_description::describeModel(file.hash, file.bytes, file.source, reveal.has(file.hash), remaster::tuneFileSelfLight);
+        auto parsed = scene_description::describeModel(file.hash, file.bytes, file.source, reveal.has(file.hash));
         if (!parsed)
         {
             ++parseFailures;

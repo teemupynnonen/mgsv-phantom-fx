@@ -38,7 +38,8 @@ const Mark HelipadMark{.location = 50,
     .rotation = 0.25f,
     .clock = 79200,
     .materials = {{.name = 0x50FFD14C26F0, .fingerprint = 0x1234567890ABCDEF, .kind = MaterialKind::SelfLit, .brightness = 30000, .uses = 4},
-        {.name = 0x0BE61C83A81D, .fingerprint = 0xFFFFFFFFFFFFFFFF, .kind = MaterialKind::Glass, .brightness = 0, .uses = 311}}};
+        {.name = 0x0BE61C83A81D, .fingerprint = 0xFFFFFFFFFFFFFFFF, .kind = MaterialKind::Glass, .brightness = 0, .uses = 311}},
+    .lamps = {{.at = {2.06f, 3.17f, 23.47f}, .color = {7953, 7953.5f, 6000}}}};
 
 void readsBackItsMarks()
 {
@@ -47,6 +48,9 @@ void readsBackItsMarks()
     expect(parsed.error.empty(), "Written marks read.");
     expect(parsed.marks == std::vector<Mark>{HelipadMark, {.location = 10, .mission = 10070}}, "Marks read back as they were, to the bit.");
     expect(parseMarks(writeMarks({})).marks.empty() && parseMarks(writeMarks({})).error.empty(), "No marks is a good file.");
+
+    const auto older = parseMarks(R"({ "marks": [{ "location": 50, "mission": 30050, "position": [0, 0, 0], "rotation": 0, "clock": 0, "materials": [] }] })");
+    expect(older.error.empty() && older.marks.size() == 1 && older.marks[0].lamps.empty(), "Marks from before lamps read, without lamps.");
 }
 
 // A file left by an older build or a bad edit costs the marks, never the game.
@@ -74,7 +78,9 @@ void saysWhereAMarkIs()
     expect(placeText(HelipadMark) == "Mother Base, at 9, 2, -48", "A mark's place is its map and position in whole metres.");
     expect(placeText({.location = 10}) == "Afghanistan, at 0, 0, 0", "Afghanistan is location 10.");
     expect(placeText({.location = 20}) == "Africa, at 0, 0, 0", "Africa is location 20.");
-    expect(placeText({.location = 40}) == "Location 40, at 0, 0, 0", "A location without a name shows its number.");
+    expect(placeText({.location = 55}) == "Quarantine platform, at 0, 0, 0", "The quarantine platform is location 55.");
+    expect(placeText({.location = 40}) == "GNTN, at 0, 0, 0", "A location without a known place keeps the game's name for it.");
+    expect(placeText({.location = 99}) == "Location 99, at 0, 0, 0", "A location the game does not name shows its number.");
 }
 
 void saysWhenAMarkWas()

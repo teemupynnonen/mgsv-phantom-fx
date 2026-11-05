@@ -41,6 +41,7 @@ void describe(PathTracing& pathTracing, SettingVisitor& visit)
             .label = "Self-lit surfaces",
             .max = 4,
             .standard = Defaults.emission,
-            .tip = "How strongly glowing surfaces such as bulbs and signs light what is around them. 1 is the brightness the game gives them; 0 leaves their light out."});
+            .tip = "How strongly glowing surfaces such as bulbs and signs light what is around them. At 1 a ceiling tube adds a third of "
+                   "the light of the game's own lamp beside it; 0 leaves their light out."});
 }
 }

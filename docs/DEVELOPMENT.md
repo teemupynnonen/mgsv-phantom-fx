@@ -1327,12 +1327,16 @@ level at Camp Omega's cliffs. No names in the exe: the class names here are desc
   holding its shader resource view at `+8`). The manager's streaming list (`+0x10` to `+0x18`, 24-byte
   nodes whose first word points 0x10 into a record) leaves a few loaded textures out. Neither the model
   objects nor their materials hold the texture: the draws bind it by id.
-- **Every model** (found 2026-10-23): the object registry (vtable `0x20F08C8`; the global at RVA
-  `0x2BA04A8` points to it) keeps a list of each object type's instances: at `+0x1E8` a table of list
-  headers by type number (`+0x38` of an object, a word; models are type 3, the global at RVA
-  `0x29E51B4`), each header the last object, the first and the count; objects are linked first to last
-  through `+0x10` (and back through `+0x18`). In Afghanistan the model list held 882 models: 566 rigid,
-  360 skinned. Characters are among them and in no visibility manager. So, at times, are a few rigid models, the
+- **Every model** (found 2026-10-23, corrected 2026-11-04): object registries, chained from the global at
+  RVA `0x2B73298` through `+0`, each keep a list of each object type's instances: `+0x30` points to a table
+  of pointers to list headers by type number less one (`+0x38` of an object, a word; models are type 3, the global at
+  RVA `0x29E51B4`), each header the first object, the last and the count; objects are linked last to first
+  through `+0x10` (and back through `+0x18`), and hold their registry at `+0x30` (the game's own unlinking,
+  `0x1B5640`). One registry held all 1242 models in Afghanistan, two more held none. The table was first
+  read at `+0x1E8` of the object at RVA `0x2BA04A8`, but that object is 0x1E0 bytes (`0x1B3B80`): the table
+  just happened to be allocated right after it, until another mod changed what the game allocates and
+  the scene lost every character, the helicopter and the swaying trees. On 2026-10-23, an earlier count, the model list held 882 models in Afghanistan: 566
+  rigid, 360 skinned (as noted then; they add up to 926). Characters are among them and in no visibility manager. So, at times, are a few rigid models, the
   scene taking those from here: the helicopter's cabin between missions (`84a2d14c3f28beb5`, `84a3b06a43ea483f`, at
   (0, 1200, 0), 71% of the frame there), 438 models in all there, and none at Mother Base or in Afghanistan. Arriving
   from another map no visibility manager holds it; straight from Mother Base one can. Without them the rays had no
@@ -1391,7 +1395,8 @@ The pixel shaders' `cPSMaterial` (`b4`, `float4 m_materials[8]`) has no copy on 
 memory at every draw, so a write to the pool shows at the next one. Zeroing the self-lit materials from outside
 the running game put out a floodlight panel and a wall lamp's bulb and they came back with the values; the light
 those lamps throw on the walls stayed, as it is a game light of its own (2026-11-01). The remastering tool
-(`src/remaster`, `src/dev/remaster`) stands on this.
+(`src/remaster`, `src/dev/remaster`) stands on this, and tunes those game lights apart, by their place, where the add-on
+records their light draws (its README, "Lamps").
 
 - **The pool.** At `[0x2B743B0]`: its rows at `+0x8`, their number at `+0x10` (5248), those in use at `+0x14`, a slot
   for each row at `+0x20` (12 bytes: the next in its hash bucket at `+2`, its uses at `+4`, its state at `+8`). A handle
@@ -1961,8 +1966,17 @@ the game's lights) is left alone until it runs.
   - **The rays.** Glass used to be left out for its alpha and shadow bytes. It is now `MeshRole::Glass`, taken by its material: any
     with a `GlassColor` vector, which four techniques have and no other (`fox3DFW_Glass_CommonRef`, `_CommonRef_LNM`,
     `_LNM` and two unnamed); mirrors are `MeshRole::Mirror`, by their technique, `fox3DFW_ParallaxReflection`. They are non-opaque
-    in their structures, so `CutOutBlocks` lets every ray through in one place: the sun's and the lamps' light comes through,
-    tinted or not, and the global illumination's rays and the camera's pass as before. Only a reflection's rays meet them
+    in their structures, so `CutOutBlocks` lets every ray through in one place, and the global illumination's rays and the
+    camera's pass as before. A ray towards the sun or a lamp keeps, past each pane it crosses (`PassPane`, past the pane it
+    left, `IsOwnPane`), what the pane lets through (`PaneTransmittance`): what clean glass's two faces do not reflect at the
+    ray's angle (`ClearGlassTransmittance`, Schlick with F0 0.04: 92% head-on, a third at 80 degrees), less half of what the
+    mask covers (`DirtLoss`: dirt scatters much of its light on through, and a covered texel is no wall; the 0.5 is a
+    judgement), read over a fixed 2 cm patch (`PaneShadowBlur`) at the level its texels a metre give. As hair, each pane
+    counts once (`NO_DUPLICATE_ANYHIT_INVOCATION`), and so does a sheet drawn as a quad for each side: a pane within
+    `SamePane` (1 cm) of the one last crossed is its other side. The Afghan huts' windows are such (84a2aa9c6ae74858 mesh 1,
+    4 triangles a sash): counted twice, their sun on the floor read 0.54 where one sheet lets through 0.73. A mirror lets
+    the light through. The pane's own dirt keeps the game's shadow map in its draw, which shades only what the pane itself
+    shows, not what is seen through it. Only a reflection's rays meet them
     (`RayAlongReflection`, `TraceReflectionRay`): by chance, as much as a pane's cover (`Base_Tex_LIN`, red, or alpha in a colour
     texture) by its table's row gives, a ray reflects as from a mirror, and otherwise goes on, through at most `MostPanes`, with
     nothing behind the pane taken for a copy of it. A mirror reflects all of a ray: it has no row of the table, and its mask is
@@ -2014,8 +2028,14 @@ the game's lights) is left alone until it runs.
   unbiased estimate. A diffuse ray that meets an emitter takes none of its light, as that would count it twice; a
   specular ray always does, which is how it shows in a reflection. A self-lit mesh left out of the 64, or on a
   character, gives its light to the diffuse rays that meet it. The intensities are set for how a bulb looks, and
-  rooms are lit by the lamps placed beside them: a mesh lights others with at most the sun's radiance
-  (`MostEmission`), and the menu's **Self-lit surfaces** (`path_traced_emission`, 1 by default, 0 to 4) scales it.
+  rooms are lit by the lamps placed beside them: a mesh lights others with 0.3% of its intensity (`SelfLitShare`),
+  at most the sun's radiance (`MostEmission`), and the menu's **Self-lit surfaces** (`path_traced_emission`, 1 by default,
+  0 to 4) scales it. Taken whole, a quarantine platform ceiling tube gave 52,462 at a metre against a median of about 620
+  (163 to 7,953) from the game's lamp at the same fixture, 8 pairs, and its corridors came out 9 to 37 times vanilla's
+  light. At a hundredth a tube lights about as its lamp does, but the lamps already carry it: a corridor with 21 tubes to
+  8 lamps was still 3.3 times vanilla's (1.5 without them). At 0.3% both corridors measured were about twice vanilla's
+  (on the side Snake's back does not cover in vanilla's frame), 2026-11-04. Most of that is light bouncing off the white
+  walls (albedo about 0.58), which the game's exposure does not see: it measures its own light (`light_combine.hpp`).
   A frame at Mother Base at night spends 2.5 to 3 ms on them at 1920 x 1080: about 1.5 ms the shadow rays, about 1 ms choosing
   one, and 0.3 ms the triangle and its texture. Dropping them outright is not free: 15% of the deck
   changes by over 10%. Rolling for their rays as for the moon's below saved 0.8 ms at most, and at that it visibly stirred
