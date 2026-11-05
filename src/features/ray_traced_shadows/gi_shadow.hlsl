@@ -421,37 +421,17 @@ void ProbeShadows(uint index : SV_GroupIndex)
                 probe.crossed = ProbeHit(TraceClosest(r.origin, -lift / liftLength, 0.0f, 0.95f * liftLength, GI_MASK_SCENE, true, false,
                     PixelCone(position, 0.0f)));
 
-            // The pane the sun's ray crosses, and what it lets through: the first glass along it, as a ray towards a light
-            // meets it (PaneTransmittance).
+            // What the sun's ray meets first, if it is a pane: what the pane covers and lets through (PaneTransmittance), at
+            // its mask's sharpest level, so the probe says what the mask holds there, and head-on.
+            SceneHit pane = TraceClosest(r.origin, r.direction, 0.0f, g_Frame.shadowParams.z, GI_MASK_SCENE, true, false, PixelCone(position, 0.0f), true);
+            uint paneRow = pane.hit ? FirstGeometry(g_Instances[pane.instance]) + pane.geometry : 0;
+            if (pane.hit && (g_Geometries[paneRow].flags & GI_GEOMETRY_GLASS))
             {
-                float footprint = LightCone(r.origin).x;
-                for (uint step = 0; step < 4; ++step)
-                {
-                    SceneHit pane = TraceClosest(r.origin, r.direction, step == 0 ? 0.0f : 0.0001f, 1e4f, GI_MASK_SCENE, true, false,
-                        PixelCone(position, 0.0f), true);
-                    if (!pane.hit) break;
-                    uint row = FirstGeometry(g_Instances[pane.instance]) + pane.geometry;
-                    if ((g_Geometries[row].flags & GI_GEOMETRY_GLASS) == 0) break;
-
-                    float3x4 toWorld = (float3x4)0;
-                    const uint geometry = pane.geometry;
-                    GIGeometry paneGeometry = g_Geometries[row];
-                    float cover = 0.0f;
-                    if (paneGeometry.texture && (paneGeometry.flags & GI_GEOMETRY_UV))
-                    {
-                        uint3 i = TriangleIndices(paneGeometry, pane.primitive);
-                        float2 uv0 = VertexUV(paneGeometry, i.x), uv1 = VertexUV(paneGeometry, i.y), uv2 = VertexUV(paneGeometry, i.z);
-                        float2 uv = (1.0f - pane.barycentrics.x - pane.barycentrics.y) * uv0 + pane.barycentrics.x * uv1 + pane.barycentrics.y * uv2;
-                        Texture2D<float4> mask = g_SceneTextures[NonUniformResourceIndex(paneGeometry.texture - 1)];
-                        cover = GlassCover(mask.SampleLevel(g_WrapSampler, uv, 0.0f));
-                    }
-
-                    // At the mask's sharpest level (footprint 0), so the probe says what the mask holds there.
-                    probe.glass = float4(cover, PaneTransmittance(row, pane.primitive, pane.barycentrics, 0.0f, toWorld), float(row),
-                        pane.frontFace ? 1.0f : 0.0f);
-                    probe.glassHit = uint4(pane.instance + 1, geometry, pane.primitive, paneGeometry.texture);
-                    break;
-                }
+                GIGeometry paneGeometry = g_Geometries[paneRow];
+                uint3 indices = TriangleIndices(paneGeometry, pane.primitive);
+                probe.glass = float4(PaneCover(paneGeometry, indices, pane.barycentrics, 0.0f),
+                    PaneTransmittance(paneGeometry, indices, pane.barycentrics, 0.0f, 1.0f), float(paneRow), 1.0f);
+                probe.glassHit = uint4(pane.instance + 1, pane.geometry, pane.primitive, paneGeometry.texture);
             }
 
             uint tile = FFX_DNSR_Shadows_LinearTileIndex(FFX_DNSR_Shadows_GetTileIndexFromPixelPosition(centre), g_Frame.dimensions.x);
