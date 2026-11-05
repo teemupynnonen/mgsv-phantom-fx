@@ -838,6 +838,10 @@ void photoModeSettingsPersist(const fs::path& root)
     expect(loadSettings(path).photoMode.fNumber == 0.7f, "An f-stop out of range is clamped.");
 
     expect(saveRejected(path, chosen, Settings{.photoMode = {.fNumber = 64}}), "An invalid f-stop cannot replace a valid saved one.");
+
+    const Settings noNearClip{.photoMode = {.noNearClip = false}};
+    saveSettings(path, noNearClip);
+    expect(loadSettings(path) == noNearClip, "Restart restores photo mode's near clip plane switch.");
 }
 
 // The engine's motion blur toggle and strength persist, and the strength is clamped.

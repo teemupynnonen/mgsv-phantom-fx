@@ -42,6 +42,9 @@ constexpr std::size_t CameraCount = 0x88, Cameras = 0x90, CameraActive = 0xE0, C
 constexpr std::size_t CameraFocusDistance = 0x38, CameraAperture = 0x44, CameraAnyAperture = 0xEA;
 // Its focal length in millimetres, which the update copies into GrCamera: the field of view.
 constexpr std::size_t CameraFocalLength = 0x3C;
+// Its near clip plane in metres (0.069 in play), which the update copies into GrCamera (+0x168) and the
+// projection follows.
+constexpr std::size_t CameraNearPlane = 0x48;
 
 // The window's raw input, from its WM_INPUT handler: reads the RAWINPUT and hands mouse and keyboard
 // data to the game's devices.
@@ -84,6 +87,9 @@ constexpr float MaxPitch = 1.55f;
 constexpr double MaxStep = 0.1;
 // With the blur off, f/64 keeps everything sharp. The depth of field plugin skips f/100 and up.
 constexpr float SharpAperture = 64.0f;
+// With the near clip plane off: 1 mm, so the free camera sees through nothing it stands close to. The
+// reversed-Z float depth keeps the far surfaces' precision.
+constexpr float NoClipNearPlane = 0.001f;
 // Seconds the autofocus takes to settle on a new distance, about.
 constexpr float FocusTime = 0.2f;
 
@@ -110,11 +116,11 @@ struct FreeCamera
 struct CameraState
 {
     float transform[8]{}; // Rotation, position
-    float focusDistance{}, aperture{}, focalLength{};
+    float focusDistance{}, aperture{}, focalLength{}, nearPlane{};
     std::uint8_t anyAperture{};
 };
 
-std::atomic<bool> installed{}, requested{}, flying{}, hideUi{}, blur{true};
+std::atomic<bool> installed{}, requested{}, flying{}, hideUi{}, blur{true}, noNearClip{};
 std::atomic<float> fNumber{1.4f};
 std::atomic<std::uint8_t> heldKeys{};
 std::atomic<int> mouseX{}, mouseY{};
@@ -151,6 +157,7 @@ CameraState stateOf(const std::uint8_t* camera)
     std::memcpy(&state.focusDistance, camera + CameraFocusDistance, sizeof(state.focusDistance));
     std::memcpy(&state.aperture, camera + CameraAperture, sizeof(state.aperture));
     std::memcpy(&state.focalLength, camera + CameraFocalLength, sizeof(state.focalLength));
+    std::memcpy(&state.nearPlane, camera + CameraNearPlane, sizeof(state.nearPlane));
     state.anyAperture = camera[CameraAnyAperture];
 
     return state;
@@ -162,6 +169,7 @@ void apply(std::uint8_t* camera, const CameraState& state)
     std::memcpy(camera + CameraFocusDistance, &state.focusDistance, sizeof(state.focusDistance));
     std::memcpy(camera + CameraAperture, &state.aperture, sizeof(state.aperture));
     std::memcpy(camera + CameraFocalLength, &state.focalLength, sizeof(state.focalLength));
+    std::memcpy(camera + CameraNearPlane, &state.nearPlane, sizeof(state.nearPlane));
     camera[CameraAnyAperture] = state.anyAperture;
 }
 
@@ -209,6 +217,8 @@ CameraState photoState(const FreeCamera& camera, const CameraState& game, bool i
     state.focusDistance = camera.focusDistance;
     if (camera.focalLength > 0) state.focalLength = camera.focalLength;
     state.aperture = blur && !isSharp ? fNumber.load() : SharpAperture;
+    // A held camera (automation) keeps the game's, so its frames match the game's own.
+    if (noNearClip && !isSharp) state.nearPlane = std::min(game.nearPlane, NoClipNearPlane);
     state.anyAperture = 1;
 
     return state;
@@ -435,6 +445,7 @@ void toggleBlur() noexcept
 void configure(const Configuration& configuration) noexcept
 {
     fNumber = configuration.settings.photoMode.fNumber;
+    noNearClip = configuration.settings.photoMode.noNearClip;
 }
 
 void setControls(const Controls& controls) noexcept

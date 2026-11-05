@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Photo mode: no near clip plane.** Photo mode now moves the free camera's near clip plane from 7 cm to 1 mm, so what
+  the camera nearly touches no longer vanishes. **No near clip plane** under Photo mode on the Camera page turns it off;
+  the game's own camera is untouched.
 - **Characters, the helicopter and swaying trees stay in the ray-traced scene beside other mods.** The scene found the
   game's list of models in a spot that only held it by chance. With some other mods installed it read an empty list, so
   Snake, the soldiers, the helicopter's cabin and trees that move in the wind cast no ray-traced shadows and global

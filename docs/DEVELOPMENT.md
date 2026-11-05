@@ -3978,6 +3978,10 @@ F2 does nothing.
   Lua, from `dev::onFrameStart` (`src/dev/game_lua.hpp`): `GameObject.SendCommand` with
   `WarpAndWaitBlock` for the player (object 0), or `SetPosition` for the vehicle or walker gear they are
   in; missions and free roam only. It is the call Infinite Heaven's `InfTppUtil.Warp` makes.
+- **Near clip plane.** With **No near clip plane** on, the swapped-in camera's near plane (`+0x48`,
+  0.069 m in play, copied to `GrCamera + 0x168` and from there into the projection and
+  `m_viewportSize.z`) becomes 1 mm for the update and is put back after it. A held camera
+  (debug cases) keeps the game's, so its frames match the game's own.
 - **Input.** In photo mode the raw input reader takes the mouse's movement for the free camera and
   gives the game only button and key releases, so nothing held when photo mode started stays held
   after it. The keys come from ReShade, and not while its overlay is open.
