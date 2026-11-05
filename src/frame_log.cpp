@@ -127,6 +127,8 @@ std::map<std::string, unsigned> constantWriters;
 // frame runs a call with that shader; that frame is kept, and the one before it as `-before.txt`.
 std::string trigger;
 bool triggered{};
+// Whether this capture's frame before the trigger is in frame-previous.txt, from restartRecording.
+bool hasPrevious{};
 
 // The caller's stack as "module+offset" frames, outermost last.
 std::string callStack()
@@ -801,14 +803,19 @@ void onDestroyPipeline(device*, pipeline pipeline)
     shaderHashes.erase(pipeline.handle);
 }
 
-// trigger.txt's first word, or nothing without the file.
+// trigger.txt's line without its ends' spaces, or nothing without the file. Any text of a record line
+// will do, spaces and all ("depth greater_equal"), so the whole line is read, not its first word.
 std::string readTrigger()
 {
     std::ifstream file(outputDirectory / "trigger.txt");
-    std::string hash;
-    file >> hash;
+    std::string text;
+    std::getline(file, text);
 
-    return hash;
+    const auto first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    const auto last = text.find_last_not_of(" \t\r\n");
+
+    return text.substr(first, last - first + 1);
 }
 
 std::filesystem::path previousRecord()
@@ -824,7 +831,10 @@ void restartRecording()
     record.close();
     const auto recorded = outputDirectory / (recordName + ".txt");
     std::error_code error;
+    // The frame before the trigger is the one right before it, so the copy kept is replaced each time.
+    std::filesystem::remove(previousRecord(), error);
     std::filesystem::rename(recorded, previousRecord(), error);
+    hasPrevious = !error;
     if (error) std::filesystem::remove(recorded, error);
     recordName = "frame-" + std::to_string(presents);
     record = std::ofstream(outputDirectory / (recordName + ".txt"), std::ios::trunc);
@@ -842,9 +852,16 @@ void finishRecording()
     log("Recorded " + std::to_string(calls) + " calls" + (trigger.empty() ? "." : ", the first frame to run " + trigger + "."));
     if (!trigger.empty())
     {
-        std::error_code error;
-        std::filesystem::rename(previousRecord(), outputDirectory / (recordName + "-before.txt"), error);
+        // Only a frame this capture recorded, so an interrupted capture's file never stands in.
+        if (hasPrevious)
+        {
+            std::error_code error;
+            std::filesystem::rename(previousRecord(), outputDirectory / (recordName + "-before.txt"), error);
+            if (error) log("Could not keep the frame before " + recordName + ": " + error.message());
+        }
+
         trigger.clear();
+        hasPrevious = false;
     }
 
     record.open(outputDirectory / (recordName + "-writers.txt"), std::ios::trunc);
@@ -910,6 +927,10 @@ void onPresent(command_queue* queue, swapchain* chain, const rect*, const rect*,
         dumpsLeft = readDumpList();
         trigger = readTrigger();
         triggered = false;
+        hasPrevious = false;
+        // A capture that was cut short leaves its frame before the trigger behind; it is not this one's.
+        std::error_code error;
+        std::filesystem::remove(previousRecord(), error);
         if (!trigger.empty()) fxui::toast(fxui::Tone::Ok, "Recording until a frame runs", trigger);
         capture = Capture::WarmingUp;
     }
