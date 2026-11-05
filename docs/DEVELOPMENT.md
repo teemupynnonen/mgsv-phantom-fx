@@ -1954,8 +1954,10 @@ the game's lights) is left alone until it runs.
   - **The draws** (`glass::draw`). Each leaves out what it reflects with (`GameShader::reflectionSlot` unbound, reading
     black), which keeps its tint, highlights, cover and fog, and is drawn again with the game's vertex shader and its
     depth test into three shared targets: the depth, the normal with `GlassRoughness`, and the weight the
-    game's shader gives its reflection, `alpha x (1 - GlassColor.a + GlassColor.a x F) x ReflectionColor x` the fog's
-    share (`GlassSurface`; `MirrorSurface`: its mask and the fog, the normal from the position across the pixel, as
+    game's shader gives its reflection, `cover x (1 - GlassColor.a + GlassColor.a x F) x ReflectionColor x` the fog's
+    share, with what clean glass's two faces reflect (F0 0.04: 8% head-on) in place of the game's `F` (an F0 of 0.58 to 0.95
+    times a cube map times the light on the pane: at the game's `F` the traced surroundings turned Kaz's dark sunglasses into
+    pale tinted mirrors, 2026-11-05) (`GlassSurface`; `MirrorSurface`: its mask and the fog, the normal from the position across the pixel, as
     its vertex shader gives none). The last drawn is the nearest, as the game sorts what blends; the weights blend as the
     game blends, so a pane drawn twice, as many are, weighs as it shows. A mirror with the live picture stays the game's
     (its texture is a render target), and so does whatever a smaller camera's view draws.
