@@ -30,12 +30,55 @@ void describe(Sea& sea, SettingVisitor& visit)
             .standard = Defaults.waves,
             .tip = "How strong the wind that raises the waves is, against the weather's. 1 is the weather's own: a breeze in the sun, a gale "
                    "in rain."});
-    visit.slider(sea.speed, {.iniKey = "sea_speed", .label = "Wave speed", .min = 0.1f, .max = 2, .standard = Defaults.speed, .visible = false});
-    visit.slider(sea.peak, {.iniKey = "sea_peak", .label = "Wavelength", .min = 0.3f, .max = 2, .standard = Defaults.peak, .visible = false});
-    visit.slider(sea.height, {.iniKey = "sea_height", .label = "Height", .min = 0.2f, .max = 2, .standard = Defaults.height, .visible = false});
-    visit.slider(sea.ripples, {.iniKey = "sea_ripples", .label = "Ripples", .min = 0, .max = 3, .standard = Defaults.ripples, .visible = false});
-    visit.slider(sea.chop, {.iniKey = "sea_chop", .label = "Choppiness", .min = 0, .max = 2, .standard = Defaults.chop, .visible = false});
-    visit.slider(sea.split, {.iniKey = "sea_split", .label = "Tile split", .min = 2, .max = 10, .standard = Defaults.split, .visible = false});
+    visit.slider(sea.speed,
+        {.iniKey = "sea_speed",
+            .label = "Wave speed",
+            .min = 0.1f,
+            .max = 2,
+            .standard = Defaults.speed,
+            .tip = "How fast the waves travel, against real ocean waves. The game's own sea rolls at about half."});
+    visit.slider(sea.peak,
+        {.iniKey = "sea_peak",
+            .label = "Wavelength",
+            .min = 0.3f,
+            .max = 2,
+            .standard = Defaults.peak,
+            .tip = "The longest waves' size, against the weather's sea: lower is longer, slower swells, as the game draws them."});
+    visit.slider(sea.height,
+        {.iniKey = "sea_height",
+            .label = "Height",
+            .min = 0.2f,
+            .max = 2,
+            .standard = Defaults.height,
+            .tip = "How tall the waves are, against the weather's sea."});
+    visit.slider(sea.ripples,
+        {.iniKey = "sea_ripples",
+            .label = "Ripples",
+            .min = 0,
+            .max = 3,
+            .standard = Defaults.ripples,
+            .tip = "The chop too short for the waves to carry: at 0 the sea is smooth between its swells."});
+    visit.slider(sea.chop,
+        {.iniKey = "sea_chop",
+            .label = "Choppiness",
+            .min = 0,
+            .max = 2,
+            .standard = Defaults.chop,
+            .tip = "How sharp the crests are: higher piles the water up into pointed waves that break more."});
+    visit.slider(sea.split,
+        {.iniKey = "sea_split",
+            .label = "Long waves",
+            .min = 2,
+            .max = 10,
+            .standard = Defaults.split,
+            .tip = "How much of the sea the long waves hold against the short ones: higher is fewer, broader swells."});
+    visit.slider(sea.foamCoverage,
+        {.iniKey = "sea_foam_coverage",
+            .label = "Foam",
+            .min = 0,
+            .max = 3,
+            .standard = Defaults.foamCoverage,
+            .tip = "How much of each crest turns to foam. 1.2 is about the game's own sea; above that the crests break more."});
     constexpr std::string_view AlbedoKeys[]{"sea_albedo_r", "sea_albedo_g", "sea_albedo_b"};
     for (int channel = 0; channel < 3; ++channel)
         visit.slider(sea.albedo[channel],

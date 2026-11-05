@@ -3681,15 +3681,17 @@ screen-space reflections, the global illumination and path tracing take it as an
   falls below 0.55 and fades over 2.5 s. The wind is the weather's, 6 m/s in sun, 8 cloudy, 14 in rain, 10 in
   sandstorms, 4 in fog, turning over about 20 s, times **Waves** (`sea_waves`); its direction the game's.
   A wave moves at the deep-water speed of its length, faster than the game's sea showed (2026-11-05), so the
-  waves' clock runs at `sea_speed` of real time (0.5, half; PhantomFX.ini only, no menu item), the foam fading on
-  it too. Beside it, `sea_albedo_r`, `_g` and `_b` set the water's albedo in the ini alone.
-  The waves' shape against the weather's sea is ini alone too, each applied at the next present:
+  waves' clock runs at **Wave speed** (`sea_speed`) of real time (0.5, half), the foam fading on it too. Beside
+  it, `sea_albedo_r`, `_g` and `_b` set the water's albedo in the ini alone.
+  The waves' shape against the weather's sea has a slider each, applied at the next present:
   `sea_height` (0.85) multiplies JONSWAP's energy by its square, so the heights follow it; `sea_peak` (0.7)
   multiplies the peak frequency, below 1 giving longer, slower waves; `sea_ripples` (0.5) scales the slope
   variance of the ripples too short for the tiles; `sea_chop` (0.9) the sideways displacement's sharpness;
   and `sea_split` (4) the wavenumber where one tile's waves end and the next's begin, larger leaving the
   longer waves with more of the spectrum. The defaults came from the game's own sea looking taller and
-  lower-frequency than the add-on's (2026-11-05, Mother Base, the same view).
+  lower-frequency than the add-on's (2026-11-05, Mother Base, the same view). **Foam** (`sea_foam_coverage`, 1.25)
+  widens the squeeze foam shows over: the longest waves fold less than the short steep ones it was set for, and in
+  the measured view 1.2 matched the game's foam to within its 0.06% of the near sea's pixels (1.6 gave 1.56%).
 - **The surface**, into the G-buffer at the frame's first draw of the main view's G-buffer: the add-on
   watches the render target binds for three 8-bit targets of one size with depth, and the viewport filling
   them (the intro's mirror draws into a corner). It draws with the game's own camera constants (`b2`, the

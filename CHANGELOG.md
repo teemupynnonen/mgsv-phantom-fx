@@ -14,7 +14,9 @@
 - **The sea's waves are longer and lower, as the game's own.** The add-on's were shorter and steeper all over: fewer
   of the long swells the game draws, more of the small chop. The waves now run 30% longer, a little lower, with
   half the ripples too short for the waves' own tiles, softer crests, and more of the spectrum left to the long
-  waves. `sea_peak`, `sea_height`, `sea_ripples`, `sea_chop` and `sea_split` in `PhantomFX.ini` set each.
+  waves. **Wavelength**, **Height**, **Ripples**, **Choppiness**, **Long waves**, **Wave speed** and **Foam** on the
+  Sea item set each while the game runs, and **Foam** brings the crests' lace back after the longer waves left them
+  barely breaking.
 - **Characters, the helicopter and swaying trees stay in the ray-traced scene beside other mods.** The scene found the
   game's list of models in a spot that only held it by chance. With some other mods installed it read an empty list, so
   Snake, the soldiers, the helicopter's cabin and trees that move in the wind cast no ray-traced shadows and global

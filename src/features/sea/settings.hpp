@@ -19,6 +19,8 @@ struct Sea
     float ripples{0.5f};
     float chop{0.9f};
     float split{4};
+    // How far short of folding foam shows on the crests: 1 is only where the waves squeeze hardest.
+    float foamCoverage{1.25f};
     // The water's albedo, linear; PhantomFX.ini only, for matching the game's sea (GI_SEA_ALBEDO's).
     float albedo[3]{0.012f, 0.066f, 0.123f};
 

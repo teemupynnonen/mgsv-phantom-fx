@@ -88,7 +88,7 @@ struct Constants
     float foamLeft, choppiness, gridSpacing;
     std::uint32_t gridCells;
     float microRoughness, waterAlbedo[3];
-    float hasGameFoam, padding[3];
+    float hasGameFoam, foamCoverage, padding[2];
 };
 
 static_assert(sizeof(Constants) == 112);
@@ -721,6 +721,7 @@ Constants constantsAfter(double elapsed, const Sea& sea)
     // offline came to about 0.0155 + 0.00135 U: the ripples shorter than the smallest tile's waves.
     constants.microRoughness = std::max(0.00377f * speed - 0.0125f, 0.001f) * sea.ripples;
     std::copy(std::begin(sea.albedo), std::end(sea.albedo), constants.waterAlbedo);
+    constants.foamCoverage = sea.foamCoverage;
 
     return constants;
 }

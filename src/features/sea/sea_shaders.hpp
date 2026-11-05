@@ -31,6 +31,7 @@ cbuffer Sea : register(b9)
     float g_MicroRoughness; // The squared slope of the waves too short for the tiles
     float3 g_WaterAlbedo;   // Linear: the light the water sends back up as a share of what falls on it (GI_SEA_ALBEDO)
     float g_HasGameFoam;    // 1 when the game's foam textures are bound (the surface's t3 and t4)
+    float g_FoamCoverage;   // How far short of folding foam shows: the squeeze at which the crests' foam starts
 };
 
 // The game's own near sea draws' material constants (cVSMaterial), as they last ran; zero before.
@@ -244,7 +245,9 @@ void main(uint3 id : SV_DispatchThreadID)
     if (id.z < CASCADES - 1)
     {
         foam = max(foam, saturate((FoamBelow - jacobian) * FoamSharpness));
-        squeezed = saturate((SqueezedBelow - jacobian) / (SqueezedBelow - FoamBelow));
+        // Higher waves fold more and show their foam over more of the sea; `g_FoamCoverage` widens that reach.
+        float squeezedBelow = FoamBelow + (SqueezedBelow - FoamBelow) * g_FoamCoverage;
+        squeezed = saturate((squeezedBelow - jacobian) / (squeezedBelow - FoamBelow));
     }
     g_Foam[kept] = foam;
 
