@@ -49,7 +49,8 @@ struct Surface
 // normal map, Fresnel by Schlick from the material table's F0, and alpha = the texture's cover x Fresnel x the vertex's
 // alpha. Its colour is (ambient + diffuse) x lerp(reflection, lerp(GlassColor, reflection, Fresnel), GlassColor.a) +
 // specular, where the reflection is a cube map times ReflectionColor, and with COLOR_TEXTURE times the texture's colour too.
-// So the reflection gets alpha x (1 - GlassColor.a + GlassColor.a x Fresnel) of the pixel, and the fog's share of that.
+// So the reflection's share of the pixel is (1 - GlassColor.a + GlassColor.a x Fresnel), here with clean glass's reflectance
+// in place of the game's Fresnel (below), and the fog's share of that.
 inline constexpr char GlassSurface[] = R"(
 cbuffer cPSMaterial : register(b4)
 {
@@ -91,11 +92,19 @@ Surface main(float4 position : SV_Position, float2 uv : TEXCOORD0, float2 range 
 
     if (dot(normal, toSurface) > 0) normal = -normal;
 
+    // The game's F0 makes a pane as opaque as its cover says, right for what it blends. As the strength of a reflection it is
+    // not: the game reflects a cube map times the light on the pane, far dimmer than the surroundings the rays bring back, which
+    // turned dark sunglasses into tinted mirrors. The reflection takes what clean glass's two faces reflect instead, the rest
+    // of what ClearGlassTransmittance lets through: 8% head-on.
+    const float clearGlass = 0.04 + 0.96 * pow(1 - cosine, 5);
+    const float sheetReflectance = 1 - (1 - clearGlass) * (1 - clearGlass);
+
     const float reflectionShare = 1 - m_materials[2].w + m_materials[2].w * fresnel;
+    const float reflection = cover * world.w * sheetReflectance * reflectionShare;
     Surface surface;
     surface.depth = position.z;
     surface.normal = float4(normal, m_materials[3].y);
-    surface.weight = float4(alpha * reflectionShare * tint * m_materials[1].rgb * FogTransmittance(position.xy, range.y), alpha);
+    surface.weight = float4(reflection * tint * m_materials[1].rgb * FogTransmittance(position.xy, range.y), alpha);
     return surface;
 }
 )";

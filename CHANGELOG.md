@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Tinted glass stays dark under Ray traced: Ultra.** Sunglasses such as Kaz's turned pale and see-through: glass
+  reflected its surroundings at the strength of the game's own dim reflection picture, so the bright deck showed in
+  the lenses as strongly as the face behind them. Glass now reflects what real glass does, about 8% head-on and more
+  at a glancing angle, still by its dirt and tint.
 - **A simpler menu, like a game's own graphics menu.** Tabs across the top replace the list of sections: **Graphics**,
   **Sandbox**, **Budget** and **Diagnostics**. Graphics holds every effect, one line each: its name, its value (‹ On ›,
   or a mode) and its cost. Click a line and it folds out to its settings; the one open before folds back. The long
