@@ -49,7 +49,8 @@ void describe(Sea& sea, SettingVisitor& visit)
             .min = 0,
             .max = 3,
             .standard = Defaults.ripples,
-            .tip = "The chop too short for the waves to carry: at 0 the sea is smooth between its swells."});
+            .tip = "The chop too short for the waves to draw, as extra roughness where the light breaks up: at 0 the swells stay "
+                   "and the water turns glassy between them."});
     visit.slider(sea.chop,
         {.iniKey = "sea_chop",
             .label = "Choppiness",
