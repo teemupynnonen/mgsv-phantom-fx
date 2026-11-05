@@ -93,6 +93,22 @@ struct DepthFill
     ComPtr<ID3D11PixelShader> stretchDepth;
     ComPtr<ID3D11DepthStencilState> writeDepth;
     ComPtr<ID3D11Buffer> constants; // The jitter, rewritten before each fill
+    // The composite behind the scene (compositeBehind).
+    ComPtr<ID3D11PixelShader> compositeBehind;
+    ComPtr<ID3D11BlendState> premultiplied;
+    ComPtr<ID3D11DepthStencilState> noDepth;
+    ComPtr<ID3D11Buffer> compositeConstants;
+};
+
+// compositeBehind's surfaces at the target's size and format: the emblem drawn alone, and the target
+// before it.
+struct CompositeSurfaces
+{
+    unsigned width{}, height{};
+    DXGI_FORMAT format{};
+    Texture layer;
+    ComPtr<ID3D11Texture2D> backdrop;
+    ComPtr<ID3D11ShaderResourceView> backdropView;
 };
 
 // Without upscaling, the depth a depth-tested 2D draw tests in place of the game's.
@@ -128,6 +144,7 @@ ComPtr<ID3D11Resource> sceneDepth;
 ComPtr<ID3D11ShaderResourceView> sceneDepthView;
 std::shared_ptr<const DepthFill> depthFill;
 std::shared_ptr<const InPlaceDepth> inPlaceDepth;
+std::shared_ptr<const CompositeSurfaces> compositeSurfaces;
 bool creationFailed{}, blurCreationFailed{}, depthFillFailed{};
 
 bool belowOutput(render_scale::Size render)
@@ -231,7 +248,55 @@ std::shared_ptr<const DepthFill> createDepthFill()
     const D3D11_BUFFER_DESC constants{16, D3D11_USAGE_DEFAULT, D3D11_BIND_CONSTANT_BUFFER};
     check(device->CreateBuffer(&constants, nullptr, created->constants.GetAddressOf()), "Creating the UI depth's constants");
 
+    created->compositeBehind = pixelShader(device.Get(), shaders::CompositeBehind, "ui-composite-behind");
+    D3D11_BLEND_DESC blend{};
+    auto& over = blend.RenderTarget[0];
+    over.BlendEnable = TRUE;
+    over.SrcBlend = D3D11_BLEND_SRC_ALPHA;
+    over.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+    over.BlendOp = D3D11_BLEND_OP_ADD;
+    over.SrcBlendAlpha = D3D11_BLEND_ONE;
+    over.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+    over.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    over.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+    check(device->CreateBlendState(&blend, created->premultiplied.GetAddressOf()), "Creating the UI composite's blend");
+    const D3D11_DEPTH_STENCIL_DESC none{};
+    check(device->CreateDepthStencilState(&none, created->noDepth.GetAddressOf()), "Creating the UI composite's depth state");
+    const D3D11_BUFFER_DESC compositeConstants{32, D3D11_USAGE_DEFAULT, D3D11_BIND_CONSTANT_BUFFER};
+    check(device->CreateBuffer(&compositeConstants, nullptr, created->compositeConstants.GetAddressOf()), "Creating the UI composite's constants");
+
     return created;
+}
+
+// compositeBehind's surfaces for a target texture, made again when its size or format changes.
+std::shared_ptr<const CompositeSurfaces> currentCompositeSurfaces(const D3D11_TEXTURE2D_DESC& target)
+{
+    std::lock_guard lock(mutex);
+    if (compositeSurfaces && compositeSurfaces->width == target.Width && compositeSurfaces->height == target.Height
+        && compositeSurfaces->format == target.Format)
+        return compositeSurfaces;
+    if (!device) return nullptr;
+
+    auto created = std::make_shared<CompositeSurfaces>();
+    created->width = target.Width;
+    created->height = target.Height;
+    created->format = target.Format;
+    auto desc = surfaceDesc(target.Width, target.Height);
+    desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    if (!makeSurface(created->layer, desc, desc.Format)) return nullptr;
+
+    desc.Format = target.Format;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SHADER_RESOURCE_VIEW_DESC viewDesc{drawFormat(), D3D11_SRV_DIMENSION_TEXTURE2D};
+    viewDesc.Texture2D.MipLevels = 1;
+    if (FAILED(device->CreateTexture2D(&desc, nullptr, created->backdrop.GetAddressOf()))
+        || FAILED(device->CreateShaderResourceView(created->backdrop.Get(), &viewDesc, created->backdropView.GetAddressOf())))
+        return nullptr;
+
+    compositeSurfaces = std::move(created);
+    log("Created the UI composite's surfaces at " + std::to_string(target.Width) + "x" + std::to_string(target.Height) + ".");
+
+    return compositeSurfaces;
 }
 
 // The fill's shaders, made when first needed; null when they could not be.
@@ -507,6 +572,117 @@ void issue(ID3D11DeviceContext* context, const DrawCall& call)
     else context->DrawInstanced(call.count, call.instances, call.first, call.firstInstance);
 }
 
+// The bindings compositeBehind changes, the game's put back when this goes out of scope.
+class SavedComposite
+{
+public:
+    explicit SavedComposite(ID3D11DeviceContext* context) : context(context)
+    {
+        context->PSGetShader(pixel.GetAddressOf(), nullptr, nullptr);
+        context->PSGetShaderResources(0, InputCount, inputs);
+        context->PSGetConstantBuffers(0, 1, constants.GetAddressOf());
+        context->OMGetBlendState(blend.GetAddressOf(), blendFactor, &sampleMask);
+        context->OMGetDepthStencilState(depthState.GetAddressOf(), &stencilReference);
+        context->OMGetRenderTargets(TargetCount, targets, depth.GetAddressOf());
+    }
+
+    ~SavedComposite()
+    {
+        context->PSSetShader(pixel.Get(), nullptr, 0);
+        context->PSSetShaderResources(0, InputCount, inputs);
+        context->PSSetConstantBuffers(0, 1, constants.GetAddressOf());
+        context->OMSetBlendState(blend.Get(), blendFactor, sampleMask);
+        context->OMSetDepthStencilState(depthState.Get(), stencilReference);
+        context->OMSetRenderTargets(TargetCount, targets, depth.Get());
+
+        for (auto* input : inputs)
+            if (input) input->Release();
+
+        for (auto* target : targets)
+            if (target) target->Release();
+    }
+
+    SavedComposite(const SavedComposite&) = delete;
+    SavedComposite& operator=(const SavedComposite&) = delete;
+
+private:
+    static constexpr UINT InputCount = 4, TargetCount = D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT;
+
+    ID3D11DeviceContext* context;
+
+    ComPtr<ID3D11PixelShader> pixel;
+    ID3D11ShaderResourceView* inputs[InputCount]{};
+    ComPtr<ID3D11Buffer> constants;
+    ComPtr<ID3D11BlendState> blend;
+    float blendFactor[4]{};
+    UINT sampleMask{};
+    ComPtr<ID3D11DepthStencilState> depthState;
+    UINT stencilReference{};
+    ID3D11RenderTargetView* targets[TargetCount]{};
+    ComPtr<ID3D11DepthStencilView> depth;
+};
+
+// Whether the bound blend is the plain "over" the emblem draws with (source alpha, inverse source
+// alpha, added), which compositeBehind reproduces.
+bool blendsOver(ID3D11DeviceContext* context)
+{
+    ComPtr<ID3D11BlendState> state;
+    float factor[4]{};
+    UINT mask{};
+    context->OMGetBlendState(state.GetAddressOf(), factor, &mask);
+    if (!state) return false;
+
+    D3D11_BLEND_DESC desc{};
+    state->GetDesc(&desc);
+    const auto& target = desc.RenderTarget[0];
+
+    return target.BlendEnable && target.SrcBlend == D3D11_BLEND_SRC_ALPHA && target.DestBlend == D3D11_BLEND_INV_SRC_ALPHA
+        && target.BlendOp == D3D11_BLEND_OP_ADD && (target.RenderTargetWriteMask & 7) == 7;
+}
+
+// A depth-tested 2D draw (the sortie prep's emblem) over the target bound now, behind the scene by its
+// depth (shaders::CompositeBehind), on a recording context with the draw's other state as it will be
+// drawn. `toRender` is render pixels per target pixel. False, with nothing drawn, when it cannot.
+bool compositeBehind(ID3D11DeviceContext* context, const DrawCall& call, ID3D11DepthStencilView* gameDepth, std::array<float, 2> jitter,
+    std::array<float, 2> toRender)
+{
+    const auto state = depthState(context);
+    if (!state.DepthEnable || state.StencilEnable || !blendsOver(context)) return false;
+
+    ComPtr<ID3D11RenderTargetView> targetView;
+    context->OMGetRenderTargets(1, targetView.GetAddressOf(), nullptr);
+    const auto fill = currentDepthFill();
+    const auto depthView = depthViewOf(gameDepth);
+    if (!targetView || !fill || !depthView) return false;
+
+    const auto targetResource = resourceOf(targetView.Get());
+    const auto surfaces = currentCompositeSurfaces(textureDesc(targetView.Get()));
+    if (!surfaces) return false;
+
+    const float nearer = state.DepthFunc == D3D11_COMPARISON_LESS || state.DepthFunc == D3D11_COMPARISON_LESS_EQUAL ? -1.0f : 1.0f;
+    const float constants[8]{jitter[0], jitter[1], nearer, 0, toRender[0], toRender[1]};
+    context->UpdateSubresource(fill->compositeConstants.Get(), 0, nullptr, constants, 0, 0);
+    context->CopyResource(surfaces->backdrop.Get(), targetResource.Get());
+
+    const SavedComposite saved(context);
+    const float clear[4]{};
+    context->ClearRenderTargetView(surfaces->layer.target.Get(), clear);
+    context->OMSetRenderTargets(1, surfaces->layer.target.GetAddressOf(), nullptr);
+    context->OMSetBlendState(fill->premultiplied.Get(), nullptr, 0xFFFFFFFF);
+    context->OMSetDepthStencilState(fill->noDepth.Get(), 0);
+    issue(context, call);
+
+    context->OMSetRenderTargets(1, targetView.GetAddressOf(), nullptr);
+    context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+    context->PSSetShader(fill->compositeBehind.Get(), nullptr, 0);
+    ID3D11ShaderResourceView* inputs[3]{surfaces->layer.view.Get(), surfaces->backdropView.Get(), depthView.Get()};
+    context->PSSetShaderResources(0, 3, inputs);
+    context->PSSetConstantBuffers(0, 1, fill->compositeConstants.GetAddressOf());
+    issue(context, call);
+
+    return true;
+}
+
 LONG scaled(LONG value, double scale)
 {
     return static_cast<LONG>(std::lround(value * scale));
@@ -626,6 +802,7 @@ void detach() noexcept
         sceneDepth.Reset();
         depthFill.reset();
         inPlaceDepth.reset();
+        compositeSurfaces.reset();
         depthFillFailed = false;
         device.Reset();
     }
@@ -660,6 +837,8 @@ bool drawDepthTestedInPlace(ID3D11DeviceContext* context, const DrawCall& call, 
 
     const auto shift = jitter();
     if (shift[0] == 0 && shift[1] == 0) return false;
+
+    if (compositeBehind(context, call, depth, shift, {1, 1})) return true;
 
     const auto own = currentInPlaceDepth(target.Width, target.Height);
     if (!own || !fillDepth(context, own->view.Get(), target.Width, target.Height, depth, shift)) return false;
@@ -699,7 +878,8 @@ bool draw2D(ID3D11DeviceContext* context, const DrawCall& call, JitterSource jit
         const auto output = currentTargets();
         if (!output) return false;
 
-        if (depth && depthState(context).DepthEnable) fillDepth(context, output->depth.Get(), output->width, output->height, depth.Get(), jitter());
+        const bool testsDepth = depth && depthState(context).DepthEnable;
+        const auto shift = testsDepth ? jitter() : std::array<float, 2>{};
 
         // The 2D pass draws in clip space, so scaling its viewports and scissors is all it takes.
         const double scaleX = static_cast<double>(output->width) / target.Width, scaleY = static_cast<double>(output->height) / target.Height;
@@ -721,7 +901,12 @@ bool draw2D(ID3D11DeviceContext* context, const DrawCall& call, JitterSource jit
         context->RSSetScissorRects(rectCount, scaledRects);
         context->PSSetConstantBuffers(0, 1, output->systemConstants.GetAddressOf());
         if (sceneCopied) context->PSSetConstantBuffers(2, 1, output->sceneConstants.GetAddressOf());
-        issue(context, call);
+        const std::array toRender{static_cast<float>(1 / scaleX), static_cast<float>(1 / scaleY)};
+        if (!testsDepth || !compositeBehind(context, call, depth.Get(), shift, toRender))
+        {
+            if (testsDepth) fillDepth(context, output->depth.Get(), output->width, output->height, depth.Get(), shift);
+            issue(context, call);
+        }
 
         context->OMSetRenderTargetsAndUnorderedAccessViews(1, bound.data(), depth.Get(), 0, D3D11_KEEP_UNORDERED_ACCESS_VIEWS, nullptr, nullptr);
         context->RSSetViewports(viewportCount, viewports);

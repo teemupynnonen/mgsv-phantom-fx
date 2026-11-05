@@ -1616,23 +1616,32 @@ rate"), the photo mode hooks (see "Photo mode"), the game loop hooks (see "Frame
     empty corner and the emblem was black at every mode until the next load (2026-11-04).
   - Every clear of a render-size depth-stencil also clears the output-size one, so the 2D pass's
     stencil masks work.
-  - A `Draw2D` draw that tests depth gets the scene's depth first: the game's depth-stencil is
-    stretched into the output-size one through a full-screen triangle writing `SV_Depth`, with the
-    stencil left alone. The sortie prep's emblem is the only such draw in the F10 records (frame
-    20182, #874: `Draw2D_Ui2_BL`, `greater_equal`, no depth write); without the scene's depth it
-    passed everywhere and stood in front of Snake and the horse. Depth a redirected 2D draw writes
-    stays on the output-size depth, so a later fill drops it; none writes depth in the records.
-    The stretch takes the upscaler's jitter back out, since the game draws the scene jittered, and
-    closes the one-pixel holes hair leaves in the depth (the same frame, whose hair is a dither
-    pattern the image's upscaler fills and the depth keeps): read nearest, the emblem's edge along a
-    character changed with the jitter every frame (2026-11-04). It reads the four depths bilinearly
-    at the jittered place, each the nearest of its own 2x2, and the test's comparison says which
-    way is nearer, as the game's depth is reversed.
+  - A `Draw2D` draw that tests depth, blending over, is made in two passes of its own
+    (`compositeBehind`): into a scratch layer in the scene's format, premultiplied; then over the
+    target, through `shaders::CompositeBehind`. The sortie prep's emblem is the only such draw in
+    the F10 records (frame 20182, #874: `Draw2D_Ui2_BL`, `greater_equal`, no depth write) and the
+    one UI image the game hides behind the 3D view: without the scene's depth it passed everywhere
+    and stood in front of Snake and the horse. The second pass reads the game's render-size
+    depth-stencil, without the upscaler's jitter (the scene is drawn jittered) and without the
+    one-pixel holes hair leaves in it (a dither pattern the image's upscaler fills and the depth
+    keeps). Read nearest against the draw's depth, the emblem's edge changed with the jitter every
+    frame, and nearest again over 2x2 closed the holes but grew every outline by a render pixel, a
+    band of backdrop between a character and the emblem. So the pixel's coverage is measured
+    instead: the depth is compared with the draw's at four places across the pixel, bilinearly, and
+    the emblem is blended in by `1 - coverage`. Where the pixel is partly the character, the grey
+    the upscaler mixed into it is replaced too: the backdrop is taken from nearby places nothing
+    covers, and the emblem takes its place (`out = pixel + (1 - cover) * (emblem - alpha * backdrop)`).
+    A draw the game leaves unjittered, or one with stencil, keeps the game's path.
+    Depth a redirected 2D draw writes stays on the output-size depth, so a later fill drops it;
+    none writes depth in the records.
   - Without upscaling (DLAA), the game draws the emblem itself, against its own render-size depth
-    and so against the jitter; a depth-tested `Draw2D` draw into the scene target is then made by
-    the add-on in place, against the scene's depth without the jitter, on a `D24_UNORM_S8_UINT`
-    depth-stencil of the scene target's size. Only for draws that test depth and leave stencil
-    alone, which that stencil has none of; the rest stay the game's own.
+    and so against the jitter: the same two-pass draw is made in place on the scene target. Only for
+    draws that test depth, leave stencil alone and blend over; the rest stay the game's own.
+  - The composite's surfaces are made when first needed (a layer in the scene's format, the
+    backdrop in the target's) and again when the target's size or format changes. The stretch that
+    fills a depth-stencil with the scene's depth, `fillDepth` and `shaders::StretchDepth`, stays for
+    a draw the composite cannot take: it writes `SV_Depth` through a full-screen triangle, with the
+    stencil left alone.
   - `GammaControl` reads the output target's `_SRGB` view in place of the scene target.
   - When `GammaControl`'s viewport has its scene's size and the back buffer is larger (the exclusive
     fullscreen box), every `GammaControl` draw gets the viewport and scissor over the whole back
