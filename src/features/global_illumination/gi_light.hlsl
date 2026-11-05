@@ -258,6 +258,10 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
     float3 origin;
     float surfaceTolerance;
     PixelRayStart(surface, surface.normal, origin, surfaceTolerance);
+    // Sunk under the terrain, a ray heading down meets the game's ground just below, which the scene lacks: it passed under
+    // the one-sided terrain into the sky, and lit a prone arm's underside above the open ground (a debug case, 2026-11-05).
+    // Its distance is how deep the surface is sunk, the ground's distance as near as it is known.
+    float sunkDepth = SunkUnderTerrain(surface);
     uint rays = clamp(g_Frame.lightRays.x, 1u, 4u);
     // Foliage (the normals' alpha under a half, PrepareGuides) takes twice: swaying and thin, it restarts its
     // denoiser history every few frames, so its light is mostly the frame's rays; shaded grass boiled (2026-10-25).
@@ -273,7 +277,12 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
         CountDiagnostic(GI_COUNTER_NEAR_HITS, hit.hit && hit.distance < 0.25f);
         float3 light;
         float3 afterUpdate = 0.0f; // The first ray's cell's light as it stands, to weigh its direction
-        if (!hit.hit)
+        if (!hit.hit && sunkDepth > 0.0f && direction.y < 0.0f)
+        {
+            light = 0.0f;
+            totalDistance += sunkDepth;
+        }
+        else if (!hit.hit)
         {
             light = SkyRadiance(direction);
             totalDistance += MISS_DISTANCE;

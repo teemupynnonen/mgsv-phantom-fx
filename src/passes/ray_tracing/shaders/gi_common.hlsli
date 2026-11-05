@@ -1099,6 +1099,17 @@ bool IsStandIn(SceneHit hit)
     return IsShadowOnly(hit.instance, hit.geometry) || (InstanceKind(g_Instances[hit.instance]) & GI_INSTANCE_SEA) != 0;
 }
 
+// The terrain's top, where the game drew a surface facing the other way. The terrain stands 1 to 3 cm above the ground
+// the game draws, so Snake's arm lying there dips under it: the search took the terrain 4 cm before the arm's underside
+// as its surface, and the rays left upwards from it into the sky, a pale band along the
+// arm's edge at 2.4x the arm's light (a debug case, 2026-11-05). The camera's ray sees only the terrain's top.
+bool IsTerrainFacingAway(SceneHit hit, float3 direction, float3 gbufferNormal)
+{
+    if ((InstanceKind(g_Instances[hit.instance]) & GI_INSTANCE_TERRAIN) == 0) return false;
+
+    return dot(FacingNormal(LoadTriangle(hit.instance, hit.geometry, hit.primitive), direction), gbufferNormal) < 0.0f;
+}
+
 PixelSurface PixelSurfaceAt(uint2 pixel, float3 position, float3 gbufferNormal)
 {
     PixelSurface surface;
@@ -1124,17 +1135,20 @@ PixelSurface PixelSurfaceAt(uint2 pixel, float3 position, float3 gbufferNormal)
     float tolerance = 0.03f + 0.02f * surfaceDistance;
     float searchFrom = max(surfaceDistance - tolerance, 0.0f);
     SceneHit hit;
-    // A stand-in is not the surface: what the game drew may lie behind it.
+    bool isPassedOver = false;
+    // A stand-in, or the terrain where the game drew a surface facing the other way, is not the surface: what the game drew
+    // may lie behind it.
     for (uint attempt = 0; attempt < 4; ++attempt)
     {
         hit = TraceClosest(g_Frame.eye.xyz, direction, searchFrom, surfaceDistance + tolerance, GI_MASK_SCENE, true, false, float2(0.0f, g_Frame.rayCone.x));
-        if (!hit.hit || !IsStandIn(hit)) break;
+        isPassedOver = hit.hit && (IsStandIn(hit) || IsTerrainFacingAway(hit, direction, gbufferNormal));
+        if (!isPassedOver) break;
 
         // A triangle's hit lies strictly past a ray's TMin, so this one drops out and what lies right behind it stays.
         searchFrom = hit.distance;
     }
 
-    if (!hit.hit || abs(hit.distance - surfaceDistance) > tolerance || IsStandIn(hit)) return surface;
+    if (!hit.hit || abs(hit.distance - surfaceDistance) > tolerance || isPassedOver) return surface;
 
     SceneTriangle t = LoadTriangle(hit.instance, hit.geometry, hit.primitive);
     float3 normal = cross(t.v1 - t.v0, t.v2 - t.v0);
@@ -1226,6 +1240,41 @@ float TerrainHeight(float2 virtualUv)
 float3 TerrainPoint(float2 xz)
 {
     return float3(xz.x, TerrainHeight(TerrainUv(xz)) * g_Frame.terrainScale.y + g_Frame.terrainOffset.y, xz.y);
+}
+
+// The scene's terrain over `xz`: its innermost ring's two triangles over the cell, split as TerrainGrid splits them, not
+// the heightmap between the cell's corners. Minus infinity outside that ring, or without terrain.
+float SceneTerrainHeight(float2 xz)
+{
+    float4 ring = g_Frame.terrainRings[0];
+    float2 cells = (xz - ring.xy) / ring.z;
+    if (g_Frame.terrainScale.w == 0.0f || any(cells < 0.0f) || any(cells >= ring.w)) return -FLT_MAX;
+
+    float2 corner = ring.xy + floor(cells) * ring.z;
+    float2 f = frac(cells);
+    float h10 = TerrainPoint(corner + float2(ring.z, 0.0f)).y, h01 = TerrainPoint(corner + float2(0.0f, ring.z)).y;
+    if (f.x + f.y <= 1.0f)
+    {
+        float h00 = TerrainPoint(corner).y;
+        return h00 + f.x * (h10 - h00) + f.y * (h01 - h00);
+    }
+
+    float h11 = TerrainPoint(corner + ring.z).y;
+
+    return h11 + (1.0f - f.x) * (h01 - h11) + (1.0f - f.y) * (h10 - h11);
+}
+
+// How deep a pixel's model or character lies under the scene's terrain, as something lying on the ground sinks into it: the
+// terrain stands 1 to 3 cm above the ground the game draws (a debug case, 2026-11-05), so a prone body's underside dips under
+// it. 0 above the terrain, and deeper than a quarter metre, where it is a cliff's recess the heightmap runs over, not the
+// ground under it. 0 too on the terrain itself, and at the depth's point, which may be the game's own ground under the terrain.
+float SunkUnderTerrain(PixelSurface surface)
+{
+    if (!surface.isExact || (InstanceKind(g_Instances[surface.hit.instance]) & GI_INSTANCE_TERRAIN) != 0) return 0.0f;
+
+    float depth = SceneTerrainHeight(surface.position.xz) - surface.position.y;
+
+    return depth > 0.0f && depth < 0.25f ? depth : 0.0f;
 }
 
 #endif
