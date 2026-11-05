@@ -117,7 +117,7 @@ void detach() noexcept
 void configure(const Configuration& configuration) noexcept
 {
     const bool running = configuration.effects.runs(Effect::SunContactShadows) || configuration.effects.runs(Effect::LampContactShadows);
-    latch.set(configuration.settings.contactShadowShape);
+    latch.set(configuration.settings.contactShadows.shape);
     wantedRunning = running;
     if (!running) return;
 

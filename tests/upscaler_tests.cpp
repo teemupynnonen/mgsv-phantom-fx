@@ -76,15 +76,14 @@ void settingsPersist(const fs::path& root)
     const auto path = root / L"PhantomFX.ini";
     const auto first = loadSettings(path);
     expect(first == firstLaunchSettings() && first.upscaling.upscaler == Upscaler::Dlss && first.upscaling.mode == Mode::Quality
-            && presetOf(first) == EffectPreset::ScreenSpace,
-        "A first launch upscales with DLSS Quality and the screen-space preset.");
+            && lightingStepOf(first) == LightingStep::ScreenSpace && isLightingAsStep(first),
+        "A first launch upscales with DLSS Quality and lights the game screen-space.");
     expect(!fs::exists(path), "Loading defaults must not create a settings file.");
 
     const Settings chosen{.upscaling = {.upscaler = Upscaler::Fsr, .mode = Mode::Off, .dlssPreset = Preset::J, .sharpness = 0.5f},
         .frameGeneration = {.mode = FrameGenerationMode::X3}, .sun = {.diameterDegrees = 1.25f}, .rayTracedShadows = {.on = true, .withGameShadows = true}, .softShadows = {.on = true},
-        .sunContactShadows = {.on = true}, .rayTracedLights = {.on = true, .shadowRaysPerPixel = 8, .flashlightBrightness = 3.5f},
-        .lampContactShadows = {.on = true}, .lampSoftShadows = {.on = true},
-        .contactShadowShape = {.contrast = 2, .reachPixels = 40, .thickness = 0.01f, .fadeMetres = 300}, .globalIllumination = {.raysPerLightPixel = 4}, .ambientOcclusion = {.on = true, .radiusMetres = 2, .strength = 1.5f},
+        .contactShadows = {.on = true, .shape = {.contrast = 2, .reachPixels = 40, .thickness = 0.01f, .fadeMetres = 300}},
+        .rayTracedLights = {.on = true, .shadowRaysPerPixel = 8, .flashlightBrightness = 3.5f}, .globalIllumination = {.raysPerLightPixel = 4}, .ambientOcclusion = {.on = true, .radiusMetres = 2, .strength = 1.5f},
         .indirectLight = {.on = true, .radiusMetres = 3, .strength = 0.5f}, .volumetricFog = {.on = true, .look = AtmosphereLook::Physical, .haze = 0.5f},
         .frameRate = {.unlocked = true}};
     saveSettings(path, chosen);
@@ -117,6 +116,9 @@ void settingsPersist(const fs::path& root)
     write(path, "soft_shadows=on\nsun_size=20\n");
     const auto shadows = loadSettings(path);
     expect(!shadows.softShadows.on && shadows.sun.diameterDegrees == 4, "An invalid toggle leaves soft shadows off, and the sun size is clamped.");
+    write(path, "soft_shadows=1\nsoft_local_shadows=0\nsun_screen_space_shadows=1\nlight_screen_space_shadows=0\n");
+    const auto merged = loadSettings(path);
+    expect(merged.softShadows.on && merged.contactShadows.on, "The sun's keys switch the lamps' soft and contact shadows too; the old lamp keys are ignored.");
     write(path, "indirect_light=yes\nindirect_light_radius=0\nindirect_light_strength=9\n");
     const auto light = loadSettings(path).indirectLight;
     expect(!light.on && light.radiusMetres == 0.25f && light.strength == 3,
@@ -135,20 +137,33 @@ void settingsPersist(const fs::path& root)
         expect(saveRejected(path, chosen, invalid), "Invalid settings cannot replace valid saved ones.");
 }
 
-void effectPresets()
+void lightingSteps()
 {
     Settings settings{.upscaling = {.mode = Mode::Performance}, .hdr = {.on = true}};
-    settings.softShadows.on = true;
     settings.globalIllumination.raysPerLightPixel = 4;
-    applyPreset(settings, EffectPreset::RayTraced);
-    expect(presetOf(settings) == EffectPreset::RayTraced && !settings.softShadows.on && settings.volumetricFog.on
-            && settings.volumetricFog.look == AtmosphereLook::Physical && settings.frameRate.unlocked,
-        "The ray-traced preset switches the screen-space effects off, the fog on.");
-    expect(settings.upscaling.mode == Mode::Performance && settings.hdr.on && settings.globalIllumination.raysPerLightPixel == 4,
-        "A preset keeps the upscaler, HDR and the effects' own settings.");
+    applyLightingStep(settings, LightingStep::RayTraced);
+    expect(lightingStepOf(settings) == LightingStep::RayTraced && isLightingAsStep(settings) && settings.softShadows.on && !settings.pathTracing.on,
+        "Ray traced keeps the screen-space effects on beneath it, and path tracing off.");
+    expect(settings.upscaling.mode == Mode::Performance && settings.hdr.on && settings.globalIllumination.raysPerLightPixel == 4
+            && !settings.upscaling.rayReconstruction && !settings.volumetricFog.on,
+        "A step keeps the upscaler, HDR, the fog and the effects' own settings.");
 
-    settings.indirectLight.on = true;
-    expect(!presetOf(settings), "One effect switched otherwise matches no preset.");
+    settings.globalIllumination.on = false;
+    expect(lightingStepOf(settings) == LightingStep::RayTraced && !isLightingAsStep(settings) && planEffects(settings, {}).runs(Effect::IndirectLight),
+        "A ray-traced effect switched off mixes the step, and leaves its screen-space one running.");
+
+    applyLightingStep(settings, LightingStep::Ultra);
+    expect(settings.upscaling.rayReconstruction && planEffects(settings, {}).runs(Effect::PathTracing), "Ultra asks for Ray Reconstruction, which path tracing needs.");
+
+    applyLightingStep(settings, LightingStep::RayTraced);
+    expect(!settings.upscaling.rayReconstruction && isLightingAsStep(settings), "Leaving Ultra gives back the Ray Reconstruction it asked for.");
+
+    applyLightingStep(settings, LightingStep::Game);
+    const auto plan = planEffects(settings, {});
+    constexpr Effect stepped[]{Effect::PathTracing, Effect::RayTracedShadows, Effect::RayTracedLights, Effect::GlobalIllumination, Effect::IndirectLight,
+        Effect::AmbientOcclusion, Effect::LampContactShadows, Effect::LampSoftShadows, Effect::SunContactShadows, Effect::SoftShadows};
+    expect(lightingStepOf(settings) == LightingStep::Game && std::ranges::none_of(stepped, [&](Effect effect) { return plan.runs(effect); }),
+        "The game's own switches every shadow and light effect off.");
 }
 
 class IniKeys final : public SettingVisitor
@@ -173,16 +188,21 @@ void featuresDescribed()
     Settings settings;
     IniKeys described;
     describe(settings, described);
+    // A feature without a key shares the switch of the one before it.
+    std::erase(described.keys, std::string_view{});
     std::ranges::sort(described.keys);
     expect(std::ranges::adjacent_find(described.keys) == described.keys.end(), "No two settings share a PhantomFX.ini key.");
+    expect(&switchOf(settings, Effect::SoftShadows) == &switchOf(settings, Effect::LampSoftShadows)
+            && &switchOf(settings, Effect::SunContactShadows) == &switchOf(settings, Effect::LampContactShadows),
+        "One switch each turns the sun's and the lamps' soft and contact shadows on.");
 }
 
-// Custom settings with every lighting effect on: the presets never turn on a replacer with what it replaces.
+// Every lighting effect on, as the Ultra step without path tracing switches them: each replacer takes the place of what it replaces.
 void effectPlan()
 {
     Settings all;
-    all.rayTracedShadows.on = all.softShadows.on = all.sunContactShadows.on = true;
-    all.rayTracedLights.on = all.lampContactShadows.on = all.lampSoftShadows.on = true;
+    all.rayTracedShadows.on = all.softShadows.on = all.contactShadows.on = true;
+    all.rayTracedLights.on = true;
     all.globalIllumination.on = all.ambientOcclusion.on = all.indirectLight.on = true;
     all.volumetricFog.on = all.sea.on = true;
 
@@ -1339,7 +1359,7 @@ int main()
     {
         fs::create_directories(root);
         settingsPersist(root);
-        effectPresets();
+        lightingSteps();
         featuresDescribed();
         effectPlan();
         pathTracingPlan();

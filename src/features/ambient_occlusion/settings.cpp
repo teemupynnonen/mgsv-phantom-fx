@@ -17,7 +17,7 @@ void describe(AmbientOcclusion& occlusion, SettingVisitor& visit)
             .tech = "GTVBAO",
             .tip = "Ground-truth visibility bitmask ambient occlusion in place of the game's SSAO, whatever its SSAO setting. It darkens only "
                    "the indirect light, so sunlit surfaces keep their brightness. Off keeps the game's SSAO, which darkens all light.",
-            .summary = "Shade where surfaces meet, on the indirect light only, so sunlit surfaces keep their brightness.",
+            .summary = "Soft shade in corners and creases.",
             .keywords = "AO SSAO radius strength",
             .effect = Effect::AmbientOcclusion,
             .replacedBy = Effect::GlobalIllumination,

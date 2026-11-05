@@ -85,7 +85,7 @@ Needs DXR 1.1.
 
 1. Install ReShade for `mgsvtpp.exe` with DirectX 10/11/12. Skip the effects.
 2. Extract the ZIP into the game folder.
-3. In game, press <kbd>Home</kbd> and open **Phantom FX**. The screen-space effects are on, upscaled at Quality: DLSS on NVIDIA, FSR on other GPUs. With a ray-tracing GPU, try the **Ray-traced** preset on the Budget page.
+3. In game, press <kbd>Home</kbd> and open **Phantom FX**. The screen-space effects are on, upscaled at Quality: DLSS on NVIDIA, FSR on other GPUs. With a ray-tracing GPU, set **Lighting > Mode** on the **Graphics** tab to **Ray traced**.
 
 > [!IMPORTANT]
 > ReShade alone crashes the game at start-up. Phantom FX fixes that, so keep both installed.

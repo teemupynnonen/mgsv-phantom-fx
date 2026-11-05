@@ -140,9 +140,8 @@ void watch() noexcept;
 void showOverlay(bool show) noexcept;
 // Starts measuring each effect's real cost, unless a measurement is running.
 void measure() noexcept;
-// The settings window's budget page, whose presets switch `wanted`, and the costs over the game, drawn
-// every frame.
-void drawBudget(Settings& wanted);
+// The settings window's Budget tab, and the costs over the game, drawn every frame.
+void drawBudget();
 void drawOverlay();
 // The costs as plain text, for PhantomFX-performance.txt.
 std::string report(const Status& state);

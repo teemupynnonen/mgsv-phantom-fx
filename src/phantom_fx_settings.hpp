@@ -2,15 +2,13 @@
 
 #include "effects.hpp"
 #include "features/ambient_occlusion/settings.hpp"
-#include "features/contact_shadow_shape/settings.hpp"
+#include "features/contact_shadows/settings.hpp"
 #include "features/depth_of_field/settings.hpp"
 #include "features/frame_generation/settings.hpp"
 #include "features/frame_rate/settings.hpp"
 #include "features/global_illumination/settings.hpp"
 #include "features/hdr/settings.hpp"
 #include "features/indirect_light/settings.hpp"
-#include "features/lamp_contact_shadows/settings.hpp"
-#include "features/lamp_soft_shadows/settings.hpp"
 #include "features/motion_blur/settings.hpp"
 #include "features/path_tracing/settings.hpp"
 #include "features/photo_mode/settings.hpp"
@@ -20,7 +18,6 @@
 #include "features/setting_visitor.hpp"
 #include "features/soft_shadows/settings.hpp"
 #include "features/sun/settings.hpp"
-#include "features/sun_contact_shadows/settings.hpp"
 #include "features/upscaling/settings.hpp"
 #include "features/volumetric_fog/settings.hpp"
 #include "features/water_caustics/settings.hpp"
@@ -28,6 +25,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 
 // Phantom FX's settings (PhantomFX.ini): its features' together. Also the diagnostics, the effect plan,
 // and what each module configures itself from.
@@ -40,11 +38,8 @@ struct Settings
     Sun sun;
     RayTracedShadows rayTracedShadows;
     SoftShadows softShadows;
-    SunContactShadows sunContactShadows;
+    ContactShadows contactShadows;
     RayTracedLights rayTracedLights;
-    LampContactShadows lampContactShadows;
-    LampSoftShadows lampSoftShadows;
-    ContactShadowShape contactShadowShape;
     GlobalIllumination globalIllumination;
     PathTracing pathTracing;
     AmbientOcclusion ambientOcclusion;
@@ -66,16 +61,14 @@ template<class Visit> void forEachFeature(Settings& settings, Visit&& visit)
 {
     visit(settings.upscaling);
     visit(settings.frameGeneration);
+    visit(settings.frameRate);
     visit(settings.sun);
+    visit(settings.pathTracing);
     visit(settings.rayTracedShadows);
     visit(settings.rayTracedLights);
     visit(settings.softShadows);
-    visit(settings.lampSoftShadows);
-    visit(settings.sunContactShadows);
-    visit(settings.lampContactShadows);
-    visit(settings.contactShadowShape);
+    visit(settings.contactShadows);
     visit(settings.globalIllumination);
-    visit(settings.pathTracing);
     visit(settings.ambientOcclusion);
     visit(settings.indirectLight);
     visit(settings.volumetricFog);
@@ -85,7 +78,6 @@ template<class Visit> void forEachFeature(Settings& settings, Visit&& visit)
     visit(settings.motionBlur);
     visit(settings.photoMode);
     visit(settings.hdr);
-    visit(settings.frameRate);
 }
 
 void describe(Settings& settings, SettingVisitor& visit);
@@ -114,16 +106,23 @@ template<class Feature> FeatureInfo infoOf()
 const FeatureInfo& featureOf(Effect effect);
 bool& switchOf(Settings& settings, Effect effect);
 
-// The effects switched together: the screen-space ones, or the ray-traced ones in their place.
-enum class EffectPreset : std::uint8_t { ScreenSpace, RayTraced, Count };
+// How the game is lit, each step replacing the one before: the game's own light, the screen-space
+// effects, the ray-traced ones, and Ultra's traced reflections and light (path tracing).
+enum class LightingStep : std::uint8_t { Game, ScreenSpace, RayTraced, Ultra, Count };
 
-// Switches the preset's effects on and the others off. Both presets also unlock the frame rate and turn
-// on the volumetric fog in the physical look. The upscaler, HDR and the effects' own settings (radius,
-// strength, ray quality) stay as they are.
-void applyPreset(Settings& settings, EffectPreset preset);
-// The preset the effects are switched as, if any.
-std::optional<EffectPreset> presetOf(const Settings& settings);
-// A first launch, without a settings file: the screen-space preset, upscaled at Quality.
+// The lighting effects a step switches on, beside those of the steps before it.
+std::span<const Effect> effectsAddedBy(LightingStep step);
+// Switches the step's lighting effects on and the others off. Ray traced keeps the screen-space effects
+// on beneath it, so each ray-traced effect switched off leaves its screen-space one; Ultra keeps both and
+// asks for DLSS Ray Reconstruction, which it needs, and leaving Ultra gives that back. The effects' own
+// settings (radius, strength, ray quality) stay as they are.
+void applyLightingStep(Settings& settings, LightingStep step);
+// The furthest step with an effect on.
+LightingStep lightingStepOf(const Settings& settings);
+// The lighting effects are switched as their step switches them: no effect of it switched off.
+bool isLightingAsStep(const Settings& settings);
+// A first launch, without a settings file: screen-space lighting, upscaled at Quality, the frame rate
+// unlocked and the fog physical.
 Settings firstLaunchSettings();
 
 // What the image shows for troubleshooting. The Shadow views, of the ray-traced shadows, and the Light

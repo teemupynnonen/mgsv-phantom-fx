@@ -7,15 +7,16 @@ void describe(RayTracedShadows& shadows, SettingVisitor& visit)
     visit.feature(shadows.on,
         {.menuId = "rayTracedShadows",
             .iniKey = "ray_traced_shadows",
-            .section = Section::Shadows,
-            .name = "Ray-traced shadows",
+            .section = Section::Lighting,
+            .name = "Sun shadows",
+            .tech = "RT",
             .tag = "Experimental",
             .tip = "The sun's shadows from rays traced through the game's own scene: as soft as the sun's disc makes them, exact where objects "
                    "meet the ground, and as far as you can see, where the game's shadows end at about 90 m. It replaces the game's shadows, soft "
-                   "shadows and sun contact shadows while on; path tracing replaces it. Needs a GPU that traces rays (DXR 1.1). Off keeps the "
+                   "shadows and contact shadows while on; Ray traced: Ultra traces its own. Needs a GPU that traces rays (DXR 1.1). Off keeps the "
                    "game's shadow map.",
-            .summary = "Sun shadows traced through the game's own scene: soft, exact where things touch, and as far as you can see.",
-            .keywords = "RT DXR sun size vanilla",
+            .summary = "Accurate sun shadows, as far as you can see.",
+            .keywords = "RT DXR ray-traced shadows sun size vanilla",
             .effect = Effect::RayTracedShadows,
             .replacedBy = Effect::PathTracing,
             .needsSupportedBuild = true});

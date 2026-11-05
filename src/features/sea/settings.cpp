@@ -12,13 +12,13 @@ void describe(Sea& sea, SettingVisitor& visit)
     visit.feature(sea.on,
         {.menuId = "sea",
             .iniKey = "sea",
-            .section = Section::Atmosphere,
+            .section = Section::World,
             .name = "Sea",
             .tag = "Experimental",
             .tip = "The sea around Mother Base as a real surface: waves from an ocean spectrum that rise and roll with the wind, and get rougher "
                    "in rain, with foam on their crests. It is lit like everything else, so it reflects the sky, the sun and the platforms, and "
                    "with path tracing its reflections are traced. Off leaves the game's sea.",
-            .summary = "Rolling waves that reflect the sky, the sun and the platforms, in place of the game's sea.",
+            .summary = "Rolling waves that reflect the sky and the platforms.",
             .keywords = "sea ocean water waves foam mother base",
             .effect = Effect::Sea,
             .needsSupportedBuild = true});
