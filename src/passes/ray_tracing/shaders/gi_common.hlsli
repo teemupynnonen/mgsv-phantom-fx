@@ -1085,13 +1085,33 @@ struct PixelSurface
     SceneHit hit;  // Diagnostics (the probe): the eye's ray's hit on it
 };
 
-PixelSurface PixelSurfaceAt(float3 position, float3 gbufferNormal)
+// Where the add-on's sea drew (the pack's albedo alpha, ray_tracing.cpp).
+bool IsSeaPixel(uint2 pixel)
+{
+    return g_Albedo.Load(int3(pixel, 0)).a < 0.5f;
+}
+
+// What the camera never sees as itself: a shadow-only stand-in (a tarp's slab, 16 cm before its sheet), or the sea's
+// plane in place of the waves. Taken as the surface, the plane lit a hull's wall below the plane's level, which the
+// camera's ray crosses the plane just before, as open water: a pale band at the waterline (2026-11-05).
+bool IsStandIn(SceneHit hit)
+{
+    return IsShadowOnly(hit.instance, hit.geometry) || (InstanceKind(g_Instances[hit.instance]) & GI_INSTANCE_SEA) != 0;
+}
+
+PixelSurface PixelSurfaceAt(uint2 pixel, float3 position, float3 gbufferNormal)
 {
     PixelSurface surface;
     surface.position = position;
     surface.normal = gbufferNormal;
     surface.isExact = false;
     surface.hit = (SceneHit)0;
+
+    // The scene holds only the sea's flat plane, not its waves: the search took the plane wherever a wave came within its
+    // reach and the wave's own point elsewhere, so the sun's shadow on the water jumped between the two as the waves
+    // moved, and it took a hull's wall behind the water by it, the water there lit as that wall (a debug case at
+    // Mother Base, 2026-11-05). For the same reason the plane is no other pixel's surface (IsStandIn).
+    if (IsSeaPixel(pixel)) return surface;
 
     // Only the stretch around the depth's point: the game hides what comes between the camera and the player
     // (a bush the camera backs into) and the scene keeps it. Searched from the eye, the ray stopped on its
@@ -1104,17 +1124,17 @@ PixelSurface PixelSurfaceAt(float3 position, float3 gbufferNormal)
     float tolerance = 0.03f + 0.02f * surfaceDistance;
     float searchFrom = max(surfaceDistance - tolerance, 0.0f);
     SceneHit hit;
-    // A stand-in the camera never sees is not the surface (a tarp's slab, 16 cm before its sheet): what the game drew may lie behind it.
+    // A stand-in is not the surface: what the game drew may lie behind it.
     for (uint attempt = 0; attempt < 4; ++attempt)
     {
         hit = TraceClosest(g_Frame.eye.xyz, direction, searchFrom, surfaceDistance + tolerance, GI_MASK_SCENE, true, false, float2(0.0f, g_Frame.rayCone.x));
-        if (!hit.hit || !IsShadowOnly(hit.instance, hit.geometry)) break;
+        if (!hit.hit || !IsStandIn(hit)) break;
 
         // A triangle's hit lies strictly past a ray's TMin, so this one drops out and what lies right behind it stays.
         searchFrom = hit.distance;
     }
 
-    if (!hit.hit || abs(hit.distance - surfaceDistance) > tolerance || IsShadowOnly(hit.instance, hit.geometry)) return surface;
+    if (!hit.hit || abs(hit.distance - surfaceDistance) > tolerance || IsStandIn(hit)) return surface;
 
     SceneTriangle t = LoadTriangle(hit.instance, hit.geometry, hit.primitive);
     float3 normal = cross(t.v1 - t.v0, t.v2 - t.v0);

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Shadows on the sea follow the waves smoothly.** A platform's shadow on the water broke up and jumped as the waves
+  moved: each patch of water took its shadow either from the moving wave or from a flat stand-in for the sea, and
+  switched between the two as the waves rose and fell. The water now always takes its own wave.
+- **No more pale band on the platforms' legs at the waterline.** Where a wave's trough showed the leg below the sea's
+  level, that strip of the leg, and the water beside it, lit up as if open sky lay below them. The ray-traced sea now
+  lies under the waves' deepest trough.
 - **The sea's foam is the game's own again.** The waves' breaking crests were flat white patches. They now take the
   game's foam textures, lacy where a crest just breaks and denser where it breaks hard, drifting with the wind and
   thinning into the distance, as on the game's own sea.

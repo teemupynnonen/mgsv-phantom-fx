@@ -50,7 +50,7 @@ void InspectPixels(uint2 did : SV_DispatchThreadID)
         // Without the shadows the frame has no ray length, and no sun to speak of.
         if (g_Frame.shadowParams.z > 0.0f)
         {
-            DebugRay r = TraceDebugRay(position, DecodeNormal(g_Normal.Load(int3(did, 0))), depth);
+            DebugRay r = TraceDebugRay(did, position, DecodeNormal(g_Normal.Load(int3(did, 0))), depth);
             SceneHit blocker = r.anyHit;
             if (r.farHit.hit) blocker = r.farHit;
             if (r.nearHit.hit) blocker = r.nearHit;

@@ -38,7 +38,7 @@ void TraceLocalLightShadows(uint2 did : SV_DispatchThreadID)
         if (total > 0.0f)
         {
             Random random = MakeRandom(g_Frame.dimensions.z, did.y * g_Frame.dimensions.x + did.x);
-            PixelSurface surface = PixelSurfaceAt(position, normal);
+            PixelSurface surface = PixelSurfaceAt(did, position, normal);
             float2 cone = PixelCone(position, 0.0f);
             uint rays = max(g_Frame.localLightCount.y, 1u);
             float spacing = total / float(rays);
@@ -163,7 +163,7 @@ void ProbeLocalLights()
     {
         float3 position = DepthPosition(centre, depth);
         float3 normal = DecodeNormal(g_Normal.Load(int3(centre, 0)));
-        PixelSurface surface = PixelSurfaceAt(position, normal);
+        PixelSurface surface = PixelSurfaceAt(centre, position, normal);
         float2 cone = PixelCone(position, 0.0f);
         Random random = MakeRandom(g_Frame.dimensions.z, centre.y * g_Frame.dimensions.x + centre.x);
         probe.receiver = float4(position, distance(position, g_Frame.eye.xyz));

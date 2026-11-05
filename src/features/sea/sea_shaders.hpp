@@ -221,13 +221,16 @@ RWTexture2DArray<float4> g_Displacement : register(u1); // Sideways x, height, s
 RWTexture2DArray<float4> g_Derivatives : register(u2);  // dh/dx, dh/dz, dDx/dx, dDz/dz
 RWTexture2DArray<float4> g_Moments : register(u3);      // (dh/dx)^2, (dh/dz)^2, squeezed, foam
 RWStructuredBuffer<float> g_Foam : register(u4);        // The foam kept from frame to frame, N x N a tile
+RWStructuredBuffer<uint> g_Deepest : register(u5);      // Each tile's deepest trough below the level, metres (float bits)
+
+groupshared uint g_GroupDeepest;
 
 static const float FoamBelow = 0.55; // The Jacobian below which crests break
 static const float FoamSharpness = 4;
 static const float SqueezedBelow = 0.9; // The Jacobian below which the game's foam patterns start to show
 
 [numthreads(8, 8, 1)]
-void main(uint3 id : SV_DispatchThreadID)
+void main(uint3 id : SV_DispatchThreadID, uint index : SV_GroupIndex)
 {
     // The transform sums e^(i 2 pi m n / N) from the spectrum's first texel; its wave vectors start at
     // -N / 2, which flips the sign of every other texel.
@@ -262,6 +265,14 @@ void main(uint3 id : SV_DispatchThreadID)
     g_Displacement[id] = float4(dx, height, dz, 0);
     g_Derivatives[id] = float4(hx, hz, dxx, dzz);
     g_Moments[id] = float4(hx * hx, hz * hz, squeezed, foam);
+
+    // The ray-traced scene's plane lies under the waves (sea::planeLevel): the tiles' troughs together are as deep as
+    // the surface goes. Positive floats order as their bits do; a group's deepest first, then one atomic a group.
+    if (index == 0) g_GroupDeepest = 0;
+    GroupMemoryBarrierWithGroupSync();
+    InterlockedMax(g_GroupDeepest, asuint(max(-height * g_HeightScale, 0)));
+    GroupMemoryBarrierWithGroupSync();
+    if (index == 0) InterlockedMax(g_Deepest[id.z], g_GroupDeepest);
 }
 )";
 

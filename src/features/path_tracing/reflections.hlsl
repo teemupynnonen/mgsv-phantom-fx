@@ -267,7 +267,7 @@ void TraceReflections(uint2 did : SV_DispatchThreadID)
     // Apart from the global illumination's rays from the same pixel (TraceLight seeds by the pixel alone).
     Random random = MakeRandom(did.x + did.y * g_BufferDimensions.x + g_BufferDimensions.x * g_BufferDimensions.y, g_FrameIndex);
     float cosineToEye;
-    PixelSurface surface = PixelSurfaceAt(world, normal);
+    PixelSurface surface = PixelSurfaceAt(did, world, normal);
     float3 direction = MirrorAboveSurface(SpecularDirection(normal, toEye, alpha, random.rand2(), cosineToEye), surface.normal);
     float3 origin;
     float tolerance;

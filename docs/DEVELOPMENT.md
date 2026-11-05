@@ -2965,8 +2965,13 @@ denoiser (see "Ray Reconstruction").
   sides.
 - **Where a ray leaves** (`PixelSurfaceAt`, for the sun's rays, the lights', the debug view's, and the
   global illumination's and path-traced reflections' first rays; what the game draws in front of the
-  rest, glass, mirrors and rivers, keeps its own start, as its surface is not in the opaque depth, while
-  the sea, in the G-buffer, leaves as any surface does). A ray from the eye through the pixel looks for
+  rest, glass, mirrors and rivers, keeps its own start, as its surface is not in the opaque depth). The
+  sea's pixels (the pack's albedo alpha 0, where the sea's own depth is the G-buffer's) leave from the depth's
+  point: the scene holds only a flat plane in place of the waves (see "Sea"). Searched for, the plane was the
+  surface where a wave came within reach of it and the wave's point was elsewhere, so the sun's shadow on the
+  water jumped between the two as the waves moved, and the water beside a hull took the hull's wall behind it
+  (a debug case at Mother Base, 2026-11-05, the shadow-start debug view). Nor is the plane any other pixel's
+  surface: it is passed as a stand-in. A ray from the eye through the pixel looks for
   the scene's own surface near the depth's point (within 3 cm plus 2% of the distance; cut-out geometry
   by its alpha, stand-ins passed), searching that stretch alone: the game hides what comes between the
   camera and the player (a bush the camera backs into) and the scene keeps it. Searched from the eye,
@@ -3741,9 +3746,13 @@ screen-space reflections, the global illumination and path tracing take it as an
   the G-buffer's, Karis' fit of GGX's split sum for F0 0.02 ("Physically Based Shading on Mobile", 2014), in
   place of the game's weighting, floored at the sun pass's `c2.z` (0.21 on the decks) and halved: the sea
   reflects almost all of the sky at grazing angles, and 2% looking down.
-- **In the ray-traced scene**: a plane at the level under the eye, 100 km across, two triangles in a static
-  structure (`GI_INSTANCE_SEA`), one-sided with its front up, as the terrain is: the decks' rays meet its top,
-  and a ray leaving a wave's trough below the plane passes its back, so it lies at the level itself. Its hits
+- **In the ray-traced scene**: a plane under the eye, 100 km across, two triangles in a static structure
+  (`GI_INSTANCE_SEA`), one-sided with its front up, as the terrain is: the decks' rays meet its top. It lies
+  under the waves' deepest trough (`sea::planeLevel`): the wave maps' pass keeps each tile's deepest height,
+  read back with the level, and the tiles' together are as deep as the surface goes. At the level itself, a
+  hull a trough showed lay under the plane: its rays passed the plane's back and found open sky below, 45 of
+  a probe's 64 rays, and it lit up as a pale band at the waterline (2026-11-05, in about half the shots a
+  second apart at Mother Base; in none of ten after). Its hits
   take water's albedo (`HitAlbedo`). Before, the rays down from the decks met nothing and took the sky's light.
   The plane and the guide's water are in a kick only when the list that drew the sea into the frame's
   G-buffer ran before it (handed over, see "Command lists"): a frame counter by presents does not tell, as
