@@ -88,7 +88,7 @@ struct Constants
     float foamLeft, choppiness, gridSpacing;
     std::uint32_t gridCells;
     float microRoughness, waterAlbedo[3];
-    float hasGameFoam, foamCoverage, padding[2];
+    float hasGameFoam, foamCoverage, heightScale, padding;
 };
 
 static_assert(sizeof(Constants) == 112);
@@ -706,9 +706,9 @@ Constants constantsAfter(double elapsed, const Sea& sea)
     const float speed = std::max(wind, 0.5f);
     const float fetch = std::min(Fetch, 1.58e4f * speed * speed / Gravity);
     const float dimensionless = Gravity * fetch / (speed * speed);
-    // The height and the wavelength against the weather's sea: the spectra's energy for a height, the peak's
-    // frequency for a wavelength (below 1 is longer waves, which travel slower too).
-    constants.alpha = 0.076f * std::pow(dimensionless, -0.22f) * sea.height * sea.height;
+    // The wavelength against the weather's sea: the peak's frequency (below 1 is longer waves, which travel
+    // slower too). The height moves the geometry alone, in the surface's vertex shader.
+    constants.alpha = 0.076f * std::pow(dimensionless, -0.22f);
     constants.peakFrequency = 22 * Gravity / speed * std::pow(dimensionless, -1.0f / 3) * sea.peak;
     constants.peakBoost = std::max(7 * std::pow(dimensionless, -0.143f), 1.0f);
     // Wrapped well before float loses the fast ripples' phase: a wave's phase is its frequency times this.
@@ -722,6 +722,7 @@ Constants constantsAfter(double elapsed, const Sea& sea)
     constants.microRoughness = std::max(0.00377f * speed - 0.0125f, 0.001f) * sea.ripples;
     std::copy(std::begin(sea.albedo), std::end(sea.albedo), constants.waterAlbedo);
     constants.foamCoverage = sea.foamCoverage;
+    constants.heightScale = sea.height;
 
     return constants;
 }

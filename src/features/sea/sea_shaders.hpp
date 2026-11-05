@@ -32,6 +32,7 @@ cbuffer Sea : register(b9)
     float3 g_WaterAlbedo;   // Linear: the light the water sends back up as a share of what falls on it (GI_SEA_ALBEDO)
     float g_HasGameFoam;    // 1 when the game's foam textures are bound (the surface's t3 and t4)
     float g_FoamCoverage;   // How far short of folding foam shows: the squeeze at which the crests' foam starts
+    float g_HeightScale;    // How tall the geometry stands: heights alone, the slopes (and so the normals) kept
 };
 
 // The game's own near sea draws' material constants (cVSMaterial), as they last ran; zero before.
@@ -340,6 +341,10 @@ Interpolants main(uint vertex : SV_VertexID, uint ring : SV_InstanceID)
         float level = max(log2(covered * N / size), 0);
         displacement += g_Displacement.SampleLevel(g_Linear, float3(xz / size, cascade), level).xyz;
     }
+
+    // The height slider moves the geometry alone: the normals stay the waves' own, so raising the sea does not
+    // sharpen every crest's shading with it.
+    displacement.y *= g_HeightScale;
 
     // The Earth's curve, so the sea meets the sky at the horizon.
     float2 away = xz - eye.xz;

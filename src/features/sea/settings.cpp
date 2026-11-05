@@ -50,7 +50,7 @@ void describe(Sea& sea, SettingVisitor& visit)
             .min = 0.2f,
             .max = 2,
             .standard = Defaults.height,
-            .tip = "How tall the waves are, against the weather's sea."});
+            .tip = "How tall the waves stand, against the weather's sea. It moves the water alone, so the crests keep the light they had."});
     visit.slider(sea.ripples,
         {.iniKey = "sea_ripples",
             .label = "Ripples",

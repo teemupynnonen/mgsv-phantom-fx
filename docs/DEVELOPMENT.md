@@ -3684,7 +3684,9 @@ screen-space reflections, the global illumination and path tracing take it as an
   waves' clock runs at **Wave speed** (`sea_speed`) of real time (0.5, half), the foam fading on it too. Beside
   it, `sea_albedo_r`, `_g` and `_b` set the water's albedo in the ini alone.
   The waves' shape against the weather's sea has a slider each, applied at the next present:
-  `sea_height` (0.85) multiplies JONSWAP's energy by its square, so the heights follow it; `sea_peak` (0.7)
+  `sea_height` (0.85) scales the geometry's heights alone, in the vertex shader, the spectrum's energy and so the
+  slopes (and the normals, the roughness and the foam built from them) left as they are: scaling the energy too
+  made every crest's shading sharpen with the slider (2026-11-05); `sea_peak` (0.7)
   multiplies the peak frequency, below 1 giving longer, slower waves; `sea_ripples` (0.5) scales the slope
   variance of the ripples too short for the tiles; `sea_chop` (0.9) the sideways displacement's sharpness;
   and `sea_split` (4) the wavenumber where one tile's waves end and the next's begin, larger leaving the

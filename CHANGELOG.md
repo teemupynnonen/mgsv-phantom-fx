@@ -17,6 +17,9 @@
   waves. **Wavelength**, **Height**, **Ripples**, **Choppiness**, **Long waves**, **Wave speed** and **Foam** on the
   Sea item set each while the game runs, and **Foam** brings the crests' lace back after the longer waves left them
   barely breaking.
+- **The sea's Height slider moves the water, not its shading.** Raising it used to steepen every wave with the
+  geometry, which warped the crests' light. It now raises the geometry alone, so the sea keeps its normals, its
+  roughness and its foam at any height.
 - **Characters, the helicopter and swaying trees stay in the ray-traced scene beside other mods.** The scene found the
   game's list of models in a spot that only held it by chance. With some other mods installed it read an empty list, so
   Snake, the soldiers, the helicopter's cabin and trees that move in the wind cast no ray-traced shadows and global
