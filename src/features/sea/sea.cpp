@@ -694,8 +694,10 @@ Constants constantsAfter(double elapsed, const Sea& sea)
     {
         constants.cascadeSizes[cascade] = CascadeSizes[cascade];
         // Each tile from where the next one's waves stop; the smallest to just below its texels' limit.
-        constants.cascadeLow[cascade] = cascade == 0 ? 1e-4f : 6 * 2 * Pi / CascadeSizes[cascade];
-        constants.cascadeHigh[cascade] = cascade + 1 < Cascades ? 6 * 2 * Pi / CascadeSizes[cascade + 1] : 0.95f * Pi * Texels / CascadeSizes[cascade];
+        // A tile takes the waves from `split` of the next one's tiles across down to its own: larger, the
+        // longer waves hold more of the spectrum and the sea shows fewer ripples.
+        constants.cascadeLow[cascade] = cascade == 0 ? 1e-4f : sea.split * 2 * Pi / CascadeSizes[cascade];
+        constants.cascadeHigh[cascade] = cascade + 1 < Cascades ? sea.split * 2 * Pi / CascadeSizes[cascade + 1] : 0.95f * Pi * Texels / CascadeSizes[cascade];
     }
 
     // JONSWAP for the wind and fetch. Past the fetch a wind fully develops the sea over, the sea grows no
@@ -704,18 +706,20 @@ Constants constantsAfter(double elapsed, const Sea& sea)
     const float speed = std::max(wind, 0.5f);
     const float fetch = std::min(Fetch, 1.58e4f * speed * speed / Gravity);
     const float dimensionless = Gravity * fetch / (speed * speed);
-    constants.alpha = 0.076f * std::pow(dimensionless, -0.22f);
-    constants.peakFrequency = 22 * Gravity / speed * std::pow(dimensionless, -1.0f / 3);
+    // The height and the wavelength against the weather's sea: the spectra's energy for a height, the peak's
+    // frequency for a wavelength (below 1 is longer waves, which travel slower too).
+    constants.alpha = 0.076f * std::pow(dimensionless, -0.22f) * sea.height * sea.height;
+    constants.peakFrequency = 22 * Gravity / speed * std::pow(dimensionless, -1.0f / 3) * sea.peak;
     constants.peakBoost = std::max(7 * std::pow(dimensionless, -0.143f), 1.0f);
     // Wrapped well before float loses the fast ripples' phase: a wave's phase is its frequency times this.
     constants.time = static_cast<float>(std::fmod(seconds, 3600.0));
     constants.foamLeft = std::exp(-static_cast<float>(waveElapsed) / FoamSeconds);
-    constants.choppiness = Choppiness;
+    constants.choppiness = Choppiness * sea.chop;
     constants.gridSpacing = GridSpacing;
     constants.gridCells = GridCells;
     // Cox and Munk's slope variance for the wind (both axes: 0.003 + 0.00512 U) less the tiles' own, which
     // offline came to about 0.0155 + 0.00135 U: the ripples shorter than the smallest tile's waves.
-    constants.microRoughness = std::max(0.00377f * speed - 0.0125f, 0.001f);
+    constants.microRoughness = std::max(0.00377f * speed - 0.0125f, 0.001f) * sea.ripples;
     std::copy(std::begin(sea.albedo), std::end(sea.albedo), constants.waterAlbedo);
 
     return constants;

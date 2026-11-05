@@ -31,6 +31,11 @@ void describe(Sea& sea, SettingVisitor& visit)
             .tip = "How strong the wind that raises the waves is, against the weather's. 1 is the weather's own: a breeze in the sun, a gale "
                    "in rain."});
     visit.slider(sea.speed, {.iniKey = "sea_speed", .label = "Wave speed", .min = 0.1f, .max = 2, .standard = Defaults.speed, .visible = false});
+    visit.slider(sea.peak, {.iniKey = "sea_peak", .label = "Wavelength", .min = 0.3f, .max = 2, .standard = Defaults.peak, .visible = false});
+    visit.slider(sea.height, {.iniKey = "sea_height", .label = "Height", .min = 0.2f, .max = 2, .standard = Defaults.height, .visible = false});
+    visit.slider(sea.ripples, {.iniKey = "sea_ripples", .label = "Ripples", .min = 0, .max = 3, .standard = Defaults.ripples, .visible = false});
+    visit.slider(sea.chop, {.iniKey = "sea_chop", .label = "Choppiness", .min = 0, .max = 2, .standard = Defaults.chop, .visible = false});
+    visit.slider(sea.split, {.iniKey = "sea_split", .label = "Tile split", .min = 2, .max = 10, .standard = Defaults.split, .visible = false});
     constexpr std::string_view AlbedoKeys[]{"sea_albedo_r", "sea_albedo_g", "sea_albedo_b"};
     for (int channel = 0; channel < 3; ++channel)
         visit.slider(sea.albedo[channel],
