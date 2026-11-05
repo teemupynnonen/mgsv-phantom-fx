@@ -17,6 +17,32 @@
   are gone, and `soft_local_shadows` and `light_screen_space_shadows` in PhantomFX.ini are no longer read: the lamps
   follow `soft_shadows` and `sun_screen_space_shadows`. So Screen-space now gives the lamps soft shadows too.
 
+- **Shadows on the sea follow the waves smoothly.** A platform's shadow on the water broke up and jumped as the waves
+  moved: each patch of water took its shadow either from the moving wave or from a flat stand-in for the sea, and
+  switched between the two as the waves rose and fell. The water now always takes its own wave.
+- **No more pale band on the platforms' legs at the waterline.** Where a wave's trough showed the leg below the sea's
+  level, that strip of the leg, and the water beside it, lit up as if open sky lay below them. The ray-traced sea now
+  lies under the waves' deepest trough.
+- **The sea's foam is the game's own again.** The waves' breaking crests were flat white patches. They now take the
+  game's foam textures, lacy where a crest just breaks and denser where it breaks hard, drifting with the wind and
+  thinning into the distance, as on the game's own sea.
+- **The sea is as bright as the game's.** It came out two to three times darker than the game's own sea. Looking down
+  it now matches it; towards the horizon it stays a little darker, as its reflections are the sky's own. The light
+  it bounces up under the platforms rises with it.
+- **The sea's waves move at the game's pace.** They ran at the real speed of their length on the open sea, quicker than
+  the game's sea. The waves' clock now runs at half that, on the **Wave speed** slider, and the foam
+  fades on the same clock, so a crest stays white as long against the waves rolling.
+- **The sea's waves are longer and lower, as the game's own.** The add-on's were shorter and steeper all over: fewer
+  of the long swells the game draws, more of the small chop. The waves now run 30% longer, a little lower, with
+  half the ripples too short for the waves' own tiles, softer crests, and more of the spectrum left to the long
+  waves. **Wavelength**, **Height**, **Ripples**, **Choppiness**, **Long waves**, **Wave speed** and **Foam** on the
+  Sea item set each while the game runs, and **Foam** brings the crests' lace back after the longer waves left them
+  barely breaking.
+- **The sea's first slider, Waves, is gone.** It scaled the wind against the weather's, and the sea it drew never matched
+  what it promised. The weather alone sets the wind now, and **Wavelength**, **Height** and **Long waves** shape the sea.
+- **The sea's Height slider moves the water, not its shading.** Raising it used to steepen every wave with the
+  geometry, which warped the crests' light. It now raises the geometry alone, so the sea keeps its normals, its
+  roughness and its foam at any height.
 - **Characters, the helicopter and swaying trees stay in the ray-traced scene beside other mods.** The scene found the
   game's list of models in a spot that only held it by chance. With some other mods installed it read an empty list, so
   Snake, the soldiers, the helicopter's cabin and trees that move in the wind cast no ray-traced shadows and global
@@ -84,7 +110,7 @@
   ocean spectrum that rise and roll with the wind, bigger in rain, with foam where their crests break. It is
   lit like the rest of the world, so it reflects the sky, the sun and the platforms and takes their shadows;
   with path tracing its reflections are traced. The ray-traced light under the platforms now bounces off the
-  water instead of the sky. A **Waves** slider sets the wind against the weather's. It costs about 0.3 ms.
+  water instead of the sky. It costs about 0.3 ms.
 - **Path tracing.** A new **Path tracing** switch under lighting, with DLSS Ray Reconstruction and the
   global illumination on: reflections are traced on every surface, sharp on smooth ones and spread on
   rough ones, in place of the game's screen-space and sky reflections (water keeps the game's;

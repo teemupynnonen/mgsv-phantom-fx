@@ -52,7 +52,9 @@ void executing(ID3D11DeviceContext* context, std::uint64_t list) noexcept;
 // which equals the G-buffer's depth where nothing nearer covers it. Null when that G-buffer has no sea of the
 // add-on's.
 Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> surfaceDepth(UINT width, UINT height) noexcept;
-// The sea's level, for the ray-traced scene's plane: as the game's sea last gave it, read back from the GPU a
-// second or so late. Absent when the frame being run has no sea of the add-on's, or before the first read.
-std::optional<float> level() noexcept;
+// The ray-traced scene's plane in place of the waves: under their deepest troughs, below the level the game's sea last
+// gave, both read back from the GPU a second or so late. At the level itself, the hull a trough showed lay under the
+// plane, its rays passed the plane's back and found open sky below, and it lit up as a pale band at the waterline
+// (2026-11-05). Absent when the frame being run has no sea of the add-on's, or before the first read.
+std::optional<float> planeLevel() noexcept;
 }
