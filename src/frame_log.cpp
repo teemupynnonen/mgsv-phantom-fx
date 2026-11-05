@@ -517,6 +517,14 @@ void noteTrigger(const std::string& text)
     if (!trigger.empty() && text.find(trigger) != std::string::npos) triggered = true;
 }
 
+// Writes one line of the record, call number and all, which is what a trigger copied from a record
+// line is matched against. Called with recordMutex held.
+void writeRecord(std::string text)
+{
+    record << text << '\n';
+    noteTrigger(text);
+}
+
 // Writes a line in execution order: the immediate context's as they come, a command list's when
 // the immediate context executes it. A call on the immediate context saves its textures at once,
 // as they are before it runs.
@@ -535,8 +543,7 @@ void emit(command_list* list, Line line)
         return;
     }
 
-    record << '#' << ++calls << ' ' << line.text << '\n';
-    noteTrigger(line.text);
+    writeRecord("#" + std::to_string(++calls) + " " + line.text);
     for (const auto& texture : line.textures)
         save(calls, texture);
 
@@ -847,18 +854,23 @@ void finishRecording()
 {
     std::lock_guard lock(recordMutex);
     saveQueued();
-    record << '#' << ++calls << " present " << describe(backBuffer, DXGI_FORMAT_UNKNOWN) << '\n';
+    writeRecord("#" + std::to_string(++calls) + " present " + describe(backBuffer, DXGI_FORMAT_UNKNOWN));
     record.close();
     log("Recorded " + std::to_string(calls) + " calls" + (trigger.empty() ? "." : ", the first frame to run " + trigger + "."));
     if (!trigger.empty())
     {
         // Only a frame this capture recorded, so an interrupted capture's file never stands in.
+        const auto before = outputDirectory / (recordName + "-before.txt");
+        std::error_code error;
         if (hasPrevious)
         {
-            std::error_code error;
-            std::filesystem::rename(previousRecord(), outputDirectory / (recordName + "-before.txt"), error);
+            std::filesystem::rename(previousRecord(), before, error);
             if (error) log("Could not keep the frame before " + recordName + ": " + error.message());
         }
+        // The frame's number can come round again after the game restarts, and an earlier run's file
+        // beside this capture would pass for its predecessor.
+        else
+            std::filesystem::remove(before, error);
 
         trigger.clear();
         hasPrevious = false;
@@ -1138,13 +1150,12 @@ void onExecuteSecondary(command_list* list, command_list* secondary)
     }
 
     saveQueued();
-    record << '#' << ++calls << " execute_command_list " << pointer(secondary) << (lines.empty() ? " (recorded before the capture)" : "")
-           << '\n';
+    writeRecord("#" + std::to_string(++calls) + " execute_command_list " + pointer(secondary)
+        + (lines.empty() ? " (recorded before the capture)" : ""));
 
     for (auto& line : lines)
     {
-        record << '#' << ++calls << "   " << line.text << '\n';
-        noteTrigger(line.text);
+        writeRecord("#" + std::to_string(++calls) + "   " + line.text);
         for (auto& texture : line.textures)
             queuedTextures.emplace_back(calls, std::move(texture));
 
