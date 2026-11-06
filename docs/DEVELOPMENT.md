@@ -209,13 +209,13 @@ what draws it, when that is the feature's own.
 | `src/passes/ray_tracing/shared_textures.*` | What Direct3D 11 and 12 share: the Direct3D 11 half of a trace's results, and the rows that open, transition and bind a trace's textures |
 | `src/passes/ray_tracing/gi_renderer.*` | The Direct3D 12 side: the device, the scene's frame (the scene contents' update, then the recording), each feature's passes recorded in turn, the probes |
 | `src/passes/ray_tracing/light_bins.*` | Which of the frame's lights can reach a place, in bins along each world axis (see "Light bins") |
-| `src/passes/ray_tracing/scene_contents.*` | The scene contents: the game's models, their variants, characters, terrain rings, the sea's plane and textures the ray-traced scene holds, made as the scene memory has room and let go after a while unplaced; each frame's instances of them; their diagnostics (status, the probes' hits, F10's `models.txt`) (see "Ray-traced scene") |
+| `src/passes/ray_tracing/scene_contents.*` | The scene contents: the game's models, their variants, characters, terrain rings and the game's own terrain patches in them, the sea's plane and textures the ray-traced scene holds, made as the scene memory has room and let go after a while unplaced; each frame's instances of them; their diagnostics (status, the probes' hits, F10's `models.txt`) (see "Ray-traced scene") |
 | `src/passes/ray_tracing/scene_memory.hpp` | The scene memory: the seam the scene contents reach the GPU through (the pool, structures, texture slots, instances) |
 | `src/passes/ray_tracing/gi_scene.*` | The ray-traced scene on Direct3D 12, the scene memory: the geometry pool, bottom-level structures (a geometry per mesh, compacted), the geometry table, the game's textures' slots, the frame's instances and top level (see "Ray-traced scene") |
 | `src/passes/ray_tracing/engine_scene.*` | The game's loaded models from its visibility managers and object brush, its characters from its model list, their model files read once, its texture manager, the terrain's heightmap inputs (see "Scene objects") |
 | `src/passes/ray_tracing/scene_description.*` | What the ray-traced scene takes of a model file: its FMDL meshes, each with its mesh role from its material, its alpha and shadow bytes and its model source, their base textures and skins; the flags, texture and alpha threshold a role gives its row of the geometry table (see "Ray-traced scene", "Mesh roles") |
 | `src/passes/ray_tracing/engine_brush.*` | The game's object brush: its loaded blocks' vegetation and props, read from their placement records (see "Scene objects") |
-| `src/passes/ray_tracing/gi_inputs.*` | What the ray tracing takes from the game's draws: the main camera of the frame drawn, its skinned meshes' bones, the terrain's inputs |
+| `src/passes/ray_tracing/gi_inputs.*` | What the ray tracing takes from the game's draws: the main camera of the frame drawn, its skinned meshes' bones, the terrain's inputs and its patch draws |
 | `src/passes/ray_tracing/gi_textures.*` | Shared copies of the game's textures the ray-traced scene's meshes use, from its texture manager (see "Ray-traced scene") |
 | `src/passes/ray_tracing/gi_d3d12.hpp` | The kernels, root signature and descriptor tables every ray-traced feature shares |
 | `src/passes/ray_tracing/gi_slots.hpp` | The slots of those tables, a type a kind; `gi_bindings.h`, generated, names each one (see "Kernels and their slots") |
@@ -232,7 +232,7 @@ what draws it, when that is the feature's own.
 | `src/game_constants.hpp` | The game's constant buffers by name (see "Constant buffers"): the system, scene, sun and lamp light, material, object, bones and probe constants, each with its slot, and a light pass's view space in the world |
 | `src/constant_capture.cpp`, `src/constant_capture.hpp` | The constant capture: what each of the game's threads last wrote to the constant buffers the contact shadows and the ray tracing read, copied at the game's unmap after the upscaler's jitter, read by type and only at the size written |
 | `src/camera.cpp`, `src/camera.hpp` | The main camera in the scene constants: main-view recognition, jitter, reprojection, camera cuts |
-| `src/game_shaders.cpp`, `src/game_shaders.hpp` | The game's shaders the add-on knows, in one table: each pixel shader's checksum, the game pass it draws and what tells it apart from its pass's others (a sun's shadow map, a light's kind); its vertex shaders by source name (the 2D pass, models, terrain). Every copy the game makes is known; a draw looks its pixel shader up once (`DrawnShader`) |
+| `src/game_shaders.cpp`, `src/game_shaders.hpp` | The game's shaders the add-on knows, in one table: each pixel shader's checksum, the game pass it draws and what tells it apart from its pass's others (a sun's shadow map, a light's kind); its vertex shaders by source name (the 2D pass, models, terrain); its input layouts' position formats. Every copy the game makes is known; a draw looks its pixel shader up once (`DrawnShader`) |
 | `src/game_lights.hpp` | What a point or spot light shader is (its row in `game_shaders.hpp`), for the local light pass and the ray-traced lights: its kind and twin, a light's range, its sphere on screen |
 | `src/device_check.cpp`, `src/device_check.hpp` | Lets the game start under ReShade (see below); the build check |
 | `src/game_code.hpp` | The game's image, checks of its code, hooks (MinHook) and code patches |
@@ -2979,7 +2979,26 @@ denoiser (see "Ray Reconstruction").
   surface where a wave came within reach of it and the wave's point was elsewhere, so the sun's shadow on the
   water jumped between the two as the waves moved, and the water beside a hull took the hull's wall behind it
   (a debug case at Mother Base, 2026-11-05, the shadow-start debug view). Nor is the plane any other pixel's
-  surface: it is passed as a stand-in. A ray from the eye through the pixel looks for
+  surface: it is passed as a stand-in. Nor is the terrain's top where the game drew a surface facing the other way
+  (`IsTerrainFacingAway`): the terrain stands up to 3 cm off the ground the game draws, above it there, so a prone
+  Snake's arm dipped under it, the search took the terrain 4 cm before the arm's underside as its surface, and the rays left
+  upwards into the sky, a pale band along the arm at 2.4x the arm's light (a debug case, 2026-11-05). From the
+  arm itself, the rays heading down passed under the one-sided terrain and met the sky too (58 of 64 escaped), so
+  the global illumination's and the opaque reflections' first rays from a model or character sunk under the
+  terrain by less than a quarter metre (`SunkUnderTerrain`) that head down and meet nothing take no light: they
+  meet the game's ground just below, which the scene lacks. The arm's underside's light fell from 0.35 to 0.12, the
+  open ground's being 0.30; the rest of the frame stayed within 2%. The gap is the game's own: its terrain shader
+  (`NewTerrain_Depth`) samples the same heightmap as `TerrainHeight` with no morph or displacement, but at the vertices
+  of its patches, whose grid coarsens with distance (32, 16, 8 or 4 cells a patch, a patch 1/128 of the heightmap and
+  up), where the scene's ring cells are 1 m; between the vertices each draws a straight line, so the two part by up to
+  3 cm, the game's ground above the scene's in one place and below in the next (the probe, 2026-11-05: within 0.3 cm
+  under a metre from the camera, 1 to 2.5 cm below 1.4 to 2.3 m away on a slope). Along a camera ray grazing the
+  ground that gap is about 10 cm, past the search's reach, and pixels by a boot resting on a slope left from the
+  depth's point, lifted 2.3 cm into the boot: their ground was black, 7x darker than the game's. Where the search
+  misses, a second one takes the terrain alone (`TerrainUnderPixel`, instance mask `GI_MASK_TERRAIN`) within 3 cm of
+  the depth's point along the terrain's own normal (not the G-buffer's, whose bumps read 3.6 cm for a 1.8 cm gap),
+  where the G-buffer's normal is within 60 degrees of the terrain's, and only for pixels within 6 cm of the scene's
+  terrain height: traced for every missed pixel, it cost 0.3 ms at 4K on a tin roof the scene leaves out. A ray from the eye through the pixel looks for
   the scene's own surface near the depth's point (within 3 cm plus 2% of the distance; cut-out geometry
   by its alpha, stand-ins passed), searching that stretch alone: the game hides what comes between the
   camera and the player (a bush the camera backs into) and the scene keeps it. Searched from the eye,
@@ -3055,6 +3074,30 @@ denoiser (see "Ray Reconstruction").
   in. A ring whose build finds no scratch left that frame is left out until it is built. Their
   instances carry `GI_INSTANCE_TERRAIN` (brown in the shadow debug view). Harness modes `terrain` (flat heightmap at
   the ground: the same shadows as `beyond`) and `terrainhigh` (a metre up: everything shadowed).
+- **The game's own terrain patches** (2026-11-06). The game draws its terrain as patches of the virtual heightmap:
+  `NewTerrain_Depth` and the G-buffer's `NewTerrain_PackedMaterial*` place each vertex alike, `virtualUv = v0.xy x c9.xy +
+  c9.zw`, clamped to 0.999756, the height read there, `(u, h, v) x c10 + c11`, with no morph or displacement. `v0` comes
+  from one static patch mesh (1,501 vertices of two halves, `R16G16_FLOAT`, uv 0 to 1; 130,980 16-bit indices), its index
+  buffer holding grids of 32, 16, 8 and 4 cells across with their stitched edges; a patch near the eye is 1/128 of the
+  heightmap (64 m, 2 m cells), coarser away from it. The 1 m ring cells sampled the same heights at other points, so the
+  two grounds parted by up to 3 cm either way: the glow under a prone arm and the black ground by a boot above. The draw
+  hooks (`gi_inputs.cpp`) note each main-camera terrain draw's `c9`, `c10`, `c11` and index range, and the mesh's
+  buffers, their vertex format from the input layout (`game_shaders::positionFormatOf`, from ReShade's `init_pipeline`);
+  the kick reads the mesh back once (`ray_tracing.cpp`). The scene (`scene_contents.cpp`) gives each ring the patches wholly
+  inside it and clear of the ring inside it, nearest first, up to `GI_TERRAIN_PATCHES` and `GI_TERRAIN_PATCH_TRIANGLES`
+  a ring; a patch across a ring's edge stays the rings'. `TerrainPatches` (gi_scene.hlsl), once a ring, writes their
+  triangles as the game places them, and `TerrainGrid` collapses the ring's cells under them to a point. They are each
+  ring structure's second geometry: as a structure of their own, every ray near the ground crossed two, and the sun's
+  rays cost 0.35 ms more at 4K than with the ring alone; merged, 0.03 to 0.08 ms in all, 0.07 ms with 168 patches in a
+  view over the ruins to the horizon. Other patches than the
+  last build the ring's structure again, as which triangles are active changes (+0.34 ms in a frame forced to every
+  frame), decided before the ring's own build: a frame that both refitted and built it removed the device. Measured
+  against the game's depth: within 0.06 mm on a slope; at the ruins and the first debug case's spot some triangles lie
+  3.0 mm under the game's, the game never below; not explained by the textures bound, the samplers, the page-table
+  constants, the draws' transforms, a second index buffer, pixel-shader depth or fused arithmetic. In that view over the
+  ruins, on the same pixels: past 2 km 53% of the rings' ground stood over 0.3% of its distance off the game's, the
+  patches' 0.5%; 512 m to 2 km about half stays off with or without them (median 0.17% to 0.06%), the game's depth there
+  nearer than both; not looked into.
 - **Inside and beyond the shadow map.** Each ray works out how far its pixel lies past the game's
   shadow map range, as `SunLight_DL_CS_ES` fades its shadow to lit there (`cPSLight` `c8.x`, `c8.y`
   and `c6.x`, noted from the shadow-mapped sun shaders): 0 inside, 1 past the fade. Cut-out geometry

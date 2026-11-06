@@ -273,7 +273,17 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
         CountDiagnostic(GI_COUNTER_NEAR_HITS, hit.hit && hit.distance < 0.25f);
         float3 light;
         float3 afterUpdate = 0.0f; // The first ray's cell's light as it stands, to weigh its direction
-        if (!hit.hit)
+        // Sunk under the terrain, a ray heading down meets the game's ground just below, which the scene lacks: it passed under
+        // the one-sided terrain into the sky, and lit a prone arm's underside above the open ground (a debug case, 2026-11-05).
+        // Its distance is how deep the surface is sunk, the ground's distance as near as it is known. Only a miss heading down
+        // reads the terrain: read for every pixel, it cost 0.05 ms at 4K.
+        float sunkDepth = !hit.hit && direction.y < 0.0f ? SunkUnderTerrain(surface) : 0.0f;
+        if (sunkDepth > 0.0f)
+        {
+            light = 0.0f;
+            totalDistance += sunkDepth;
+        }
+        else if (!hit.hit)
         {
             light = SkyRadiance(direction);
             totalDistance += MISS_DISTANCE;

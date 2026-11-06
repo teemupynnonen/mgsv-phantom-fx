@@ -275,6 +275,15 @@ void TraceReflections(uint2 did : SV_DispatchThreadID)
     float hitDistance;
     bool isRough = normalRoughness.w >= RoughSurface;
     float3 light = ReflectedLight(origin, surface.normal, tolerance, direction, PixelCone(world, g_Frame.rayCone.x + alpha), isRough, random, hitDistance);
+    // Sunk under the terrain, a ray heading down meets the game's ground just below, which the scene lacks, not the sky
+    // (TraceLight). Read only when the first ray met nothing: read for every ray heading down, it cost 0.05 ms at 4K on a sloped roof.
+    float sunkDepth = hitDistance == SkyHitDistance && direction.y < 0.0f ? SunkUnderTerrain(surface) : 0.0f;
+    if (sunkDepth > 0.0f)
+    {
+        light = 0.0f;
+        hitDistance = sunkDepth;
+    }
+
     float3 exposed = RemoveNaNs(light) * g_Frame.nearFar.w;
     bool isGameBlended = hitDistance < SkyHitDistance && specularAlbedo.a > 0.0f;
     float fresnel = GameFresnel(normalRoughness.w, saturate(dot(normal, toEye)));
