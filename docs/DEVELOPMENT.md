@@ -228,7 +228,7 @@ what draws it, when that is the feature's own.
 | File | Purpose |
 | --- | --- |
 | `src/render_scale.cpp`, `src/render_scale.hpp` | Hook on the renderer's per-frame step: the engine renders at the requested size |
-| `src/ui_redirect.cpp`, `src/ui_redirect.hpp` | The draw call every module sees; the grading, the 2D pass and `GammaControl` on output-size targets while the engine renders below them |
+| `src/ui_redirect.cpp`, `src/ui_redirect.hpp`, `src/ui_redirect_shaders.hpp` | The draw call every module sees; the grading, the 2D pass and `GammaControl` on output-size targets while the engine renders below them, with the scene's depth for the 2D pass's depth-tested draws |
 | `src/game_constants.hpp` | The game's constant buffers by name (see "Constant buffers"): the system, scene, sun and lamp light, material, object, bones and probe constants, each with its slot, and a light pass's view space in the world |
 | `src/constant_capture.cpp`, `src/constant_capture.hpp` | The constant capture: what each of the game's threads last wrote to the constant buffers the contact shadows and the ray tracing read, copied at the game's unmap after the upscaler's jitter, read by type and only at the size written |
 | `src/camera.cpp`, `src/camera.hpp` | The main camera in the scene constants: main-view recognition, jitter, reprojection, camera cuts |
@@ -403,6 +403,11 @@ reads state; the frame renders unchanged. Its files go into that folder:
   call lists shaders, targets, depth, viewport, blend, depth state, shader resources, UAVs and
   constant buffers. `frame-<n>-writers.txt` lists the call stacks of constant buffer maps by size.
   Once both are written, a "Frame captured" toast with the file name shows at the right of the screen.
+- `trigger.txt` (a shader hash, or any text of a record line) makes F10 wait for a rare call: it
+  records frame after frame, each over the last, until a line has that text, then keeps that frame
+  and the one before it as `frame-<n>-before.txt`. F10 again stops waiting and keeps the frame.
+  It costs a record a frame while it waits, and the folders the lights and the scene dumped into go as
+  it turns over, all but the frame before's.
 - `dump.txt` (`<checksum> <count>` per line) makes the first calls with those shaders add their
   constant buffer contents (as the game wrote them on that thread) and save their textures as DDS
   in `frame-<n>/` once their command list has run, so a list's textures are as it left them, not as
@@ -1611,8 +1616,41 @@ rate"), the photo mode hooks (see "Photo mode"), the game loop hooks (see "Frame
     `m_viewportSize.xy` copied over from a buffer holding the output size (a partial copy into a
     constant buffer, which Direct3D 11.1 drivers allow). A clear of the scene target from such a
     context goes to the output target.
+  - Only draws whose viewport covers the scene target are made there. As a save loads, the game
+    builds the Mother Base emblem with `Draw2D` shaders in corners of the scene target (1024x1024,
+    512x512 and 256x256 from 0,0, then 128x128 down to 8x8 in a row from 256,0) and reads it back
+    into the BC3 texture the sortie prep shows. Made on the output target, the game read back an
+    empty corner and the emblem was black at every mode until the next load (2026-11-04).
   - Every clear of a render-size depth-stencil also clears the output-size one, so the 2D pass's
     stencil masks work.
+  - A `Draw2D` draw that tests depth, blending over, is made in two passes of its own
+    (`compositeBehind`): into a float scratch layer, premultiplied; then over the
+    target, through `shaders::CompositeBehind`. The sortie prep's emblem is the only such draw in
+    the F10 records (frame 20182, #874: `Draw2D_Ui2_BL`, `greater_equal`, no depth write) and the
+    one UI image the game hides behind the 3D view: without the scene's depth it passed everywhere
+    and stood in front of Snake and the horse. The second pass reads the game's render-size
+    depth-stencil, without the upscaler's jitter (the scene is drawn jittered) and without the
+    one-pixel holes hair leaves in it (a dither pattern the image's upscaler fills and the depth
+    keeps). Read nearest against the draw's depth, the emblem's edge changed with the jitter every
+    frame, and nearest again over 2x2 closed the holes but grew every outline by a render pixel, a
+    band of backdrop between a character and the emblem. So the pixel's coverage is measured
+    instead: the depth is compared with the draw's at four places across the pixel, bilinearly, and
+    the emblem is blended in by `1 - coverage`. Where the pixel is partly the character, the grey
+    the upscaler mixed into it is replaced too: the backdrop is taken from nearby places nothing
+    covers, and the emblem takes its place (`out = pixel + (1 - cover) * (emblem - alpha * backdrop)`).
+    A depth-tested draw the composite cannot take, one that blends other than over (the training
+    area's circles, additive, in Mother Base's records) or one with stencil, is drawn on the output
+    target with the filled depth as before.
+    Depth a redirected 2D draw writes stays on the output-size depth, so a later fill drops it;
+    none writes depth in the records.
+  - Without upscaling (DLAA), the game draws the emblem itself, against its own render-size depth
+    and so against the jitter: the same two-pass draw is made in place on the scene target. Only for
+    draws that test depth, leave stencil alone and blend over; the rest stay the game's own.
+  - The composite's surfaces are made when first needed (the layer in `R16G16B16A16_FLOAT`, the
+    backdrop in the target's format) and again when the target's size or format changes. The stretch
+    that fills a depth-stencil with the scene's depth, `fillDepth` and `shaders::StretchDepth`, stays
+    for a draw the composite cannot take: it writes `SV_Depth` through a full-screen triangle, with
+    the stencil left alone.
   - `GammaControl` reads the output target's `_SRGB` view in place of the scene target.
   - When `GammaControl`'s viewport has its scene's size and the back buffer is larger (the exclusive
     fullscreen box), every `GammaControl` draw gets the viewport and scissor over the whole back
