@@ -869,9 +869,8 @@ void finishRecording()
 {
     std::lock_guard lock(recordMutex);
     saveQueued();
-    writeRecord("#" + std::to_string(++calls) + " present " + describe(backBuffer, DXGI_FORMAT_UNKNOWN));
     record.close();
-    log("Recorded " + std::to_string(calls) + " calls" + (trigger.empty() ? "." : ", the first frame to run " + trigger + "."));
+    log("Recorded " + std::to_string(calls) + " calls" + (trigger.empty() || !triggered ? "." : ", the first frame to run " + trigger + "."));
     if (!trigger.empty())
     {
         // Only a frame this capture recorded, so an interrupted capture's file never stands in.
@@ -923,6 +922,9 @@ void onPresent(command_queue* queue, swapchain* chain, const rect*, const rect*,
         bool dumping{}, waiting{};
         {
             std::lock_guard lock(recordMutex);
+            // The frame's last line, written before the wait decides: a frame a wait turns over keeps
+            // it too, and a trigger on this line finds the frame it was written for.
+            writeRecord("#" + std::to_string(++calls) + " present " + describe(backBuffer, DXGI_FORMAT_UNKNOWN));
             dumping = !dumpsLeft.empty();
             waiting = !trigger.empty() && !triggered;
         }

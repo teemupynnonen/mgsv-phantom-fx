@@ -92,7 +92,7 @@ float Covered(float2 place, float z)
     float c[2][2];
     [unroll] for (int j = 0; j < 2; ++j)
         [unroll] for (int i = 0; i < 2; ++i)
-            c[j][i] = Nearer * Depth.Load(int3(clamp(base + int2(i, j), 0, last), 0)) > Nearer * z ? 1 : 0;
+            c[j][i] = Nearer * Depth.Load(int3(clamp(base + int2(i, j), 0, last), 0)) >= Nearer * z ? 1 : 0;
 
     return lerp(lerp(c[0][0], c[0][1], weight.x), lerp(c[1][0], c[1][1], weight.x), weight.y);
 }

@@ -646,8 +646,12 @@ bool blendsOver(ID3D11DeviceContext* context)
 bool compositeBehind(ID3D11DeviceContext* context, const DrawCall& call, ID3D11DepthStencilView* gameDepth, std::array<float, 2> jitter,
     std::array<float, 2> toRender)
 {
+    // Only the test the shader makes: nearer, or as near, passes. Another one (always, never, equal,
+    // strictly nearer) would show what the draw does not, so the game's own state draws it instead.
+    // And it writes no depth: the composite turns depth off, and a write would be lost.
     const auto state = depthState(context);
-    if (!state.DepthEnable || state.StencilEnable || !blendsOver(context)) return false;
+    if (!state.DepthEnable || state.StencilEnable || state.DepthWriteMask != D3D11_DEPTH_WRITE_MASK_ZERO || !blendsOver(context)) return false;
+    if (state.DepthFunc != D3D11_COMPARISON_GREATER_EQUAL && state.DepthFunc != D3D11_COMPARISON_LESS_EQUAL) return false;
 
     ComPtr<ID3D11RenderTargetView> targetView;
     context->OMGetRenderTargets(1, targetView.GetAddressOf(), nullptr);
