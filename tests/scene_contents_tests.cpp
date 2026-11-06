@@ -714,6 +714,13 @@ void terrainPatchesRemade()
     auto other = scene.run(frame);
     expect(other.terrain[1].arePatchesWritten && isBuilt(1) && !other.terrain[0].isRemade, "Other patches in the next ring build its structure again, not the innermost's.");
 
+    auto replaced = patchMesh(6);
+    replaced.version = 2;
+    frame.patchMesh = &replaced;
+    auto remeshed = scene.run(frame);
+    expect(remeshed.terrain[0].arePatchesWritten && remeshed.terrain[1].arePatchesWritten && isBuilt(0) && isBuilt(1),
+        "A new mesh under the same draws makes each ring's patches again from it.");
+
     frame.patchDraws = {};
     auto none = scene.run(frame);
     expect(isBuilt(0) && isBuilt(1) && none.terrain[0].patches.empty() && none.terrain[1].patches.empty(), "Without patches the rings cover it all again.");

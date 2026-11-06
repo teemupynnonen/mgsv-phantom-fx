@@ -1098,6 +1098,8 @@ void detach() noexcept
         fenceHandle = nullptr;
         fenceValue = lightSignalled = lightWaited = 0;
         sceneCamera.reset();
+        lastReadSource.reset();
+        patchMesh = {};
         previousCamera.reset();
         sky.reset();
         sun.reset();

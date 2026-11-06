@@ -708,8 +708,10 @@ void SceneContents::updateCharacters(const GameScene& frame, Update& update)
 // frame's constants.
 void SceneContents::planTerrain(const std::array<float, 3>& eye, const TerrainPatches& drawn, std::uint32_t frameIndex, Update& update)
 {
+    const auto lastMeshVersion = patchMesh.version;
     uploadPatchMesh(drawn.mesh);
     const bool hasMesh = drawn.mesh && patchMesh.version == drawn.mesh->version;
+    const bool hasNewMesh = hasMesh && patchMesh.version != lastMeshVersion;
     update.patchMeshIndexOffset = patchMesh.offset;
     update.patchMeshVertexOffset = patchMesh.offset + std::uint64_t{patchMesh.indices} * 4;
     bool hasInnerMoved{};
@@ -726,12 +728,12 @@ void SceneContents::planTerrain(const std::array<float, 3>& eye, const TerrainPa
         placed.poolOffset = ring.poolOffset;
         placed.patchPoolOffset = ring.patchPoolOffset;
 
-        // The game's own patches in the ring's stretch as it lies this frame. Others than the last make its structure
-        // again, as which of its triangles are active changes, which a refit cannot do. Decided before the ring's build, so
-        // a frame never refits and builds the same structure: forced to build every frame, the two met in one frame and the
-        // device was removed (2026-11-06).
+        // The game's own patches in the ring's stretch as it lies this frame. Others than the last, or a new mesh under
+        // them, make its structure again, as its triangles and which of them are active change, which a refit cannot do.
+        // Decided before the ring's build, so a frame never refits and builds the same structure: forced to build every
+        // frame, the two met in one frame and the device was removed (2026-11-06).
         auto taken = hasMesh ? takePatches(drawn, patchMesh, eye, placed, r > 0 ? &update.terrain[r - 1] : nullptr) : std::vector<GITerrainPatch>{};
-        const bool hasOtherPatches = !isSamePatches(taken, ring.patches);
+        const bool hasOtherPatches = !isSamePatches(taken, ring.patches) || (hasNewMesh && !taken.empty());
         if (hasOtherPatches) ring.patches = std::move(taken);
 
         const bool hasMoved = !ring.isPlaced || corner != ring.corner || hasInnerMoved || !memory.ready(ring.blas);
