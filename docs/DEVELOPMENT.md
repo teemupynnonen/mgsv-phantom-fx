@@ -400,7 +400,8 @@ reads state; the frame renders unchanged. Its files go into that folder:
 - `trigger.txt` (a shader hash, or any text of a record line) makes F10 wait for a rare call: it
   records frame after frame, each over the last, until a line has that text, then keeps that frame
   and the one before it as `frame-<n>-before.txt`. F10 again stops waiting and keeps the frame.
-  It costs a record a frame while it waits.
+  It costs a record a frame while it waits, and the folders the lights and the scene dumped into go as
+  it turns over, all but the frame before's.
 - `dump.txt` (`<checksum> <count>` per line) makes the first calls with those shaders add their
   constant buffer contents (as the game wrote them on that thread) and save their textures as DDS
   in `frame-<n>/` once their command list has run, so a list's textures are as it left them, not as
@@ -1617,7 +1618,7 @@ rate"), the photo mode hooks (see "Photo mode"), the game loop hooks (see "Frame
   - Every clear of a render-size depth-stencil also clears the output-size one, so the 2D pass's
     stencil masks work.
   - A `Draw2D` draw that tests depth, blending over, is made in two passes of its own
-    (`compositeBehind`): into a scratch layer in the scene's format, premultiplied; then over the
+    (`compositeBehind`): into a float scratch layer, premultiplied; then over the
     target, through `shaders::CompositeBehind`. The sortie prep's emblem is the only such draw in
     the F10 records (frame 20182, #874: `Draw2D_Ui2_BL`, `greater_equal`, no depth write) and the
     one UI image the game hides behind the 3D view: without the scene's depth it passed everywhere
@@ -1631,17 +1632,19 @@ rate"), the photo mode hooks (see "Photo mode"), the game loop hooks (see "Frame
     the emblem is blended in by `1 - coverage`. Where the pixel is partly the character, the grey
     the upscaler mixed into it is replaced too: the backdrop is taken from nearby places nothing
     covers, and the emblem takes its place (`out = pixel + (1 - cover) * (emblem - alpha * backdrop)`).
-    A draw the game leaves unjittered, or one with stencil, keeps the game's path.
+    A depth-tested draw the composite cannot take, one that blends other than over (the training
+    area's circles, additive, in Mother Base's records) or one with stencil, is drawn on the output
+    target with the filled depth as before.
     Depth a redirected 2D draw writes stays on the output-size depth, so a later fill drops it;
     none writes depth in the records.
   - Without upscaling (DLAA), the game draws the emblem itself, against its own render-size depth
     and so against the jitter: the same two-pass draw is made in place on the scene target. Only for
     draws that test depth, leave stencil alone and blend over; the rest stay the game's own.
-  - The composite's surfaces are made when first needed (a layer in the scene's format, the
-    backdrop in the target's) and again when the target's size or format changes. The stretch that
-    fills a depth-stencil with the scene's depth, `fillDepth` and `shaders::StretchDepth`, stays for
-    a draw the composite cannot take: it writes `SV_Depth` through a full-screen triangle, with the
-    stencil left alone.
+  - The composite's surfaces are made when first needed (the layer in `R16G16B16A16_FLOAT`, the
+    backdrop in the target's format) and again when the target's size or format changes. The stretch
+    that fills a depth-stencil with the scene's depth, `fillDepth` and `shaders::StretchDepth`, stays
+    for a draw the composite cannot take: it writes `SV_Depth` through a full-screen triangle, with
+    the stencil left alone.
   - `GammaControl` reads the output target's `_SRGB` view in place of the scene target.
   - When `GammaControl`'s viewport has its scene's size and the back buffer is larger (the exclusive
     fullscreen box), every `GammaControl` draw gets the viewport and scissor over the whole back

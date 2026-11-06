@@ -129,6 +129,8 @@ std::string trigger;
 bool triggered{};
 // Whether this capture's frame before the trigger is in frame-previous.txt, from restartRecording.
 bool hasPrevious{};
+// The frame whose record is in frame-previous.txt, whose dump folder lasts while it may still be needed.
+std::string previousName;
 
 // The caller's stack as "module+offset" frames, outermost last.
 std::string callStack()
@@ -830,6 +832,16 @@ std::filesystem::path previousRecord()
     return outputDirectory / "frame-previous.txt";
 }
 
+// A frame's dump folder, thrown away with the frame it belonged to: the lights and the scene dump into
+// it without asking dump.txt, so a wait of many frames would otherwise leave one folder a frame.
+void removeDumpDirectory(const std::string& name)
+{
+    if (name.empty()) return;
+
+    std::error_code error;
+    std::filesystem::remove_all(outputDirectory / name, error);
+}
+
 // While waiting for the trigger: the frame just recorded becomes the previous one, and the next starts.
 void restartRecording()
 {
@@ -838,6 +850,9 @@ void restartRecording()
     record.close();
     const auto recorded = outputDirectory / (recordName + ".txt");
     std::error_code error;
+    // The frame before, which frame-previous.txt holds, is replaced by this one: its folder goes with it.
+    removeDumpDirectory(previousName);
+    previousName = recordName;
     // The frame before the trigger is the one right before it, so the copy kept is replaced each time.
     std::filesystem::remove(previousRecord(), error);
     std::filesystem::rename(recorded, previousRecord(), error);
@@ -874,6 +889,7 @@ void finishRecording()
 
         trigger.clear();
         hasPrevious = false;
+        previousName.clear();
     }
 
     record.open(outputDirectory / (recordName + "-writers.txt"), std::ios::trunc);
@@ -911,8 +927,10 @@ void onPresent(command_queue* queue, swapchain* chain, const rect*, const rect*,
             waiting = !trigger.empty() && !triggered;
         }
 
-        // F10 again stops waiting and keeps the frame.
-        if (waiting && !requested.exchange(false))
+        // F10 again stops waiting and keeps the frame; pressed as the trigger matches, it stops the
+        // capture rather than starting another one.
+        const bool stop = requested.exchange(false);
+        if (waiting && !stop)
         {
             restartRecording();
             return;
@@ -940,6 +958,7 @@ void onPresent(command_queue* queue, swapchain* chain, const rect*, const rect*,
         trigger = readTrigger();
         triggered = false;
         hasPrevious = false;
+        previousName.clear();
         // A capture that was cut short leaves its frame before the trigger behind; it is not this one's.
         std::error_code error;
         std::filesystem::remove(previousRecord(), error);

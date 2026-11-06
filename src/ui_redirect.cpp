@@ -100,8 +100,8 @@ struct DepthFill
     ComPtr<ID3D11Buffer> compositeConstants;
 };
 
-// compositeBehind's surfaces at the target's size and format: the emblem drawn alone, and the target
-// before it.
+// compositeBehind's surfaces at the target's size: the draw alone in a float layer, and the target
+// before it, in the target's format.
 struct CompositeSurfaces
 {
     unsigned width{}, height{};
