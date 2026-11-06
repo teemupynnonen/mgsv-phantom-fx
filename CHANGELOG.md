@@ -8,6 +8,8 @@
   patches on the ground by a boot or a knee resting on a slope.
 - The ray-traced ground is now the game's own terrain as it draws it, near and far, so shadows, bounce light and
   reflections meet the ground where it really is.
+- Ray-traced bounce light and reflections no longer leak in from outside: no orange glow or pale lines along pipes,
+  frames and furniture standing close to a room's wall.
 
 ## 2.0.0
 
