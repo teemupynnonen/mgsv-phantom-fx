@@ -707,7 +707,7 @@ float3 SunReaching(float3 world, float3 normal, float3 origin, float tolerance, 
     if (chance < 1.0f && random.rand() >= chance) return 0.0f;
 
     direction = SunSample(random.rand2());
-    float3 sunOrigin = sunFar ? OffsetFromTriangle(world, sunSide) : origin;
+    float3 sunOrigin = sunFar ? LiftOffTriangle(world, sunSide) : origin;
     float visibility = VisibilityFromSurface(sunOrigin, sunSide, tolerance, direction, 1e4f, ShadowRayTowards(RayTowardsSun));
     if (visibility <= 0.0f) return 0.0f;
 
@@ -724,7 +724,7 @@ float3 SunLight(float3 world, float3 normal, float3 origin, float tolerance, boo
 // The light a hit sends towards `toEye` from the sun, a point or spot light and a self-lit mesh: their diffuse light
 // by its albedo, and with path tracing the sun's and the light's specular light by GGX, as the sun pass and the lamps
 // shade what the camera sees; a self-lit mesh's specular light is the specular ray that meets it. `origin` and
-// `tolerance` as OffsetFromTriangle and CopyTolerance give them for its triangle.
+// `tolerance` as LiftOffTriangle and CopyTolerance give them for its triangle.
 float3 HitOwnLight(HitMaterial material, float3 toEye, float3 origin, float tolerance, inout Random random)
 {
     float3 toSun, toLight;
@@ -751,7 +751,7 @@ float3 BounceSide(float3 normal, bool leaf, inout Random random, out float weigh
 // game's diffuse light units times albedo; a leaf adds what it lets through from its far side.
 float3 HitDirectLight(float3 world, float3 normal, float3 albedo, bool leaf, inout Random random)
 {
-    float3 origin = OffsetFromTriangle(world, normal);
+    float3 origin = LiftOffTriangle(world, normal);
     float tolerance = CopyTolerance(world);
     float3 light = SunLight(world, normal, origin, tolerance, leaf, random);
 
@@ -759,7 +759,7 @@ float3 HitDirectLight(float3 world, float3 normal, float3 albedo, bool leaf, ino
     float skyWeight;
     float3 skySide = BounceSide(normal, leaf, random, skyWeight);
     float3 skyDirection = mapToCosineHemisphere(random.rand2(), skySide);
-    float3 skyOrigin = all(skySide == normal) ? origin : OffsetFromTriangle(world, skySide);
+    float3 skyOrigin = all(skySide == normal) ? origin : LiftOffTriangle(world, skySide);
     light += SkyRadiance(skyDirection) * (skyWeight * VisibilityFromSurface(skyOrigin, skySide, tolerance, skyDirection, 1e4f, RayTowardsSurface));
 
     light += SampledLocalLight(world, normal, origin, tolerance, random);

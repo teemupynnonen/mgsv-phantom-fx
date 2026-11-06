@@ -3012,8 +3012,8 @@ denoiser (see "Ray Reconstruction").
   maps reach. The point comes from the triangle's corners and the ray is traced in the instance's own
   space, each a few steps of the largest coordinate off in any direction, as a character's transform
   turns the error of one large coordinate into the others. Wachter and Binder's offset
-  (`OffsetFromTriangle`, Ray Tracing Gems chapter 6: 256 steps of each coordinate on its own, which
-  rays leaving a hit keep) failed both ways, found by the shadow probe on 2026-10-24. In the
+  (Ray Tracing Gems chapter 6: 256 steps of each coordinate on its own, which rays leaving a hit kept
+  until 2026-11-06) failed both ways, found by the shadow probe on 2026-10-24. In the
   field it lifted the start about 3 cm: Snake's chest was shadowed in strips along the folds of his
   suit, the start inside the next fold, 5 to 6 mm under its surface, the ray blocked at 0.00 m leaving
   it. In the helicopter, whose floor lies near the map's origin across but 1,200 m up, it lifted next
@@ -3041,6 +3041,18 @@ denoiser (see "Ray Reconstruction").
   ruins' and Snake's boots on a deck read the same. The stretch passes stand-ins since then too: a pixel
   behind one left from the depth's point, though only 48 of 134 recorded debug cases had any there, the
   worst 0.47% of its frame.
+- **Rays leaving a hit.** They leave by `LiftOffTriangle` too, and skip copies of the hit's surface
+  within its copy tolerance, a copy being a parallel surface whose back they meet (on a model, DXR's
+  front face), or cut-out geometry from either side. Until 2026-11-06 they left by Wachter and Binder's
+  offset and took any parallel surface for a copy. In a dark room (a debug case) a pipe 1 to 2 cm off
+  the wall glowed orange along its length, as did a poster's frame, a bed's head and a cabinet's edge:
+  half the bounce rays from the pipe's back went past 9 m and lit the sunlit walls outside. Either
+  fault alone kept the leak: the 3 cm lift started them inside the wall, past the wall's sun-only
+  stand-in, and from a 3 mm lift the wall facing them counted as a copy of the pipe. With path tracing
+  (720p render) the band beside the pipe was 5.8 times the wall's light, 5.4 with the lift alone, 5.7
+  with the copy rule alone and 1.1 with both, its light from the rays 83 times the wall's before and
+  half of it after. At 4K the frame cost 0.25 ms less (19.52 to 19.27 ms, two runs each in turn): the
+  bounce rays no longer reach cache cells far outside.
 - **Cut-out meshes.** A model mesh the game alpha-tests (FMDL alpha bits 5 and 7, see "Scene objects",
   mesh flags) is cut-out geometry: non-opaque in its structure, so only it reaches the rays' candidate
   code. In the captured-mesh era the shadow rays' alpha test on the captured grass and bushes' cards (5
