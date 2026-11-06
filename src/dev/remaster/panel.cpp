@@ -52,6 +52,14 @@ enum class View : std::uint8_t
     All
 };
 
+// What the Rules tab lists: the rules against the file.
+enum class RuleView : std::uint8_t
+{
+    All,
+    Unsaved,
+    Saved
+};
+
 // A row of the Lights list: a lamp or a material, for the arrow keys to walk.
 struct Pick
 {
@@ -64,6 +72,8 @@ bool wasVHeld{}; // Last frame: the panel's hold on the game without rules (hold
 Tab tab{};
 std::size_t chosenMark{};
 View view{};
+RuleView ruleView{};
+bool isConfirmingDiscard{}; // The head asks before every unsaved change goes
 bool showsMore{};
 bool shouldScrollToChosen{};
 float tuneHeight{};
@@ -173,18 +183,28 @@ bool actionWord(const char* word)
     return isPressed;
 }
 
-bool primaryButton(const char* label, bool isEnabled)
+bool filledButton(const char* label, bool isEnabled, ImU32 fill, ImU32 hover, ImU32 press)
 {
     ImGui::BeginDisabled(!isEnabled);
-    ImGui::PushStyleColor(ImGuiCol_Button, colour::Text);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32_WHITE);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, colour::TextDim);
+    ImGui::PushStyleColor(ImGuiCol_Button, fill);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, press);
     ImGui::PushStyleColor(ImGuiCol_Text, colour::Ground);
     const bool isPressed = ImGui::Button(label);
     ImGui::PopStyleColor(4);
     ImGui::EndDisabled();
 
     return isPressed;
+}
+
+bool primaryButton(const char* label, bool isEnabled)
+{
+    return filledButton(label, isEnabled, colour::Text, IM_COL32_WHITE, colour::TextDim);
+}
+
+bool dangerButton(const char* label)
+{
+    return filledButton(label, true, colour::Bad, IM_COL32(0xf5, 0x9c, 0x8e, 0xff), IM_COL32(0xc8, 0x66, 0x58, 0xff));
 }
 
 // A thin track, a grab, and a tick at the original: as fxui's sliders look. The wheel nudges it.
@@ -544,66 +564,121 @@ void pickKeys(const std::vector<Pick>& picks)
     edit(*material, SelfColorIntensityParameter, value);
 }
 
-void materialRow(const MaterialRow& row, bool isChosen, std::string_view note)
+// What a row of a list shows: a swatch and strength at the left, then the name, a note and a word that does
+// something at the right.
+struct RowLook
+{
+    std::optional<ImU32> swatch;
+    std::string strength;
+    ImU32 ink{colour::Text};
+    std::string name;
+    ImU32 nameInk{colour::Text};
+    std::string note;
+    ImU32 noteInk{colour::TextFaint};
+    const char* action{};
+};
+
+struct RowHits
+{
+    bool isPressed{}, isHovered{}, isActionPressed{};
+};
+
+RowHits listRow(const RowLook& look, bool isChosen, bool canPick)
 {
     const ImVec2 at = ImGui::GetCursorScreenPos();
     const float width = ImGui::GetContentRegionAvail().x, height = px(26), left = at.x + px(Margin), line = at.y + (height - ImGui::GetTextLineHeight()) / 2;
+    const float right = at.x + width - px(Margin), actionAt = look.action ? right - widthOf(look.action) : right;
+    const float noteAt = (look.action ? actionAt - px(Margin) : right) - widthOf(look.note);
 
-    ImGui::PushID(static_cast<int>(row.poolRow.value_or(0)) ^ static_cast<int>(row.name));
-    ImGui::BeginDisabled(!row.poolRow);
-    const bool isPressed = ImGui::InvisibleButton("##row", {width, height});
-    const bool isHovered = ImGui::IsItemHovered();
+    // The row stops short of its action word, so a click on the word is the word's alone.
+    RowHits hits;
+    ImGui::BeginDisabled(!canPick);
+    hits.isPressed = ImGui::InvisibleButton("##row", {look.action ? actionAt - px(Margin / 2) - at.x : width, height});
+    hits.isHovered = ImGui::IsItemHovered();
     ImGui::EndDisabled();
-    ImGui::PopID();
 
     auto* draw = ImGui::GetWindowDrawList();
-    if (isChosen || isHovered) draw->AddRectFilled(at, {at.x + width, at.y + height}, isChosen ? colour::Frame : colour::Raise);
+    if (isChosen || hits.isHovered) draw->AddRectFilled(at, {at.x + width, at.y + height}, isChosen ? colour::Frame : colour::Raise);
 
-    const ImU32 ink = row.poolRow ? colour::Text : colour::TextFaint;
-    const bool isLit = row.kind == MaterialKind::SelfLit;
-    if (isLit)
+    if (look.swatch)
     {
-        draw->AddRectFilled({left, line + px(1)}, {left + px(12), line + px(13)}, row.poolRow ? swatchOf(row.color) : colour::LineStrong);
-        text({left + px(16), line}, ink, strengthText(row.brightness));
+        draw->AddRectFilled({left, line + px(1)}, {left + px(12), line + px(13)}, *look.swatch);
+        text({left + px(16), line}, look.ink, look.strength);
     }
 
-    const float nameAt = isLit ? left + px(78) : left, noteAt = at.x + width - px(Margin) - widthOf(note);
-    clippedText({nameAt, line}, noteAt - px(8), row.label.empty() ? (row.poolRow ? colour::TextDim : colour::TextFaint) : ink,
-        row.label.empty() ? hashText(row.name) : row.label);
-    text({noteAt, line}, row.isTuned ? colour::Warn : colour::TextFaint, note);
-    hairline(at.y + height - 1);
+    clippedText({look.swatch ? left + px(78) : left, line}, noteAt - px(8), look.nameInk, look.name);
+    text({noteAt, line}, look.noteInk, look.note);
 
-    if (isHovered && row.poolRow) flash(*row.poolRow);
-    if (isPressed && row.poolRow) select(*row.poolRow, row.name);
+    if (look.action)
+    {
+        ImGui::SetCursorScreenPos({actionAt, line});
+        ImGui::BeginDisabled(isComparing());
+        hits.isActionPressed = actionWord(look.action);
+        ImGui::EndDisabled();
+    }
+
+    hairline(at.y + height - 1);
+    ImGui::SetCursorScreenPos({at.x, at.y + height});
+    ImGui::Dummy({1, 0});
+
+    return hits;
 }
 
-void lampRow(const LampRow& row, bool isChosen)
+RowLook lookOf(const MaterialRow& row)
 {
-    const ImVec2 at = ImGui::GetCursorScreenPos();
-    const float width = ImGui::GetContentRegionAvail().x, height = px(26), left = at.x + px(Margin), line = at.y + (height - ImGui::GetTextLineHeight()) / 2;
+    const ImU32 ink = row.poolRow ? colour::Text : colour::TextFaint;
+    RowLook look{.ink = ink,
+        .name = row.label.empty() ? hashText(row.name) : row.label,
+        .nameInk = row.label.empty() ? (row.poolRow ? colour::TextDim : colour::TextFaint) : ink,
+        .noteInk = row.isTuned ? colour::Warn : colour::TextFaint};
 
-    ImGui::PushID(static_cast<int>(std::lround(row.at[0] * 100) ^ std::lround(row.at[1] * 1000) ^ std::lround(row.at[2] * 10000)));
-    const bool isPressed = ImGui::InvisibleButton("##lamp", {width, height});
-    const bool isHovered = ImGui::IsItemHovered();
-    ImGui::PopID();
+    if (row.kind == MaterialKind::SelfLit)
+    {
+        look.swatch = row.poolRow ? swatchOf(row.color) : colour::LineStrong;
+        look.strength = strengthText(row.brightness);
+    }
 
-    auto* draw = ImGui::GetWindowDrawList();
-    if (isChosen || isHovered) draw->AddRectFilled(at, {at.x + width, at.y + height}, isChosen ? colour::Frame : colour::Raise);
+    return look;
+}
 
-    // Its colour as a swatch, scaled to its brightest channel, and that channel's value: the game's light at a metre.
+// Its colour as a swatch, scaled to its brightest channel, and that channel's value: the game's light at a metre.
+RowLook lookOf(const LampRow& row)
+{
     const float strongest = std::max(std::ranges::max(row.color), 1e-6f);
     const ImU32 ink = row.isDrawn ? colour::Text : colour::TextFaint;
-    draw->AddRectFilled({left, line + px(1)}, {left + px(12), line + px(13)}, swatchOf({row.color[0] / strongest, row.color[1] / strongest, row.color[2] / strongest}));
-    text({left + px(16), line}, ink, strengthText(strongest));
 
-    const auto note = row.isTuned ? std::format("{:.2g} x", row.brightness) : row.isDrawn ? std::string() : std::string("not drawn now");
-    const float noteAt = at.x + width - px(Margin) - widthOf(note);
-    clippedText({left + px(78), line}, noteAt - px(8), row.label.empty() ? colour::TextDim : ink, row.label.empty() ? lampPlace(row.at) : row.label);
-    text({noteAt, line}, row.isTuned ? colour::Warn : colour::TextFaint, note);
-    hairline(at.y + height - 1);
+    return {.swatch = swatchOf({row.color[0] / strongest, row.color[1] / strongest, row.color[2] / strongest}),
+        .strength = strengthText(strongest),
+        .ink = ink,
+        .name = row.label.empty() ? lampPlace(row.at) : row.label,
+        .nameInk = row.label.empty() ? colour::TextDim : ink,
+        .note = row.isTuned ? std::format("{:.2g} x", row.brightness) : row.isDrawn ? std::string() : std::string("not drawn now"),
+        .noteInk = row.isTuned ? colour::Warn : colour::TextFaint};
+}
 
-    if (isHovered) flashLamp(row.at);
-    if (isPressed) selectLamp(row);
+// A material's row: hovering flashes it in the game, a click picks it.
+RowHits materialRow(const MaterialRow& row, const RowLook& look, bool isChosen)
+{
+    ImGui::PushID(static_cast<int>(row.poolRow.value_or(0)) ^ static_cast<int>(row.name));
+    const auto hits = listRow(look, isChosen, row.poolRow.has_value());
+    ImGui::PopID();
+
+    if (hits.isHovered && row.poolRow) flash(*row.poolRow);
+    if (hits.isPressed && row.poolRow) select(*row.poolRow, row.name);
+
+    return hits;
+}
+
+RowHits lampRow(const LampRow& row, const RowLook& look, bool isChosen, bool canPick = true)
+{
+    ImGui::PushID(static_cast<int>(std::lround(row.at[0] * 100) ^ std::lround(row.at[1] * 1000) ^ std::lround(row.at[2] * 10000)));
+    const auto hits = listRow(look, isChosen, canPick);
+    ImGui::PopID();
+
+    if (hits.isHovered) flashLamp(row.at);
+    if (hits.isPressed) selectLamp(row);
+
+    return hits;
 }
 
 // A mark's two lines, and its buttons at the right.
@@ -666,12 +741,32 @@ void drawEmpty(std::string_view first, std::string_view second)
     text({at.x + px(Margin), at.y + ImGui::GetTextLineHeight() + px(4)}, colour::TextDim, second);
 }
 
-void viewWord(const char* word, View shown)
+// The line over a list: what it shows at the left, the words that switch it at the right. True when one did.
+template<class V> bool viewLine(std::string_view caption, V& current, std::initializer_list<std::pair<const char*, V>> words)
 {
-    if (!switchWord(word, view == shown) || view == shown) return;
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float height = px(26), line = at.y + (height - ImGui::GetTextLineHeight()) / 2;
+    text({at.x + px(Margin), line}, colour::TextFaint, caption);
 
-    view = shown;
-    clearSelection();
+    bool isSwitched{};
+    float x = at.x + ImGui::GetContentRegionAvail().x - px(Margin);
+    for (auto word = std::rbegin(words); word != std::rend(words); ++word)
+    {
+        x -= widthOf(word->first);
+        ImGui::SetCursorScreenPos({x, line});
+        if (switchWord(word->first, current == word->second) && current != word->second)
+        {
+            current = word->second;
+            isSwitched = true;
+        }
+
+        x -= px(14);
+    }
+
+    ImGui::SetCursorScreenPos({at.x, at.y + height});
+    hairline(at.y + height - 1);
+
+    return isSwitched;
 }
 
 // A faint line naming the rows below it.
@@ -684,8 +779,9 @@ void sectionLine(const char* name)
 
 void materialNote(const MaterialRow& row, bool isChosen)
 {
-    const auto note = row.isTuned ? std::string("tuned") : row.poolRow ? std::format("used {}", row.uses) : std::string("not loaded here");
-    materialRow(row, isChosen, note);
+    auto look = lookOf(row);
+    look.note = row.isTuned ? std::string("tuned") : row.poolRow ? std::format("used {}", row.uses) : std::string("not loaded here");
+    materialRow(row, look, isChosen);
 }
 
 void drawLights(const Mark& mark)
@@ -709,7 +805,7 @@ void drawLights(const Mark& mark)
     for (const auto& lamp : lamps)
     {
         const bool isChosenRow = isChosen({.lamp = lamp});
-        lampRow(lamp, isChosenRow);
+        lampRow(lamp, lookOf(lamp), isChosenRow);
         scrollToChosen(isChosenRow);
     }
 
@@ -724,20 +820,7 @@ void drawLights(const Mark& mark)
 
 void drawMaterials(const Mark& mark)
 {
-    const ImVec2 at = ImGui::GetCursorScreenPos();
-    const float height = px(26), line = at.y + (height - ImGui::GetTextLineHeight()) / 2, right = at.x + ImGui::GetContentRegionAvail().x - px(Margin);
-    text({at.x + px(Margin), line}, colour::TextFaint, std::format("Seen at mark {}", chosenMark + 1));
-
-    const float gap = px(14), all = right - widthOf("All"), glass = all - gap - widthOf("Glass"), lights = glass - gap - widthOf("Lights");
-    ImGui::SetCursorScreenPos({lights, line});
-    viewWord("Lights", View::Lights);
-    ImGui::SetCursorScreenPos({glass, line});
-    viewWord("Glass", View::Glass);
-    ImGui::SetCursorScreenPos({all, line});
-    viewWord("All", View::All);
-
-    ImGui::SetCursorScreenPos({at.x, at.y + height});
-    hairline(at.y + height - 1);
+    if (viewLine(std::format("Seen at mark {}", chosenMark + 1), view, {{"Lights", View::Lights}, {"Glass", View::Glass}, {"All", View::All}})) clearSelection();
 
     if (ImGui::BeginChild("##list", {0, ImGui::GetContentRegionAvail().y - tuneHeight - hintsHeight()}))
     {
@@ -786,53 +869,115 @@ bool drawMarks()
     return true;
 }
 
+bool isShown(RuleState state)
+{
+    return ruleView == RuleView::All || (state == RuleState::Saved) == (ruleView == RuleView::Saved);
+}
+
+// An unsaved rule says how it differs from the file, in the colour of unsaved work.
+std::string_view stateText(RuleState state)
+{
+    switch (state)
+    {
+    case RuleState::New: return "new";
+    case RuleState::Changed: return "changed";
+    case RuleState::Removed: return "removed";
+    case RuleState::Saved: break;
+    }
+
+    return "";
+}
+
+void drawRuleCaption(std::size_t saved, std::size_t unsaved)
+{
+    const auto caption = ruleView == RuleView::Unsaved ? std::format("{} unsaved", unsaved)
+        : ruleView == RuleView::Saved                  ? std::format("{} saved", saved)
+                                                       : std::format("{} rules", saved + unsaved);
+
+    viewLine(caption, ruleView, {{"Unsaved", RuleView::Unsaved}, {"Saved", RuleView::Saved}, {"All", RuleView::All}});
+}
+
+void drawRulesEmpty(bool hasAny)
+{
+    if (!hasAny) drawEmpty("No rules yet.", "Tune a light and it shows here.");
+    else if (ruleView == RuleView::Unsaved) drawEmpty("Nothing unsaved.", "The file has every rule as it is now.");
+    else drawEmpty("Nothing saved yet.", "Save puts the rules in the file.");
+}
+
+// A lamp has nothing to load: its rule shows wherever it is, to tune where it is drawn.
+void drawLampRules(const std::vector<LampRuleRow>& rows)
+{
+    const auto chosen = selectedLamp();
+    for (std::size_t i = 0; i < rows.size(); ++i)
+    {
+        const auto& [rule, saved, state] = rows[i];
+        if (!isShown(state)) continue;
+
+        const LampRow lamp{.location = rule.location, .at = rule.at, .brightness = rule.brightness, .label = rule.label, .isTuned = true, .isDrawn = true};
+        const bool isRemoved = state == RuleState::Removed, isSaved = state == RuleState::Saved;
+        const RowLook look{.name = rule.label.empty() ? lampPlace(rule.at) : rule.label,
+            .nameInk = isRemoved ? colour::TextFaint : colour::Text,
+            .note = isSaved ? std::format("{:.2g} x", rule.brightness) : std::string(stateText(state)),
+            .noteInk = isSaved ? colour::TextFaint : colour::Warn,
+            .action = isSaved ? "Remove" : "Revert"};
+
+        ImGui::PushID(static_cast<int>(i));
+        const auto hits = lampRow(lamp, look, chosen && chosen->location == rule.location && chosen->at == rule.at, !isRemoved);
+        ImGui::PopID();
+
+        if (!hits.isActionPressed) continue;
+        if (isSaved) removeLampRule(rule);
+        else revertLampRule(rows[i]);
+    }
+}
+
+void drawMaterialRules(const std::vector<RuleRow>& rows)
+{
+    const auto selected = selectedMaterial();
+    for (const auto& row : rows)
+    {
+        if (!isShown(row.state)) continue;
+
+        const auto intensity = std::ranges::find(row.rule.changes, SelfColorIntensityParameter, &Change::parameter);
+        const auto& change = intensity != row.rule.changes.end() ? *intensity : row.rule.changes.front();
+        const bool isSaved = row.state == RuleState::Saved;
+
+        auto look = lookOf(row.material);
+        look.note = !isSaved ? std::string(stateText(row.state)) : row.material.poolRow ? std::format("from {:.4g}", change.from[0]) : std::string();
+        look.noteInk = isSaved ? colour::TextFaint : colour::Warn;
+        look.action = isSaved ? "Remove" : "Revert";
+
+        const auto hits = materialRow(row.material, look, selected && row.material.poolRow == selected->index);
+        if (!hits.isActionPressed) continue;
+        if (isSaved) removeRule(row.rule);
+        else revertRule(row);
+    }
+}
+
 bool drawRules()
 {
     const auto rows = ruleRows();
-    const auto lamps = lampRules();
-    if (rows.empty() && lamps.empty())
+    const auto lamps = lampRuleRows();
+    const auto savedOf = [](const auto& list) { return static_cast<std::size_t>(std::ranges::count(list, RuleState::Saved, [](const auto& row) { return row.state; })); };
+    const auto shownOf = [](const auto& list) { return std::ranges::any_of(list, [](const auto& row) { return isShown(row.state); }); };
+    const std::size_t saved = savedOf(rows) + savedOf(lamps), unsaved = rows.size() + lamps.size() - saved;
+
+    drawRuleCaption(saved, unsaved);
+
+    const bool hasLamps = shownOf(lamps), hasMaterials = shownOf(rows);
+    if (!hasLamps && !hasMaterials)
     {
-        drawEmpty("No rules yet.", "Tune a material and it shows here.");
+        drawRulesEmpty(saved + unsaved != 0);
         return false;
     }
 
-    const auto selected = selectedMaterial();
     if (ImGui::BeginChild("##rules", {0, ImGui::GetContentRegionAvail().y - tuneHeight - hintsHeight()}))
     {
-        for (const auto& row : rows)
-        {
-            const auto intensity = std::ranges::find(row.rule.changes, SelfColorIntensityParameter, &Change::parameter);
-            const auto& change = intensity != row.rule.changes.end() ? *intensity : row.rule.changes.front();
-            const bool isLoaded = row.material.poolRow.has_value();
-            const ImVec2 at = ImGui::GetCursorScreenPos();
-            materialRow(row.material, selected && row.material.poolRow == selected->index, isLoaded ? std::format("from {:.4g}", change.from[0]) : "");
-            if (isLoaded) continue;
+        if (hasLamps) sectionLine("Lamps");
+        drawLampRules(lamps);
 
-            // Elsewhere there is nothing to tune, but a rule can still go.
-            const float width = widthOf("Remove") + px(16), next = ImGui::GetCursorPosY();
-            ImGui::SetCursorScreenPos({at.x + ImGui::GetContentRegionAvail().x - px(Margin) - width, at.y + (px(26) - ImGui::GetFrameHeight()) / 2});
-            ImGui::PushID(&row);
-            if (ImGui::Button("Remove")) removeRule(row.rule);
-
-            ImGui::PopID();
-            ImGui::SetCursorPosY(next);
-        }
-
-        // A lamp has nothing to load: its rule shows wherever it is, to tune where it is drawn.
-        for (std::size_t i = 0; i < lamps.size(); ++i)
-        {
-            const auto& rule = lamps[i];
-            const ImVec2 at = ImGui::GetCursorScreenPos();
-            ImGui::PushID(static_cast<int>(i) + 0x10000);
-            lampRow({.location = rule.location, .at = rule.at, .color = {1, 1, 1}, .brightness = rule.brightness, .label = rule.label, .isTuned = true, .isDrawn = true},
-                false);
-            const float width = widthOf("Remove") + px(16), next = ImGui::GetCursorPosY();
-            ImGui::SetCursorScreenPos({at.x + ImGui::GetContentRegionAvail().x - px(Margin) - width - px(48), at.y + (px(26) - ImGui::GetFrameHeight()) / 2});
-            if (ImGui::Button("Remove")) removeLampRule(rule);
-
-            ImGui::PopID();
-            ImGui::SetCursorPosY(next);
-        }
+        if (hasMaterials) sectionLine("Materials");
+        drawMaterialRules(rows);
     }
 
     ImGui::EndChild();
@@ -852,23 +997,58 @@ void drawHead()
     if (switchWord("Rules", tab == Tab::Rules)) tab = Tab::Rules;
 
     const auto unsaved = unsavedRules();
-    const float save = widthOf("Save") + px(16);
-    if (areRulesHeldOff())
-    {
-        constexpr std::string_view Without = "Without any rule";
-        text({right - save - px(10) - widthOf(Without), line}, colour::Warn, Without);
-    }
-    else if (unsaved)
-    {
-        // A default name says only where and what: name them before they go in the file.
-        const auto unnamed = defaultNamedRules();
-        const auto state = didSaveFail() ? std::string("Save failed")
-                                         : std::format("{} unsaved{}", unsaved, unnamed ? std::format(", {} not named", unnamed) : std::string());
-        text({right - save - px(10) - widthOf(state), line}, didSaveFail() ? colour::Bad : colour::Warn, state);
-    }
+    if (!unsaved || isComparing()) isConfirmingDiscard = false;
 
-    ImGui::SetCursorScreenPos({right - save, at.y + (height - ImGui::GetFrameHeight()) / 2});
-    if (primaryButton("Save", unsaved != 0)) saveRules();
+    const float buttonY = at.y + (height - ImGui::GetFrameHeight()) / 2, gap = px(10);
+    float x = right;
+    if (isConfirmingDiscard)
+    {
+        // The question stands alone in the head: the answer is one of its two words.
+        x -= widthOf("Discard") + px(16);
+        ImGui::SetCursorScreenPos({x, buttonY});
+        if (dangerButton("Discard"))
+        {
+            discardUnsaved();
+            isConfirmingDiscard = false;
+        }
+
+        x -= gap + widthOf("Keep");
+        ImGui::SetCursorScreenPos({x, line});
+        if (actionWord("Keep")) isConfirmingDiscard = false;
+
+        const auto question = std::format("Discard {} unsaved?", unsaved);
+        text({x - gap - widthOf(question), line}, colour::Warn, question);
+    }
+    else
+    {
+        x -= widthOf("Save") + px(16);
+        ImGui::SetCursorScreenPos({x, buttonY});
+        if (primaryButton("Save", unsaved != 0)) saveRules();
+
+        if (unsaved)
+        {
+            x -= gap + widthOf("Discard");
+            ImGui::SetCursorScreenPos({x, line});
+            ImGui::BeginDisabled(isComparing());
+            if (actionWord("Discard")) isConfirmingDiscard = true;
+
+            ImGui::EndDisabled();
+        }
+
+        if (areRulesHeldOff())
+        {
+            constexpr std::string_view Without = "Without any rule";
+            text({x - gap - widthOf(Without), line}, colour::Warn, Without);
+        }
+        else if (unsaved)
+        {
+            // A default name says only where and what: name them before they go in the file.
+            const auto unnamed = defaultNamedRules();
+            const auto state = didSaveFail() ? std::string("Save failed")
+                                             : std::format("{} unsaved{}", unsaved, unnamed ? std::format(", {} not named", unnamed) : std::string());
+            text({x - gap - widthOf(state), line}, didSaveFail() ? colour::Bad : colour::Warn, state);
+        }
+    }
 
     hairline(at.y + height - 1);
     ImGui::SetCursorScreenPos({at.x, at.y + height});
@@ -953,6 +1133,7 @@ void setOpen(bool open)
     if (open) return;
 
     isBlocking = false;
+    isConfirmingDiscard = false;
     settleTool();
 
     // Its own hold goes with it; one automation started stays until `without 0`.

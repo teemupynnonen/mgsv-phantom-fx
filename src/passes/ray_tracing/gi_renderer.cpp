@@ -819,6 +819,13 @@ std::pair<std::string, std::string> describeProbe(const State& s, std::span<cons
     else
         text += "with every instance: nothing in the scene blocks it\n";
 
+    if (probe.glass.w > 0.5f)
+        text += std::format("the sun's ray crosses a pane: instance {}, geometry {}, its mask {}, cover {:.2f}, lets through {:.2f} (at the mask's "
+            "sharpest level, head-on)\n",
+            probe.glassHit.x - 1, probe.glassHit.y, probe.glassHit.w, probe.glass.x, probe.glass.y);
+    else
+        text += "the sun's ray crosses no pane\n";
+
     const auto& g = probe.lightRays;
     text += std::format("its global illumination rays ({}): {} hit within 1 m, {} within 10 m, {} get away, {} hit a back face; the nearest hit: {}\n",
         GI_PROBE_LIGHT_RAYS, g.x, g.y, g.z, g.w, s.contents->describeHit(instancedModels, probe.lightNearest));

@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -92,8 +93,58 @@ Value valueOf(const PackedMaterial& material, std::uint64_t parameter);
 // from `held`, a change back where it started goes, and only the components `value` has move.
 void retune(Rule& rule, std::uint64_t parameter, const Value& held, const Value& value);
 
-// How many rules differ between two sets: one for each added, removed or changed.
-std::size_t unsavedCount(std::span<const Rule> saved, std::span<const Rule> rules);
+// How a rule stands against the rules file.
+enum class RuleState : std::uint8_t
+{
+    Saved,
+    New,
+    Changed,
+    Removed // In the file, but no longer in force
+};
+
+// A rule in force and the file's rule it stands for: either is missing for a new or a removed rule.
+template<class R> struct Paired
+{
+    const R* now{};
+    const R* saved{};
+};
+
+// Each rule in force with the file's rule it stands for, then the file's rules none stands for.
+template<class R, class IsSame> std::vector<Paired<R>> paired(const std::vector<R>& now, const std::vector<R>& saved, IsSame isSame)
+{
+    std::vector<Paired<R>> pairs;
+    for (const auto& rule : now) pairs.push_back({&rule});
+
+    // Equal rules first, so a changed rule does not take the file's rule of an unchanged one beside it.
+    std::vector<bool> isTaken(saved.size());
+    const auto pairUp = [&](auto isMatch) {
+        for (auto& pair : pairs)
+            for (std::size_t i = 0; i < saved.size() && !pair.saved; ++i)
+                if (!isTaken[i] && isMatch(*pair.now, saved[i]))
+                {
+                    pair.saved = &saved[i];
+                    isTaken[i] = true;
+                }
+    };
+    pairUp(std::equal_to{});
+    pairUp(isSame);
+
+    for (std::size_t i = 0; i < saved.size(); ++i)
+        if (!isTaken[i]) pairs.push_back({nullptr, &saved[i]});
+
+    return pairs;
+}
+
+template<class R> RuleState stateOf(const Paired<R>& pair)
+{
+    if (!pair.saved) return RuleState::New;
+    if (!pair.now) return RuleState::Removed;
+
+    return *pair.now == *pair.saved ? RuleState::Saved : RuleState::Changed;
+}
+
+// Rules of one name tell apart its materials by where they start, so a rule tuned on keeps its `from`s.
+bool isSameMaterialRule(const Rule& a, const Rule& b);
 
 // A technique keeps only the low half of a name: the whole hash where the name is known.
 std::uint64_t parameterOfLowHalf(std::uint32_t lowHalf);

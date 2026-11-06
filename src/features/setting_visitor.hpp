@@ -12,15 +12,17 @@
 // menu each walk those descriptions as a SettingVisitor.
 namespace phantom_fx
 {
-// The menu's sections, in the rail's order. Only the dev build has Developer (dev_tools.hpp).
-enum class Section : std::uint8_t { Budget, Upscaling, Shadows, Lighting, Atmosphere, Camera, Display, World, Diagnostics, Developer };
+// The menu's sections, in its order: the first four share the Graphics tab. Only the dev build has
+// Developer (dev_tools.hpp).
+enum class Section : std::uint8_t { Lighting, Image, World, Camera, Sandbox, Budget, Diagnostics, Developer };
 
 struct FeatureInfo
 {
-    const char* menuId; // Its item's and its budget line's
-    std::string_view iniKey; // Its switch's
+    // Its item's and its budget line's. A feature with the id of the one before it shares that one's
+    // switch and item: one setting for two effects, such as the sun's and the lamps' soft shadows.
+    const char* menuId;
+    std::string_view iniKey; // Its switch's; none where it shares the switch of the feature before it
     Section section;
-    const char* heading{}; // Above its item, for the items that follow
     const char* name;
     const char* tech{};
     const char* tag{};
@@ -41,7 +43,8 @@ struct ToggleInfo
     const char* tip{};
     bool visible{true};
     bool enabled{true};
-    bool needsRayTracing{}; // Does something only while a ray-traced effect is on; the menu hides it otherwise
+    // Shared by the ray-traced effects: the menu shows it with the rays' settings, not in its feature's item.
+    bool isRaySetting{};
 };
 
 struct SliderInfo
@@ -81,7 +84,8 @@ struct ChoiceInfo
     const char* tip{};
     bool visible{true};
     bool enabled{true};
-    bool needsRayTracing{}; // As a toggle's
+    bool isRaySetting{}; // As a toggle's
+    bool isItemValue{};  // The value on its item's line, for a feature without a switch
 };
 
 class SettingVisitor

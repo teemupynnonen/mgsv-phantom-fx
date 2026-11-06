@@ -86,10 +86,14 @@ public:
     }
 
 private:
-    // Empty for a key the file leaves out, which leaves its setting as it is.
+    // Empty for a key the file leaves out, and for a setting without a key (a feature that shares another's
+    // switch), which leaves its setting as it is.
     std::string_view textOf(std::string_view key) const
     {
+        if (key.empty()) return {};
+
         const auto found = values.find(key);
+
         return found == values.end() ? std::string_view{} : std::string_view(found->second);
     }
 
@@ -115,7 +119,11 @@ public:
     }
 
 private:
-    template<class T> void write(std::string_view key, const T& value) { output << key << '=' << value << '\n'; }
+    // A feature that shares the switch of the one before it has no key of its own.
+    template<class T> void write(std::string_view key, const T& value)
+    {
+        if (!key.empty()) output << key << '=' << value << '\n';
+    }
 
     std::ostream& output;
 };
@@ -200,40 +208,61 @@ bool& switchOf(Settings& settings, Effect effect)
     return *described.switches[effect];
 }
 
-void applyPreset(Settings& settings, EffectPreset preset)
+std::span<const Effect> effectsAddedBy(LightingStep step)
 {
-    const bool screenSpace = preset == EffectPreset::ScreenSpace;
-    settings.softShadows.on = screenSpace;
-    settings.sunContactShadows.on = screenSpace;
-    settings.lampContactShadows.on = screenSpace;
-    settings.ambientOcclusion.on = screenSpace;
-    settings.indirectLight.on = screenSpace;
-
-    settings.rayTracedShadows.on = !screenSpace;
-    settings.rayTracedLights.on = !screenSpace;
-    settings.globalIllumination.on = !screenSpace;
-
-    settings.frameRate.unlocked = true;
-    settings.volumetricFog.on = true;
-    settings.volumetricFog.look = AtmosphereLook::Physical;
+    static constexpr Effect ScreenSpace[]{Effect::SoftShadows, Effect::SunContactShadows, Effect::AmbientOcclusion, Effect::IndirectLight};
+    static constexpr Effect RayTraced[]{Effect::RayTracedShadows, Effect::RayTracedLights, Effect::GlobalIllumination};
+    static constexpr Effect Ultra[]{Effect::PathTracing};
+    switch (step)
+    {
+    case LightingStep::ScreenSpace: return ScreenSpace;
+    case LightingStep::RayTraced: return RayTraced;
+    case LightingStep::Ultra: return Ultra;
+    default: return {};
+    }
 }
 
-std::optional<EffectPreset> presetOf(const Settings& settings)
+void applyLightingStep(Settings& settings, LightingStep step)
 {
-    for (const auto preset : {EffectPreset::ScreenSpace, EffectPreset::RayTraced})
+    // Ultra asks for Ray Reconstruction, and leaving Ultra gives it back.
+    if (step == LightingStep::Ultra) settings.upscaling.rayReconstruction = true;
+    else if (settings.pathTracing.on) settings.upscaling.rayReconstruction = Upscaling{}.rayReconstruction;
+
+    EffectSwitches described;
+    describe(settings, described);
+    for (int index = 1; index < static_cast<int>(LightingStep::Count); ++index)
+        for (const auto effect : effectsAddedBy(static_cast<LightingStep>(index))) *described.switches[effect] = index <= static_cast<int>(step);
+}
+
+LightingStep lightingStepOf(const Settings& settings)
+{
+    // A copy, as describe() takes settings it may change.
+    auto copy = settings;
+    EffectSwitches described;
+    describe(copy, described);
+    for (int index = static_cast<int>(LightingStep::Count) - 1; index > 0; --index)
     {
-        auto switched = settings;
-        applyPreset(switched, preset);
-        if (switched == settings) return preset;
+        const auto step = static_cast<LightingStep>(index);
+        if (std::ranges::any_of(effectsAddedBy(step), [&](Effect effect) { return *described.switches[effect]; })) return step;
     }
 
-    return std::nullopt;
+    return LightingStep::Game;
+}
+
+bool isLightingAsStep(const Settings& settings)
+{
+    auto switched = settings;
+    applyLightingStep(switched, lightingStepOf(settings));
+    return switched == settings;
 }
 
 Settings firstLaunchSettings()
 {
     Settings settings{.upscaling = {.mode = upscaler::Mode::Quality}};
-    applyPreset(settings, EffectPreset::ScreenSpace);
+    applyLightingStep(settings, LightingStep::ScreenSpace);
+    settings.frameRate.unlocked = true;
+    settings.volumetricFog.on = true;
+    settings.volumetricFog.look = AtmosphereLook::Physical;
 
     return settings;
 }

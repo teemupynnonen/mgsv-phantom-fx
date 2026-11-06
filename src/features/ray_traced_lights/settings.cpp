@@ -6,7 +6,7 @@ namespace
 {
 constexpr RayTracedLights Defaults{};
 constexpr SettingChoice Qualities[]{{1, "Low 1"}, {2, "Medium 2"}, {4, "High 4"}, {8, "Ultra 8"}};
-// Path tracing lights the flashlights too.
+// Ray traced: Ultra (path tracing) lights the flashlights too.
 constexpr Effect FlashlightsShownIn[]{Effect::RayTracedLights, Effect::PathTracing};
 }
 
@@ -15,15 +15,16 @@ void describe(RayTracedLights& lights, SettingVisitor& visit)
     visit.feature(lights.on,
         {.menuId = "rayTracedLights",
             .iniKey = "ray_traced_lights",
-            .section = Section::Shadows,
-            .name = "Ray-traced lights",
+            .section = Section::Lighting,
+            .name = "Lamp shadows",
+            .tech = "RT",
             .tag = "Experimental",
             .tip = "Every lamp, spot light and flashlight casts shadows from rays traced through the game's own scene, in place of the game's "
                    "shadow maps or none at all: most of the game's lights, the flashlights among them, light through walls and characters. "
-                   "Lights without specular get the game's own. With global illumination on, their light bounces too. Needs a GPU that traces "
+                   "Lights without specular get the game's own. With bounce light on, their light bounces too. Needs a GPU that traces "
                    "rays (DXR 1.1).",
-            .summary = "Every lamp, spot light and flashlight casts traced shadows, where most of the game's lights shine through walls.",
-            .keywords = "RT DXR ray quality flashlight brightness",
+            .summary = "Lamps and flashlights cast real shadows and stop at walls.",
+            .keywords = "RT DXR ray-traced lights lamps ray quality flashlight brightness",
             .effect = Effect::RayTracedLights,
             .replacedBy = Effect::PathTracing,
             .needsSupportedBuild = true});

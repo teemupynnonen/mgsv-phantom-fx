@@ -353,6 +353,20 @@ std::optional<travel::Map> mapOf(std::uint16_t location)
 
     return std::nullopt;
 }
+
+bool isSameLampRule(const LampRule& a, const LampRule& b)
+{
+    return a.location == b.location && isLampAt(a.at, b.at);
+}
+
+// The row's rule taken out of `rules` and the file's put back.
+template<class R> void putBack(std::vector<R>& rules, const R& rule, const std::optional<R>& saved, RuleState state)
+{
+    if (state != RuleState::Removed)
+        if (const auto found = std::ranges::find(rules, rule); found != rules.end()) rules.erase(found);
+
+    if (saved) rules.push_back(*saved);
+}
 }
 
 std::optional<std::string> savedRulesText()
@@ -589,8 +603,10 @@ std::vector<RuleRow> ruleRows()
 {
     std::vector<RuleRow> rows;
     const auto rules = rulesInForce();
-    for (const auto& rule : *rules)
+    for (const auto& pair : paired(*rules, savedRules, isSameMaterialRule))
     {
+        const auto& rule = pair.now ? *pair.now : *pair.saved;
+
         // What the rule says, until a loaded material says more.
         MaterialRow row{.name = rule.material, .label = rule.label};
         const auto intensity = std::ranges::find(rule.changes, SelfColorIntensityParameter, &Change::parameter);
@@ -600,13 +616,15 @@ std::vector<RuleRow> ruleRows()
             row.brightness = intensity->to[0];
         }
 
-        rows.push_back({rule, std::move(row)});
+        rows.push_back({rule, pair.saved ? std::optional(*pair.saved) : std::nullopt, std::move(row), stateOf(pair)});
     }
 
+    // A removed rule is on no material: it shows as the file has it.
     game_materials::forEachMaterial([&](const Material& material) {
         for (auto& row : rows)
         {
-            if (row.material.poolRow || row.rule.material != material.name || !isAwaited(material.packed, row.rule, Direction::Back)) continue;
+            if (row.state == RuleState::Removed || row.material.poolRow || row.rule.material != material.name || !isAwaited(material.packed, row.rule, Direction::Back))
+                continue;
 
             row.material.poolRow = material.index;
             row.material.kind = kindOf(material);
@@ -641,9 +659,14 @@ std::vector<LampRow> lampRowsOf(const Mark& mark)
     return rows;
 }
 
-std::vector<LampRule> lampRules()
+std::vector<LampRuleRow> lampRuleRows()
 {
-    return *lampsInForce();
+    std::vector<LampRuleRow> rows;
+    const auto lamps = lampsInForce();
+    for (const auto& pair : paired(*lamps, savedLamps, isSameLampRule))
+        rows.push_back({pair.now ? *pair.now : *pair.saved, pair.saved ? std::optional(*pair.saved) : std::nullopt, stateOf(pair)});
+
+    return rows;
 }
 
 void select(std::uint32_t poolRow, std::uint64_t name)
@@ -936,12 +959,12 @@ void holdWithoutRules(Holder holder, bool isHeld)
 
 std::size_t unsavedRules()
 {
+    const auto isUnsaved = [](const auto& pair) { return stateOf(pair) != RuleState::Saved; };
+    const auto rules = rulesInForce();
     const auto lamps = lampsInForce();
-    const auto missing = [](const std::vector<LampRule>& set, const std::vector<LampRule>& other) {
-        return static_cast<std::size_t>(std::ranges::count_if(set, [&](const LampRule& rule) { return std::ranges::find(other, rule) == other.end(); }));
-    };
 
-    return unsavedCount(savedRules, *rulesInForce()) + std::max(missing(*lamps, savedLamps), missing(savedLamps, *lamps));
+    return static_cast<std::size_t>(std::ranges::count_if(paired(*rules, savedRules, isSameMaterialRule), isUnsaved)
+        + std::ranges::count_if(paired(*lamps, savedLamps, isSameLampRule), isUnsaved));
 }
 
 void saveRules()
@@ -965,6 +988,34 @@ bool didSaveFail()
     return hasSaveFailed;
 }
 
+void revertRule(const RuleRow& row)
+{
+    auto to = snapshot();
+    putBack(to.rules, row.rule, row.saved, row.state);
+    sortRules(to.rules);
+
+    noteChange();
+    restore(std::move(to));
+}
+
+void revertLampRule(const LampRuleRow& row)
+{
+    auto to = snapshot();
+    putBack(to.lamps, row.rule, row.saved, row.state);
+
+    noteChange();
+    restore(std::move(to));
+}
+
+void discardUnsaved()
+{
+    if (!unsavedRules()) return;
+
+    noteChange();
+    restore({savedRules, savedLamps});
+    fxui::toast(Tone::Ok, "Unsaved changes discarded", "Ctrl+Z brings them back");
+}
+
 std::string runLine(std::string_view line)
 {
     std::istringstream words{std::string(line)};
@@ -975,7 +1026,7 @@ std::string runLine(std::string_view line)
     refreshLoaded();
 
     // The panel waits while the game shows without rules, and so do these: a rule is matched by the values the game holds.
-    constexpr std::string_view Edits[]{"set", "original", "lamp", "reset", "compare", "undo", "redo"};
+    constexpr std::string_view Edits[]{"set", "original", "lamp", "reset", "compare", "undo", "redo", "discard"};
     if (areRulesHeldOff() && std::ranges::find(Edits, command) != std::end(Edits)) return "error: the game is held without rules: without 0 first\n";
 
     if (command == "mark")
@@ -1000,11 +1051,22 @@ std::string runLine(std::string_view line)
 
     if (command == "rules")
     {
+        constexpr std::string_view States[]{"saved", "new", "changed", "removed"};
         std::string text;
-        for (const auto& rule : *rulesInForce()) text += std::format("material {} \"{}\"\n", hashText(rule.material), rule.label);
-        for (const auto& lamp : *lampsInForce()) text += std::format("lamp {} \"{}\"\n", lamp.brightness, lamp.label);
+        for (const auto& row : ruleRows())
+            text += std::format("material {} \"{}\" {}\n", hashText(row.rule.material), row.rule.label, States[static_cast<std::size_t>(row.state)]);
+        for (const auto& row : lampRuleRows())
+            text += std::format("lamp {} \"{}\" {}\n", row.rule.brightness, row.rule.label, States[static_cast<std::size_t>(row.state)]);
 
-        return std::format("{}{} under default names\n", text, defaultNamedRules());
+        return std::format("{}{} unsaved, {} under default names\n", text, unsavedRules(), defaultNamedRules());
+    }
+
+    if (command == "discard")
+    {
+        const auto unsaved = unsavedRules();
+        discardUnsaved();
+
+        return std::format("{} unsaved discarded\n", unsaved);
     }
 
     if (command == "loaded")

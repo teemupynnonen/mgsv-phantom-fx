@@ -49,6 +49,7 @@ void TraceSunShadows(uint2 gtid : SV_GroupThreadID, uint2 gid : SV_GroupID, uint
 
     uint2 did = gid * uint2(8, 4) + gtid;
     bool lit = true;
+    float light = 1.0f;
     if (all(did < g_Frame.dimensions.xy))
     {
         float depth = g_Depth.Load(int3(did, 0));
@@ -60,7 +61,7 @@ void TraceSunShadows(uint2 gtid : SV_GroupThreadID, uint2 gid : SV_GroupID, uint
             float3 toSun = SunSample(random.rand2());
             float3 origin, facing;
             float tolerance;
-            ShadowRayStart(PixelSurfaceAt(position, normal), toSun, origin, facing, tolerance);
+            ShadowRayStart(PixelSurfaceAt(did, position, normal), toSun, origin, facing, tolerance);
             float blocking = BeyondShadowMap(position, depth) * g_Frame.shadowParams.y;
             // Rays to the sun run parallel: each keeps its pixel's footprint. The sun's size comes from
             // spreading the rays over its disc; a cone widened by it as well took cut-out alpha from
@@ -68,12 +69,14 @@ void TraceSunShadows(uint2 gtid : SV_GroupThreadID, uint2 gid : SV_GroupID, uint
             float blocker, transmittance;
             bool blocked = SurfaceRayBlocked(origin, facing, tolerance, toSun, g_Frame.shadowParams.z, PixelCone(position, 0.0f), true, blocking, ShadowRayTowards(RayTowardsSun),
                 random, blocker, transmittance);
-            // The denoiser takes a pixel as lit or not: past hair, lit with the chance its light gets through.
+            // The denoiser takes a pixel as lit or not: past hair and glass, lit with the chance its light gets through.
+            light = blocked ? 0.0f : transmittance;
             lit = !blocked && random.rand() < transmittance;
         }
 
-        // DLSS Ray Reconstruction denoises the image: the sun pass reads the ray as it is.
-        if (g_Frame.reconstruction.x != 0u) g_Shadow_Output[did] = lit ? 1.0f : 0.0f;
+        // DLSS Ray Reconstruction denoises the image: the sun pass reads the ray as it is, with what hair and glass let
+        // through as it is too. Drawn as a coin toss, a pane's dirt boiled under it, half its pixels flipping each frame.
+        if (g_Frame.reconstruction.x != 0u) g_Shadow_Output[did] = light;
     }
 
     if (lit) InterlockedOr(g_TileMask, FFX_DNSR_Shadows_GetBitMaskFromPixelPosition(did));
@@ -285,11 +288,11 @@ struct DebugRay
     SceneHit anyHit;  // The whole ray, past copies near the surface; cut-outs without their texture let it through
 };
 
-DebugRay TraceDebugRay(float3 position, float3 normal, float depth)
+DebugRay TraceDebugRay(uint2 pixel, float3 position, float3 normal, float depth)
 {
     DebugRay r;
     r.direction = g_Frame.sunDirection.xyz;
-    r.surface = PixelSurfaceAt(position, normal);
+    r.surface = PixelSurfaceAt(pixel, position, normal);
     ShadowRayStart(r.surface, r.direction, r.origin, r.normal, r.tolerance);
     r.beyond = BeyondShadowMap(position, depth);
     float rayLength = g_Frame.shadowParams.z;
@@ -309,9 +312,9 @@ DebugRay TraceDebugRay(float3 position, float3 normal, float depth)
 // the G-buffer's normal. Grey: from the depth's point, the scene having no surface near it. Blue: the
 // scene's surface there faces over 60 degrees away from the game's normal. Otherwise red where it lies
 // nearer the eye than the depth's point, cyan where farther, clear up to 5 mm apart and full from 3 cm.
-float4 ShadowStartColor(float3 position, float3 normal)
+float4 ShadowStartColor(uint2 pixel, float3 position, float3 normal)
 {
-    PixelSurface surface = PixelSurfaceAt(position, normal);
+    PixelSurface surface = PixelSurfaceAt(pixel, position, normal);
     if (!surface.isExact) return float4(0.5f, 0.5f, 0.5f, 0.6f);
     if (dot(surface.normal, normal) < 0.5f) return float4(0.2f, 0.3f, 1.0f, 0.75f);
 
@@ -338,11 +341,11 @@ void DebugShadows(uint2 did : SV_DispatchThreadID)
         float3 normal = DecodeNormal(g_Normal.Load(int3(did, 0)));
         if (g_Frame.shadowDiagnostics.y)
         {
-            g_ShadowDebug[did] = ShadowStartColor(position, normal);
+            g_ShadowDebug[did] = ShadowStartColor(did, position, normal);
             return;
         }
 
-        DebugRay r = TraceDebugRay(position, normal, depth);
+        DebugRay r = TraceDebugRay(did, position, normal, depth);
         SceneHit real = r.farHit;
         if (r.nearHit.hit) real = r.nearHit;
         if (real.hit)
@@ -386,7 +389,7 @@ void ProbeShadows(uint index : SV_GroupIndex)
         {
             float3 position = DepthPosition(centre, depth);
             float3 normal = DecodeNormal(g_Normal.Load(int3(centre, 0)));
-            DebugRay r = TraceDebugRay(position, normal, depth);
+            DebugRay r = TraceDebugRay(centre, position, normal, depth);
             probe.receiver.xyz = position;
             probe.normal = float4(normal, distance(position, g_Frame.eye.xyz));
             probe.ray = float4(r.direction, r.beyond);
@@ -417,6 +420,19 @@ void ProbeShadows(uint index : SV_GroupIndex)
             if (liftLength > 0.0f)
                 probe.crossed = ProbeHit(TraceClosest(r.origin, -lift / liftLength, 0.0f, 0.95f * liftLength, GI_MASK_SCENE, true, false,
                     PixelCone(position, 0.0f)));
+
+            // What the sun's ray meets first, if it is a pane: what the pane covers and lets through (PaneTransmittance), at
+            // its mask's sharpest level, so the probe says what the mask holds there, and head-on.
+            SceneHit pane = TraceClosest(r.origin, r.direction, 0.0f, g_Frame.shadowParams.z, GI_MASK_SCENE, true, false, PixelCone(position, 0.0f), true);
+            uint paneRow = pane.hit ? FirstGeometry(g_Instances[pane.instance]) + pane.geometry : 0;
+            if (pane.hit && (g_Geometries[paneRow].flags & GI_GEOMETRY_GLASS))
+            {
+                GIGeometry paneGeometry = g_Geometries[paneRow];
+                uint3 indices = TriangleIndices(paneGeometry, pane.primitive);
+                probe.glass = float4(PaneCover(paneGeometry, indices, pane.barycentrics, 0.0f),
+                    PaneTransmittance(paneGeometry, indices, pane.barycentrics, 0.0f, 1.0f), float(paneRow), 1.0f);
+                probe.glassHit = uint4(pane.instance + 1, pane.geometry, pane.primitive, paneGeometry.texture);
+            }
 
             uint tile = FFX_DNSR_Shadows_LinearTileIndex(FFX_DNSR_Shadows_GetTileIndexFromPixelPosition(centre), g_Frame.dimensions.x);
             bool rayLit = (g_Shadow_Masks[tile] & FFX_DNSR_Shadows_GetBitMaskFromPixelPosition(centre)) != 0;

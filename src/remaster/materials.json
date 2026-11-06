@@ -1,3 +1,55 @@
 {
-  "materials": []
+  "materials": [
+    {
+      "label": "Quarantine platform, ceiling lights, 21 uses",
+      "material": "c8016fc92abb",
+      "parameters": {
+        "SelfColor": { "from": [1.0,1.0,1.0,1.0], "to": [0.44552058,0.44552058,0.44552058,1.0] },
+        "SelfColorIntensity": { "from": [221182.0], "to": [59.498257] }
+      }
+    }
+  ],
+  "lamps": [
+    { "label": "Quarantine platform, lamp 1379 at -1.5, 3.2, 20.9", "location": 55, "at": [-1.4871264,3.1702561,20.929832], "brightness": 0.32917008 },
+    { "label": "Quarantine platform, lamp 7953 at 2.1, 3.2, 23.5", "location": 55, "at": [2.0575716,3.170256,23.468834], "brightness": 0.49979383 },
+    { "label": "Quarantine platform, lamp 5733 at 2.1, 7.2, 20.4", "location": 55, "at": [2.0575714,7.1694818,20.449743], "brightness": 0.49979383 },
+    { "label": "Quarantine platform, lamp 259 at 2.5, 7.2, 11.9", "location": 55, "at": [2.5308821,7.1694865,11.942246], "brightness": 8.0 },
+    { "label": "Quarantine platform, lamp 60 at 8.0, 0.2, 19.0", "location": 55, "at": [7.976478,0.18870878,18.980545], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 5 at -4.5, -3.8, 20.4", "location": 55, "at": [-4.4623337,-3.811355,20.376545], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 4 at 3.8, -4.0, 14.9", "location": 55, "at": [3.8488777,-3.963921,14.897417], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 4 at 0.3, -4.0, 11.7", "location": 55, "at": [0.2764883,-3.9639213,11.722782], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 4 at 3.8, -4.0, 18.4", "location": 55, "at": [3.8488643,-3.9639215,18.40782], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 4 at 3.8, -4.0, 7.3", "location": 55, "at": [3.8489041,-3.9639215,7.3369365], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 4 at 0.3, -4.0, 14.4", "location": 55, "at": [0.27648878,-3.9639215,14.373653], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 4 at 0.3, -4.0, 17.9", "location": 55, "at": [0.2764895,-3.963921,17.895168], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 4 at 0.3, -4.0, 7.2", "location": 55, "at": [0.27649093,-3.9639213,7.1971354], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 4 at 3.8, -4.0, 9.6", "location": 55, "at": [3.8488984,-3.9639213,9.638227], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 63 at 8.0, -3.8, 10.4", "location": 55, "at": [7.9764633,-3.8114147,10.41779], "brightness": 0.08589937 },
+    { "label": "Quarantine platform, lamp 60 at 0.1, -3.8, 17.9", "location": 55, "at": [0.148911,-3.8114142,17.895231], "brightness": 0.085899375 },
+    { "label": "Quarantine platform, lamp 60 at 4.0, 0.2, 9.6", "location": 55, "at": [3.9764528,0.17128277,9.648142], "brightness": 0.08589937 },
+    { "label": "Quarantine platform, lamp 60 at 4.0, -3.8, 7.3", "location": 55, "at": [3.9764833,-3.8114142,7.336874], "brightness": 0.085899375 },
+    { "label": "Quarantine platform, lamp 60 at 4.0, -3.8, 14.9", "location": 55, "at": [3.9764562,-3.8114142,14.897356], "brightness": 0.08589937 },
+    { "label": "Quarantine platform, lamp 60 at 4.0, -3.8, 18.4", "location": 55, "at": [3.976443,-3.8114145,18.407759], "brightness": 0.08589937 },
+    { "label": "Quarantine platform, lamp 60 at 0.1, -3.8, 11.7", "location": 55, "at": [0.14890909,-3.8114142,11.722844], "brightness": 0.08589937 },
+    { "label": "Quarantine platform, lamp 60 at 0.1, 0.2, 9.6", "location": 55, "at": [0.14882112,0.18864489,9.641887], "brightness": 0.08589937 },
+    { "label": "Quarantine platform, lamp 60 at 4.0, -3.8, 9.6", "location": 55, "at": [3.9764774,-3.8114147,9.638165], "brightness": 0.085899375 },
+    { "label": "Quarantine platform, lamp 60 at -0.1, 0.2, 23.9", "location": 55, "at": [-0.14859605,0.18864512,23.915281], "brightness": 0.085899375 },
+    { "label": "Quarantine platform, lamp 60 at 0.1, -3.8, 7.2", "location": 55, "at": [0.14891195,-3.8114142,7.197198], "brightness": 0.085899375 },
+    { "label": "Quarantine platform, lamp 60 at 0.1, -3.8, 14.4", "location": 55, "at": [0.14891028,-3.8114142,14.373715], "brightness": 0.08589937 },
+    { "label": "Quarantine platform, lamp 60 at 4.0, 4.2, 23.8", "location": 55, "at": [3.9764042,4.1886444,23.841915], "brightness": 0.08589937 },
+    { "label": "Quarantine platform, lamp 60 at 4.0, 4.2, 14.7", "location": 55, "at": [3.976462,4.1712823,14.716792], "brightness": 0.08589937 },
+    { "label": "Quarantine platform, lamp 60 at 0.1, 4.2, 20.1", "location": 55, "at": [0.14882231,4.1886444,20.072117], "brightness": 0.08589937 },
+    { "label": "Quarantine platform, lamp 60 at 0.1, 4.2, 14.5", "location": 55, "at": [0.14881921,4.1886444,14.496372], "brightness": 0.08589937 },
+    { "label": "Quarantine platform, lamp 60 at 0.1, 4.2, 9.6", "location": 55, "at": [0.14882112,4.1886444,9.641886], "brightness": 0.08589937 },
+    { "label": "Quarantine platform, lamp 60 at 0.1, 4.2, 7.0", "location": 55, "at": [0.14881945,4.1886444,7.0448585], "brightness": 0.08589937 },
+    { "label": "Quarantine platform, lamp 60 at 4.0, 4.2, 9.6", "location": 55, "at": [3.9764528,4.1712823,9.648142], "brightness": 0.085899375 },
+    { "label": "Quarantine platform, lamp 60 at 0.1, 4.2, 24.0", "location": 55, "at": [0.14882398,4.188644,24.031199], "brightness": 0.08589937 },
+    { "label": "Quarantine platform, lamp 4 at 0.3, 4.0, 20.1", "location": 55, "at": [0.27640128,4.0361376,20.072056], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 4 at 3.8, 4.0, 14.7", "location": 55, "at": [3.8488832,4.018776,14.716854], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 4 at 0.3, 4.0, 14.5", "location": 55, "at": [0.27639818,4.0361376,14.496309], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 4 at 3.8, 4.0, 23.8", "location": 55, "at": [3.8488252,4.036138,23.841976], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 4 at 3.8, 4.0, 9.6", "location": 55, "at": [3.8488739,4.018775,9.648205], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 4 at 0.3, 4.0, 9.6", "location": 55, "at": [0.27640033,4.0361376,9.641823], "brightness": 0.0 },
+    { "label": "Quarantine platform, lamp 4 at 0.3, 4.0, 24.0", "location": 55, "at": [0.27640343,4.0361376,24.031134], "brightness": 0.0 }
+  ]
 }
