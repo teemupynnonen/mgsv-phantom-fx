@@ -92,10 +92,22 @@ struct HashGridCache_Desc
     uint2 cellOffset;
 };
 
-HashGridCache_Desc HashGridCache_GetDesc(float3 hitPosition, float3 direction, float hitDistance)
+// The level of a hit's cells: they grow with its distance from the eye, in steps of two.
+float HashGridCache_Level(float3 hitPosition)
 {
     float step = max(distance(g_Eye, hitPosition) * HASH_CELL_SIZE, HASH_MIN_CELL_SIZE);
-    float logStep = floor(log2(HASHGRIDCACHE_STEP_FACTOR * step));
+    return floor(log2(HASHGRIDCACHE_STEP_FACTOR * step));
+}
+
+// How wide a hit's cell is across the ray's main axis. Along it a cell is as deep as its tile, HASH_TILE_CELL_RATIO cells.
+float HashGridCache_CellSize(float3 hitPosition)
+{
+    return HASHGRIDCACHE_SIZE_FACTOR * exp2(HashGridCache_Level(hitPosition));
+}
+
+HashGridCache_Desc HashGridCache_GetDesc(float3 hitPosition, float3 direction, float hitDistance)
+{
+    float logStep = HashGridCache_Level(hitPosition);
     float hitCellSize = HASHGRIDCACHE_SIZE_FACTOR * exp2(logStep);
     float hitTileSize = hitCellSize * HASH_TILE_CELL_RATIO;
 

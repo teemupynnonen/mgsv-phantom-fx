@@ -1900,7 +1900,12 @@ the game's lights) is left alone until it runs.
   along a reflection the surface's roughness spreads (GGX's visible normals, Heitz 2018, roughness squared,
   from Ray Reconstruction's normal guide). On a surface of roughness 0.5 and up (`RoughSurface`), most of what
   the game draws, a reflection is a faint blur: the ray's hit takes the light cache's light for its place (`CachedLight`),
-  one ray a pixel; where no ray has lit that cell yet, and at a self-lit mesh, it is shaded as below. On a glossy
+  one ray a pixel; where no ray has lit that cell yet, at a self-lit mesh, and nearer than the cell is wide, it is
+  shaded as below. A cell is a tile deep along the ray's main axis, a metre at a room's distance, through a wall:
+  until 2026-11-06 the rays from a dark room's wall beside a pipe 2 cm off it read the cell at the pipe's back, which
+  held light the pipe lit afresh had none of, and drew a pale line along it at 4 to 10 times the wall's light, and
+  dotted white blobs on a box (a debug case: recorded in 7 sessions the line lit 199 to 400 of 400 rows,
+  in 4 with the rule none). The reflections cost 0.08 ms more there at 4K (1.63 to 1.71 ms). On a glossy
   surface the hit has its material (see "Hits" below) and takes the sun, a light and a self-lit mesh afresh, each
   diffuse by its albedo. The sun and the light are specular by GGX too; a self-lit mesh's specular light is the
   specular ray that meets it. One of its lobes then goes on, chosen by what each reflects: the

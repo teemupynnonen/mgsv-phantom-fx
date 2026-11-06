@@ -129,10 +129,16 @@ float ScreenTravel(float3 from, float3 to)
     return length((end.xy / end.w - start.xy / start.w) * float2(0.5f, -0.5f));
 }
 
-// The light the cache holds for a hit, its own and what it reflects, diffuse; false where no ray has lit that cell yet.
+// The light the cache holds for a hit, its own and what it reflects, diffuse; false where no ray has lit that cell yet, and
+// for a hit nearer than a cell is wide, which the cache cannot tell from what lies around it. A cell is a tile deep along the
+// ray's main axis, a metre at a room's distance, through the wall: the cell at the back of a pipe 2 cm off a dark room's wall
+// held light that the pipe lit afresh had none of, and the rays from the wall beside the pipe drew a pale line along it at
+// 4 to 10 times the wall's light (a debug case, 2026-11-06).
 bool CachedLight(float3 position, float3 direction, float hitDistance, out float3 light)
 {
     light = 0.0f;
+    if (hitDistance < HashGridCache_CellSize(position)) return false;
+
     uint tileIndex;
     bool isNewTile;
     uint cellIndex = HashGridCache_InsertCell(position, direction, hitDistance, tileIndex, isNewTile);
