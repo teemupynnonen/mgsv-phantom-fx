@@ -1174,8 +1174,8 @@ bool IsTerrainFacingAway(SceneHit hit, float3 direction, float3 gbufferNormal)
 
 // How far the terrain may stand off the ground the game draws, along the ground's normal, and still be taken as it. The game
 // draws its terrain from patches whose grid coarsens with distance (32 down to 4 cells a patch), the scene's rings from 1 m
-// cells, so the two part by up to 3 cm on a slope (a debug case, 2026-11-05); near the eye the scene takes the game's own
-// patches where it drew them (TerrainPatches), and the rings stand only where it did not.
+// cells, so the two part by up to 3 cm on a slope (a debug case, 2026-11-05); the scene takes the game's own patches where it
+// drew them (TerrainPatches), and the rings stand only where it did not.
 static const float TerrainGap = 0.03f;
 
 // The terrain under a ground pixel the search for its surface missed. Along a camera ray grazing the ground, a 3 cm gap is

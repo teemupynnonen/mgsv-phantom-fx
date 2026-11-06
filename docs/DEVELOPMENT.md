@@ -209,7 +209,7 @@ what draws it, when that is the feature's own.
 | `src/passes/ray_tracing/shared_textures.*` | What Direct3D 11 and 12 share: the Direct3D 11 half of a trace's results, and the rows that open, transition and bind a trace's textures |
 | `src/passes/ray_tracing/gi_renderer.*` | The Direct3D 12 side: the device, the scene's frame (the scene contents' update, then the recording), each feature's passes recorded in turn, the probes |
 | `src/passes/ray_tracing/light_bins.*` | Which of the frame's lights can reach a place, in bins along each world axis (see "Light bins") |
-| `src/passes/ray_tracing/scene_contents.*` | The scene contents: the game's models, their variants, characters, terrain rings and the game's own terrain patches near the eye, the sea's plane and textures the ray-traced scene holds, made as the scene memory has room and let go after a while unplaced; each frame's instances of them; their diagnostics (status, the probes' hits, F10's `models.txt`) (see "Ray-traced scene") |
+| `src/passes/ray_tracing/scene_contents.*` | The scene contents: the game's models, their variants, characters, terrain rings and the game's own terrain patches in them, the sea's plane and textures the ray-traced scene holds, made as the scene memory has room and let go after a while unplaced; each frame's instances of them; their diagnostics (status, the probes' hits, F10's `models.txt`) (see "Ray-traced scene") |
 | `src/passes/ray_tracing/scene_memory.hpp` | The scene memory: the seam the scene contents reach the GPU through (the pool, structures, texture slots, instances) |
 | `src/passes/ray_tracing/gi_scene.*` | The ray-traced scene on Direct3D 12, the scene memory: the geometry pool, bottom-level structures (a geometry per mesh, compacted), the geometry table, the game's textures' slots, the frame's instances and top level (see "Ray-traced scene") |
 | `src/passes/ray_tracing/engine_scene.*` | The game's loaded models from its visibility managers and object brush, its characters from its model list, their model files read once, its texture manager, the terrain's heightmap inputs (see "Scene objects") |
@@ -3083,16 +3083,21 @@ denoiser (see "Ray Reconstruction").
   two grounds parted by up to 3 cm either way: the glow under a prone arm and the black ground by a boot above. The draw
   hooks (`gi_inputs.cpp`) note each main-camera terrain draw's `c9`, `c10`, `c11` and index range, and the mesh's
   buffers, their vertex format from the input layout (`game_shaders::positionFormatOf`, from ReShade's `init_pipeline`);
-  the kick reads the mesh back once (`ray_tracing.cpp`). The scene (`scene_contents.cpp`) takes the patches wholly inside
-  the innermost ring, nearest first, up to `GI_TERRAIN_PATCH_TRIANGLES`; `TerrainPatches` (gi_scene.hlsl) writes their
-  triangles as the game places them, and `TerrainGrid` collapses the ring's cells under them to a point. They are the
-  innermost ring structure's second geometry: as a structure of their own, every ray near the ground crossed two, and the
-  sun's rays cost 0.35 ms more at 4K than with the ring alone; merged, 0.03 to 0.08 ms in all. Other patches than the
+  the kick reads the mesh back once (`ray_tracing.cpp`). The scene (`scene_contents.cpp`) gives each ring the patches wholly
+  inside it and clear of the ring inside it, nearest first, up to `GI_TERRAIN_PATCHES` and `GI_TERRAIN_PATCH_TRIANGLES`
+  a ring; a patch across a ring's edge stays the rings'. `TerrainPatches` (gi_scene.hlsl), once a ring, writes their
+  triangles as the game places them, and `TerrainGrid` collapses the ring's cells under them to a point. They are each
+  ring structure's second geometry: as a structure of their own, every ray near the ground crossed two, and the sun's
+  rays cost 0.35 ms more at 4K than with the ring alone; merged, 0.03 to 0.08 ms in all, 0.07 ms with 168 patches in a
+  view over the ruins to the horizon. Other patches than the
   last build the ring's structure again, as which triangles are active changes (+0.34 ms in a frame forced to every
   frame), decided before the ring's own build: a frame that both refitted and built it removed the device. Measured
   against the game's depth: within 0.06 mm on a slope; at the ruins and the first debug case's spot some triangles lie
   3.0 mm under the game's, the game never below; not explained by the textures bound, the samplers, the page-table
-  constants, the draws' transforms, a second index buffer, pixel-shader depth or fused arithmetic.
+  constants, the draws' transforms, a second index buffer, pixel-shader depth or fused arithmetic. In that view over the
+  ruins, on the same pixels: past 2 km 53% of the rings' ground stood over 0.3% of its distance off the game's, the
+  patches' 0.5%; 512 m to 2 km about half stays off with or without them (median 0.17% to 0.06%), the game's depth there
+  nearer than both; not looked into.
 - **Inside and beyond the shadow map.** Each ray works out how far its pixel lies past the game's
   shadow map range, as `SunLight_DL_CS_ES` fades its shadow to lit there (`cPSLight` `c8.x`, `c8.y`
   and `c6.x`, noted from the shadow-mapped sun shaders): 0 inside, 1 past the fade. Cut-out geometry

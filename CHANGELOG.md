@@ -6,7 +6,7 @@
 
 - Ray-traced light where things touch the ground: no pale glow under Snake's arm when he lies prone, and no black
   patches on the ground by a boot or a knee resting on a slope.
-- The ray-traced ground near the camera is now the game's own terrain as it draws it, so shadows, bounce light and
+- The ray-traced ground is now the game's own terrain as it draws it, near and far, so shadows, bounce light and
   reflections meet the ground where it really is.
 
 ## 2.0.0

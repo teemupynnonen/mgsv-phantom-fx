@@ -111,14 +111,15 @@ void DebugScene(uint2 did : SV_DispatchThreadID)
 }
 
 // ---- The game's terrain (TerrainPoint in gi_common.hlsli) ----
-// The game's own terrain patches the scene takes this frame (scene_contents.cpp), g_Frame.terrainPatchPool.w of them.
+// The game's own terrain patches the rings take this frame (scene_contents.cpp), ring after ring (terrainPatchRings).
 StructuredBuffer<GITerrainPatch> g_TerrainPatches : register(t9);
 
-// Whether one of the frame's patches covers the cell from `lowest` to `highest` (world x, z) whole: its own triangles
+// Whether one of a ring's patches covers its cell from `lowest` to `highest` (world x, z) whole: the patch's own triangles
 // stand there, as the game drew them, and the ring's are left out.
-bool IsUnderPatch(float2 lowest, float2 highest)
+bool IsUnderPatch(uint ring, float2 lowest, float2 highest)
 {
-    for (uint i = 0; i < g_Frame.terrainPatchPool.w; ++i)
+    uint4 patches = g_Frame.terrainPatchRings[ring];
+    for (uint i = patches.y; i < patches.y + patches.z; ++i)
     {
         float4 rect = g_TerrainPatches[i].worldRect;
         if (all(lowest >= rect.xy - GI_TERRAIN_PATCH_SLACK) && all(highest <= rect.zw + GI_TERRAIN_PATCH_SLACK)) return true;
@@ -130,9 +131,9 @@ bool IsUnderPatch(float2 lowest, float2 highest)
 // Ring g_Dispatch.x, a cell a thread: its two triangles into the pool from the ring's first vertex,
 // clockwise seen from above: their front faces up, the only side the rays see (GI_RAY_FLAGS; the
 // other order hid the ground from above in the scene view and showed it from below).
-// Cells the ring inside covers are left inactive (NaN positions), so the rings do not overlap. The innermost ring's
-// cells under the game's own patches collapse to a point, no triangle there: the patches stand there instead, the same
-// structure's second geometry (TerrainPatches). Still active, so the ring's refits keep working.
+// Cells the ring inside covers are left inactive (NaN positions), so the rings do not overlap. A ring's cells under the
+// game's own patches collapse to a point, no triangle there: the patches stand there instead, the same structure's
+// second geometry (TerrainPatches). Still active, so the ring's refits keep working.
 [numthreads(8, 8, 1)]
 void TerrainGrid(uint2 did : SV_DispatchThreadID)
 {
@@ -153,7 +154,7 @@ void TerrainGrid(uint2 did : SV_DispatchThreadID)
     float3 p00 = TerrainPoint(corner), p10 = TerrainPoint(corner + float2(r.z, 0.0f));
     float3 p01 = TerrainPoint(corner + float2(0.0f, r.z)), p11 = TerrainPoint(corner + r.z);
     if (hole) p00 = p10 = p01 = p11 = asfloat(0x7FC00000u);
-    else if (ring == 0 && IsUnderPatch(corner, corner + r.z)) p10 = p01 = p11 = p00;
+    else if (IsUnderPatch(ring, corner, corner + r.z)) p10 = p01 = p11 = p00;
 
     uint first = g_Frame.terrainRingOffsets[ring] + 16 * 6 * (did.y * cells + did.x);
     g_GeometryPoolOut.Store4(first, asuint(float4(p00, 1.0f)));
@@ -164,10 +165,10 @@ void TerrainGrid(uint2 did : SV_DispatchThreadID)
     g_GeometryPoolOut.Store4(first + 80, asuint(float4(p11, 1.0f)));
 }
 
-// The frame's patch holding a triangle: patches are sorted by their first triangle and adjoin.
-uint FindTerrainPatch(uint triangleIndex)
+// The patch of a ring's (`patches`, terrainPatchRings) holding a triangle: they are sorted by their first triangle and adjoin.
+uint FindTerrainPatch(uint4 patches, uint triangleIndex)
 {
-    uint low = 0, high = g_Frame.terrainPatchPool.w;
+    uint low = patches.y, high = patches.y + patches.z;
     while (high - low > 1)
     {
         uint middle = (low + high) / 2;
@@ -178,7 +179,7 @@ uint FindTerrainPatch(uint triangleIndex)
     return low;
 }
 
-// One thread a triangle of the patches' room: the game's own terrain patches as its main camera drew them, a draw's
+// Ring g_Dispatch.x, one thread a triangle of its patches' room: the game's own terrain patches as its main camera drew them, a draw's
 // index range of the game's patch mesh at the draw's rect of the virtual heightmap, each vertex placed as the game's
 // terrain vertex shader places it (TerrainVertex), so the scene's ground is the game's: within 0.06 mm on a slope, where
 // the 1 m ring cells stood up to 3 cm off it; elsewhere some triangles still lie 3 mm under the game's, for a cause not
@@ -189,10 +190,10 @@ void TerrainPatches(uint did : SV_DispatchThreadID)
 {
     if (did >= GI_TERRAIN_PATCH_TRIANGLES) return;
 
-    uint first = g_Frame.terrainPatchPool.x + 48 * did; // Three float4 vertices a triangle
-    uint count = g_Frame.terrainPatchPool.w;
-    GITerrainPatch last = g_TerrainPatches[max(count, 1u) - 1];
-    if (count == 0 || did >= last.firstTriangle + last.indexCount / 3)
+    uint4 patches = g_Frame.terrainPatchRings[g_Dispatch.x];
+    uint first = patches.x + 48 * did; // Three float4 vertices a triangle
+    GITerrainPatch last = g_TerrainPatches[patches.y + max(patches.z, 1u) - 1];
+    if (patches.z == 0 || did >= last.firstTriangle + last.indexCount / 3)
     {
         float4 inactive = float4(asfloat(0x7FC00000u).xxx, 1.0f);
         g_GeometryPoolOut.Store4(first, asuint(inactive));
@@ -201,13 +202,13 @@ void TerrainPatches(uint did : SV_DispatchThreadID)
         return;
     }
 
-    GITerrainPatch patch = g_TerrainPatches[FindTerrainPatch(did)];
+    GITerrainPatch patch = g_TerrainPatches[FindTerrainPatch(patches, did)];
     uint firstIndex = patch.firstIndex + 3 * (did - patch.firstTriangle);
     float3 p[3];
     for (uint i = 0; i < 3; ++i)
     {
-        uint vertex = g_GeometryPoolOut.Load(g_Frame.terrainPatchPool.y + 4 * (firstIndex + i)) + patch.baseVertex;
-        float2 own = asfloat(g_GeometryPoolOut.Load2(g_Frame.terrainPatchPool.z + 8 * vertex));
+        uint vertex = g_GeometryPoolOut.Load(g_Frame.terrainPatchMesh.x + 4 * (firstIndex + i)) + patch.baseVertex;
+        float2 own = asfloat(g_GeometryPoolOut.Load2(g_Frame.terrainPatchMesh.y + 8 * vertex));
         p[i] = TerrainVertex(own * patch.uvScaleOffset.xy + patch.uvScaleOffset.zw, patch.worldScale.xyz, patch.worldOffset.xyz);
     }
 

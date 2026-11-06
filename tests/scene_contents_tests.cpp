@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <ranges>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -659,22 +660,25 @@ bool hasRect(const std::vector<phantom_fx::gi::GITerrainPatch>& taken, float x0,
     });
 }
 
-// The patches the game drew inside the innermost ring (256 m around the eye) are taken, each once; those reaching past
-// it stay the rings'.
+// Each ring takes the patches the game drew in its own stretch, each once: inside its square and clear of the ring inside
+// it, whose square is a hole in it. A patch reaching across a ring's edge stays the rings'.
 void terrainPatchesTaken()
 {
     TestScene scene;
     const auto mesh = patchMesh(6);
     const GameFrame frame{.terrainEye = std::array<float, 3>{0, 0, 0},
-        .patchDraws = {patchAt(0, 0), patchAt(-64, 0), patchAt(0, 0), patchAt(96, 0)}, .patchMesh = &mesh};
-    const auto taken = scene.run(frame).terrainPatches.taken;
+        .patchDraws = {patchAt(0, 0), patchAt(-64, 0), patchAt(0, 0), patchAt(96, 0), patchAt(192, 0)}, .patchMesh = &mesh};
+    const auto update = scene.run(frame);
+    const auto& inner = update.terrain[0].patches;
+    const auto& next = update.terrain[1].patches;
 
-    expect(taken.size() == 2, "The two patches inside the innermost ring are taken, the one drawn twice once, the one past its edge not.");
-    expect(hasRect(taken, 0, 0, 64, 64) && hasRect(taken, -64, 0, 0, 64), "Each is where the game drew it.");
-    expect(taken[0].firstTriangle == 0 && taken[1].firstTriangle == 2, "Their triangles follow one another.");
+    expect(inner.size() == 2, "The two patches inside the innermost ring are taken there, the one drawn twice once.");
+    expect(hasRect(inner, 0, 0, 64, 64) && hasRect(inner, -64, 0, 0, 64), "Each is where the game drew it.");
+    expect(inner[0].firstTriangle == 0 && inner[1].firstTriangle == 2, "Their triangles follow one another.");
+    expect(next.size() == 1 && hasRect(next, 192, 0, 256, 64), "The one past the innermost ring is the next ring's; the one across its edge, neither's.");
 }
 
-// Past the triangles the scene holds for the patches, the nearest the eye are taken.
+// Past the triangles a ring holds for its patches, the nearest the eye are taken.
 void terrainPatchesNearestFirst()
 {
     TestScene scene;
@@ -682,34 +686,37 @@ void terrainPatchesNearestFirst()
     const auto mesh = patchMesh(half);
     const GameFrame frame{.terrainEye = std::array<float, 3>{0, 0, 0},
         .patchDraws = {patchAt(64, 64, half), patchAt(0, 0, half), patchAt(-64, -64, half)}, .patchMesh = &mesh};
-    const auto taken = scene.run(frame).terrainPatches.taken;
+    const auto taken = scene.run(frame).terrain[0].patches;
 
-    expect(taken.size() == 2 && hasRect(taken, 0, 0, 64, 64) && hasRect(taken, -64, -64, 0, 0), "The two nearest fill the room; the farthest stays the rings'.");
+    expect(taken.size() == 2 && hasRect(taken, 0, 0, 64, 64) && hasRect(taken, -64, -64, 0, 0), "The two nearest fill the room; the farthest stays the ring's.");
 }
 
-// The patches are a second geometry of the innermost ring's structure, so a ray crosses one structure of terrain near the
-// eye, not two. They are made again only when the game draws other patches, and the ring's structure built again with
-// them; the mesh goes to the pool once.
+// A ring's patches are a second geometry of its structure, so a ray crosses one structure of terrain, not two. They are
+// made again only when the game draws other patches in that ring's stretch, and only that ring's structure is built
+// again with them; the mesh goes to the pool once.
 void terrainPatchesRemade()
 {
     TestScene scene;
     const auto mesh = patchMesh(6);
-    GameFrame frame{.terrainEye = std::array<float, 3>{0, 0, 0}, .patchDraws = {patchAt(0, 0)}, .patchMesh = &mesh};
-    const auto isRingBuilt = [&] { return std::ranges::find(scene.memory.rebuilt, BlasId{0}) != scene.memory.rebuilt.end(); };
+    GameFrame frame{.terrainEye = std::array<float, 3>{0, 0, 0}, .patchDraws = {patchAt(0, 0), patchAt(192, 0)}, .patchMesh = &mesh};
+    const auto isBuilt = [&](BlasId ring) { return std::ranges::find(scene.memory.rebuilt, ring) != scene.memory.rebuilt.end(); };
 
-    expect(scene.run(frame).terrainPatches.isRemade && scene.memory.structures[0].geometries.size() == 2, "The first patches are made, in the ring's structure.");
+    const auto first = scene.run(frame);
+    expect(first.terrain[0].arePatchesWritten && first.terrain[1].arePatchesWritten, "The first patches are made.");
+    expect(std::ranges::all_of(scene.memory.structures | std::views::take(GI_TERRAIN_RINGS), [](const auto& ring) { return ring.geometries.size() == 2; }),
+        "Each ring's structure holds its patches.");
 
     auto again = scene.run(frame);
-    expect(!again.terrainPatches.isRemade && !again.terrain[0].isRemade, "The same patches are kept, and the ring.");
+    expect(!again.terrain[0].arePatchesWritten && !again.terrain[1].isRemade, "The same patches are kept, and the rings.");
     expect(scene.memory.uploadRoom() == GeometryUploadBytes, "The mesh is not uploaded again.");
 
-    frame.patchDraws = {patchAt(-64, 0)};
+    frame.patchDraws = {patchAt(0, 0), patchAt(256, 0)};
     auto other = scene.run(frame);
-    expect(other.terrainPatches.isRemade && other.terrain[0].isRemade && isRingBuilt(), "Other patches are made again, and the ring's structure built again.");
+    expect(other.terrain[1].arePatchesWritten && isBuilt(1) && !other.terrain[0].isRemade, "Other patches in the next ring build its structure again, not the innermost's.");
 
     frame.patchDraws = {};
     auto none = scene.run(frame);
-    expect(none.terrain[0].isRemade && isRingBuilt() && none.terrainPatches.taken.empty(), "Without patches the ring covers it all again.");
+    expect(isBuilt(0) && isBuilt(1) && none.terrain[0].patches.empty() && none.terrain[1].patches.empty(), "Without patches the rings cover it all again.");
 }
 }
 
