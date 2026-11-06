@@ -1026,6 +1026,7 @@ Result render(Frame& frame)
         .characters = frame.characters,
         .newTextures = frame.newTextures,
         .terrainEye = terrain ? std::optional(frame.eye) : std::nullopt,
+        .terrainPatches = {.draws = frame.terrainPatches, .mesh = frame.terrainPatchMesh},
         .seaCentre = frame.seaLevel ? std::optional(std::array{frame.eye[0], *frame.seaLevel, frame.eye[2]}) : std::nullopt,
         .shouldListInstances = frame.debugShadows || std::ranges::any_of(trace::inOrder(), [&](const auto* each) { return each->listsInstances(frame); }),
         .selfLight = frame.selfLight,
@@ -1108,6 +1109,10 @@ Result render(Frame& frame)
         const auto paletteRows = palettes.size() / 4;
         const auto paletteOffset = uploads.reserve(16, paletteRows);
         std::memcpy(uploads.data + paletteOffset, palettes.data(), palettes.size() * sizeof(float));
+        const auto& patches = update.terrainPatches;
+        const auto patchCount = static_cast<std::uint32_t>(patches.taken.size());
+        const auto patchesOffset = uploads.reserve(sizeof(GITerrainPatch), patchCount);
+        std::memcpy(uploads.data + patchesOffset, patches.taken.data(), patches.taken.size() * sizeof(GITerrainPatch));
         const auto micromapJobs = scene.micromapJobs();
         const auto micromapJobCount = static_cast<std::uint32_t>(micromapJobs.size());
         const auto micromapJobsOffset = uploads.reserve(sizeof(GIMicromapJob), micromapJobCount);
@@ -1129,6 +1134,9 @@ Result render(Frame& frame)
                 constants.terrainRings[r] = {ring.corner[0], ring.corner[1], ring.cellSize, static_cast<float>(GI_TERRAIN_CELLS)};
                 (&constants.terrainRingOffsets.x)[r] = static_cast<std::uint32_t>(ring.poolOffset);
             }
+
+            constants.terrainPatchPool = {static_cast<std::uint32_t>(patches.poolOffset), static_cast<std::uint32_t>(patches.meshIndexOffset),
+                static_cast<std::uint32_t>(patches.meshVertexOffset), patchCount};
         }
         if (traces.tracesLight) s.light->fill(constants, frame.verticalFov, parity);
         if (traces.tracesSun) s.shadows->fill(constants);
@@ -1158,6 +1166,7 @@ Result render(Frame& frame)
         descriptors.buffer(binding::NewGeometries, s.upload[slot].Get(), newGeometriesOffset, 4, newGeometryCount);
         descriptors.buffer(binding::SkinRecords, s.upload[slot].Get(), skinOffset, sizeof(GISkinRecord), skinCount);
         descriptors.buffer(binding::Palettes, s.upload[slot].Get(), paletteOffset, 16, paletteRows);
+        descriptors.buffer(binding::TerrainPatches, s.upload[slot].Get(), patchesOffset, sizeof(GITerrainPatch), patchCount);
         descriptors.buffer(binding::Instances, scene.instanceBuffer(), 0, sizeof(GIInstanceDesc), instanceCount);
         descriptors.rawBuffer(binding::GeometryPool, scene.pool(), gi_scene::Scene::PoolBytes);
         descriptors.buffer(binding::Geometries, scene.geometryTable(), 0, sizeof(GIGeometry), MaxGeometries);
@@ -1231,6 +1240,8 @@ Result render(Frame& frame)
 
         for (std::uint32_t r = 0; r < GI_TERRAIN_RINGS; ++r)
             if (update.terrain[r].isRemade) recorder.dispatch(Kernel::TerrainGrid, groups(GI_TERRAIN_CELLS, 8), groups(GI_TERRAIN_CELLS, 8), {r});
+
+        if (patches.isRemade) recorder.dispatch(Kernel::TerrainPatches, groups(GI_TERRAIN_PATCH_TRIANGLES, 64));
 
         if (skinCount) recorder.dispatch(Kernel::Skin, groups(skinVertices, 64), 1, {skinVertices, skinCount});
 

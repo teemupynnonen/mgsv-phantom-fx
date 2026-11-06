@@ -197,6 +197,19 @@ void onInitPipeline(device* device, pipeline_layout, uint32_t count, const pipel
 
     for (uint32_t i = 0; i < count; ++i)
     {
+        // A layout's POSITION format, where it starts each vertex of the first buffer, for draws that decode the vertices they
+        // bind (ReShade's formats are DXGI's).
+        if (subobjects[i].type == pipeline_subobject_type::input_layout)
+        {
+            const auto* elements = static_cast<const input_element*>(subobjects[i].data);
+            for (uint32_t e = 0; elements && e < subobjects[i].count; ++e)
+                if (elements[e].semantic && std::string_view(elements[e].semantic) == "POSITION" && elements[e].semantic_index == 0 && elements[e].offset == 0
+                    && elements[e].buffer_binding == 0)
+                    game_shaders::inputLayoutCreated(reinterpret_cast<IUnknown*>(pipeline.handle), static_cast<DXGI_FORMAT>(elements[e].format));
+
+            continue;
+        }
+
         const auto* shader = static_cast<const shader_desc*>(subobjects[i].data);
         if (!shader) continue;
 

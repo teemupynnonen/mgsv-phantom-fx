@@ -22,6 +22,10 @@ void expect(bool condition, const char* message)
     if (!condition) throw std::runtime_error(message);
 }
 
+// The structures the scene makes first and keeps: the terrain rings' (ring r's id is r); the innermost holds the game's own
+// patches too.
+constexpr std::uint32_t TerrainStructures = GI_TERRAIN_RINGS;
+
 // The scene memory without a GPU. Room is counted, not kept: the pool's bytes, the structures, the
 // texture slots and the frame's instances, each up to a limit the test sets. A static structure is
 // built at the next planBuilds, a refitted one when rebuilt; a closed slot is free again the next frame.
@@ -197,10 +201,12 @@ struct GameFrame
     std::vector<CharacterInstance> characters;
     std::vector<SceneTexture> textures;
     std::optional<std::array<float, 3>> terrainEye;
+    std::vector<TerrainPatchDraw> patchDraws;
+    const TerrainPatchMesh* patchMesh{};
 };
 
-// The scene contents over a fake memory, a frame at a time. The terrain rings' structures are the first
-// four (ring r's id is r).
+// The scene contents over a fake memory, a frame at a time. The terrain's structures are the first
+// (TerrainStructures).
 class TestScene
 {
 public:
@@ -216,13 +222,14 @@ public:
             .characters = game.characters,
             .newTextures = game.textures,
             .terrainEye = game.terrainEye,
+            .terrainPatches = {.draws = game.patchDraws, .mesh = game.patchMesh},
             .shouldListInstances = true});
     }
 
     // The last structure made with `geometries` geometries, of `use`, that is not a terrain ring.
     BlasId structureWith(Use use, std::size_t geometries) const
     {
-        for (auto id = memory.structures.size(); id > GI_TERRAIN_RINGS; --id)
+        for (auto id = memory.structures.size(); id > TerrainStructures; --id)
         {
             const auto& structure = memory.structures[id - 1];
             if (structure.use == use && structure.geometries.size() == geometries) return static_cast<BlasId>(id - 1);
@@ -296,7 +303,7 @@ void retention()
 
     const auto letGo = scene.run(crateOnly);
     expect(letGo.releasedModels == std::vector<std::uint64_t>{Building}, "A model unplaced for 601 frames is let go.");
-    expect(std::ranges::count_if(scene.memory.structures, &FakeSceneMemory::Structure::isLive) == GI_TERRAIN_RINGS + 1,
+    expect(std::ranges::count_if(scene.memory.structures, &FakeSceneMemory::Structure::isLive) == TerrainStructures + 1,
         "Its structure is destroyed, the placed model's kept.");
     expect(scene.memory.releasedOffsets.size() == released + 1, "Its pool range is given back.");
 
@@ -327,7 +334,7 @@ void waitingForRoom()
     large.run({.newModels = {model(Building, {huge})}, .placements = {placed(Building)}});
     for (int frame = 0; frame < 3; ++frame) expect(large.run({.placements = {placed(Building)}}).instanced.empty(), "A model larger than a frame's upload is not traced.");
 
-    expect(large.memory.poolUsed == poolUsed && large.memory.structures.size() == GI_TERRAIN_RINGS, "It is never made.");
+    expect(large.memory.poolUsed == poolUsed && large.memory.structures.size() == TerrainStructures, "It is never made.");
 
     TestScene unread;
     expect(unread.run({.placements = {placed(Crate)}}).instanced.empty() && unread.says("1 placements of models not received"),
@@ -367,7 +374,7 @@ void variant()
 void variantWithoutRoomNeverTraced()
 {
     TestScene scene;
-    scene.memory.structureRoom = GI_TERRAIN_RINGS + 1;
+    scene.memory.structureRoom = TerrainStructures + 1;
     const GameFrame hiding{.placements = {placed(Building, 1u << 2)}};
     auto first = hiding;
     first.newModels = {model(Building, {mesh(0, 1), mesh(1, 2)})};
@@ -623,6 +630,87 @@ void terrainRings()
 
     expect(refreshedAt == std::array<std::uint32_t, GI_TERRAIN_RINGS>{121, 151, 181, 211}, "The rings are refitted every 120 frames, staggered by 30.");
 }
+
+// The game's patch mesh for the tests: one quad of a patch's own uv, its two triangles' indices repeated `indices` long.
+TerrainPatchMesh patchMesh(std::size_t indices)
+{
+    TerrainPatchMesh mesh{.vertices = {{0, 0}, {1, 0}, {0, 1}, {1, 1}}, .version = 1};
+    const std::uint32_t quad[]{0, 1, 2, 2, 1, 3};
+    for (std::size_t i = 0; i < indices; ++i) mesh.indices.push_back(quad[i % 6]);
+
+    return mesh;
+}
+
+// A patch of 64 m (1/128 of the tests' 8,192 m heightmap) with its lowest corner at world x, z, drawing `indices`
+// of the mesh.
+TerrainPatchDraw patchAt(float x, float z, std::uint32_t indices = 6)
+{
+    return {.uvScaleOffset = {1.0f / 128, 1.0f / 128, (x + 4096) / 8192, (z + 4096) / 8192},
+        .worldScale = {8192, 1, 8192},
+        .worldOffset = {-4096, 0, -4096},
+        .indexCount = indices};
+}
+
+bool hasRect(const std::vector<phantom_fx::gi::GITerrainPatch>& taken, float x0, float z0, float x1, float z1)
+{
+    return std::ranges::any_of(taken, [&](const phantom_fx::gi::GITerrainPatch& patch) {
+        const auto& r = patch.worldRect;
+        return r.x == x0 && r.y == z0 && r.z == x1 && r.w == z1;
+    });
+}
+
+// The patches the game drew inside the innermost ring (256 m around the eye) are taken, each once; those reaching past
+// it stay the rings'.
+void terrainPatchesTaken()
+{
+    TestScene scene;
+    const auto mesh = patchMesh(6);
+    const GameFrame frame{.terrainEye = std::array<float, 3>{0, 0, 0},
+        .patchDraws = {patchAt(0, 0), patchAt(-64, 0), patchAt(0, 0), patchAt(96, 0)}, .patchMesh = &mesh};
+    const auto taken = scene.run(frame).terrainPatches.taken;
+
+    expect(taken.size() == 2, "The two patches inside the innermost ring are taken, the one drawn twice once, the one past its edge not.");
+    expect(hasRect(taken, 0, 0, 64, 64) && hasRect(taken, -64, 0, 0, 64), "Each is where the game drew it.");
+    expect(taken[0].firstTriangle == 0 && taken[1].firstTriangle == 2, "Their triangles follow one another.");
+}
+
+// Past the triangles the scene holds for the patches, the nearest the eye are taken.
+void terrainPatchesNearestFirst()
+{
+    TestScene scene;
+    const std::uint32_t half = GI_TERRAIN_PATCH_TRIANGLES / 2 * 3;
+    const auto mesh = patchMesh(half);
+    const GameFrame frame{.terrainEye = std::array<float, 3>{0, 0, 0},
+        .patchDraws = {patchAt(64, 64, half), patchAt(0, 0, half), patchAt(-64, -64, half)}, .patchMesh = &mesh};
+    const auto taken = scene.run(frame).terrainPatches.taken;
+
+    expect(taken.size() == 2 && hasRect(taken, 0, 0, 64, 64) && hasRect(taken, -64, -64, 0, 0), "The two nearest fill the room; the farthest stays the rings'.");
+}
+
+// The patches are a second geometry of the innermost ring's structure, so a ray crosses one structure of terrain near the
+// eye, not two. They are made again only when the game draws other patches, and the ring's structure built again with
+// them; the mesh goes to the pool once.
+void terrainPatchesRemade()
+{
+    TestScene scene;
+    const auto mesh = patchMesh(6);
+    GameFrame frame{.terrainEye = std::array<float, 3>{0, 0, 0}, .patchDraws = {patchAt(0, 0)}, .patchMesh = &mesh};
+    const auto isRingBuilt = [&] { return std::ranges::find(scene.memory.rebuilt, BlasId{0}) != scene.memory.rebuilt.end(); };
+
+    expect(scene.run(frame).terrainPatches.isRemade && scene.memory.structures[0].geometries.size() == 2, "The first patches are made, in the ring's structure.");
+
+    auto again = scene.run(frame);
+    expect(!again.terrainPatches.isRemade && !again.terrain[0].isRemade, "The same patches are kept, and the ring.");
+    expect(scene.memory.uploadRoom() == GeometryUploadBytes, "The mesh is not uploaded again.");
+
+    frame.patchDraws = {patchAt(-64, 0)};
+    auto other = scene.run(frame);
+    expect(other.terrainPatches.isRemade && other.terrain[0].isRemade && isRingBuilt(), "Other patches are made again, and the ring's structure built again.");
+
+    frame.patchDraws = {};
+    auto none = scene.run(frame);
+    expect(none.terrain[0].isRemade && isRingBuilt() && none.terrainPatches.taken.empty(), "Without patches the ring covers it all again.");
+}
 }
 
 int main()
@@ -642,6 +730,9 @@ int main()
         noNewerLists();
         instanceCap();
         terrainRings();
+        terrainPatchesTaken();
+        terrainPatchesNearestFirst();
+        terrainPatchesRemade();
         std::cout << "Scene contents tests passed.\n";
 
         return 0;

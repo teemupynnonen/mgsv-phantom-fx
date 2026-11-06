@@ -32,9 +32,11 @@
 #include <Windows.h>
 #include <d3d11_4.h>
 #include <wrl/client.h>
+#include <DirectXPackedVector.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cfloat>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -611,6 +613,64 @@ void copyTerrain(const engine_scene::TerrainInputs& inputs, gi_renderer::Frame& 
     frame.terrain = terrain;
 }
 
+// The game's terrain patch mesh (scene_contents::TerrainPatchMesh), read back from the buffers its patch draws bind,
+// again only when they change; empty when its formats are not the ones it was measured in (16-bit indices, vertices of
+// two halves, 2026-11-06).
+scene_contents::TerrainPatchMesh patchMesh;
+std::optional<gi_inputs::PatchMeshSource> lastReadSource;
+
+// A buffer's bytes, through a staging copy: a stall, once a mesh. Empty on failure.
+std::vector<std::uint8_t> readBack(ID3D11Buffer* buffer)
+{
+    D3D11_BUFFER_DESC desc{};
+    buffer->GetDesc(&desc);
+    desc = {.ByteWidth = desc.ByteWidth, .Usage = D3D11_USAGE_STAGING, .CPUAccessFlags = D3D11_CPU_ACCESS_READ};
+    ComPtr<ID3D11Buffer> staging;
+    if (FAILED(device->CreateBuffer(&desc, nullptr, staging.GetAddressOf()))) return {};
+
+    immediate->CopyResource(staging.Get(), buffer);
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(immediate->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return {};
+
+    const auto* bytes = static_cast<const std::uint8_t*>(mapped.pData);
+    std::vector<std::uint8_t> read(bytes, bytes + desc.ByteWidth);
+    immediate->Unmap(staging.Get(), 0);
+
+    return read;
+}
+
+// The patch mesh from `source`, once its buffers or formats change; read again the next frame when a read fails.
+void readPatchMesh(const gi_inputs::PatchMeshSource& source)
+{
+    if (lastReadSource == source) return;
+
+    const auto indexBytes = readBack(source.indices.Get()), vertexBytes = readBack(source.vertices.Get());
+    if (indexBytes.empty() || vertexBytes.empty()) return;
+
+    lastReadSource = source;
+    patchMesh.indices.clear();
+    patchMesh.vertices.clear();
+    ++patchMesh.version;
+    const bool isReadable = source.indexFormat == DXGI_FORMAT_R16_UINT && source.vertexFormat == DXGI_FORMAT_R16G16_FLOAT && source.vertexStride >= 4;
+    for (std::size_t at = source.indexOffset; isReadable && at + 2 <= indexBytes.size(); at += 2)
+    {
+        std::uint16_t index{};
+        std::memcpy(&index, indexBytes.data() + at, 2);
+        patchMesh.indices.push_back(index);
+    }
+
+    for (std::size_t at = source.vertexOffset; isReadable && at + source.vertexStride <= vertexBytes.size(); at += source.vertexStride)
+    {
+        std::uint16_t halves[2]{};
+        std::memcpy(halves, vertexBytes.data() + at, 4);
+        patchMesh.vertices.push_back({DirectX::PackedVector::XMConvertHalfToFloat(halves[0]), DirectX::PackedVector::XMConvertHalfToFloat(halves[1])});
+    }
+
+    log(std::format("The game's terrain patch mesh: {} indices (format {}), {} vertices (format {}, stride {}){}.", patchMesh.indices.size(),
+        static_cast<int>(source.indexFormat), patchMesh.vertices.size(), static_cast<int>(source.vertexFormat), source.vertexStride,
+        isReadable ? "" : "; not in the formats measured, the scene keeps its rings"));
+}
+
 gi_renderer::Matrix matrixOf(const float (&rows)[4][4])
 {
     gi_renderer::Matrix matrix{};
@@ -841,6 +901,16 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     gi_textures::update(device.Get(), immediate.Get(), frame.newTextures);
     endStep(TexturesStep);
     if (const auto terrain = engine_scene::takeTerrain()) copyTerrain(*terrain, frame);
+    if (const auto source = gi_inputs::patchMeshSource()) readPatchMesh(*source);
+    for (const auto& drawn : gi_inputs::takeDrawnPatches(*sceneCamera))
+        frame.terrainPatches.push_back({.uvScaleOffset = drawn.uvScaleOffset,
+            .worldScale = drawn.worldScale,
+            .worldOffset = drawn.worldOffset,
+            .firstIndex = drawn.firstIndex,
+            .indexCount = drawn.indexCount,
+            .baseVertex = static_cast<std::uint32_t>(drawn.baseVertex)});
+
+    frame.terrainPatchMesh = patchMesh.vertices.empty() ? nullptr : &patchMesh;
     frame.seaLevel = sea::planeLevel();
     auto* skyCube = traces.isPathTraced ? sky_capture::update(immediate.Get(), LightScale) : nullptr;
 

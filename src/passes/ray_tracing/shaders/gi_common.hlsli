@@ -1101,6 +1101,14 @@ float3 TerrainPoint(float2 xz)
     return float3(xz.x, TerrainHeight(TerrainUv(xz)) * g_Frame.terrainScale.y + g_Frame.terrainOffset.y, xz.y);
 }
 
+// The game's terrain vertex at virtual heightmap coordinates, as its terrain vertex shader (NewTerrain_Depth) places
+// it: the coordinates clamped as it clamps them, then (u, height, v) x its draw's scale + offset (cb5 c10, c11).
+float3 TerrainVertex(float2 virtualUv, float3 scale, float3 offset)
+{
+    float2 uv = min(virtualUv, 0.999756f);
+    return float3(uv.x, TerrainHeight(uv), uv.y) * scale + offset;
+}
+
 // The scene's terrain over `xz`: its innermost ring's two triangles over the cell, split as TerrainGrid splits them, not
 // the heightmap between the cell's corners. Minus infinity outside that ring, or without terrain.
 float SceneTerrainHeight(float2 xz)
@@ -1165,8 +1173,9 @@ bool IsTerrainFacingAway(SceneHit hit, float3 direction, float3 gbufferNormal)
 }
 
 // How far the terrain may stand off the ground the game draws, along the ground's normal, and still be taken as it. The game
-// draws its terrain from patches whose grid coarsens with distance (32 down to 4 cells a patch), the scene from 1 m cells, so
-// the two part by up to 3 cm on a slope (a debug case, 2026-11-05).
+// draws its terrain from patches whose grid coarsens with distance (32 down to 4 cells a patch), the scene's rings from 1 m
+// cells, so the two part by up to 3 cm on a slope (a debug case, 2026-11-05); near the eye the scene takes the game's own
+// patches where it drew them (TerrainPatches), and the rings stand only where it did not.
 static const float TerrainGap = 0.03f;
 
 // The terrain under a ground pixel the search for its surface missed. Along a camera ray grazing the ground, a 3 cm gap is

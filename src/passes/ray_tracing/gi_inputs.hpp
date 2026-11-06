@@ -5,6 +5,7 @@
 #include "ui_redirect.hpp"
 
 #include <d3d11.h>
+#include <wrl/client.h>
 #include <cstddef>
 #include <cstdint>
 #include <array>
@@ -53,6 +54,31 @@ struct DrawnBones
 };
 // At the kick: the skinned meshes drawn for the frame `camera` draws since the last call.
 std::vector<DrawnBones> takeDrawnBones(const game_constants::SceneConstants& camera) noexcept;
+
+// A terrain patch as the main camera's terrain draw drew it (scene_contents::TerrainPatchDraw): its rect of the virtual
+// heightmap (cb5 c9), the index range of the patch mesh it drew, and the draw's camera.
+struct DrawnPatch
+{
+    std::array<float, 4> uvScaleOffset{};
+    std::array<float, 3> worldScale{}, worldOffset{}; // cb5 c10, c11
+    std::uint32_t firstIndex{}, indexCount{};
+    std::int32_t baseVertex{};
+    std::array<float, 3> eye{};
+};
+// At the kick: the terrain patches drawn for the frame `camera` draws since the last call.
+std::vector<DrawnPatch> takeDrawnPatches(const game_constants::SceneConstants& camera) noexcept;
+
+// The buffers the terrain's patch draws read their mesh from, as the last one bound them, with their formats: the
+// vertices' from the input layout (game_shaders::positionFormatOf).
+struct PatchMeshSource
+{
+    Microsoft::WRL::ComPtr<ID3D11Buffer> indices, vertices;
+    DXGI_FORMAT indexFormat{}, vertexFormat{};
+    UINT indexOffset{}, vertexStride{}, vertexOffset{};
+
+    bool operator==(const PatchMeshSource&) const = default;
+};
+std::optional<PatchMeshSource> patchMeshSource() noexcept;
 
 // Diagnostics (dev builds): where the main camera's rigid model draws put their models, and which mesh (its index
 // range), recorded from recordRigidDraws(true) until takeRigidDraws.

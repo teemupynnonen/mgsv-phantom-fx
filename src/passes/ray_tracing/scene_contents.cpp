@@ -12,6 +12,7 @@
 #include <fstream>
 #include <numbers>
 #include <stdexcept>
+#include <tuple>
 
 namespace phantom_fx::scene_contents
 {
@@ -37,6 +38,7 @@ constexpr std::size_t MaxModelParts = 4096;
 constexpr float TerrainCellSize = 1.0f;
 constexpr std::uint32_t TerrainRefreshFrames = 120;
 constexpr std::uint32_t TerrainRingVertices = GI_TERRAIN_CELLS * GI_TERRAIN_CELLS * 6;
+constexpr std::uint32_t TerrainPatchVertices = GI_TERRAIN_PATCH_TRIANGLES * 3;
 // The sea's plane: a square two units across, its four vertices and six indices (padded to 16 bytes, as the
 // pool's ranges are), under an instance that stretches it 100 km across under the eye, past the horizon from
 // a helicopter.
@@ -117,6 +119,79 @@ std::string characterMesh(const ModelPart& part, const CharacterInstance& charac
         groupState, part.alphaBits, part.shadowBits, part.technique, part.role == MeshRole::Hair ? "hair" : isCutOut(part.role) ? "cut-out" : "opaque",
         part.indices.size() / 3, isShown ? "shown" : "hidden", isDrawn ? "drawn" : "not drawn");
 }
+
+// The game's terrain patches inside the innermost ring as placed this frame, each once, as the scene takes them: the
+// nearest the eye first while their triangles fit, then in a fixed order, so the same patches give the same records.
+// The bounds are the patch mesh's vertices' (lowest u, v, highest): a patch's rect of its own uv.
+std::vector<GITerrainPatch> takePatches(const TerrainPatches& drawn, std::uint32_t meshIndices, std::uint32_t meshVertices, std::uint32_t highestIndex,
+    const std::array<float, 4>& bounds, const std::array<float, 3>& eye, const Update::Ring& ring)
+{
+    struct Candidate
+    {
+        GITerrainPatch patch;
+        float distance{};
+    };
+
+    const float ringEnd[2]{ring.corner[0] + ring.cellSize * GI_TERRAIN_CELLS, ring.corner[1] + ring.cellSize * GI_TERRAIN_CELLS};
+    constexpr float Slack = GI_TERRAIN_PATCH_SLACK;
+    std::vector<TerrainPatchDraw> seen;
+    std::vector<Candidate> candidates;
+    for (const auto& draw : drawn.draws)
+    {
+        const bool isInMesh = draw.indexCount % 3 == 0 && std::uint64_t{draw.firstIndex} + draw.indexCount <= meshIndices
+            && std::uint64_t{draw.baseVertex} + highestIndex < meshVertices;
+        if (!isInMesh || std::ranges::find(seen, draw) != seen.end()) continue;
+
+        seen.push_back(draw);
+        const auto& [scaleU, scaleV, offsetU, offsetV] = draw.uvScaleOffset;
+        const auto& scale = draw.worldScale;
+        const auto& offset = draw.worldOffset;
+        const float x0 = (offsetU + bounds[0] * scaleU) * scale[0] + offset[0], x1 = (offsetU + bounds[2] * scaleU) * scale[0] + offset[0];
+        const float z0 = (offsetV + bounds[1] * scaleV) * scale[2] + offset[2], z1 = (offsetV + bounds[3] * scaleV) * scale[2] + offset[2];
+        const bool isInside = x0 >= ring.corner[0] - Slack && z0 >= ring.corner[1] - Slack && x1 <= ringEnd[0] + Slack && z1 <= ringEnd[1] + Slack;
+        if (!isInside) continue;
+
+        const float dx = (x0 + x1) / 2 - eye[0], dz = (z0 + z1) / 2 - eye[2];
+        candidates.push_back({{.uvScaleOffset = {scaleU, scaleV, offsetU, offsetV},
+                                  .worldScale = {scale[0], scale[1], scale[2], 0},
+                                  .worldOffset = {offset[0], offset[1], offset[2], 0},
+                                  .worldRect = {x0, z0, x1, z1},
+                                  .firstIndex = draw.firstIndex,
+                                  .indexCount = draw.indexCount, .baseVertex = draw.baseVertex},
+            dx * dx + dz * dz});
+    }
+
+    std::ranges::sort(candidates, {}, &Candidate::distance);
+    std::vector<GITerrainPatch> taken;
+    std::uint32_t triangles{};
+    for (const auto& candidate : candidates)
+    {
+        const auto count = candidate.patch.indexCount / 3;
+        if (taken.size() == GI_TERRAIN_PATCHES || triangles + count > GI_TERRAIN_PATCH_TRIANGLES) continue;
+
+        taken.push_back(candidate.patch);
+        triangles += count;
+    }
+
+    const auto order = [](const GITerrainPatch& patch) {
+        const auto& r = patch.worldRect;
+        return std::tuple(r.y, r.x, r.w, r.z, patch.firstIndex, patch.indexCount);
+    };
+    std::ranges::sort(taken, {}, order);
+    triangles = 0;
+    for (auto& patch : taken)
+    {
+        patch.firstTriangle = triangles;
+        triangles += patch.indexCount / 3;
+    }
+
+    return taken;
+}
+
+bool isSamePatches(const std::vector<GITerrainPatch>& a, const std::vector<GITerrainPatch>& b)
+{
+    return a.size() == b.size() && (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(GITerrainPatch)) == 0);
+}
 }
 
 const InstancedModel* instancedAt(std::span<const InstancedModel> instanced, std::uint32_t instance)
@@ -128,11 +203,21 @@ const InstancedModel* instancedAt(std::span<const InstancedModel> instanced, std
 
 SceneContents::SceneContents(SceneMemory& memory) : memory(memory)
 {
-    // The terrain's room in the pool and its structures, kept while the scene runs.
-    for (auto& ring : terrain)
+    // The terrain's room in the pool and its structures, kept while the scene runs. The game's own patches are a second
+    // geometry of the innermost ring's: in a structure of their own, every ray near the ground crossed two, and the sun's
+    // rays cost 0.35 ms more at 4K than with the ring alone; with the ring left out, 0.14 ms less (a debug case, 2026-11-06).
+    const auto patchVertices = memory.allocate(std::uint64_t{TerrainPatchVertices} * 16);
+    if (!patchVertices) throw std::runtime_error("The scene has no room for the terrain.");
+
+    patches.poolOffset = *patchVertices;
+    for (std::uint32_t r = 0; r < GI_TERRAIN_RINGS; ++r)
     {
+        auto& ring = terrain[r];
         const auto vertices = memory.allocate(std::uint64_t{TerrainRingVertices} * 16);
-        const auto blas = vertices ? memory.createBlas(Use::Refit, {{*vertices, TerrainRingVertices}}) : std::nullopt;
+        std::vector<Geometry> geometries;
+        if (vertices) geometries.push_back({*vertices, TerrainRingVertices});
+        if (vertices && r == 0) geometries.push_back({*patchVertices, TerrainPatchVertices});
+        const auto blas = vertices ? memory.createBlas(Use::Refit, geometries) : std::nullopt;
         if (!blas) throw std::runtime_error("The scene has no room for the terrain.");
 
         ring.poolOffset = *vertices;
@@ -146,7 +231,7 @@ Update SceneContents::update(GameScene&& frame)
     retuneSelfLight(frame);
     updateModels(frame, update);
     updateCharacters(frame, update);
-    if (frame.terrainEye) planTerrain(*frame.terrainEye, frame.frameIndex, update);
+    if (frame.terrainEye) planTerrain(*frame.terrainEye, frame.terrainPatches, frame.frameIndex, update);
     if (frame.seaCentre) makeSea();
 
     memory.planBuilds();
@@ -625,8 +710,10 @@ void SceneContents::updateCharacters(const GameScene& frame, Update& update)
 // The frame's terrain rings around `eye`: where each lies, and which to make again with a new structure,
 // or with the old one refitted, this frame (Update::Ring::isRemade). Each ring's place goes into the
 // frame's constants.
-void SceneContents::planTerrain(const std::array<float, 3>& eye, std::uint32_t frameIndex, Update& update)
+void SceneContents::planTerrain(const std::array<float, 3>& eye, const TerrainPatches& drawn, std::uint32_t frameIndex, Update& update)
 {
+    uploadPatchMesh(drawn.mesh);
+    const bool hasMesh = drawn.mesh && patches.meshVersion == drawn.mesh->version;
     bool hasInnerMoved{};
     for (std::uint32_t r = 0; r < GI_TERRAIN_RINGS; ++r)
     {
@@ -636,8 +723,25 @@ void SceneContents::planTerrain(const std::array<float, 3>& eye, std::uint32_t f
         const float step = cell * 8;
         const std::array<float, 2> corner{std::floor((eye[0] - cell * GI_TERRAIN_CELLS / 2) / step) * step,
             std::floor((eye[2] - cell * GI_TERRAIN_CELLS / 2) / step) * step};
+        placed.corner = corner;
+        placed.cellSize = cell;
+        placed.poolOffset = ring.poolOffset;
+
+        // The game's own patches inside the innermost ring as it lies this frame. Others than the last make its structure
+        // again, as which of its triangles are active changes, which a refit cannot do. Decided before the ring's build, so
+        // a frame never refits and builds the same structure: forced to build every frame, the two met in one frame and the
+        // device was removed (2026-11-06).
+        bool hasOtherPatches{};
+        if (r == 0)
+        {
+            auto taken = hasMesh ? takePatches(drawn, patches.meshIndices, patches.meshVertices, patches.highestIndex, patches.meshBounds, eye, placed)
+                                 : std::vector<GITerrainPatch>{};
+            hasOtherPatches = !isSamePatches(taken, patches.taken);
+            if (hasOtherPatches) patches.taken = std::move(taken);
+        }
+
         const bool hasMoved = !ring.isPlaced || corner != ring.corner || hasInnerMoved || !memory.ready(ring.blas);
-        if (hasMoved)
+        if (hasMoved || hasOtherPatches)
         {
             ring.corner = corner;
             ring.isPlaced = true;
@@ -650,11 +754,53 @@ void SceneContents::planTerrain(const std::array<float, 3>& eye, std::uint32_t f
             placed.isRemade = memory.refit(ring.blas);
         }
 
-        placed.corner = ring.corner;
-        placed.cellSize = cell;
-        placed.poolOffset = ring.poolOffset;
         hasInnerMoved = hasMoved;
+        if (r > 0) continue;
+
+        // The patches are written whenever the ring is made, as finer heights stream in, and when they change: without
+        // patches, every one of their triangles inactive, so the pool's room never stands in the structure as triangles at
+        // the world's origin.
+        auto& planned = update.terrainPatches;
+        planned.isRemade = hasOtherPatches || placed.isRemade;
+        planned.taken = patches.taken;
+        planned.poolOffset = patches.poolOffset;
+        planned.meshIndexOffset = patches.meshOffset;
+        planned.meshVertexOffset = patches.meshOffset + std::uint64_t{patches.meshIndices} * 4;
     }
+}
+
+// The game's patch mesh into the pool, once a version: its indices, then its vertices' uv. Without room it waits for a
+// later frame, and no patch is taken until it is there.
+void SceneContents::uploadPatchMesh(const TerrainPatchMesh* mesh)
+{
+    if (!mesh || mesh->version == patches.meshVersion || mesh->vertices.empty() || mesh->indices.empty()) return;
+
+    if (patches.meshBytes) memory.release(patches.meshOffset, patches.meshBytes);
+    patches.meshVersion = 0;
+    patches.meshBytes = 0;
+    const auto indexBytes = mesh->indices.size() * 4, bytes = indexBytes + mesh->vertices.size() * 8;
+    const auto offset = memory.allocate(bytes);
+    if (!offset) return;
+
+    std::vector<std::uint8_t> staged(bytes);
+    std::memcpy(staged.data(), mesh->indices.data(), indexBytes);
+    std::memcpy(staged.data() + indexBytes, mesh->vertices.data(), bytes - indexBytes);
+    if (!memory.upload(*offset, staged))
+    {
+        memory.release(*offset, bytes);
+        return;
+    }
+
+    std::array<float, 4> bounds{FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
+    for (const auto& [u, v] : mesh->vertices) bounds = {std::min(bounds[0], u), std::min(bounds[1], v), std::max(bounds[2], u), std::max(bounds[3], v)};
+
+    patches.meshOffset = *offset;
+    patches.meshBytes = bytes;
+    patches.meshVersion = mesh->version;
+    patches.meshIndices = static_cast<std::uint32_t>(mesh->indices.size());
+    patches.meshVertices = static_cast<std::uint32_t>(mesh->vertices.size());
+    patches.highestIndex = std::ranges::max(mesh->indices);
+    patches.meshBounds = bounds;
 }
 
 // The sea's plane, once: its corners as TerrainGrid lays its cells out, clockwise seen from above, so its front
@@ -831,10 +977,13 @@ void SceneContents::addInstances(const GameScene& frame, Update& update)
     }
 
     update.triangles += characterTriangles;
+    patchesTraced = 0;
+    innermostRing.reset();
     terrainRings = 0;
     for (std::uint32_t r = 0; r < GI_TERRAIN_RINGS && frame.terrainEye; ++r)
     {
-        if (!memory.addInstance(terrain[r].blas, nullptr, GI_INSTANCE_TERRAIN))
+        const auto instance = memory.addInstance(terrain[r].blas, nullptr, GI_INSTANCE_TERRAIN);
+        if (!instance)
         {
             if (memory.ready(terrain[r].blas)) ++ringsPastCap;
             continue;
@@ -842,6 +991,12 @@ void SceneContents::addInstances(const GameScene& frame, Update& update)
 
         update.triangles += TerrainRingVertices / 3;
         ++terrainRings;
+        if (r > 0 || patches.taken.empty()) continue;
+
+
+        innermostRing = instance;
+        patchesTraced = static_cast<std::uint32_t>(patches.taken.size());
+        update.triangles += patches.taken.back().firstTriangle + patches.taken.back().indexCount / 3;
     }
 
     isSeaTraced = false;
@@ -863,7 +1018,8 @@ std::string SceneContents::status() const
         + std::to_string(texturesHeld) + " of the game's textures held (" + std::to_string(texturesRefused) + " copies refused for want of a slot); characters: "
         + std::to_string(charactersTraced) + " traced (" + std::to_string(characterVertices / 1000) + "k vertices posed, "
         + std::to_string(characterTriangles / 1000) + "k triangles), " + std::to_string(charactersWaiting) + " waiting; terrain rings "
-        + std::to_string(terrainRings) + " of " + std::to_string(GI_TERRAIN_RINGS) + "; past the instance cap: " + std::to_string(modelsPastCap)
+        + std::to_string(terrainRings) + " of " + std::to_string(GI_TERRAIN_RINGS) + ", the game's own patches " + std::to_string(patchesTraced)
+        + "; past the instance cap: " + std::to_string(modelsPastCap)
         + " models, " + std::to_string(charactersPastCap) + " characters, " + std::to_string(ringsPastCap) + " terrain rings"
         + (isSeaTraced ? "; the sea's plane traced" : "") + "; self-lit meshes: " + std::to_string(emittersPlaced) + " near the eye, "
         + std::to_string(emittersAimedAt) + " aimed at";
@@ -936,7 +1092,7 @@ std::string SceneContents::describeHit(std::span<const InstancedModel> instanced
 
 std::string SceneContents::describeMesh(std::span<const InstancedModel> instanced, std::uint32_t instance, std::uint32_t geometry, std::uint32_t kind) const
 {
-    std::string what = (kind & GI_INSTANCE_SEA) ? "the sea" : "the terrain";
+    std::string what = (kind & GI_INSTANCE_SEA) ? "the sea" : instance == innermostRing && geometry == 1 ? "the terrain (the game's own patches)" : "the terrain (its rings)";
     if (kind & GI_INSTANCE_MODEL)
     {
         const auto placed = instancedAt(instanced, instance);

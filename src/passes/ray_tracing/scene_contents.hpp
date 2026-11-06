@@ -23,12 +23,42 @@ namespace phantom_fx::scene_contents
 {
 using gi::GIEmitter;
 using gi::GISkinRecord;
+using gi::GITerrainPatch;
 using gi::uint4;
 using scene_description::CharacterInstance;
 using scene_description::Model;
 using scene_description::ModelInstance;
 using scene_description::ModelPart;
 using scene_description::Transform;
+
+// A terrain patch as the game's main camera drew it (NewTerrain_Depth): its rect of the virtual heightmap, and the
+// index range of the patch mesh it drew, a grid of 32, 16, 8 or 4 cells across stitched to its neighbours'.
+struct TerrainPatchDraw
+{
+    std::array<float, 4> uvScaleOffset{}; // cb5 c9: a vertex's virtual heightmap uv = its own x xy + zw
+    // cb5 c10, c11: its world point = (u, height, v) x scale + offset, the draw's own.
+    std::array<float, 3> worldScale{}, worldOffset{};
+    std::uint32_t firstIndex{}, indexCount{};
+    std::uint32_t baseVertex{};
+
+    bool operator==(const TerrainPatchDraw&) const = default;
+};
+
+// The game's patch mesh every patch draws from: its grids' indices, their vertices (a patch's own uv), and a number
+// that changes when the game's buffers do.
+struct TerrainPatchMesh
+{
+    std::vector<std::uint32_t> indices;
+    std::vector<std::array<float, 2>> vertices;
+    std::uint64_t version{};
+};
+
+// The game's terrain patches a frame drew, and the mesh they drew from.
+struct TerrainPatches
+{
+    std::span<const TerrainPatchDraw> draws;
+    const TerrainPatchMesh* mesh{};
+};
 
 // What the game's scene gave this frame.
 struct GameScene
@@ -48,6 +78,9 @@ struct GameScene
     // Where the terrain rings centre, once the game's terrain draws give its inputs; without it the
     // terrain is left out of the frame.
     std::optional<std::array<float, 3>> terrainEye;
+    // The game's own terrain patches drawn this frame, which the scene takes near the eye in place of the innermost
+    // ring's cells; with terrainEye only.
+    TerrainPatches terrainPatches;
     // The sea's level under the eye (sea.hpp), where its plane lies this frame; without it the frame has no sea.
     std::optional<std::array<float, 3>> seaCentre;
     // Diagnostics (the probes): the frame's instances of the game's models listed (Update::instanced).
@@ -84,12 +117,22 @@ struct Update
         bool isRemade{};
     };
 
+    // The game's terrain patches the scene takes (TerrainPatches in gi_scene.hlsl): sorted by their first triangle, where
+    // their triangles and the patch mesh lie in the pool, and whether they are made again this frame.
+    struct Patches
+    {
+        std::vector<GITerrainPatch> taken;
+        std::uint64_t poolOffset{}, meshIndexOffset{}, meshVertexOffset{};
+        bool isRemade{};
+    };
+
     // The characters' meshes to pose (Skin in gi_scene.hlsl), a record a mesh, and their palettes.
     std::vector<GISkinRecord> skins;
     std::vector<float> palettes;
     // The self-lit meshes placed this frame the rays aim at, the strongest at the eye, at most GI_MAX_EMITTERS.
     std::vector<GIEmitter> emitters;
     std::array<Ring, GI_TERRAIN_RINGS> terrain{};
+    Patches terrainPatches;
     // Diagnostics: the frame's instances of the game's models when asked for (GameScene::shouldListInstances),
     // by instance; the triangles of every instance.
     std::vector<InstancedModel> instanced;
@@ -198,6 +241,18 @@ private:
         std::uint32_t refreshed{};
     };
 
+    // The game's terrain patches the scene takes, kept while the scene runs: their triangles' vertices in the pool (the
+    // innermost ring's structure's second geometry); the patch mesh in the pool, as its version uploaded, with its
+    // vertices' uv bounds; the patches taken last.
+    struct PatchRecord
+    {
+        std::uint64_t poolOffset{};
+        std::uint64_t meshOffset{}, meshBytes{}, meshVersion{};
+        std::uint32_t meshIndices{}, meshVertices{}, highestIndex{};
+        std::array<float, 4> meshBounds{}; // Lowest u, v, then highest
+        std::vector<GITerrainPatch> taken;
+    };
+
     // One of the game's textures the models' meshes use: its slot in the scene's texture range once
     // copied; the models whose meshes use it.
     struct TextureRecord
@@ -215,7 +270,8 @@ private:
     void useTextures(const Model& model, bool isUsed, Update& update);
     void updateModels(GameScene& frame, Update& update); // Takes frame.placements
     void updateCharacters(const GameScene& frame, Update& update);
-    void planTerrain(const std::array<float, 3>& eye, std::uint32_t frameIndex, Update& update);
+    void planTerrain(const std::array<float, 3>& eye, const TerrainPatches& drawn, std::uint32_t frameIndex, Update& update);
+    void uploadPatchMesh(const TerrainPatchMesh* mesh);
     void makeSea();
     void addInstances(const GameScene& frame, Update& update);
     static ModelRecord::Emitter emitterOf(const ModelPart& part, std::uint32_t index);
@@ -233,6 +289,7 @@ private:
     std::unordered_map<std::uint64_t, CharacterRecord> characters;
     std::vector<CharacterInstance> characterList;
     std::array<TerrainRing, GI_TERRAIN_RINGS> terrain;
+    PatchRecord patches;
     scene_description::SelfLightFilter selfLight{};
     std::uint64_t selfLightVersion{};
     // The sea's plane, made the first frame with a sea and kept.
@@ -242,7 +299,8 @@ private:
 
     // Diagnostics: the frame's model instances and their triangles, the models waiting for room, and
     // models too large for a frame's upload; the textures with a slot.
-    std::uint32_t modelInstanceCount{}, modelsWaiting{}, modelsTooLarge{}, terrainRings{}, texturesHeld{};
+    std::uint32_t modelInstanceCount{}, modelsWaiting{}, modelsTooLarge{}, terrainRings{}, patchesTraced{}, texturesHeld{};
+    std::optional<std::uint32_t> innermostRing; // Diagnostics: the frame's instance of the innermost ring, its second geometry the patches
     std::uint64_t modelTriangles{};
     // Diagnostics: the frame's characters traced, those waiting for their model or for room, and their
     // posed vertices and triangles.
