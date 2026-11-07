@@ -598,6 +598,12 @@ shows what it printed and returned, or its error with the stack.
   While the code runs, `print` collects lines in place of the game's; the code runs under `xpcall`
   with `debug.traceback` when the game has the debug library. The lines and the returned values come
   back as one string; an error is raised again with the lines before it.
+- **Hooks.** Before the tools run, each function above is checked against this build's bytes at its
+  address (`game_code::matchesPastHooks`). A function another mod hooked is accepted when the rest of
+  the bytes, past the hook's jump and the `int3`/`nop` it fills the rest of the cut instruction with,
+  are this build's. Infinite Heaven's IHHook hooks these functions, so its game's Lua tools call
+  through it. A function whose code differs elsewhere still makes the tools unavailable, and the log
+  names its address.
 
 ### Travel
 
