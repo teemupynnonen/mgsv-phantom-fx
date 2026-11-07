@@ -58,14 +58,18 @@ if (Test-Path $saves) { Remove-Item $saves -Recurse -Force }
 New-Item -ItemType Directory -Force $saves | Out-Null
 Copy-Item (Join-Path $SeedSaves '*') $saves
 
-# The game's user data folder for the run: its own display settings, windowed at 1920x1080.
+# The game's user data folder for the run, with the player's display and quality settings.
 $userData = Join-Path $Game 'PhantomFX-automation\local'
 New-Item -ItemType Directory -Force $userData | Out-Null
 $config = Get-ChildItem (Join-Path $Steam '..\..\..\userdata\*\287700\local\TPP_GRAPHICS_CONFIG') | Select-Object -First 1
 if (-not $config) { throw "No TPP_GRAPHICS_CONFIG in Steam's userdata: run the game once from Steam first." }
-$display = Get-Content $config.FullName -Raw | ConvertFrom-Json
-$display.graphics.videoout_setting.window_mode = 'Windowed'
-if ($Width -gt 0) { $display.graphics.videoout_setting.width = $Width }
-if ($Height -gt 0) { $display.graphics.videoout_setting.height = $Height }
-$display | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $userData 'TPP_GRAPHICS_CONFIG')
+# Byte for byte: the file carries a checksum ("as") of its settings, and an edited one (windowed, another size) the game
+# throws away for its defaults, Effects below Extra High among them, where the ray tracing fails (2026-11-07). The copy
+# runs in the player's own display mode.
+# The game reads the player's file in the copy and still starts at its defaults (2026-11-07), so settings the copy's own
+# game saved, set once in its menu, are kept over the player's.
+$own = Join-Path $userData 'TPP_GRAPHICS_CONFIG'
+$isGameSaved = (Test-Path $own) -and (Get-FileHash $own).Hash -ne (Get-FileHash $config.FullName).Hash
+if (-not $isGameSaved) { Copy-Item $config.FullName $own -Force }
+if ($Width -gt 0 -or $Height -gt 0) { Write-Warning 'Width and Height are no longer applied: an edited TPP_GRAPHICS_CONFIG resets the game to its defaults.' }
 "Installed $(Join-Path $Build 'PhantomFX.addon64') into $Game"
