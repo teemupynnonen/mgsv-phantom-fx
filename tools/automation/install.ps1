@@ -7,8 +7,10 @@ param(
     [string]$Steam = $(if ($env:PHANTOM_FX_GAME) { $env:PHANTOM_FX_GAME } else { 'C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP' }),
     # The saves every run starts from; the game reads and writes a copy (src/dev/save_redirect.hpp).
     [string]$SeedSaves = (Join-Path $env:USERPROFILE 'Documents\Development\mgsv-automation\seed-saves'),
-    [int]$Width = 1920,
-    [int]$Height = 1080,
+    # 0 keeps the player's own output size, so a case recorded in their game has the render size the copy
+    # reproduces (a smaller window renders smaller still under an upscaler).
+    [int]$Width = 0,
+    [int]$Height = 0,
     # PhantomFX.ini lines in place of the player's. Frame generation and HDR are off by default: the
     # captures compare more easily without them, and changing either takes a restart.
     [string[]]$Settings = @('frame_generation=off', 'hdr=0'),
@@ -76,7 +78,7 @@ $config = Get-ChildItem (Join-Path $Steam '..\..\..\userdata\*\287700\local\TPP_
 if (-not $config) { throw "No TPP_GRAPHICS_CONFIG in Steam's userdata: run the game once from Steam first." }
 $display = Get-Content $config.FullName -Raw | ConvertFrom-Json
 $display.graphics.videoout_setting.window_mode = 'Windowed'
-$display.graphics.videoout_setting.width = $Width
-$display.graphics.videoout_setting.height = $Height
+if ($Width -gt 0) { $display.graphics.videoout_setting.width = $Width }
+if ($Height -gt 0) { $display.graphics.videoout_setting.height = $Height }
 $display | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $userData 'TPP_GRAPHICS_CONFIG')
 "Installed $(Join-Path $Build 'PhantomFX.addon64') into $Game"
