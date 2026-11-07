@@ -318,13 +318,13 @@ Roles character(const std::vector<TestMesh>& meshes)
     return rolesOf(meshes, Source::ModelList, true);
 }
 
-// Mother Base's scaffold tarps (2026-10-27): the sheets the main view alone shows are cut out and dropped,
-// so their stand-in, drawn into every sun cascade, is all the rays have of them. Met by every ray, a sheet's
-// rays would meet its inside 16 cm away.
+// Mother Base's scaffold tarps (2026-10-27): the sheets the main view alone shows cast nothing, so their
+// stand-in, drawn into every sun cascade, is all rays towards lights have of them. Met by every ray, a
+// sheet's rays would meet its inside 16 cm away.
 void tarpSheetsCastThroughStandIn()
 {
-    expect(rigid({{32, 1}, {0, 2}, {0, 0}}) == Roles{Dropped, MeshRole::ShadowOnly, MeshRole::Solid},
-        "A tarp's stand-in is kept for rays towards lights alone, as its sheets are dropped.");
+    expect(rigid({{32, 1}, {0, 2}, {0, 0}}) == Roles{MeshRole::MainViewCutOut, MeshRole::ShadowOnly, MeshRole::Solid},
+        "A tarp's stand-in is kept for rays towards lights alone, as its sheets cast nothing.");
 }
 
 // Serak Power Plant (2026-10-27): a room's walls and a cave's rock overhang the main view alone shows let
@@ -340,7 +340,7 @@ void solidStandInsCastTheSunAlone()
 
 void pylonLattice()
 {
-    expect(rigid({{32, 1}, {128, 66}}) == Roles{Dropped, MeshRole::CutOutStandIn}, "A pylon's lattice casts through its cut-out stand-in.");
+    expect(rigid({{32, 1}, {128, 66}}) == Roles{MeshRole::MainViewCutOut, MeshRole::CutOutStandIn}, "A pylon's lattice casts through its cut-out stand-in.");
 }
 
 // Alpha bit 4 is no glass: it marks a mesh drawn forward, after the G-buffer, most of them fox3DFW_ConstantSRGB (the game's
@@ -395,10 +395,12 @@ void innerWallsMainViewOnly()
     expect(rigid({{0, 1}}) == Roles{MeshRole::MainViewOnly}, "A solid mesh the main view alone shows is taken.");
 }
 
-// Crossed cards 44 cm above a road cast a moon shadow where the game showed nothing (2026-10-25).
-void crossedCardsDropped()
+// Crossed cards 44 cm above a road cast a moon shadow where the game showed nothing (2026-10-25). A tree
+// fern's fronds (2026-11-07): without them the jungle's floor saw open sky through its canopy.
+void mainViewCutOutsCastNothing()
 {
-    expect(rigid({{32, 1}, {160, 65}}) == Roles{Dropped, Dropped}, "Cut-out meshes and decals the main view alone shows are dropped.");
+    expect(rigid({{32, 1}, {160, 65}}) == Roles{MeshRole::MainViewCutOut, MeshRole::MainViewCutOut},
+        "Cut-out meshes and decals the main view alone shows are taken, and cast nothing.");
 }
 
 // A trench's grating and a tree's twigs cast in the game (2026-10-23).
@@ -410,7 +412,7 @@ void decalsCast()
 // Taken as both main view only and shadow only, no ray would meet it.
 void shadowByteThreeDropped()
 {
-    expect(rigid({{32, 1}, {0, 3}, {0, 2}}) == Roles{Dropped, Dropped, MeshRole::ShadowOnly},
+    expect(rigid({{32, 1}, {0, 3}, {0, 2}}) == Roles{MeshRole::MainViewCutOut, Dropped, MeshRole::ShadowOnly},
         "A stand-in the main view shows too is dropped beside main-view cut-outs.");
     expect(rigid({{0, 3}}) == Roles{Dropped}, "A stand-in the main view shows too is dropped.");
 }
@@ -441,7 +443,7 @@ void bushesAreLeaves()
 
 void sameFileDependsOnSource()
 {
-    expect(rolesOf({{160, 65}, {160, 64}}, Source::VisibilityManager) == Roles{Dropped, MeshRole::CutOut},
+    expect(rolesOf({{160, 65}, {160, 64}}, Source::VisibilityManager) == Roles{MeshRole::MainViewCutOut, MeshRole::CutOut},
         "A bush's file from a visibility manager takes a rigid model's roles.");
 }
 
@@ -460,6 +462,7 @@ void materialPerRole()
 
     const auto tree = modelOf({{128, 1}, {160, 66}}, Source::VisibilityManager);
     expect(flagsOf(*tree, 1) == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_SHADOW_ONLY), "Only rays towards lights meet a tree's canopy card, by its alpha.");
+    expect(flagsOf(*tree, 0) == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_NO_SHADOW), "Rays towards lights pass a tree's fronds, the others meet them by their alpha.");
 
     const auto bush = modelOf({{160, 64}}, Source::ObjectBrush);
     expect(flagsOf(*bush, 0) == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_LEAF), "Leaves are cut out and let light through.");
@@ -679,7 +682,7 @@ int main()
         glassKeepsItsMask();
         skyDomeDropped();
         innerWallsMainViewOnly();
-        crossedCardsDropped();
+        mainViewCutOutsCastNothing();
         decalsCast();
         shadowByteThreeDropped();
         hairTaken();

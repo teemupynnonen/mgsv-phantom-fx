@@ -4,10 +4,12 @@
 
 ### Fixed
 
-- **The jungle floor is no longer too dark under the trees.** The game shades the ground under a tree fern with a
-  flat card hung in its crown, which it never shows on screen. The rays met those cards like solid sheets, so they
-  kept the sky's light off the forest floor and showed up in reflections. Now only light from the sun and lamps meets
-  them, so the trees' shadows stay where they were.
+- **The jungle floor keeps its shade under the trees.** A tree fern's fronds are drawn in the main view alone, and the
+  game casts their shadow through a flat card hung in the crown. The rays saw neither, so the canopy hid nothing from
+  the sky and the floor under it went flat and bright. Both are in the scene now: the card stops only light from the
+  sun and lamps, as the game's shadow map does, and the fronds stop the sky's and the bounce, by their alpha. At the
+  case's ground pixel the floor is as dark as the game's and 34 of 64 bounce rays leave under the canopy instead of 5.
+  The fronds are cut out, so opacity micromaps keep them cheap.
 
 ## 2.0.0
 

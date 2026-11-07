@@ -975,8 +975,10 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
     transmittance = 1.0f;
     float nearestHair = FLT_MAX;
     float nearEnd = NearEnd(normal, tolerance, direction, maxDistance);
+    // Rays towards lights skip what they would pass anyway, whole (GI_MASK_VIEW_ONLY).
+    uint mask = (towards == RayTowardsSun || towards == RayTowardsLamp) ? GI_MASK_CASTS : GI_MASK_SCENE;
     uint copies;
-    SceneHit nearHit = TraceFromSurface(origin, normal, tolerance, direction, nearEnd, GI_MASK_SCENE, true, cone, towards, true, transmittance,
+    SceneHit nearHit = TraceFromSurface(origin, normal, tolerance, direction, nearEnd, mask, true, cone, towards, true, transmittance,
         nearestHair, copies);
     blocker = min(nearHit.distance, nearestHair);
     if (nearHit.hit) return true;
@@ -992,10 +994,13 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
     float nearTransmittance = transmittance, nearHair = nearestHair;
     float countedPane = -1.0f;
     RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> query;
-    query.TraceRayInline(g_Scene, GI_RAY_FLAGS, GI_MASK_SCENE, ray);
-    // Only cut-out geometry is non-opaque, so only it comes here.
+    query.TraceRayInline(g_Scene, GI_RAY_FLAGS, mask, ray);
+    // Only cut-out geometry is non-opaque, so only it comes here. What does not stop it (a tree fern's fronds, which only the
+    // camera's and the global illumination's rays meet) is passed here, not left for the second look.
     while (query.Proceed())
     {
+        if (!StopsRay(query.CandidateInstanceIndex(), query.CandidateGeometryIndex(), query.CandidateTriangleFrontFace(), towards)) continue;
+
         uint row = query.CandidateInstanceContributionToHitGroupIndex() + query.CandidateGeometryIndex();
         float footprint = cone.x + query.CandidateTriangleRayT() * cone.y;
         if (DimsThroughGlass(row, towards))
@@ -1027,7 +1032,7 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
     nearestHair = nearHair;
     countedPane = -1.0f;
     RayQuery<RAY_FLAG_FORCE_NON_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> every;
-    every.TraceRayInline(g_Scene, GI_RAY_FLAGS, GI_MASK_SCENE, ray);
+    every.TraceRayInline(g_Scene, GI_RAY_FLAGS, mask, ray);
     while (every.Proceed())
     {
         uint instance = every.CandidateInstanceIndex(), geometry = every.CandidateGeometryIndex();

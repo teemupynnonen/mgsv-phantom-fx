@@ -2854,6 +2854,11 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   alpha 0xa0 shadow 0x42) 14 to 20 m up, one a tree. Met by every ray, the cards were a lid over the forest:
   the camera's ray met one at 36 m where the game drew ground at 105 m, they stood in front of 14% of the
   frame, and the floor under them lost the sky's light while the sun's shadow matched the game's.
+  Their fronds are in the scene since the same day (`MeshRole::MainViewCutOut`: cut out by their alpha, and
+  rays towards lights pass them, so the game's shadow map still answers for the sun): without them the
+  camera's and the bounce's rays saw open sky through the canopy, and the floor came out as flat as the
+  game's, 34 of 64 bounce rays leaving under it. A structure whose meshes all let a light's rays through is
+  `GI_MASK_VIEW_ONLY`, which those rays skip whole, so its fronds may take an opacity micromap.
   Since 2026-10-27 a solid stand-in is kept again where its model's main view shows cut-out meshes the
   scene leaves out (shadow bit 0 with alpha bit 5 or 7), as the only thing the rays have of them, and
   only for rays towards lights (`GI_GEOMETRY_SHADOW_ONLY`, `StopsRay`): every other ray passes it, and

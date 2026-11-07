@@ -57,10 +57,14 @@ constexpr int MicromapKeyTextureShift = 48;
 constexpr auto BakeRead = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_COPY_SOURCE;
 
 // A cut-out geometry the rays test alpha on, whose micromap the scene bakes. Not hair, which dims rays layer by layer (PassHair) and
-// so must see each hit, nor glass, whose alpha is no hole: every ray but a reflection's passes it (CutOutBlocks).
-bool isMicromapped(std::uint32_t flags)
+// so must see each hit, nor glass, whose alpha is no hole: every ray but a reflection's passes it (CutOutBlocks). What rays towards
+// lights pass (a tree fern's fronds) only in a structure they skip whole (GI_MASK_VIEW_ONLY): elsewhere an opaque micro-triangle
+// would end their search on it, where they skip it as a candidate.
+bool isMicromapped(std::uint32_t flags, bool castsNothing)
 {
-    return (flags & GI_GEOMETRY_CUT_OUT) && (flags & GI_GEOMETRY_UV) && !(flags & (GI_GEOMETRY_HAIR | GI_GEOMETRY_GLASS));
+    if (!(flags & GI_GEOMETRY_CUT_OUT) || !(flags & GI_GEOMETRY_UV) || (flags & (GI_GEOMETRY_HAIR | GI_GEOMETRY_GLASS))) return false;
+
+    return castsNothing || !(flags & GI_GEOMETRY_NO_SHADOW);
 }
 
 // A mesh is baked whole in one frame, so a big one goes coarser to stay within a frame's bake: a dispatch that runs for seconds loses
@@ -449,6 +453,7 @@ std::optional<BlasId> Scene::createBlas(Use use, const std::vector<Geometry>& ge
 
     Blas blas;
     blas.use = use;
+    blas.castsNothing = std::ranges::all_of(geometries, [](const Geometry& geometry) { return (geometry.material.flags & GI_GEOMETRY_NO_SHADOW) != 0; });
     const auto poolAddress = geometryPool->GetGPUVirtualAddress();
     for (const auto& geometry : geometries)
     {
@@ -470,7 +475,7 @@ std::optional<BlasId> Scene::createBlas(Use use, const std::vector<Geometry>& ge
 
         blas.geometries.push_back(desc);
         blas.triangles += (geometry.indexCount ? geometry.indexCount : geometry.vertexCount) / 3;
-        if (isMicromapCapable && geometry.indexCount && isMicromapped(geometry.material.flags))
+        if (isMicromapCapable && geometry.indexCount && isMicromapped(geometry.material.flags, blas.castsNothing))
             blas.micromapped.push_back(static_cast<std::uint32_t>(blas.geometries.size() - 1));
     }
 
@@ -643,7 +648,7 @@ std::optional<std::uint32_t> Scene::addInstance(BlasId id, const float* transfor
     // Only the terrain and the sea are one-sided (GI_RAY_FLAGS); the game's meshes are often open shells. The
     // sea's rays from the waves' troughs below its plane pass its back.
     const std::uint32_t flags = (kind & (GI_INSTANCE_TERRAIN | GI_INSTANCE_SEA)) ? 0 : D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
-    desc.idAndMask = (kind & 0xFFFFFFu) | (GI_MASK_SCENE << 24);
+    desc.idAndMask = (kind & 0xFFFFFFu) | ((blas.castsNothing ? GI_MASK_VIEW_ONLY : GI_MASK_CASTS) << 24);
     desc.hitGroupAndFlags = (blas.firstGeometry & 0xFFFFFFu) | (flags << 24);
     const auto blasAddress = address(blas);
     desc.blas = {static_cast<std::uint32_t>(blasAddress), static_cast<std::uint32_t>(blasAddress >> 32)};
