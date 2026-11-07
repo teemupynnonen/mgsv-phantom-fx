@@ -2819,7 +2819,13 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   stand-in (model `84a1b19dea6952c1`, mesh 9) kept 80 to 100% of a room's main lamp, an unshadowed spot,
   off its wall 0.9 m from it (the lamp probe), and the scene view went red over the room: the camera's
   rays met stand-ins short of what the game drew. Cut-out stand-ins stay in, for the main-view cut-out
-  meshes left out (the pylon's lattice).
+  meshes left out (the pylon's lattice). Since 2026-11-07 only rays towards lights meet them
+  (`MeshRole::CutOutStandIn`: `GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_SHADOW_ONLY`). In Africa's jungle each tree
+  fern's fronds (model `84a1f5deb4c61e59`, mesh 0, alpha 0x80 shadow 0x01) are drawn in the main view alone,
+  and the game casts them through a canopy card (model `84a3bde77c6368f3`, 10 triangles, about 22 x 22 m,
+  alpha 0xa0 shadow 0x42) 14 to 20 m up, one a tree. Met by every ray, the cards were a lid over the forest:
+  the camera's ray met one at 36 m where the game drew ground at 105 m, they stood in front of 14% of the
+  frame, and the floor under them lost the sky's light while the sun's shadow matched the game's.
   Since 2026-10-27 a solid stand-in is kept again where its model's main view shows cut-out meshes the
   scene leaves out (shadow bit 0 with alpha bit 5 or 7), as the only thing the rays have of them, and
   only for rays towards lights (`GI_GEOMETRY_SHADOW_ONLY`, `StopsRay`): every other ray passes it, and

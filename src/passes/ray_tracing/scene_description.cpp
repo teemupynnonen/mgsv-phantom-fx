@@ -116,7 +116,8 @@ constexpr float CutOutThreshold = 0.5f;
 //   simpler copy of the main view's meshes, it kept a lamp off a wall where nothing was drawn. Where the
 //   main view's cut-out meshes are dropped, it is all the rays have of them: it is kept for every ray
 //   towards a light. One the main view draws too is dropped (no ray would meet it). A cut-out stand-in
-//   stays in (a pylon's lattice casts through one). Should the sun-only rule mislead too, the game's
+//   stays in for every ray towards a light (a pylon's lattice casts through one), and other rays pass it:
+//   a tree's canopy card, a flat 22 m sheet the camera never sees, sealed the forest floor from the sky. Should the sun-only rule mislead too, the game's
 //   per-draw pass masks say which shadow maps each mesh is drawn into (docs/DEVELOPMENT.md, "Ray-traced
 //   shadows").
 // - The object brush's bushes and grass cast no shadow in the game: their meshes are taken as leaves
@@ -143,7 +144,7 @@ std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isC
     }
 
     if (isSeeThrough || (isCutOut && isMainViewOnly)) return std::nullopt;
-    if (isCutOut) return isVegetation ? MeshRole::Leaf : MeshRole::CutOut;
+    if (isCutOut) return isVegetation ? MeshRole::Leaf : isStandIn ? MeshRole::CutOutStandIn : MeshRole::CutOut;
     if (isStandIn)
     {
         if (isMainViewOnly) return std::nullopt;
@@ -183,6 +184,8 @@ std::uint32_t flagsOf(MeshRole role)
         return GI_GEOMETRY_SHADOW_ONLY;
     case MeshRole::SunShadowOnly:
         return GI_GEOMETRY_SHADOW_ONLY | GI_GEOMETRY_SUN_ONLY;
+    case MeshRole::CutOutStandIn:
+        return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_SHADOW_ONLY;
     case MeshRole::Solid:
         break;
     }
@@ -647,7 +650,7 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
 
 bool isCutOut(MeshRole role)
 {
-    return role == MeshRole::CutOut || role == MeshRole::Leaf || role == MeshRole::Hair;
+    return role == MeshRole::CutOut || role == MeshRole::Leaf || role == MeshRole::Hair || role == MeshRole::CutOutStandIn;
 }
 
 std::array<std::uint64_t, 5> texturePathsOf(const ModelPart& part)

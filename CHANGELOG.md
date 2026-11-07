@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **The jungle floor is no longer too dark under the trees.** The game shades the ground under a tree fern with a
+  flat card hung in its crown, which it never shows on screen. The rays met those cards like solid sheets, so they
+  kept the sky's light off the forest floor and showed up in reflections. Now only light from the sun and lamps meets
+  them, so the trees' shadows stay where they were.
 - **Global illumination is a little faster in open country.** Its rays and their bounces, also those of path-traced
   reflections, now look 100 m for what they hit and take the sky's light past it. At 4K that saves about 0.7 ms of an
   18 ms frame in Afghanistan and 0.3 ms in the jungle, and the picture looks the same. Turning off **Short rays** under
