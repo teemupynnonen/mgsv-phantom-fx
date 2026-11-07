@@ -140,7 +140,10 @@ std::optional<Outcome> run(std::string_view code, std::string_view name, bool ex
     if (!system || !*reinterpret_cast<void**>(system + 8)) return std::nullopt;
 
     Scope scope;
-    reinterpret_cast<BeginScope>(engine + BeginScopeRva)(&scope, true, true);
+    // Not the queued work: another mod's Lua (Infinite Heaven's MgsvSaves.Tick, once a frame) is queued there, and running
+    // it inside this scope re-enters Lua through the hooks IHHook has over it, which crashed the game (0xC0000005 at
+    // 0x2B31D2, beside the script system, 2026-11-07). The game runs its own queue at the next frame.
+    reinterpret_cast<BeginScope>(engine + BeginScopeRva)(&scope, true, false);
     void* const lua = *reinterpret_cast<void**>(scope.system + 8);
     int status = reinterpret_cast<LoadBuffer>(engine + LoadBufferRva)(lua, Harness.data(), Harness.size(), "=PhantomFX harness");
     if (status == 0) status = reinterpret_cast<Call>(engine + CallRva)(lua, 0, 1, 0);

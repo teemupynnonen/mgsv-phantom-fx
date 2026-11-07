@@ -69,17 +69,67 @@ def cases():
     return link() / "cases"
 
 
+# Seconds a command file may wait before the game takes it: it takes one each frame start, so far more is a stuck game.
+PICKUP_TIMEOUT = 30.0
+# Where each run's watch on PhantomFX.log starts: the log's size when this process first looked.
+log_start = {}
+
+
+def device_lost_since(_started):
+    """Whether the game's log has reported a removed GPU device (DXGI_ERROR_DEVICE_REMOVED) since this process first
+    looked at it."""
+    log = game_folder / "PhantomFX.log"
+    try:
+        size = log.stat().st_size
+    except FileNotFoundError:
+        return False
+    start = log_start.setdefault(log, size)
+    if size < start:
+        log_start[log] = start = 0  # A new game started and the log began again
+    with open(log, "rb") as file:
+        file.seek(start)
+        return b"0x887A0005" in file.read()
+
+
+class GameGone(RuntimeError):
+    """The game exited or crashed: nothing will answer, so callers that wait out a slow start must not retry."""
+
+
+def game_running():
+    """Whether a game runs from game_folder."""
+    command = "(Get-Process mgsvtpp -ErrorAction SilentlyContinue).Path"
+    paths = subprocess.run(["powershell", "-NoProfile", "-Command", command], capture_output=True, text=True).stdout.split("\n")
+    return any(Path(line.strip()).parent == game_folder for line in paths if line.strip())
+
+
 def run(lines, timeout=600.0):
     name = time.strftime("%Y%m%d-%H%M%S") + f"-{time.perf_counter_ns() % 1000000:06d}"
     partial = link() / f"{name}.partial"
     partial.write_text("\n".join(lines) + "\n")
     partial.rename(link() / f"{name}.cmd")
     result = link() / f"{name}.result"
-    deadline = time.monotonic() + timeout
+    started_at = time.monotonic()
+    deadline = started_at + timeout
+    # A game that exits or crashes mid-command never answers: look every few seconds, not only at the deadline.
+    next_check = time.monotonic() + 3
     while True:
-        if time.monotonic() > deadline:
+        now = time.monotonic()
+        if now > deadline:
             (link() / f"{name}.cmd").unlink(missing_ok=True)  # Not for a game that starts later
             raise TimeoutError(f"no result for {name} in {timeout} s: is a dev build running in {game_folder}?")
+        if now > next_check:
+            next_check = now + 3
+            command = link() / f"{name}.cmd"
+            if not game_running():
+                command.unlink(missing_ok=True)
+                raise GameGone(f"no game runs in {game_folder}: it exited or crashed before answering {name}")
+            if device_lost_since(started_at):
+                command.unlink(missing_ok=True)
+                raise GameGone(f"the GPU device was removed (0x887A0005 in {game_folder / 'PhantomFX.log'}): nothing renders, nothing will answer")
+            # The game takes a command file by deleting it, at its next frame start: one still there is a game not running frames.
+            if command.exists() and now - started_at > PICKUP_TIMEOUT:
+                command.unlink(missing_ok=True)
+                raise GameGone(f"the game in {game_folder} took no command for {PICKUP_TIMEOUT:.0f} s: it is frozen or stuck loading")
         try:
             text = result.read_text()
             result.unlink()
@@ -162,6 +212,7 @@ def diff(a, b):
 # click are skipped before they start, to where their click leads; the Konami login too, as it opens a
 # notice that waits for one.
 BOOT_STEP = """
+if not gvars or not mvars or not vars then return "0 waiting" end
 local skips = {
   Seq_Demo_ConfirmAutoSave = "Seq_Demo_StartSignIn",
   Seq_Demo_LogInKonamiServer = "Seq_Demo_CheckPatchDlcForInvitation",
@@ -196,12 +247,21 @@ return vars.missionCode .. " " .. tostring(sequence) .. (playing and " playing" 
 """.strip().replace("\n", " ")
 
 
-def wait_for_scripts(timeout=60.0):
-    """Until the game draws with a camera, before its Lua is asked anything. Another mod's hooks over the
-    game's Lua (Infinite Heaven's IHHook) make a call during start-up crash the game: with one, a script
-    state exists before it can be used. A game without them answers 'not running yet' instead."""
-    deadline = time.monotonic() + timeout
+def wait_for_scripts(timeout=90.0, least_seconds=45.0):
+    """Until the game is far enough through start-up to answer a Lua call. With another mod's hooks over the
+    game's Lua (Infinite Heaven's IHHook), a script state exists seconds after launch but a call then
+    crashes the game (0xC0000409); from about 45 s, at the title, it answers. A game without the hooks says
+    'not running yet' instead and is harmless to ask."""
+    started = time.monotonic()
+    deadline = started + timeout
     while time.monotonic() < deadline:
+        if time.monotonic() - started < least_seconds:
+            time.sleep(3)
+            # The process can take a few seconds to appear after launch.ps1 starts it.
+            if time.monotonic() - started > 15 and not game_running():
+                raise GameGone(f"no game runs in {game_folder}: read {link() / 'launch.log'}")
+            continue
+
         try:
             line = run(["status"], timeout=30).splitlines()[1]
         except (TimeoutError, FileNotFoundError):
@@ -240,7 +300,7 @@ def boot(timeout=180.0):
 MAPS = {"afghanistan": 30010, "africa": 30020, "motherbase": 30050}
 
 
-def travel(destination, place=None, timeout=90.0):
+def travel(destination, place=None, timeout=90.0, again=False):
     """Leaves for another free roam, at `place` when given, and returns once it plays: after its loading has
     been seen to start. The game refuses to leave while busy (a fade, a save), so the request repeats until
     it goes. Each poll is a boot step, which closes popups and leaves the loading tips."""
@@ -258,7 +318,7 @@ def travel(destination, place=None, timeout=90.0):
             if asked: loading_seen = True
         elif loading_seen and state[0] == str(code):
             return
-        elif not loading_seen and state[0] != str(code) and time.monotonic() - asked > 5:
+        elif not loading_seen and (again or state[0] != str(code)) and time.monotonic() - asked > 5:
             run([f"travel {destination}" + (f" {place}" if place else "")])
             asked = time.monotonic()
         time.sleep(0.5)
@@ -361,30 +421,36 @@ def go_back(state):
         print("A story mission or cutscene: the place comes back, what it put there does not.")
 
     x, y, z = state["player"].split()
-    if here == MAPS[name]:
-        print(run([f"lua TppPlayer.Warp{{pos={{{x}, {y}, {z}}}, rotY=0}}"]), end="")
-    else:
-        travel(name, f"{x} {y} {z}")
+    # A full load there, also within the map: a warp streamed the jungle in under path tracing at once and the GPU
+    # timed out (0x887A0005, 2026-11-07), where a load, as from the player's save, does not.
+    travel(name, f"{x} {y} {z}", again=here == MAPS[name])
 
 
 def wait_for_scene(least=5000, timeout=90.0):
     """Until the game draws a scene again, after a warp or a travel: the scene holds models and the lights
     are lit. A modded player's save loads for many seconds, and a case recorded in that loading screen has
     nothing to read (a black frame)."""
+    # Each poll is a boot step too: a warp ends in loading tips that wait for a button, and without one the game
+    # sat in its loading screen for good (2026-11-07).
     deadline = time.monotonic() + timeout
+    last = "nothing"
     while time.monotonic() < deadline:
         try:
-            text = run(["status"], timeout=30)
+            text = run([f"lua {BOOT_STEP}", "status"], timeout=30)
         except (TimeoutError, FileNotFoundError):
             time.sleep(1)
             continue
 
+        lines = text.splitlines()
+        last = lines[1] if len(lines) > 1 else last
         instances = re.search(r"the game's scene: (\d+) instances", text)
         lit = re.search(r"GPU: scene [\d.]+ ms, light ([\d.]+) ms", text)
-        if instances and int(instances.group(1)) >= least and lit and float(lit.group(1)) >= 1.0:
+        if last.endswith(" playing") and instances and int(instances.group(1)) >= least and lit and float(lit.group(1)) >= 1.0:
             return
 
         time.sleep(1)
+
+    raise TimeoutError(f"no scene after {timeout:.0f} s: the game is at {last}")
 
 
 def record_at(state, name):
