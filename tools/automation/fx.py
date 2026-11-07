@@ -22,6 +22,7 @@
 """
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -195,9 +196,29 @@ return vars.missionCode .. " " .. tostring(sequence) .. (playing and " playing" 
 """.strip().replace("\n", " ")
 
 
-def boot(timeout=600.0):
+def wait_for_scripts(timeout=60.0):
+    """Until the game draws with a camera, before its Lua is asked anything. Another mod's hooks over the
+    game's Lua (Infinite Heaven's IHHook) make a call during start-up crash the game: with one, a script
+    state exists before it can be used. A game without them answers 'not running yet' instead."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            line = run(["status"], timeout=30).splitlines()[1]
+        except (TimeoutError, FileNotFoundError):
+            time.sleep(0.5)
+            continue
+
+        frame = re.match(r"frame (\d+)", line)
+        if frame and int(frame.group(1)) > 200 and " camera " in f" {line} ":
+            return
+
+        time.sleep(0.5)
+
+
+def boot(timeout=180.0):
     """Steps the game from wherever it is into free roam; returns the seconds it took."""
     start = time.monotonic()
+    wait_for_scripts()
     last = None
     while time.monotonic() - start < timeout:
         try:
@@ -219,7 +240,7 @@ def boot(timeout=600.0):
 MAPS = {"afghanistan": 30010, "africa": 30020, "motherbase": 30050}
 
 
-def travel(destination, place=None, timeout=300.0):
+def travel(destination, place=None, timeout=90.0):
     """Leaves for another free roam, at `place` when given, and returns once it plays: after its loading has
     been seen to start. The game refuses to leave while busy (a fade, a save), so the request repeats until
     it goes. Each poll is a boot step, which closes popups and leaves the loading tips."""
@@ -343,9 +364,30 @@ def go_back(state):
         travel(name, f"{x} {y} {z}")
 
 
+def wait_for_scene(least=5000, timeout=90.0):
+    """Until the game draws a scene again, after a warp or a travel: the scene holds models and the lights
+    are lit. A modded player's save loads for many seconds, and a case recorded in that loading screen has
+    nothing to read (a black frame)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            text = run(["status"], timeout=30)
+        except (TimeoutError, FileNotFoundError):
+            time.sleep(1)
+            continue
+
+        instances = re.search(r"the game's scene: (\d+) instances", text)
+        lit = re.search(r"GPU: scene [\d.]+ ms, light ([\d.]+) ms", text)
+        if instances and int(instances.group(1)) >= least and lit and float(lit.group(1)) >= 1.0:
+            return
+
+        time.sleep(1)
+
+
 def record_at(state, name):
     """The running copy at a case's or a scenario's spot, recorded there as the case `name`."""
     go_back(state)
+    wait_for_scene()
     weather = state.get("weather", "-1")
     sky = [f"clock {state['clock']}"] if "clock" in state else []
     sky.append("weather off" if weather.startswith("-1") else f"weather {weather}")
@@ -487,3 +529,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
