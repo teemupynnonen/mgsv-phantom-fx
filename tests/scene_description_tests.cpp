@@ -340,7 +340,7 @@ void solidStandInsCastTheSunAlone()
 
 void pylonLattice()
 {
-    expect(rigid({{32, 1}, {128, 66}}) == Roles{Dropped, MeshRole::CutOut}, "A pylon's lattice casts through its cut-out stand-in.");
+    expect(rigid({{32, 1}, {128, 66}}) == Roles{Dropped, MeshRole::CutOutStandIn}, "A pylon's lattice casts through its cut-out stand-in.");
 }
 
 // Alpha bit 4 is no glass: it marks a mesh drawn forward, after the G-buffer, most of them fox3DFW_ConstantSRGB (the game's
@@ -457,6 +457,9 @@ void materialPerRole()
 
     const auto rock = modelOf({{0, 1}, {0, 2}}, Source::VisibilityManager);
     expect(flagsOf(*rock, 1) == (GI_GEOMETRY_SHADOW_ONLY | GI_GEOMETRY_SUN_ONLY), "Only the sun's rays meet a rock's stand-in.");
+
+    const auto tree = modelOf({{128, 1}, {160, 66}}, Source::VisibilityManager);
+    expect(flagsOf(*tree, 1) == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_SHADOW_ONLY), "Only rays towards lights meet a tree's canopy card, by its alpha.");
 
     const auto bush = modelOf({{160, 64}}, Source::ObjectBrush);
     expect(flagsOf(*bush, 0) == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_LEAF), "Leaves are cut out and let light through.");
