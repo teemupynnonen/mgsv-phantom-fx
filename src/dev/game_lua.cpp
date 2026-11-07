@@ -2,6 +2,7 @@
 
 #include "device_check.hpp"
 #include "game_code.hpp"
+#include "log.hpp"
 
 #include <Windows.h>
 #include <mutex>
@@ -112,7 +113,20 @@ Console published;
 
 bool isSupported() noexcept
 {
-    static const bool expected = isSupportedGameBuild() && game_code::matches(Checked);
+    static const bool expected = [] {
+        if (!isSupportedGameBuild()) return false;
+
+        for (const auto& one : Checked)
+        {
+            if (game_code::matchesPastHooks({&one, 1})) continue;
+
+            log("Game Lua: unexpected code at " + hex(one.rva) + ", so the Lua tools are unavailable.");
+            return false;
+        }
+        if (!game_code::matches(Checked)) log("Game Lua: another mod hooks the game's Lua; the Lua tools call through its hooks.");
+
+        return true;
+    }();
 
     return expected;
 }
