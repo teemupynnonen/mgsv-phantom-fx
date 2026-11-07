@@ -185,25 +185,11 @@ void retune(Rule& rule, std::uint64_t parameter, const Value& held, const Value&
     if (change->to == change->from) rule.changes.erase(change);
 }
 
-std::size_t unsavedCount(std::span<const Rule> saved, std::span<const Rule> rules)
+bool isSameMaterialRule(const Rule& a, const Rule& b)
 {
-    // A rule matches one rule of the other set at most, so a duplicate taken out still counts.
-    const auto unmatched = [](std::span<const Rule> set, std::span<const Rule> other) {
-        std::vector<bool> isTaken(other.size());
-        std::size_t count{};
-        for (const auto& rule : set)
-        {
-            std::size_t i = 0;
-            while (i < other.size() && (isTaken[i] || other[i] != rule)) ++i;
-
-            if (i == other.size()) ++count;
-            else isTaken[i] = true;
-        }
-
-        return count;
-    };
-
-    return std::max(unmatched(rules, saved), unmatched(saved, rules));
+    return a.material == b.material && std::ranges::any_of(a.changes, [&](const Change& change) {
+        return std::ranges::any_of(b.changes, [&](const Change& other) { return other.parameter == change.parameter && other.from == change.from; });
+    });
 }
 
 std::uint64_t parameterOfLowHalf(std::uint32_t lowHalf)

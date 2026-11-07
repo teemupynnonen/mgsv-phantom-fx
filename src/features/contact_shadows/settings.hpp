@@ -16,5 +16,14 @@ struct ContactShadowShape
     bool operator==(const ContactShadowShape&) const = default;
 };
 
-void describe(ContactShadowShape& shape, SettingVisitor& visit);
+// Short screen-space shadows of the sun and the lamps, one switch for both.
+struct ContactShadows
+{
+    bool on{};
+    ContactShadowShape shape;
+
+    bool operator==(const ContactShadows&) const = default;
+};
+
+void describe(ContactShadows& shadows, SettingVisitor& visit);
 }

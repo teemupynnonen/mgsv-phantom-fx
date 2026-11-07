@@ -143,6 +143,7 @@ SceneContents::SceneContents(SceneMemory& memory) : memory(memory)
 Update SceneContents::update(GameScene&& frame)
 {
     Update update;
+    retuneSelfLight(frame);
     updateModels(frame, update);
     updateCharacters(frame, update);
     if (frame.terrainEye) planTerrain(*frame.terrainEye, frame.frameIndex, update);
@@ -166,7 +167,49 @@ scene_description::Material SceneContents::materialOf(const ModelPart& part) con
     const auto baseTexture = textures.find(base);
     const float baseTexelsAcross = baseTexture != textures.end() ? baseTexture->second.texelsAcross : 0.0f;
 
-    return scene_description::materialOf(part, {slotOf(base), slotOf(specular), slotOf(normal), slotOf(layer), slotOf(layerMask), baseTexelsAcross});
+    return scene_description::materialOf(part, {slotOf(base), slotOf(specular), slotOf(normal), slotOf(layer), slotOf(layerMask), baseTexelsAcross},
+        selfLight);
+}
+
+// The self-lit meshes' light again when what tunes it has changed (the remastering tool), so the rays follow at once.
+void SceneContents::retuneSelfLight(const GameScene& frame)
+{
+    const bool isFirst = !selfLight;
+    selfLight = frame.selfLight;
+    if (isFirst || frame.selfLightVersion == std::exchange(selfLightVersion, frame.selfLightVersion)) return;
+
+    for (auto& [hash, record] : models)
+    {
+        const auto& parts = record.geometry->parts;
+        for (std::uint32_t i = 0; i < parts.size() && i < MaxModelParts && i < record.parts.size(); ++i)
+        {
+            if (!parts[i].selfLight) continue;
+
+            const auto material = materialOf(parts[i]);
+            if (material.emission != record.parts[i].material.emission) setPartMaterial(record, hash, i, material);
+        }
+    }
+}
+
+// A mesh's material, in the model's structure, its variants' and, for a skinned model, its characters' that show it.
+void SceneContents::setPartMaterial(ModelRecord& record, std::uint64_t hash, std::uint32_t part, const scene_description::Material& material)
+{
+    if (record.blas) memory.setMaterial(*record.blas, part, material);
+    if (part >= record.parts.size()) return;
+
+    record.parts[part].material = material;
+    for (const auto& variant : record.variants)
+    {
+        const auto shown = std::find(variant.parts.begin(), variant.parts.end(), part);
+        if (variant.blas && shown != variant.parts.end()) memory.setMaterial(*variant.blas, static_cast<std::uint32_t>(shown - variant.parts.begin()), material);
+    }
+
+    for (const auto& [id, character] : characters)
+    {
+        const auto shown = std::find(character.parts.begin(), character.parts.end(), part);
+        if (character.hash == hash && shown != character.parts.end())
+            memory.setMaterial(character.blas, static_cast<std::uint32_t>(shown - character.parts.begin()), material);
+    }
 }
 
 // The model's meshes laid out from `poolOffset` into `bytes`, and their geometries; a skinned model's
@@ -273,26 +316,7 @@ void SceneContents::updateTextures(const GameScene& frame)
                 const auto paths = texturePathsOf(parts[i]);
                 if (std::ranges::find(paths, made.path) == paths.end()) continue;
 
-                const auto material = materialOf(parts[i]);
-                if (modelRecord.blas) memory.setMaterial(*modelRecord.blas, i, material);
-                if (i >= modelRecord.parts.size()) continue;
-
-                // Its variants' structures, and a skinned model's characters' structures, that have it among
-                // the meshes they show.
-                modelRecord.parts[i].material = material;
-                for (const auto& variant : modelRecord.variants)
-                {
-                    const auto shown = std::find(variant.parts.begin(), variant.parts.end(), i);
-                    if (variant.blas && shown != variant.parts.end())
-                        memory.setMaterial(*variant.blas, static_cast<std::uint32_t>(shown - variant.parts.begin()), material);
-                }
-
-                for (const auto& [id, character] : characters)
-                {
-                    const auto shown = std::find(character.parts.begin(), character.parts.end(), i);
-                    if (character.hash == user && shown != character.parts.end())
-                        memory.setMaterial(character.blas, static_cast<std::uint32_t>(shown - character.parts.begin()), material);
-                }
+                setPartMaterial(modelRecord, user, i, materialOf(parts[i]));
             }
         }
     }

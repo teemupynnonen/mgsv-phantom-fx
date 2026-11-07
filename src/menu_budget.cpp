@@ -21,7 +21,9 @@
 
 #include <algorithm>
 #include <array>
+#include <format>
 #include <initializer_list>
+#include <iterator>
 #include <span>
 #include <string>
 #include <utility>
@@ -33,16 +35,14 @@ namespace
 using fxui::State;
 using performance::Pass;
 
-constexpr std::array<fxui::Section, 10> all{{
+constexpr std::array<fxui::Section, 8> all{{
+    {"Lighting", fxui::hue::Blue, false, "Graphics"},
+    {"Image", fxui::hue::Teal, false, "Graphics"},
+    {"World", fxui::hue::Violet, false, "Graphics"},
+    {"Camera", fxui::hue::Pink, false, "Graphics"},
+    {"Sandbox"},
     {"Budget", 0, true},
-    {"Upscaling", fxui::hue::Teal},
-    {"Shadows", fxui::hue::Straw},
-    {"Lighting", fxui::hue::Blue},
-    {"Atmosphere", fxui::hue::Violet},
-    {"Camera", fxui::hue::Pink},
-    {"Display", fxui::hue::Sand},
-    {"World"},
-    {"Diagnostics", 0, false, true},
+    {"Diagnostics"},
     {"Developer"},
 }};
 
@@ -69,9 +69,9 @@ const EffectLine EffectLines[]{
     {.effect = Effect::RayTracedLights, .passes = {{Pass::LightShadowRays, "Shadow rays"}, {Pass::LightShadowFilter, "Shadow filter"}, {Pass::LocalLights, "Lights with their traced shadows"}},
         .health = local_lights::health},
     {.effect = Effect::SoftShadows, .health = sun_light_pass::softShadowHealth},
-    {.effect = Effect::LampSoftShadows, .passes = {{Pass::LampSoftLight, "Light draws, with the soft shadow"}}, .health = lamp_soft_shadows::health},
-    {.effect = Effect::SunContactShadows, .passes = {{Pass::SunTrace, "Contact shadow trace"}}, .health = sun_contact_shadows::health},
-    {.effect = Effect::LampContactShadows, .passes = {{Pass::LampShadows, "Shadow draws"}}, .health = lamp_contact_shadows::health},
+    {.effect = Effect::LampSoftShadows, .passes = {{Pass::LampSoftLight, "Lamps: light draws, with the soft shadow"}}, .health = lamp_soft_shadows::health},
+    {.effect = Effect::SunContactShadows, .passes = {{Pass::SunTrace, "Sun: contact shadow trace"}}, .health = sun_contact_shadows::health},
+    {.effect = Effect::LampContactShadows, .passes = {{Pass::LampShadows, "Lamps: shadow draws"}}, .health = lamp_contact_shadows::health},
     {.effect = Effect::GlobalIllumination, .passes = {{Pass::GiRays, "Rays and the light cache"}, {Pass::GiDenoiser, "Denoiser and render size"},
             {Pass::GiProbeLight, "The game's probe light, copied"}, {Pass::GiCombine, "Adding the light"}},
         .health = light_combine::health},
@@ -140,6 +140,32 @@ std::string_view owner(std::span<const LineState> effects)
         if (state != State::Off) return id;
 
     return effects.begin()->first;
+}
+
+// What the upscaler is doing right now, for its line.
+std::string upscalerMessage(const upscaler::Status& state, const Upscaling& wanted)
+{
+    const auto& name = state.upscalerName;
+    const auto nativeMode = upscaler::label(upscaler::Mode::Dlaa, wanted.upscaler);
+    std::string message;
+    if (!state.supportedBuild) message = "This game version is not supported, so upscaling stays off.";
+    else if (wanted.mode == upscaler::Mode::Off) message = "Upscaling is off. The game's FXAA is in use.";
+    else if (state.failed) message = std::format("{} stopped: {} Choose a mode or upscaler again to retry.", name, state.failure);
+    else if (upscaler::upscales(wanted.mode) && !state.upscalingAvailable) message = std::format("Upscaling is unavailable (see PhantomFX.log); {} still works.", nativeMode);
+    else if (core::currentDiagnostics().gameFxaa) message = "Showing the game's FXAA for comparison (Diagnostics).";
+    else if (!state.fxaaRecognised) message = "Waiting for the game to draw its anti-aliasing.";
+    else if (!state.running && state.lastFallback.empty()) message = std::format("{} is waiting for the game's 3D view.", name);
+    else if (!state.running) message = std::format("{} is waiting: {}.", name, state.lastFallback);
+    else if (state.renderWidth == state.outputWidth && state.renderHeight == state.outputHeight)
+        message = std::format("{} {} at {}\xC3\x97{}.", name, nativeMode, state.outputWidth, state.outputHeight);
+    else
+        message = std::format("{} {}: {}\xC3\x97{} upscaled to {}\xC3\x97{}.", name, upscaler::label(wanted.mode, wanted.upscaler), state.renderWidth, state.renderHeight,
+            state.outputWidth, state.outputHeight);
+
+    if (wanted.upscaler != upscaler::Upscaler::Dlss || !wanted.rayReconstruction || !state.running || state.rayReconstruction) return message;
+
+    return message + (state.reconstructionAvailable ? " Ray Reconstruction waits for a ray-traced effect; DLSS runs meanwhile."
+                                                     : " Ray Reconstruction could not run here (see PhantomFX.log); DLSS runs instead.");
 }
 
 int at(Section section)
@@ -233,12 +259,28 @@ fxui::Budget budget(Settings& wanted, const performance::Costs& costs)
             addPass(split ? "Its share of the ray-traced scene" : "The ray-traced scene", timed(Pass::RayTracedScene) * share);
             addPass(split ? "Its share of the hand-over to Direct3D 12" : "Hand-over to Direct3D 12 (G-buffer pack, waits)", handOver * share);
         }
-        result.lines.push_back(std::move(line));
+        // Effects that share a switch share a line (FeatureInfo::menuId): their passes add up, and it says
+        // what the one that does most says: one that works, else one that is on.
+        const auto shared = std::ranges::find(result.lines, line.id, &fxui::Line::id);
+        if (shared == result.lines.end())
+        {
+            result.lines.push_back(std::move(line));
+            return;
+        }
+
+        shared->ms += line.ms;
+        std::ranges::move(line.passes, std::back_inserter(shared->passes));
+        const bool doesMore = line.state == State::Working ? shared->state != State::Working : line.state != State::Off && shared->state == State::Off;
+        if (!doesMore) return;
+
+        shared->state = line.state;
+        shared->replacedBy = line.replacedBy;
+        shared->message = std::move(line.message);
     };
 
     const auto upscalerFeature = infoOf<Upscaling>();
     add({.id = upscalerFeature.menuId, .name = upscalerFeature.name, .tech = upscaler::label(wanted.upscaling.upscaler), .section = at(upscalerFeature.section),
-            .state = upscaling},
+            .state = upscaling, .message = upscalerMessage(status, wanted.upscaling)},
         {{Pass::UpscalerInputs, "Motion vectors and inputs"}, {Pass::Upscaler, "DLSS or FSR"}, {Pass::UpscalerOutput, "Sharpening and output"}});
 
     for (const auto& line : EffectLines)

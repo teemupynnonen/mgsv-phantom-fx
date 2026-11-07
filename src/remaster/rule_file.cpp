@@ -44,6 +44,20 @@ Rule parsedRule(const Json& entry)
 
     return rule;
 }
+
+LampRule parsedLamp(const Json& entry)
+{
+    const auto at = entry.at("at").get<std::vector<float>>();
+    if (at.size() != 3) throw std::runtime_error("a place has three components");
+
+    const auto location = entry.at("location").get<std::int64_t>();
+    if (location < 0 || location > 0xFFFF) throw std::runtime_error("the location is out of range");
+
+    const auto brightness = entry.at("brightness").get<float>();
+    if (!(brightness >= 0)) throw std::runtime_error("the brightness is below zero");
+
+    return {.label = entry.value("label", ""), .location = static_cast<std::uint16_t>(location), .at = {at[0], at[1], at[2]}, .brightness = brightness};
+}
 }
 
 ParsedRules parseRules(std::string_view text)
@@ -68,11 +82,30 @@ ParsedRules parseRules(std::string_view text)
 
     sortRules(rules);
 
-    return {.rules = std::move(rules)};
+    std::vector<LampRule> lamps;
+    if (file.contains("lamps"))
+    {
+        const auto& list = file["lamps"];
+        if (!list.is_array()) return {.error = "The lamps are no list."};
+
+        for (std::size_t i = 0; i < list.size(); ++i)
+        {
+            try
+            {
+                lamps.push_back(parsedLamp(list[i]));
+            }
+            catch (const std::exception& error)
+            {
+                return {.error = std::format("Lamp {}: {}", i + 1, error.what())};
+            }
+        }
+    }
+
+    return {.rules = std::move(rules), .lamps = std::move(lamps)};
 }
 
 #if PHANTOM_FX_DEV_TOOLS
-std::string writeRules(std::vector<Rule> rules)
+std::string writeRules(std::vector<Rule> rules, const std::vector<LampRule>& lamps)
 {
     sortRules(rules);
 
@@ -93,7 +126,18 @@ std::string writeRules(std::vector<Rule> rules)
         text += "\n      }\n    }";
     }
 
-    return text + (rules.empty() ? "]\n}\n" : "\n  ]\n}\n");
+    text += rules.empty() ? "]" : "\n  ]";
+    if (lamps.empty()) return text + "\n}\n";
+
+    text += ",\n  \"lamps\": [";
+    for (std::size_t i = 0; i < lamps.size(); ++i)
+    {
+        const auto& lamp = lamps[i];
+        text += std::format("{}\n    {{ \"label\": {}, \"location\": {}, \"at\": {}, \"brightness\": {} }}", i ? "," : "", dump(lamp.label), lamp.location,
+            dump(lamp.at), dump(lamp.brightness));
+    }
+
+    return text + "\n  ]\n}\n";
 }
 #endif
 }

@@ -52,6 +52,9 @@ struct GameScene
     std::optional<std::array<float, 3>> seaCentre;
     // Diagnostics (the probes): the frame's instances of the game's models listed (Update::instanced).
     bool shouldListInstances{};
+    // What tunes the self-lit meshes' light, and a number that changes whenever what it does changes.
+    scene_description::SelfLightFilter selfLight{};
+    std::uint64_t selfLightVersion{};
 };
 
 // Diagnostics (the probes): one of a frame's instances of the game's models, and where it is.
@@ -207,6 +210,8 @@ private:
     scene_description::Material materialOf(const ModelPart& part) const;
     std::vector<Geometry> stageModel(const Model& model, std::uint64_t poolOffset, std::vector<std::uint8_t>& bytes, std::vector<std::uint64_t>& skins) const;
     void updateTextures(const GameScene& frame);
+    void retuneSelfLight(const GameScene& frame);
+    void setPartMaterial(ModelRecord& record, std::uint64_t hash, std::uint32_t part, const scene_description::Material& material);
     void useTextures(const Model& model, bool isUsed, Update& update);
     void updateModels(GameScene& frame, Update& update); // Takes frame.placements
     void updateCharacters(const GameScene& frame, Update& update);
@@ -228,6 +233,8 @@ private:
     std::unordered_map<std::uint64_t, CharacterRecord> characters;
     std::vector<CharacterInstance> characterList;
     std::array<TerrainRing, GI_TERRAIN_RINGS> terrain;
+    scene_description::SelfLightFilter selfLight{};
+    std::uint64_t selfLightVersion{};
     // The sea's plane, made the first frame with a sea and kept.
     std::optional<BlasId> sea;
     // The game's textures the models' meshes use, by path hash.

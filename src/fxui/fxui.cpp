@@ -24,15 +24,15 @@ namespace
 {
 // Sizes in pixels at ImGui's default 13 px font; everything grows with ReShade's font size.
 constexpr float FontBase = 13;
-constexpr float RailWidth = 176, CompactRailWidth = 140, Gutter = 34, SummaryWidth = 540;
+constexpr float Gutter = 34, SummaryWidth = 540;
 constexpr float ControlX = 160, ControlMin = 150, ControlMax = 250, ReadoutWidth = 76, ResetSize = 16, ColumnGap = 10;
 constexpr float StateWidth = 100, BarWidth = 100, MsWidth = 52, ShareWidth = 40, ChevronSize = 16;
 constexpr float RowName = 200; // The name column of cost rows, which do not stretch with the window
-// Window widths where the layout changes: below WideWindow the rail narrows and drops its hotkeys,
-// below NarrowWindow a dropdown of sections takes its place.
-constexpr float WideWindow = 640, NarrowWindow = 500;
-// Below these, an item's state and cost go under its name, and the budget drops its share column.
-constexpr float OneLineHead = Gutter + 150 + 8 + StateWidth + 56 + MsWidth, FullLedger = 480;
+// An item's line: its height, its value's width, the fold mark, and how far its settings sit in.
+constexpr float LineHeight = 27, ValueWidth = 190, ArrowWidth = 18, MarkSize = 16, FoldIndent = 16;
+constexpr float TabHeight = 25, SearchWidth = 220, SearchMin = 140;
+// Below these, an item's line drops its cost bar, and the budget drops its share column.
+constexpr float LineWithBar = 520, FullLedger = 480;
 // One millisecond on every cost bar in the window.
 constexpr float Millisecond = 48;
 constexpr double FlashSeconds = 1.6;
@@ -40,15 +40,16 @@ constexpr double FlashSeconds = 1.6;
 // What the window keeps between frames.
 struct Navigation
 {
-    int page{};
+    int page{}; // The chosen tab, as the index of its first section
     char search[64]{};
     bool resetScroll{};
-    std::string goTo;     // Asked for; the next window chooses its page
+    std::string goTo;     // Asked for; the next window chooses its tab
     std::string scrollTo; // Scrolled to as it is drawn
     std::string flash;    // Flashing since flashStart, as tall as the frame before drew it
     double flashStart{};
     float flashHeight{};
-    std::string hot, hotNext; // The line under the mouse, which the frame bar and the rail light
+    std::string hot, hotNext; // The line under the mouse, which the frame bar lights
+    std::string unfoldedId;
     std::unordered_set<std::string> open; // Budget rows showing their passes
 };
 
@@ -63,6 +64,15 @@ struct FieldLayout
     float bottom{};
 };
 
+// Where the item being drawn shows its value on its line (itemChoice()).
+struct ValueSlot
+{
+    ImVec2 at;
+    float width{}, height{};
+    bool isEnabled{};
+    bool isOff{}; // The item is off: its value shows dim
+};
+
 // What one frame of the window draws with.
 struct Frame
 {
@@ -72,16 +82,13 @@ struct Frame
     const char* masterKey{};
     float unit{1};
     float windowLeft{}, windowRight{}, windowBottom{};
-    // The layout for the window's width.
-    bool picker{}; // A dropdown of sections in place of the rail
-    bool keys{};   // The rail shows the hotkeys
-    float railWidth{};
     ImVec2 pagePadding;
     bool overlay{}; // Drawing the costs over the game: rows keep their width
     bool searching{}, matched{};
     int page{-1};
-    bool headingPending{}, firstHeading{true};
+    bool headingPending{}, firstHeading{true}, isFirstGroup{true};
     bool inItem{};
+    std::optional<ValueSlot> value; // The open item's, until it ends
     FieldLayout combo; // The field of the open combo, until endCombo()
 };
 
@@ -161,6 +168,31 @@ ImU32 hueOf(std::span<const Section> sections, int section)
 {
     const bool known = section >= 0 && section < static_cast<int>(sections.size());
     return known && sections[static_cast<std::size_t>(section)].hue ? sections[static_cast<std::size_t>(section)].hue : colour::TextDim;
+}
+
+const char* tabName(int section)
+{
+    const Section& entry = frame.sections[static_cast<std::size_t>(section)];
+    return entry.tab ? entry.tab : entry.name;
+}
+
+// The tab a section shows on, as the index of the first section on it.
+int tabOf(int section)
+{
+    const std::string_view name = tabName(section);
+    for (int index = 0; index < section; ++index)
+        if (name == tabName(index)) return index;
+
+    return section;
+}
+
+// Whether a tab holds more than one section, each then under its name.
+bool isShared(int tab)
+{
+    for (int index = tab + 1; index < static_cast<int>(frame.sections.size()); ++index)
+        if (tabOf(index) == tab) return true;
+
+    return false;
 }
 
 struct FrameRate
@@ -599,149 +631,66 @@ void searchBox(float width)
     }
 }
 
-// A section in the rail or the sections dropdown: its name, its milliseconds, and its bar on the
-// window's scale. True when chosen.
-bool navItem(int index)
+void chooseTab(int tab)
 {
-    const Section& section = frame.sections[static_cast<std::size_t>(index)];
-    const Budget& budget = *frame.budget;
-    const float width = ImGui::GetContentRegionAvail().x, height = px(33);
-    const ImVec2 at = ImGui::GetCursorScreenPos();
-    ImGui::PushID(index);
-    const bool chosen = ImGui::InvisibleButton("##section", {width, height});
-    if (chosen)
-    {
-        if (nav.page != index || nav.search[0]) nav.resetScroll = true;
-        nav.page = index;
-        nav.search[0] = 0;
-    }
-    const bool hovered = ImGui::IsItemHovered();
-    ImGui::PopID();
-
-    const Line* hotLine = nav.hot.empty() ? nullptr : budget.find(nav.hot);
-    const bool current = nav.page == index && !nav.search[0];
-    const bool lit = hovered || (hotLine && hotLine->section == index);
-    auto* list = drawList();
-    if (current) list->AddRectFilled(at, at + ImVec2(width, height), tint(colour::Frame));
-    else if (lit) list->AddRectFilled(at, at + ImVec2(width, height), tint(colour::Raise));
-
-    const float inner = at.x + px(8), innerRight = at.x + width - px(8), barTop = at.y + px(25);
-    addText({inner, at.y + px(6)}, current || lit ? colour::Text : colour::TextDim, section.name);
-    if (section.overview || section.hue)
-    {
-        const float ms = section.overview ? budget.total() : budget.total(index);
-        rightText(innerRight, at.y + px(6), milliseconds(ms), current || lit ? colour::TextDim : colour::TextFaint);
-    }
-
-    const float barMax = innerRight - inner;
-    const float alpha = current || lit ? 1.0f : 0.5f;
-    if (section.overview)
-    {
-        // Every section's share of the effects' total, side by side.
-        const float total = budget.total();
-        float x = inner;
-        for (int other = 0; other < static_cast<int>(frame.sections.size()) && total > 0; ++other)
-        {
-            const float ms = budget.total(other);
-            if (ms <= 0 || !frame.sections[static_cast<std::size_t>(other)].hue) continue;
-
-            const float to = std::min(innerRight, x + std::max(2.0f, std::round(ms / total * barMax) - 1));
-            list->AddRectFilled({x, barTop}, {to, barTop + px(2)}, tint(frame.sections[static_cast<std::size_t>(other)].hue, alpha));
-            x = to + 1;
-        }
-    }
-    else if (section.hue)
-    {
-        const float bar = std::min(budget.total(index) * px(Millisecond), barMax);
-        if (bar >= 1) list->AddRectFilled({inner, barTop}, {inner + std::max(2.0f, bar), barTop + px(2)}, tint(section.hue, alpha));
-    }
-
-    return chosen;
+    if (nav.page != tab || nav.search[0]) nav.resetScroll = true;
+    nav.page = tab;
+    nav.search[0] = 0;
 }
 
-// Every section, with a rule above those set apart.
-void navItems(bool closePopup)
-{
-    for (int index = 0; index < static_cast<int>(frame.sections.size()); ++index)
-    {
-        if (frame.sections[static_cast<std::size_t>(index)].apart)
-        {
-            gap(4);
-            const ImVec2 at = ImGui::GetCursorScreenPos();
-            drawList()->AddRectFilled(at, {at.x + ImGui::GetContentRegionAvail().x, at.y + 1}, tint(colour::Line));
-            gap(5);
-        }
-        if (navItem(index) && closePopup) ImGui::CloseCurrentPopup();
-    }
-}
-
-// In a narrow window: the sections in a dropdown beside the search, over the full-width page.
-void drawPicker()
+// The tabs side by side, then the search against the right edge; where they do not fit beside it, a
+// dropdown of the tabs takes their place.
+void drawTabs()
 {
     const ImVec2 start = ImGui::GetCursorScreenPos();
     const float left = start.x + px(6), right = start.x + ImGui::GetContentRegionAvail().x - px(6), top = start.y + px(8);
-    const auto page = static_cast<std::size_t>(nav.page);
-    const Section& section = frame.sections[page];
-    std::string preview = nav.search[0] ? "Search results" : section.name;
-    if (!nav.search[0] && (section.overview || section.hue))
-        preview += "  " + milliseconds(section.overview ? frame.budget->total() : frame.budget->total(nav.page)) + " ms";
-
-    const float comboWidth = std::round((right - left) * 0.55f);
-    ImGui::SetCursorScreenPos({left, top});
-    ImGui::SetNextItemWidth(comboWidth);
-    if (ImGui::BeginCombo("##fxui-sections", preview.c_str(), ImGuiComboFlags_HeightLargest))
-    {
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(px(8), px(2)));
-        navItems(true);
-        ImGui::PopStyleVar();
-        ImGui::EndCombo();
-    }
-    ImGui::SetCursorScreenPos({left + comboWidth + px(6), top});
-    searchBox(right - left - comboWidth - px(6));
-
-    endStrip(start, top + ImGui::GetFrameHeight() + px(8));
-}
-
-void drawRail(std::span<const Key> keys)
-{
-    const ImVec2 start = ImGui::GetCursorScreenPos();
-    const float width = frame.railWidth;
-    auto* list = drawList();
-    list->PushClipRect({frame.windowLeft, start.y}, {frame.windowRight, frame.windowBottom}, false);
-    list->AddRectFilled({frame.windowLeft, start.y}, {start.x + width, frame.windowBottom}, colour::Rail);
-    list->AddRectFilled({start.x + width, start.y}, {start.x + width + 1, frame.windowBottom}, colour::Line);
-    list->PopClipRect();
-
-    // The rail reaches the window's edge, so its padding makes up what ReShade's leaves.
-    const float padding = std::max(0.0f, px(8) - (start.x - frame.windowLeft));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding, px(10)));
-    ImGui::BeginChild("##fxui-rail", {width, 0}, ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
-    ImGui::PopStyleVar();
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(px(8), px(2)));
-
-    searchBox(ImGui::GetContentRegionAvail().x);
-    gap(6);
-    navItems(false);
-
-    // The hotkeys against the rail's foot.
-    if (frame.keys && !keys.empty())
-    {
-        const float row = ImGui::GetFontSize() + px(3) + px(6);
-        const float height = row * static_cast<float>(keys.size()) + px(4);
-        const float bottom = ImGui::GetWindowPos().y + ImGui::GetWindowHeight() - px(10);
-        if (ImGui::GetCursorScreenPos().y < bottom - height) ImGui::SetCursorScreenPos({ImGui::GetCursorScreenPos().x, bottom - height});
-        for (const auto& key : keys)
+    const float pad = px(12), height = px(TabHeight);
+    std::vector<int> tabs;
+    float tabsWidth{};
+    for (int index = 0; index < static_cast<int>(frame.sections.size()); ++index)
+        if (tabOf(index) == index)
         {
-            const ImVec2 at = ImGui::GetCursorScreenPos() + ImVec2(px(8), 0);
-            const float x = keycap(at, key.key);
-            addText({x + px(6), at.y + px(2)}, colour::TextDim, key.action);
-            ImGui::Dummy({1, row - px(2)});
+            tabs.push_back(index);
+            tabsWidth += textWidth(tabName(index)) + 2 * pad;
+        }
+
+    const bool picker = tabsWidth + px(12 + SearchMin) > right - left;
+    const float searchWidth = picker ? std::round((right - left) * 0.45f) : std::min(px(SearchWidth), right - left - tabsWidth - px(12));
+    const float searchTop = top + std::round((height - ImGui::GetFrameHeight()) / 2) - px(2);
+    auto* list = drawList();
+    if (picker)
+    {
+        ImGui::SetCursorScreenPos({left, searchTop});
+        ImGui::SetNextItemWidth(right - left - searchWidth - px(6));
+        if (ImGui::BeginCombo("##fxui-tabs", nav.search[0] ? "Search results" : tabName(nav.page)))
+        {
+            for (const int tab : tabs)
+                if (ImGui::Selectable(tabName(tab), tab == nav.page && !nav.search[0])) chooseTab(tab);
+            ImGui::EndCombo();
         }
     }
+    else
+    {
+        float x = left;
+        for (const int tab : tabs)
+        {
+            const float width = textWidth(tabName(tab)) + 2 * pad;
+            ImGui::PushID(tab);
+            ImGui::SetCursorScreenPos({x, top});
+            if (ImGui::InvisibleButton("##tab", {width, height})) chooseTab(tab);
+            const bool hovered = ImGui::IsItemHovered();
+            ImGui::PopID();
 
-    ImGui::PopStyleVar();
-    ImGui::EndChild();
-    ImGui::SetCursorScreenPos({start.x + width + 1, start.y});
+            const bool current = tab == nav.page && !nav.search[0];
+            addText({x + pad, top + std::round((height - ImGui::GetFontSize()) / 2) - px(1)}, current || hovered ? colour::Text : colour::TextDim, tabName(tab));
+            if (current) list->AddRectFilled({x, top + height - px(2)}, {x + width, top + height}, tint(colour::Text));
+            x += width;
+        }
+    }
+    ImGui::SetCursorScreenPos({right - searchWidth, searchTop});
+    searchBox(searchWidth);
+
+    endStrip(start, top + height);
 }
 
 void beginPages()
@@ -752,44 +701,16 @@ void beginPages()
     ImGui::PopStyleVar();
 }
 
-// A page's title at twice the size, with its section's milliseconds, then its description.
-void heading(int index, const char* description)
+// A section's name with a rule to its right, on a tab of several.
+void groupHeading(const char* name)
 {
-    const Section& section = frame.sections[static_cast<std::size_t>(index)];
+    if (!std::exchange(frame.isFirstGroup, false)) gap(22);
     const ImVec2 at = ImGui::GetCursorScreenPos();
     const float right = at.x + ImGui::GetContentRegionAvail().x;
-    const float size = ImGui::GetFontSize(), big = size * 2;
-    ImFont* font = ImGui::GetFont();
-    drawList()->AddText(font, big, at, tint(colour::Text), section.name);
-    ImGui::Dummy({1, big});
-
-    // The total at the title's size against the right edge, or under the title where they would meet.
-    if (section.overview || section.hue)
-    {
-        const Budget& budget = *frame.budget;
-        const auto total = formatted("%.2f", section.overview ? budget.total() : budget.total(index));
-        const float unitWidth = textWidth("ms");
-        // The font scales evenly, so text is twice as wide at twice the size.
-        const float number = textWidth(total) * 2, title = textWidth(section.name) * 2;
-        if (at.x + title + px(16) + number + px(6) + unitWidth <= right)
-        {
-            drawList()->AddText(font, big, {right - unitWidth - px(6) - number, at.y}, tint(colour::Text), total.c_str());
-            // On the number's baseline.
-            addText({right - unitWidth, at.y + std::round(ImGui::GetFontBaked()->Ascent)}, colour::TextDim, "ms");
-        }
-        else
-        {
-            gap(4);
-            textLine(total + " ms", colour::TextDim);
-        }
-    }
-
-    if (description)
-    {
-        gap(9);
-        wrapped(description, colour::TextDim, SummaryWidth);
-    }
-    gap(16);
+    textLine(name, colour::TextDim);
+    const float ruleLeft = ImGui::GetItemRectMax().x + px(10), middle = at.y + std::round(ImGui::GetFontSize() / 2);
+    if (ruleLeft < right) drawList()->AddRectFilled({ruleLeft, middle}, {right, middle + 1}, tint(colour::Line));
+    gap(6);
 }
 
 // During a search: the page's name over its first matching item.
@@ -901,33 +822,28 @@ Window::Window(std::span<const Section> sections, const Budget& budget, const Ch
     frame.searching = nav.search[0] != 0;
     nav.hot = std::exchange(nav.hotNext, {});
 
+    nav.page = sections.empty() ? 0 : tabOf(std::clamp(nav.page, 0, static_cast<int>(sections.size()) - 1));
     if (!nav.goTo.empty())
     {
-        if (const Line* line = budget.find(nav.goTo); line && line->section != nav.page)
+        if (const Line* line = budget.find(nav.goTo); line && tabOf(line->section) != nav.page)
         {
-            nav.page = line->section;
+            nav.page = tabOf(line->section);
             nav.resetScroll = true;
         }
         nav.search[0] = 0;
-        nav.scrollTo = nav.flash = std::exchange(nav.goTo, {});
+        nav.scrollTo = nav.flash = nav.unfoldedId = std::exchange(nav.goTo, {});
         nav.flashStart = ImGui::GetTime();
         nav.flashHeight = 0;
     }
-    nav.page = std::clamp(nav.page, 0, std::max(0, static_cast<int>(sections.size()) - 1));
 
-    // The layout for the window's width.
     const float width = ImGui::GetContentRegionAvail().x;
-    frame.picker = width < px(NarrowWindow);
-    frame.keys = width >= px(WideWindow);
-    frame.railWidth = px(frame.keys ? RailWidth : CompactRailWidth);
-    frame.pagePadding = frame.picker ? ImVec2(px(12), px(12)) : ImVec2(px(22), px(16));
+    frame.pagePadding = width < px(500) ? ImVec2(px(10), px(12)) : ImVec2(px(18), px(14));
 
     // ReShade's padding and border, before ours are pushed.
     paintGround();
     pushStyle();
     drawStrip(chrome);
-    if (frame.picker) drawPicker();
-    else drawRail(chrome.keys);
+    drawTabs();
     frame.searching = nav.search[0] != 0;
     beginPages();
 }
@@ -935,16 +851,27 @@ Window::Window(std::span<const Section> sections, const Budget& budget, const Ch
 Window::~Window()
 {
     if (frame.searching && !frame.matched) textLine("No setting matches that search.", colour::TextDim);
+    // An item jumped to that this frame did not draw, such as one its page hides now, is searched for:
+    // the next frame shows it among the results, scrolled to. Not found by a search either, the jump ends.
+    const Line* missed = nav.scrollTo.empty() || frame.searching ? nullptr : frame.budget->find(nav.scrollTo);
+    if (missed)
+    {
+        const auto length = std::min(missed->name.size(), sizeof(nav.search) - 1);
+        std::copy_n(missed->name.data(), length, nav.search);
+        nav.search[length] = 0;
+    }
+    else nav.scrollTo.clear();
     ImGui::EndChild();
     ImGui::PopStyleColor(static_cast<int>(std::size(styleColours)));
     ImGui::PopStyleVar(StyleVars);
     frame.inItem = false;
+    frame.value.reset();
     frame.page = -1;
 }
 
 // ---- Page ----
 
-Page::Page(int section, const char* description)
+Page::Page(int section)
 {
     if (frame.page >= 0 || section < 0 || section >= static_cast<int>(frame.sections.size())) return;
 
@@ -959,11 +886,11 @@ Page::Page(int section, const char* description)
         return;
     }
 
-    if (section != nav.page) return;
+    if (tabOf(section) != nav.page) return;
 
     shown = true;
     frame.page = section;
-    heading(section, description);
+    if (isShared(nav.page)) groupHeading(frame.sections[static_cast<std::size_t>(section)].name);
 }
 
 Page::~Page()
@@ -975,6 +902,31 @@ Page::~Page()
 }
 
 // ---- Item ----
+
+namespace
+{
+// States a line names after its name: those that say it does not do what its value says.
+bool isNamedOnLine(State state)
+{
+    return state == State::Held || state == State::Replaced || state == State::Restart || state == State::NotRunning || state == State::Unavailable;
+}
+
+// A plus while folded, a minus while open.
+void foldMark(ImVec2 centre, bool isOpen, ImU32 colour)
+{
+    const float arm = px(4), thickness = std::max(1.0f, px(1.2f));
+    drawList()->AddLine({centre.x - arm, centre.y}, {centre.x + arm + 1, centre.y}, colour, thickness);
+    if (!isOpen) drawList()->AddLine({centre.x, centre.y - arm}, {centre.x, centre.y + arm + 1}, colour, thickness);
+}
+
+// A chevron pointing left or right, for stepping through a value.
+void chevron(ImVec2 centre, bool isLeft, ImU32 colour)
+{
+    const float arm = px(3), thickness = std::max(1.0f, px(1.3f)), tip = isLeft ? -arm / 2 : arm / 2;
+    drawList()->AddLine({centre.x - tip, centre.y - arm}, {centre.x + tip, centre.y}, colour, thickness);
+    drawList()->AddLine({centre.x + tip, centre.y}, {centre.x - tip, centre.y + arm}, colour, thickness);
+}
+}
 
 Item::Item(const ItemSpec& spec) : id(spec.id)
 {
@@ -999,6 +951,7 @@ Item::Item(const ItemSpec& spec) : id(spec.id)
     const bool replaced = state == State::Replaced;
     held = state == State::Held;
     hot = line && line->ms > 0;
+    isUnfolded = frame.searching || nav.unfoldedId == spec.id;
 
     const ImVec2 start = ImGui::GetCursorScreenPos();
     left = start.x;
@@ -1008,7 +961,7 @@ Item::Item(const ItemSpec& spec) : id(spec.id)
     if (nav.flash == spec.id)
     {
         const double t = (ImGui::GetTime() - nav.flashStart) / FlashSeconds;
-        if (t < 1) list->AddRectFilled({left - px(8), top}, {right, top + nav.flashHeight}, tint(withAlpha(hue, 0.24f * static_cast<float>(std::pow(1 - t, 3)))));
+        if (t < 1) list->AddRectFilled({left, top}, {right, top + nav.flashHeight}, tint(withAlpha(hue, 0.24f * static_cast<float>(std::pow(1 - t, 3)))));
         else nav.flash.clear();
     }
     if (nav.scrollTo == spec.id)
@@ -1016,67 +969,87 @@ Item::Item(const ItemSpec& spec) : id(spec.id)
         ImGui::SetScrollHereY(0.3f);
         nav.scrollTo.clear();
     }
-    list->AddRectFilled({left, top}, {right, top + 1}, tint(colour::Line));
-    gap(10);
 
-    // The head: switch, name, technical name, tag, then state, cost and milliseconds on the right.
-    const float row = ImGui::GetCursorScreenPos().y, rowHeight = px(15), textTop = row + px(1);
-    if (toggle)
-    {
-        ImGui::SetCursorScreenPos({left, row});
-        toggleSwitch("##on", *toggle, !held && !replaced);
-    }
-    // The name keeps clear of the state column; the technical name and tag show where they fit. In a
-    // narrow page the state and cost go on a line of their own, under the name.
-    const auto columns = columnsFor(right - left);
-    const bool twoLines = right - left < px(OneLineHead) && (state || line);
-    const float statusRow = twoLines ? row + rowHeight + px(5) : row;
-    const float stateLeft = twoLines ? left + px(Gutter) : right - columns.state - columns.bar - columns.ms;
-    const float nameRight = twoLines ? right : stateLeft - px(8);
-    ImGui::PushClipRect({left, row - px(2)}, {nameRight, row + rowHeight + px(4)}, true);
-    ImGui::SetCursorScreenPos({left + px(Gutter), textTop});
+    // The line folds the item out and back; its value's own buttons, drawn later, go over it.
+    const float height = px(LineHeight);
+    ImGui::SetNextItemAllowOverlap();
+    if (ImGui::InvisibleButton("##line", {right - left, height}) && !frame.searching) nav.unfoldedId = isUnfolded ? std::string() : std::string(spec.id);
+    const bool hovered = ImGui::IsItemHovered();
+    if (hovered || isUnfolded) list->AddRectFilled({left, top}, {right, top + height}, tint(colour::Raise));
+    list->AddRectFilled({left, top}, {right, top + 1}, tint(colour::Line));
+
+    // From the right: the fold mark, milliseconds, the cost bar, then the value; the name takes the rest.
+    const float font = ImGui::GetFontSize(), textTop = top + std::round((height - font) / 2);
+    const bool hasBar = right - left >= px(LineWithBar);
+    const float markLeft = right - px(MarkSize + 4), msRight = markLeft - px(8);
+    const float barLeft = msRight - px(MsWidth) - (hasBar ? px(BarWidth) : 0);
+    const float valueWidth = std::min(px(ValueWidth), std::max(px(110), std::round((barLeft - left) * 0.45f)));
+    const float valueLeft = barLeft - px(hasBar ? 4.0f : 12.0f) - valueWidth, nameLeft = left + px(8), nameRight = valueLeft - px(12);
+
     const bool idle = state == State::Off || held || replaced;
+    ImGui::PushClipRect({nameLeft, top}, {nameRight, top + height}, true);
+    ImGui::SetCursorScreenPos({nameLeft, textTop});
     textLine(name, idle ? colour::TextDim : colour::Text);
     if (spec.tip)
     {
         dottedUnderline(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         tooltip(spec.tip);
     }
+    // The dot right after the name, so a narrow line clips the technical name first.
     float x = ImGui::GetItemRectMax().x;
-    if (!tech.empty() && x + px(8) + textWidth(tech) <= nameRight)
+    if (spec.isChanged)
     {
-        addText({x + px(8), textTop}, colour::TextDim, tech);
+        const float dot = px(4), dotTop = textTop + std::round((font - dot) / 2);
+        x += px(6);
+        list->AddRectFilled({x, dotTop}, {x + dot, dotTop + dot}, tint(colour::Text));
+        x += dot;
+    }
+    if (!tech.empty())
+    {
+        addText({x + px(8), textTop}, colour::TextFaint, tech);
         x += px(8) + textWidth(tech);
     }
-    if (spec.tag && x + px(16) + textWidth(spec.tag) <= nameRight)
-    {
-        const float tagLeft = x + px(8), tagRight = tagLeft + textWidth(spec.tag) + px(8);
-        list->AddRect({tagLeft, row - px(1)}, {tagRight, row + rowHeight}, tint(colour::LineStrong));
-        addText({tagLeft + px(4), textTop}, colour::TextDim, spec.tag);
-    }
+    if (state && isNamedOnLine(*state)) addText({x + px(12), textTop}, toneColour(toneOf(*state)), stateWord(*state));
     ImGui::PopClipRect();
-    if (state) drawState({stateLeft, statusRow + px(1)}, *state);
-    if (line)
-    {
-        const float barLeft = twoLines ? stateLeft + columns.state : right - columns.bar - columns.ms;
-        const float barMax = twoLines ? right - columns.ms - barLeft : columns.bar - px(8);
-        costBar({barLeft, statusRow}, rowHeight, line->ms, hue, barMax);
-        rightText(right, statusRow + px(1), milliseconds(line->ms), line->ms >= 0.005f ? colour::Text : colour::TextFaint);
-    }
-    ImGui::SetCursorScreenPos({left, row});
-    ImGui::Dummy({1, statusRow + rowHeight - row});
 
-    // The summary, then what replaces it or why it does not run.
-    if (spec.summary)
+    if (line || spec.ms)
     {
-        gap(7);
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + px(Gutter));
-        wrapped(spec.summary, colour::TextDim, SummaryWidth);
+        const float ms = line ? line->ms : *spec.ms;
+        if (hasBar) costBar({barLeft, top}, height, ms, hue, px(BarWidth - 8));
+        rightText(msRight, textTop, milliseconds(ms), ms >= 0.005f ? colour::Text : colour::TextFaint);
+    }
+    if (!frame.searching) foldMark({markLeft + px(MarkSize) / 2, top + height / 2}, isUnfolded, tint(hovered || isUnfolded ? colour::Text : colour::TextFaint));
+
+    frame.value = ValueSlot{{valueLeft, top}, valueWidth, height, !held && !replaced, state == State::Off};
+    if (toggle)
+    {
+        const Option onOff[]{{"Off"}, {"On"}};
+        if (const int picked = itemChoice(*toggle ? 1 : 0, onOff); picked >= 0) *toggle = picked == 1;
+    }
+    ImGui::SetCursorScreenPos({left, top});
+    ImGui::Dummy({1, height});
+    if (!isUnfolded) return;
+
+
+    // Folded out: the summary, then what replaces it or why it does not run, then its settings.
+    ImGui::Indent(px(FoldIndent));
+    gap(6);
+    if (spec.summary || spec.tag)
+    {
+        if (spec.tag)
+        {
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            const float tagRight = at.x + textWidth(spec.tag) + px(8);
+            list->AddRect({at.x, at.y - px(2)}, {tagRight, at.y + font + px(1)}, tint(colour::LineStrong));
+            addText({at.x + px(4), at.y}, colour::TextDim, spec.tag);
+            ImGui::Dummy({tagRight - at.x, font});
+            if (spec.summary) ImGui::SameLine(0, px(10));
+        }
+        if (spec.summary) wrapped(spec.summary, colour::TextDim, SummaryWidth);
     }
     if (replaced && line && !line->replacedBy.empty())
     {
-        gap(7);
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + px(Gutter));
+        gap(6);
         const Line* by = frame.budget->find(line->replacedBy);
         textLine("Replaced by", colour::TextDim);
         ImGui::SameLine(0, textWidth(" "));
@@ -1086,35 +1059,33 @@ Item::Item(const ItemSpec& spec) : id(spec.id)
     }
     if (!message.empty())
     {
-        gap(7);
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + px(Gutter));
+        gap(6);
         wrapped(message, toneColour(state ? toneOf(*state) : Tone::Dim), SummaryWidth);
     }
 
     open = !replaced && (!toggle || *toggle);
-    if (!open) return;
-
-    gap(11);
-    ImGui::Indent(px(Gutter));
-    if (held) ImGui::BeginDisabled();
+    gap(open ? 12.0f : 4.0f);
+    if (open && held) ImGui::BeginDisabled();
 }
 
 Item::~Item()
 {
     if (!drawn) return;
 
-    if (open)
+    if (isUnfolded)
     {
-        if (held) ImGui::EndDisabled();
-        ImGui::Unindent(px(Gutter));
-        gap(5);
+        if (open && held) ImGui::EndDisabled();
+        ImGui::Unindent(px(FoldIndent));
+        gap(8);
     }
-    else gap(11);
 
     const float bottom = ImGui::GetCursorScreenPos().y;
+    // An open item's line and settings hold together by a rule down their left.
+    if (isUnfolded && !frame.searching) drawList()->AddRectFilled({left, top}, {left + px(2), bottom - px(4)}, tint(colour::LineStrong));
     if (nav.flash == id) nav.flashHeight = bottom - top;
     if (hot && ImGui::IsMouseHoveringRect({left, top}, {right, bottom})) nav.hotNext = id;
     frame.inItem = false;
+    frame.value.reset();
     ImGui::PopID();
 }
 
@@ -1208,13 +1179,83 @@ bool slider(const char* label, float& value, const SliderSpec& spec)
     return result;
 }
 
-int segmented(const char* label, int selected, std::span<const Option> options, const char* tip)
+int itemChoice(int selected, std::span<const Option> options)
+{
+    if (!frame.value || options.empty()) return -1;
+
+    const ValueSlot slot = *frame.value;
+    const ImVec2 back = ImGui::GetCursorScreenPos();
+    const int count = static_cast<int>(options.size());
+    const bool isKnown = selected >= 0 && selected < count;
+    // The next enabled option `step` away, round the ends; from an unknown value, the first or the last.
+    const auto next = [&](int step) {
+        const int from = isKnown ? selected : step > 0 ? -1 : count;
+        for (int i = 1; i <= count; ++i)
+            if (const int at = ((from + step * i) % count + count) % count; options[static_cast<std::size_t>(at)].enabled) return at;
+        return selected;
+    };
+
+    ImGui::PushID("##value");
+    ImGui::BeginDisabled(!slot.isEnabled);
+    auto* list = drawList();
+    const float arrow = px(ArrowWidth), textTop = slot.at.y + std::round((slot.height - ImGui::GetFontSize()) / 2);
+    int picked = -1;
+    const auto arrowButton = [&](const char* id, float x, bool isLeft) {
+        ImGui::SetCursorScreenPos({x, slot.at.y});
+        const bool pressed = ImGui::InvisibleButton(id, {arrow, slot.height});
+        chevron({x + arrow / 2, slot.at.y + slot.height / 2}, isLeft, tint(ImGui::IsItemHovered() ? colour::Text : colour::TextFaint));
+        return pressed;
+    };
+    if (arrowButton("##previous", slot.at.x, true)) picked = next(-1);
+
+    // The option's name: a click steps on through two, and lists more.
+    const float labelLeft = slot.at.x + arrow, labelWidth = slot.width - 2 * arrow;
+    ImGui::SetCursorScreenPos({labelLeft, slot.at.y});
+    if (ImGui::InvisibleButton("##label", {labelWidth, slot.height}))
+    {
+        if (count > 2) ImGui::OpenPopup("##choices");
+        else picked = next(1);
+    }
+    const bool isHovered = ImGui::IsItemHovered();
+    const char* text = isKnown ? options[static_cast<std::size_t>(selected)].label : "-";
+    if (isHovered) list->AddRectFilled({labelLeft, slot.at.y + px(4)}, {labelLeft + labelWidth, slot.at.y + slot.height - px(4)}, tint(colour::FrameHover));
+    const bool doesFit = textWidth(text) <= labelWidth - px(8);
+    ImGui::PushClipRect({labelLeft + px(4), slot.at.y}, {labelLeft + labelWidth - px(4), slot.at.y + slot.height}, true);
+    addText({doesFit ? std::round(labelLeft + (labelWidth - textWidth(text)) / 2) : labelLeft + px(4), textTop}, slot.isOff ? colour::TextFaint : colour::Text, text);
+    ImGui::PopClipRect();
+    tooltip(!doesFit ? text : isKnown ? options[static_cast<std::size_t>(selected)].tip : nullptr);
+    if (arrowButton("##next", labelLeft + labelWidth, false)) picked = next(1);
+
+    ImGui::SetNextWindowPos({labelLeft, slot.at.y + slot.height});
+    ImGui::SetNextWindowSizeConstraints({labelWidth, 0}, {FLT_MAX, FLT_MAX});
+    if (ImGui::BeginPopup("##choices"))
+    {
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(px(8), px(4)));
+        for (int index = 0; index < count; ++index)
+        {
+            const auto& option = options[static_cast<std::size_t>(index)];
+            ImGui::PushID(index);
+            if (fxui::option(option.label, index == selected, option.enabled, option.tip)) picked = index;
+            ImGui::PopID();
+        }
+        ImGui::PopStyleVar();
+        ImGui::EndPopup();
+    }
+    ImGui::EndDisabled();
+    ImGui::PopID();
+    ImGui::SetCursorScreenPos(back);
+
+    return picked == selected ? -1 : picked;
+}
+
+int segmented(const char* label, int selected, std::span<const Option> options, const char* tip, int standard)
 {
     if (hidden() || options.empty()) return -1;
 
     ImGui::PushID(label);
     const auto field = layoutField();
-    fieldLabel(field, label, tip, false);
+    const bool changed = standard >= 0 && selected != standard;
+    fieldLabel(field, label, tip, changed);
 
     const float height = ImGui::GetFrameHeight(), count = static_cast<float>(options.size());
     const float each = std::floor((field.wide - (count - 1)) / count);
@@ -1253,6 +1294,12 @@ int segmented(const char* label, int selected, std::span<const Option> options, 
         tooltip(option.tip ? option.tip : withLabel ? nullptr : option.label);
         ImGui::PopID();
     }
+    if (changed)
+    {
+        if (resetButton({field.reset.x, field.reset.y + std::round((height - px(ResetSize)) / 2)})) pressed = standard;
+        const char* standardLabel = options[static_cast<std::size_t>(standard)].label;
+        tooltip(standardLabel ? (std::string("Back to ") + standardLabel).c_str() : "Back to its default");
+    }
 
     endField(field);
     ImGui::PopID();
@@ -1260,12 +1307,19 @@ int segmented(const char* label, int selected, std::span<const Option> options, 
     return pressed;
 }
 
-bool beginCombo(const char* label, const char* preview, const char* tip)
+bool beginCombo(const char* label, const char* preview, const char* tip, bool isChanged, bool* reset)
 {
     if (hidden()) return false;
 
     const auto field = layoutField();
-    fieldLabel(field, label, tip, false);
+    fieldLabel(field, label, tip, isChanged);
+    if (isChanged && reset)
+    {
+        ImGui::PushID(label);
+        *reset = resetButton({field.reset.x, field.reset.y + std::round((ImGui::GetFrameHeight() - px(ResetSize)) / 2)});
+        tooltip("Back to its default");
+        ImGui::PopID();
+    }
     ImGui::SetCursorScreenPos(field.control);
     ImGui::SetNextItemWidth(field.wide);
     ImGui::PushID(label);
@@ -1337,7 +1391,7 @@ std::optional<std::size_t> searchCombo(const char* label, const char* preview, s
     return picked;
 }
 
-bool checkbox(const char* label, bool& value, const char* tip)
+bool checkbox(const char* label, bool& value, const char* tip, std::optional<bool> standard)
 {
     if (hidden()) return false;
 
@@ -1347,10 +1401,27 @@ bool checkbox(const char* label, bool& value, const char* tip)
     ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, value ? IM_COL32_WHITE : colour::TextFaint);
     ImGui::PushStyleColor(ImGuiCol_FrameBgActive, value ? IM_COL32_WHITE : colour::TextFaint);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
-    const bool changed = ImGui::Checkbox(label, &value);
+    bool changed = ImGui::Checkbox(label, &value);
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(3);
     tooltip(tip);
+
+    // Off its default: the square in the gutter, and a reset after the label.
+    if (standard && value != *standard)
+    {
+        const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax(), after = ImGui::GetCursorScreenPos();
+        const float middle = std::round((min.y + max.y) / 2);
+        drawList()->AddRectFilled({min.x - px(12), middle - px(2)}, {min.x - px(8), middle + px(2)}, tint(colour::Text));
+        ImGui::PushID(label);
+        if (resetButton({max.x + px(8), middle - std::round(px(ResetSize) / 2)}))
+        {
+            value = *standard;
+            changed = true;
+        }
+        tooltip(*standard ? "Back to on" : "Back to off");
+        ImGui::PopID();
+        ImGui::SetCursorScreenPos(after);
+    }
     if (frame.inItem) gap(3 + 6);
 
     return changed;
@@ -1461,6 +1532,11 @@ bool link(const char* label, std::string_view id)
 void goTo(std::string_view id)
 {
     nav.goTo = id;
+}
+
+bool isSearching()
+{
+    return frame.searching;
 }
 
 void tooltip(const char* text)

@@ -472,26 +472,81 @@ float TextureLod(float3 v0, float3 v1, float3 v2, float2 uv0, float2 uv1, float2
     return log2(max(footprint * sqrt(texelArea / max(worldArea, 1e-12f)), 1e-6f));
 }
 
+// The level of detail of a cut-out's or a pane's texture where a ray's cone is `footprint` metres across, from the mesh's
+// average texels a metre (GIGeometry::texelsPerMetre); its sharpest at 0. A jungle's rays run this about 20 million times a
+// frame: working it out from each triangle's vertices and placement took 2 ms of that, and showed no different on the same
+// frozen frame.
+float MeshTextureLevel(GIGeometry geometry, float footprint)
+{
+    return footprint > 0.0f ? log2(max(footprint * geometry.texelsPerMetre, 1e-6f)) : 0.0f;
+}
+
 // Whether a cut-out geometry (non-opaque, as glass is) stops a ray where the ray crosses it: with its
 // texture, where the texture's alpha is at least the game's threshold at the level of detail the ray's
-// cone (`footprint` metres across there) meets; without, as `untextured` says. The level comes from the mesh's
-// average texels a metre (GIGeometry::texelsPerMetre), as a jungle's rays run this about 20 million times a frame: working it
-// out from each triangle's vertices and placement took 2 ms of that, and showed no different on the same frozen frame.
-// Glass never does: the sun's and a lamp's light come through it, and only a reflection's rays meet it (TraceClosest's
-// `canMeetGlass`).
+// cone (`footprint` metres across there) meets (MeshTextureLevel); without, as `untextured` says. Glass never does:
+// a ray towards a light passes it dimmed by its cover (PaneTransmittance), and only a reflection's rays meet it
+// (TraceClosest's `canMeetGlass`).
 bool CutOutBlocks(uint row, uint primitive, float2 barycentrics, bool untextured, float footprint)
 {
     GIGeometry geometry = g_Geometries[row];
     if (geometry.flags & GI_GEOMETRY_GLASS) return false;
     if ((geometry.flags & GI_GEOMETRY_ALPHA_TEXTURE) == 0) return untextured;
 
-    uint3 i = TriangleIndices(geometry, primitive);
-    float2 uv0 = VertexUV(geometry, i.x), uv1 = VertexUV(geometry, i.y), uv2 = VertexUV(geometry, i.z);
-    float2 uv = (1.0f - barycentrics.x - barycentrics.y) * uv0 + barycentrics.x * uv1 + barycentrics.y * uv2;
+    float2 uv = TriangleUV(geometry, TriangleIndices(geometry, primitive), barycentrics);
     Texture2D<float4> texture = g_SceneTextures[NonUniformResourceIndex(geometry.texture - 1)];
-    float lod = footprint > 0.0f ? log2(max(footprint * geometry.texelsPerMetre, 1e-6f)) : 0.0f;
-    float4 texel = texture.SampleLevel(g_WrapSampler, uv, lod);
+    float4 texel = texture.SampleLevel(g_WrapSampler, uv, MeshTextureLevel(geometry, footprint));
     return texel.a >= geometry.alphaThreshold;
+}
+
+// A pane's cover in a texel of its mask (fox3dfw_glass*'s): a colour texture holds it in alpha, a plain one, whose alpha
+// is 1, in red. Its dirt and frosting are cover: they are what the game's draw shows of the pane.
+float GlassCover(float4 texel)
+{
+    return texel.a < 1.0f ? texel.a : texel.r;
+}
+
+// What a pane's mask covers on its triangle `indices` where a ray crosses it, read over a patch `footprint` metres wide
+// (0: its sharpest level); nothing for a pane without its mask.
+float PaneCover(GIGeometry geometry, uint3 indices, float2 barycentrics, float footprint)
+{
+    if (!geometry.texture || !(geometry.flags & GI_GEOMETRY_UV)) return 0.0f;
+
+    float2 uv = TriangleUV(geometry, indices, barycentrics);
+    Texture2D<float4> texture = g_SceneTextures[NonUniformResourceIndex(geometry.texture - 1)];
+    return GlassCover(texture.SampleLevel(g_WrapSampler, uv, MeshTextureLevel(geometry, footprint)));
+}
+
+// What clean glass lets through of a ray meeting it at `cosine` to its normal: what neither of its two faces reflects,
+// by Schlick's approximation of glass's Fresnel reflectance (F0 0.04, n = 1.5). 92% head-on, a third at 80 degrees, as a
+// low sun through a window.
+float ClearGlassTransmittance(float cosine)
+{
+    float reflected = 0.04f + 0.96f * pow(1.0f - saturate(cosine), 5.0f);
+    return (1.0f - reflected) * (1.0f - reflected);
+}
+
+// The cosine between a ray along `objectDirection`, in the pane's object space, and its triangle `indices`' normal.
+float PaneCosine(GIGeometry geometry, uint3 indices, float3 objectDirection)
+{
+    float3 v0 = PoolVertex(geometry, indices.x).xyz;
+    float3 normal = cross(PoolVertex(geometry, indices.y).xyz - v0, PoolVertex(geometry, indices.z).xyz - v0);
+    return abs(dot(normal, objectDirection)) * rsqrt(max(dot(normal, normal) * dot(objectDirection, objectDirection), 1e-20f));
+}
+
+// How much of the light a texel the mask covers takes. Dust and grime absorb some and scatter some back, and scatter
+// the rest on through, which a ray towards a light counts as passing: a covered texel is no wall. A judgement, not a
+// measurement: the game's masks say how much of a pane is dirty, not how dense the dirt is.
+static const float DirtLoss = 0.5f;
+
+// What a pane lets through of a ray towards a light that crosses its triangle `indices` at `cosine` to its normal: what
+// the clean glass does not reflect (ClearGlassTransmittance), less what its dirt takes (DirtLoss). The mask alone gives the
+// dirt, not its row of the game's material table as a reflection's ray takes it (HitMaterialOf): that row is the
+// specular's, and a pane whose row is empty or unread (its F0 0) would show no dirt at all. A mirror lets it all through.
+float PaneTransmittance(GIGeometry geometry, uint3 indices, float2 barycentrics, float footprint, float cosine)
+{
+    if (geometry.flags & GI_GEOMETRY_MIRROR) return 1.0f;
+
+    return ClearGlassTransmittance(cosine) * (1.0f - DirtLoss * PaneCover(geometry, indices, barycentrics, footprint));
 }
 
 // Every ray's flags. The terrain is one-sided, as the game draws it: where its heightmap runs across a
@@ -795,6 +850,54 @@ void PassHair(float distance, inout float transmittance, inout float nearestHair
     nearestHair = min(nearestHair, distance);
 }
 
+// Whether a ray towards a light (not one towards a surface or along a reflection) is dimmed by the panes it crosses
+// (PaneTransmittance). Glass is non-opaque and never committed, so each candidate pane is met once
+// (NO_DUPLICATE_ANYHIT_INVOCATION) and the ray goes on.
+bool DimsThroughGlass(uint row, uint towards)
+{
+    return (towards == RayTowardsSun || towards == RayTowardsLamp) && (g_Geometries[row].flags & GI_GEOMETRY_GLASS) != 0;
+}
+
+// Whether a pane a ray meets is the one it left. A ray towards the sun or a lamp starts a couple of centimetres off a
+// surface, so from a pane it crosses that pane at once: dimmed by its own cover, every pane cast its dirt's shadow onto
+// itself, and the mask's frame and streaks read as a shadow of the window on the glass, from the side the eye is on.
+// A pane that the ray goes through lies further from the plane it started on.
+bool IsOwnPane(float3 origin, float3 direction, float distance, float3 normal)
+{
+    const float OwnPlane = 0.05f;
+    return distance * abs(dot(direction, normal)) < OwnPlane;
+}
+
+// How wide a patch of a pane a ray towards a light reads its mask over. One fixed width, whatever the camera and the
+// distance: read at the camera's pixel, the mask's detail came and went with the camera, and each frame's point on the
+// sun's disc crossed a sharper level at another texel, so a pane's dirt's shadow appeared in patches and boiled near.
+// The width is the sun's disc at a room's distance (2 x tan of its radius x 2 m), soft enough to hold still.
+static const float PaneShadowBlur = 0.02f;
+
+// How far apart two panes a ray crosses must lie to be two sheets of glass. Many panes are a quad for each side, the
+// same sheet twice: a window at the Afghan huts (84a2aa9c6ae74858 mesh 1, 4 triangles a sash) dimmed the sun on the floor
+// to 0.54 where its one sheet lets through 0.73.
+static const float SamePane = 0.01f;
+
+// A ray towards a light, from `origin` on a surface of `normal`, crossing a pane `distance` along it (`objectDirection`
+// in the pane's object space): past the pane it left (IsOwnPane) and the other side of the one it last crossed
+// (`countedPane`, its distance, negative for none), it keeps what the pane lets through, and the pane takes its light as
+// hair does (PassHair).
+void PassPane(uint row, uint primitive, float2 barycentrics, float distance, float3 objectDirection, float3 origin, float3 direction,
+    float3 normal, inout float transmittance, inout float nearestHair, inout float countedPane)
+{
+    if (IsOwnPane(origin, direction, distance, normal)) return;
+
+    GIGeometry geometry = g_Geometries[row];
+    uint3 indices = TriangleIndices(geometry, primitive);
+    float cosine = PaneCosine(geometry, indices, objectDirection);
+    if (countedPane >= 0.0f && abs(distance - countedPane) * cosine < SamePane) return;
+
+    transmittance *= PaneTransmittance(geometry, indices, barycentrics, PaneShadowBlur, cosine);
+    nearestHair = min(nearestHair, distance);
+    countedPane = distance;
+}
+
 // The closest hit of a ray leaving a surface of `normal` from `origin`, past copies of the surface, and
 // in `copies` how many it skipped; `alphaTest` as TraceClosest. Past what does not stop it too (StopsRay:
 // by what it goes `towards`). With `throughHair`, past hair too, which takes its share of
@@ -887,6 +990,7 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
 
     // What the near stretch let through, for the second look below.
     float nearTransmittance = transmittance, nearHair = nearestHair;
+    float countedPane = -1.0f;
     RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> query;
     query.TraceRayInline(g_Scene, GI_RAY_FLAGS, GI_MASK_SCENE, ray);
     // Only cut-out geometry is non-opaque, so only it comes here.
@@ -894,6 +998,14 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
     {
         uint row = query.CandidateInstanceContributionToHitGroupIndex() + query.CandidateGeometryIndex();
         float footprint = cone.x + query.CandidateTriangleRayT() * cone.y;
+        if (DimsThroughGlass(row, towards))
+        {
+            if (StopsRay(query.CandidateInstanceIndex(), query.CandidateGeometryIndex(), query.CandidateTriangleFrontFace(), towards))
+                PassPane(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), query.CandidateTriangleRayT(),
+                    query.CandidateObjectRayDirection(), origin, direction, normal, transmittance, nearestHair, countedPane);
+            continue;
+        }
+
         bool untextured = false;
         if (chance) untextured = random.rand() < blocking;
         if (!CutOutBlocks(row, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), untextured, footprint))
@@ -913,6 +1025,7 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
 
     transmittance = nearTransmittance;
     nearestHair = nearHair;
+    countedPane = -1.0f;
     RayQuery<RAY_FLAG_FORCE_NON_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> every;
     every.TraceRayInline(g_Scene, GI_RAY_FLAGS, GI_MASK_SCENE, ray);
     while (every.Proceed())
@@ -921,6 +1034,13 @@ bool SurfaceRayBlocked(float3 origin, float3 normal, float tolerance, float3 dir
         if (!StopsRay(instance, geometry, every.CandidateTriangleFrontFace(), towards)) continue;
 
         uint row = every.CandidateInstanceContributionToHitGroupIndex() + geometry;
+        if (DimsThroughGlass(row, towards))
+        {
+            PassPane(row, every.CandidatePrimitiveIndex(), every.CandidateTriangleBarycentrics(), every.CandidateTriangleRayT(),
+                every.CandidateObjectRayDirection(), origin, direction, normal, transmittance, nearestHair, countedPane);
+            continue;
+        }
+
         bool untextured = false;
         if (chance) untextured = random.rand() < blocking;
         float footprint = cone.x + every.CandidateTriangleRayT() * cone.y;
@@ -965,13 +1085,33 @@ struct PixelSurface
     SceneHit hit;  // Diagnostics (the probe): the eye's ray's hit on it
 };
 
-PixelSurface PixelSurfaceAt(float3 position, float3 gbufferNormal)
+// Where the add-on's sea drew (the pack's albedo alpha, ray_tracing.cpp).
+bool IsSeaPixel(uint2 pixel)
+{
+    return g_Albedo.Load(int3(pixel, 0)).a < 0.5f;
+}
+
+// What the camera never sees as itself: a shadow-only stand-in (a tarp's slab, 16 cm before its sheet), or the sea's
+// plane in place of the waves. Taken as the surface, the plane lit a hull's wall below the plane's level, which the
+// camera's ray crosses the plane just before, as open water: a pale band at the waterline (2026-11-05).
+bool IsStandIn(SceneHit hit)
+{
+    return IsShadowOnly(hit.instance, hit.geometry) || (InstanceKind(g_Instances[hit.instance]) & GI_INSTANCE_SEA) != 0;
+}
+
+PixelSurface PixelSurfaceAt(uint2 pixel, float3 position, float3 gbufferNormal)
 {
     PixelSurface surface;
     surface.position = position;
     surface.normal = gbufferNormal;
     surface.isExact = false;
     surface.hit = (SceneHit)0;
+
+    // The scene holds only the sea's flat plane, not its waves: the search took the plane wherever a wave came within its
+    // reach and the wave's own point elsewhere, so the sun's shadow on the water jumped between the two as the waves
+    // moved, and it took a hull's wall behind the water by it, the water there lit as that wall (a debug case at
+    // Mother Base, 2026-11-05). For the same reason the plane is no other pixel's surface (IsStandIn).
+    if (IsSeaPixel(pixel)) return surface;
 
     // Only the stretch around the depth's point: the game hides what comes between the camera and the player
     // (a bush the camera backs into) and the scene keeps it. Searched from the eye, the ray stopped on its
@@ -984,17 +1124,17 @@ PixelSurface PixelSurfaceAt(float3 position, float3 gbufferNormal)
     float tolerance = 0.03f + 0.02f * surfaceDistance;
     float searchFrom = max(surfaceDistance - tolerance, 0.0f);
     SceneHit hit;
-    // A stand-in the camera never sees is not the surface (a tarp's slab, 16 cm before its sheet): what the game drew may lie behind it.
+    // A stand-in is not the surface: what the game drew may lie behind it.
     for (uint attempt = 0; attempt < 4; ++attempt)
     {
         hit = TraceClosest(g_Frame.eye.xyz, direction, searchFrom, surfaceDistance + tolerance, GI_MASK_SCENE, true, false, float2(0.0f, g_Frame.rayCone.x));
-        if (!hit.hit || !IsShadowOnly(hit.instance, hit.geometry)) break;
+        if (!hit.hit || !IsStandIn(hit)) break;
 
         // A triangle's hit lies strictly past a ray's TMin, so this one drops out and what lies right behind it stays.
         searchFrom = hit.distance;
     }
 
-    if (!hit.hit || abs(hit.distance - surfaceDistance) > tolerance || IsShadowOnly(hit.instance, hit.geometry)) return surface;
+    if (!hit.hit || abs(hit.distance - surfaceDistance) > tolerance || IsStandIn(hit)) return surface;
 
     SceneTriangle t = LoadTriangle(hit.instance, hit.geometry, hit.primitive);
     float3 normal = cross(t.v1 - t.v0, t.v2 - t.v0);

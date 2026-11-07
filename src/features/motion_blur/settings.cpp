@@ -16,7 +16,7 @@ void describe(MotionBlur& blur, SettingVisitor& visit)
             .name = "Motion blur",
             .tip = "The game's own motion blur, drawn by the engine at the speed and radius its graphics setting asks for, with the upscaler on "
                    "too. Off leaves it out whatever the game's setting says.",
-            .summary = "The game's own motion blur, at the strength below.",
+            .summary = "The game's own motion blur.",
             .keywords = "motion blur strength smear trail shutter"});
     visit.slider(blur.strength,
         {.iniKey = "motion_blur_strength",

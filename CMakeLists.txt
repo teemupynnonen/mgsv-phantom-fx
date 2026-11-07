@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(PhantomFX VERSION 1.9.0 LANGUAGES C CXX)
+project(PhantomFX VERSION 2.0.0 LANGUAGES C CXX)
 
 if(NOT WIN32 OR NOT MSVC)
     message(FATAL_ERROR "Phantom FX requires Windows and MSVC.")
@@ -234,9 +234,9 @@ add_custom_command(OUTPUT ${GI_GENERATED_HEADERS}
 add_custom_target(gi_kernels DEPENDS ${GI_SHADER_HEADERS} ${GI_GENERATED_HEADERS})
 
 # Each feature's settings and their description (src/features/).
-set(PHANTOM_FX_FEATURES src/features/upscaling/settings.cpp src/features/frame_generation/settings.cpp src/features/sun/settings.cpp src/features/ray_traced_shadows/settings.cpp src/features/soft_shadows/settings.cpp src/features/sun_contact_shadows/settings.cpp
-    src/features/ray_traced_lights/settings.cpp src/features/lamp_contact_shadows/settings.cpp src/features/lamp_soft_shadows/settings.cpp
-    src/features/contact_shadow_shape/settings.cpp src/features/global_illumination/settings.cpp src/features/ambient_occlusion/settings.cpp
+set(PHANTOM_FX_FEATURES src/features/upscaling/settings.cpp src/features/frame_generation/settings.cpp src/features/sun/settings.cpp src/features/ray_traced_shadows/settings.cpp src/features/soft_shadows/settings.cpp
+    src/features/ray_traced_lights/settings.cpp
+    src/features/contact_shadows/settings.cpp src/features/global_illumination/settings.cpp src/features/ambient_occlusion/settings.cpp
     src/features/indirect_light/settings.cpp src/features/path_tracing/settings.cpp src/features/volumetric_fog/settings.cpp src/features/sea/settings.cpp src/features/water_caustics/settings.cpp src/features/photo_mode/settings.cpp src/features/hdr/settings.cpp src/features/frame_rate/settings.cpp
     src/features/motion_blur/settings.cpp src/features/depth_of_field/settings.cpp)
 

@@ -5,6 +5,7 @@
 #include "dev/held_camera.hpp"
 #include "dev/inspect_trace.hpp"
 #include "dev/perf_record.hpp"
+#include "dev/remaster/tool.hpp"
 #include "features/global_illumination/river_light.hpp"
 #include "fxui/fxui.hpp"
 #include "game_memory.hpp"
@@ -482,6 +483,8 @@ void run(Script& running, const std::string& line)
             return "saved the textures into " + rest + "\n";
         });
     }
+    else if (command == "remaster")
+        askJob(running, [rest](ID3D11DeviceContext*, ID3D11Resource*) { return remaster::runLine(rest); });
     else if (command == "game_shadow") game_shadow::keep(invert("0"));
     else if (command == "enhancements") setEnhancements(invert("0"));
     else if (command == "reveal")

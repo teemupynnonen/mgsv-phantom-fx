@@ -12,14 +12,14 @@
 #include <vector>
 
 // fxui: a settings window for ReShade add-ons, drawn with the Dear ImGui that ReShade gives add-ons.
-// The window is a frame budget: every effect is a line with its GPU milliseconds on one scale, the
-// frame split by effect heads the window, a rail of sections runs down its left, and each section is
-// a page of line items with their settings. README.md shows a whole window.
+// The window is a frame budget: every effect is a line with its value and its GPU milliseconds on one
+// scale, the frame split by effect heads the window, and tabs under it each hold one or more sections
+// of lines. A line folds out to its settings. README.md shows a whole window.
 //
-// Each frame, inside the overlay callback: fill a Budget, open a Window, then draw the pages:
+// Each frame, inside the overlay callback: fill a Budget, open a Window, then draw the sections:
 //
 //     fxui::Window window(sections, budget, chrome);
-//     if (fxui::Page page(Section::Shadows, "Shadows of the sun."); page)
+//     if (fxui::Page page(Section::Lighting); page)
 //         if (fxui::Item item({.id = "softShadows", .name = "Soft shadows"}); item)
 //             fxui::slider("Sun size", settings.sunSize, {.min = 0.1f, .max = 4, .standard = 0.53f});
 //
@@ -113,14 +113,10 @@ struct Section
 {
     const char* name{};
     ImU32 hue{};     // Its lines' colour; 0 for a section without timed lines
-    bool overview{}; // The budget page: no items, and the rail shows every section's share
-    bool apart{};    // A rule above it in the rail, such as for diagnostics
-};
-
-struct Key
-{
-    const char* key{};
-    const char* action{};
+    bool overview{}; // The budget page: no items, so a search leaves it out
+    // The tab it shows on. Sections with the same tab share it, each under its name; without one, a
+    // section has a tab of its own.
+    const char* tab{};
 };
 
 struct Chrome
@@ -132,10 +128,9 @@ struct Chrome
     const char* masterKey{};
     const char* masterTip{};
     const char* masterOff{}; // Beside the switch while it is off
-    std::span<const Key> keys; // Hotkeys at the foot of the rail
 };
 
-// The strip, the frame bar and the rail, then the page area until it goes out of scope. `sections`
+// The strip, the frame bar and the tabs, then the page area until it goes out of scope. `sections`
 // and `budget` must outlive it.
 class Window
 {
@@ -146,14 +141,14 @@ public:
     Window& operator=(const Window&) = delete;
 };
 
-// A section's page: true while it shows, when its section is chosen or a search runs. During a search
-// only items show, so a page's settings belong in its items.
+// A section: true while it shows, when its tab is chosen or a search runs. On a tab of several
+// sections it starts with its name. During a search only items show, so its settings belong in items.
 class Page
 {
 public:
-    explicit Page(int section, const char* description = nullptr);
+    explicit Page(int section);
     template<class E> requires std::is_enum_v<E>
-    explicit Page(E section, const char* description = nullptr) : Page(static_cast<int>(section), description) {}
+    explicit Page(E section) : Page(static_cast<int>(section)) {}
     ~Page();
     Page(const Page&) = delete;
     Page& operator=(const Page&) = delete;
@@ -171,18 +166,22 @@ struct ItemSpec
     const char* id{};
     const char* name{};
     const char* tech{};     // Its technical name, dim beside the name
-    const char* tag{};      // An outlined tag, such as "Experimental"
+    const char* tag{};      // An outlined tag, such as "Experimental", before the summary
     const char* tip{};      // The long explanation, on the name's tooltip
-    const char* summary{};  // One plain line under the name
+    const char* summary{};  // One plain line, first when it folds out
     const char* keywords{}; // More words a search finds it by, such as its settings' labels
+    bool isChanged{};       // A setting in it is not at its default: a dot after the name
     // Without a budget line of the same id:
     bool* toggle{};
     std::optional<State> state;
     std::string_view message;
+    std::optional<float> ms; // A cost to show, such as the sum of the lines it sets
 };
 
-// A line item: a rule, its switch, name, state and cost, and its summary and messages. True while
-// its settings show: it is on (or has no switch) and not replaced.
+// A line item: its name, value, cost and a fold mark on one line. Clicked, it folds out to its
+// summary, messages and settings, and the one open before folds back; during a search every match is
+// open. True while its settings show: open, on (or without a switch) and not replaced. A switch is its
+// value, On or Off; an item without one may give its line a value with itemChoice().
 class Item
 {
 public:
@@ -195,7 +194,7 @@ public:
 
 private:
     const char* id{};
-    bool drawn{}, open{}, held{}, hot{};
+    bool drawn{}, isUnfolded{}, open{}, held{}, hot{};
     float top{}, left{}, right{};
 };
 
@@ -239,15 +238,22 @@ struct Choice
     const char* tip{};
 };
 
-// Side-by-side buttons for a few choices. Returns the index pressed, or -1.
-int segmented(const char* label, int selected, std::span<const Option> options, const char* tip = nullptr);
+// The value on the item's line: the option chosen, with arrows to step through the enabled ones, and,
+// with more than two, a list on a click. Inside an Item, folded or open. Returns the index picked, or -1.
+int itemChoice(int selected, std::span<const Option> options);
 
-// A combo box: true while open, then option() for each entry and endCombo().
-bool beginCombo(const char* label, const char* preview, const char* tip = nullptr);
+// Side-by-side buttons for a few choices, with a reset while `standard` (an index, or -1 for none) is
+// not chosen. Returns the index pressed, or -1.
+int segmented(const char* label, int selected, std::span<const Option> options, const char* tip = nullptr, int standard = -1);
+
+// A combo box: true while open, then option() for each entry and endCombo(). `isChanged` shows a reset
+// beside it, and `reset` says whether it was pressed.
+bool beginCombo(const char* label, const char* preview, const char* tip = nullptr, bool isChanged = false, bool* reset = nullptr);
 bool option(const char* label, bool selected, bool enabled = true, const char* tip = nullptr);
 void endCombo();
 
-bool checkbox(const char* label, bool& value, const char* tip = nullptr);
+// With a reset beside it while it differs from `standard`.
+bool checkbox(const char* label, bool& value, const char* tip = nullptr, std::optional<bool> standard = {});
 bool button(const char* label, const char* tip = nullptr, bool enabled = true);
 // A box of text across the item, `lines` tall: text to edit, such as code, true when Ctrl+Enter
 // submits it; or, read-only, text to select and copy, such as output.
@@ -273,6 +279,8 @@ bool link(const char* label, std::string_view id);
 void goTo(std::string_view id);
 // The long explanation of the last control, while the mouse rests on it.
 void tooltip(const char* text);
+// A search runs: pages show their matching items, from every section.
+bool isSearching();
 
 // ---- The budget page ----
 
@@ -314,17 +322,18 @@ void drawToast(Placement placement = Placement::Right);
 // ---- Typed conveniences ----
 
 template<class T>
-bool segmented(const char* label, T& value, std::span<const Choice<T>> choices, const char* tip = nullptr)
+bool segmented(const char* label, T& value, std::span<const Choice<T>> choices, const char* tip = nullptr, std::optional<T> standard = {})
 {
     std::vector<Option> options;
-    int selected = -1;
+    int selected = -1, standardIndex = -1;
     for (const auto& choice : choices)
     {
         if (choice.value == value) selected = static_cast<int>(options.size());
+        if (standard && choice.value == *standard) standardIndex = static_cast<int>(options.size());
         options.push_back({choice.label, choice.icon, choice.enabled, choice.tip});
     }
 
-    const int pressed = segmented(label, selected, options, tip);
+    const int pressed = segmented(label, selected, options, tip, standardIndex);
     if (pressed < 0 || pressed == selected) return false;
 
     value = choices[static_cast<std::size_t>(pressed)].value;
@@ -332,36 +341,41 @@ bool segmented(const char* label, T& value, std::span<const Choice<T>> choices, 
 }
 
 template<class T>
-bool combo(const char* label, T& value, std::span<const Choice<T>> choices, const char* tip = nullptr)
+bool combo(const char* label, T& value, std::span<const Choice<T>> choices, const char* tip = nullptr, std::optional<T> standard = {})
 {
     const char* preview = "";
     for (const auto& choice : choices)
         if (choice.value == value) preview = choice.label;
 
-    if (!beginCombo(label, preview, tip)) return false;
+    bool reset{}, changed{};
+    if (beginCombo(label, preview, tip, standard && value != *standard, &reset))
+    {
+        for (const auto& choice : choices)
+            if (option(choice.label, choice.value == value, choice.enabled, choice.tip) && choice.value != value)
+            {
+                value = choice.value;
+                changed = true;
+            }
 
-    bool changed{};
-    for (const auto& choice : choices)
-        if (option(choice.label, choice.value == value, choice.enabled, choice.tip) && choice.value != value)
-        {
-            value = choice.value;
-            changed = true;
-        }
+        endCombo();
+    }
 
-    endCombo();
-    return changed;
+    if (!reset) return changed;
+
+    value = *standard;
+    return true;
 }
 
 template<class T, std::size_t N>
-bool segmented(const char* label, T& value, const Choice<T> (&choices)[N], const char* tip = nullptr)
+bool segmented(const char* label, T& value, const Choice<T> (&choices)[N], const char* tip = nullptr, std::optional<T> standard = {})
 {
-    return segmented(label, value, std::span<const Choice<T>>(choices), tip);
+    return segmented(label, value, std::span<const Choice<T>>(choices), tip, standard);
 }
 
 template<class T, std::size_t N>
-bool combo(const char* label, T& value, const Choice<T> (&choices)[N], const char* tip = nullptr)
+bool combo(const char* label, T& value, const Choice<T> (&choices)[N], const char* tip = nullptr, std::optional<T> standard = {})
 {
-    return combo(label, value, std::span<const Choice<T>>(choices), tip);
+    return combo(label, value, std::span<const Choice<T>>(choices), tip, standard);
 }
 
 // A combo whose list starts with a search box and shows the names that hold every word of it, in any

@@ -115,13 +115,16 @@ struct Frame
     bool modelInstancesUpdated{};
     std::vector<SceneTexture> newTextures; // Copied, or copied again as the game streamed more of it in, since the last frame
     std::optional<Terrain> terrain; // Absent until the game's terrain draws give its inputs
-    std::optional<float> seaLevel;  // The sea's (sea::level); absent in a frame without the add-on's sea
+    std::optional<float> seaLevel;  // The sea plane's (sea::planeLevel); absent in a frame without the add-on's sea
     std::uint32_t frameIndex{};
     kick_traces::KickTraces traces; // The one answer to what runs; a texture a trace needs is there when it runs
     bool showScene{}; // The output shows the traced scene instead of the light
     bool logOften{};  // Diagnostics: the light's statistics logged every few frames (as each readback returns), not every ten seconds
-    // Self-lit meshes' light: its scale from the game's units, and the most radiance one lights others with, so scaled.
+    // Self-lit meshes' light: its scale from the game's units, and the most radiance one lights others with, so scaled;
+    // what tunes each and a number that changes with it (scene_contents::GameScene).
     float emissionScale{}, emissionCap{};
+    scene_description::SelfLightFilter selfLight{};
+    std::uint64_t selfLightVersion{};
     // The game's shadow map range (cPSLight c8.x, c8.y, c6.x, and 1 once known) and the tangent of the sun's
     // angular radius.
     std::array<float, 4> shadowRange{};

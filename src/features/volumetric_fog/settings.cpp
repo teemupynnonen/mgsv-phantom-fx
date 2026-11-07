@@ -16,11 +16,11 @@ void describe(VolumetricFog& fog, SettingVisitor& visit)
     visit.feature(fog.on,
         {.menuId = "volumetricFog",
             .iniKey = "volumetric_fog",
-            .section = Section::Atmosphere,
+            .section = Section::World,
             .name = "Volumetric fog",
             .tip = "Fog with the sun shadowed in it: light shafts through trees, buildings and dust, and shade where the sun cannot reach. "
                    "Shadows reach about 90 m, as the game's do. Off leaves the game's fog unchanged.",
-            .summary = "Light shafts through trees, buildings and dust, and shade where the sun cannot reach.",
+            .summary = "Light shafts through trees, buildings and dust.",
             .keywords = "sky look physical MGSV haze light shafts",
             .effect = Effect::VolumetricFog,
             .needsSupportedBuild = true});
