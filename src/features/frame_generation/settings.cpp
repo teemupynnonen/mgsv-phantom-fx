@@ -28,15 +28,16 @@ constexpr SettingChoice Modes[]{
 void describe(FrameGeneration& generation, SettingVisitor& visit)
 {
     visit.feature({.menuId = "frameGeneration",
-        .section = Section::Upscaling,
+        .section = Section::Image,
         .name = "Frame generation",
         .tip = "Frames generated between the ones the game renders, with either upscaler. DLSS Frame Generation: 2x needs an RTX 40, 3x to "
                "6x and Dynamic an RTX 50. Dynamic reaches the display's refresh rate. It turns on NVIDIA Reflex. FSR frame generation: 2x on "
                "any GPU, machine-learned on Radeon RX 9000. Turning it on, or switching between DLSS and FSR, takes a restart, as the game "
                "then presents through Direct3D 12; other changes apply at once.",
-        .summary = "Frames generated between the rendered ones. Turning it on, or switching between DLSS and FSR, takes a restart.",
+        .summary = "Extra frames between the real ones. Needs a restart.",
         .keywords = "DLSS FSR Reflex 2x 3x 4x 5x 6x dynamic"});
-    visit.choice(generation.mode, {.iniKey = "frame_generation", .label = "Frame generation", .choices = Modes, .control = ChoiceControl::Dropdown});
+    visit.choice(generation.mode,
+        {.iniKey = "frame_generation", .label = "Frame generation", .choices = Modes, .control = ChoiceControl::Dropdown, .isItemValue = true});
 }
 
 namespace upscaler

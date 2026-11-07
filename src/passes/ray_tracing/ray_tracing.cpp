@@ -26,6 +26,7 @@
 #include "passes/ray_tracing/shaders/gi_shared.h"
 #include "passes/ray_tracing/trace.hpp"
 #include "performance.hpp"
+#include "remaster/remaster.hpp"
 #include "resource_dump.hpp"
 
 #include <Windows.h>
@@ -77,12 +78,14 @@ struct Options
 constexpr UINT ObjectVelocitySlot = 3;
 
 // Packs what the kernels read from the G-buffer: the depth, the normals in world space (0 where
-// the sky is; alpha 1/3 on foliage, the specular target's material 43, else 1) and the albedo, linear.
+// the sky is; alpha 1/3 on foliage, the specular target's material 43, else 1) and the albedo, linear
+// (alpha 0 where the add-on's sea drew, else 1: IsSeaPixel in gi_common.hlsli).
 constexpr char PackSource[] = R"(
 Texture2D<float> g_Depth : register(t0);
 Texture2D<float4> g_Normal : register(t1);
 Texture2D<float4> g_Albedo : register(t2);
 Texture2D<float4> g_Specular : register(t3);
+Texture2D<float> g_SeaDepth : register(t4); // The sea's depth where it drew (sea::surfaceDepth)
 RWTexture2D<float> g_DepthOut : register(u0);
 RWTexture2D<float4> g_NormalOut : register(u1);
 RWTexture2D<float4> g_AlbedoOut : register(u2);
@@ -93,6 +96,7 @@ cbuffer Parameters : register(b0)
     uint2 g_Size;
     uint g_HasAlbedo;
     uint g_HasSpecular;
+    uint g_HasSea;
 };
 
 [numthreads(8, 8, 1)]
@@ -113,7 +117,8 @@ void main(uint2 id : SV_DispatchThreadID)
     bool foliage = g_HasSpecular && round(g_Specular.Load(int3(id, 0)).z * 255) == 43;
     g_NormalOut[id] = depth > 0 ? float4(0.5 * world + 0.5, foliage ? 1.0 / 3 : 1) : 0;
 
-    g_AlbedoOut[id] = float4(g_HasAlbedo ? g_Albedo.Load(int3(id, 0)).rgb : 0.25, 1);
+    bool isSea = g_HasSea && depth > 0 && g_SeaDepth.Load(int3(id, 0)) == depth;
+    g_AlbedoOut[id] = float4(g_HasAlbedo ? g_Albedo.Load(int3(id, 0)).rgb : 0.25, isSea ? 0 : 1);
 }
 )";
 
@@ -121,6 +126,7 @@ struct PackParameters
 {
     float view[3][4];
     std::uint32_t width, height, hasAlbedo, hasSpecular;
+    std::uint32_t hasSea, padding[3];
 };
 
 // DLSS Ray Reconstruction's guides from the G-buffer, as its integration guide asks for them: the
@@ -275,6 +281,12 @@ constexpr float LightScale = 1.0f / 1024;
 // The most radiance a self-lit mesh lights others with, in the game's units: the sun's light. Their intensities are set
 // for how they look (up to 221,182, a bulb's bloom); their rooms are lit by the lamps placed beside them.
 constexpr float MostEmission = 20000;
+// The share of that intensity a self-lit mesh lights others with at the menu's 1. Read as it looks, a quarantine platform
+// ceiling tube gave 52,462 at a metre, against a median of about 620 (163 to 7,953) from the game's own lamp at the same
+// fixture, 8 pairs; rooms came out 9 to 37 times vanilla's light, blown out (2026-11-04). A hundredth makes a tube about as
+// bright as its lamp, but the lamps already carry the fixtures' light: a corridor with 21 tubes to 8 lamps came out 3.3 times
+// vanilla's. At a third of that, tubes top their lamps up, and both corridors measured were about twice vanilla's.
+constexpr float SelfLitShare = 0.003f;
 
 // The sky's light as PsWork holds it, before exposure, and the exposure the pass had; whether the
 // probe's light stands in for it (the game gave no sky).
@@ -464,18 +476,20 @@ void pack(ID3D11ShaderResourceView* depth, const SceneConstants& scene)
     parameters.hasAlbedo = hasAlbedo;
     const auto specular = indirect_light_pass::specularTarget(width, height);
     parameters.hasSpecular = specular != nullptr;
+    const auto seaDepth = sea::surfaceDepth(width, height);
+    parameters.hasSea = seaDepth != nullptr;
     check(write(immediate.Get(), packParameters.Get(), parameters), "Writing the G-buffer pack's constants");
 
-    ID3D11ShaderResourceView* inputs[]{depth, normals.Get(), hasAlbedo ? albedo.Get() : nullptr, specular.Get()};
+    ID3D11ShaderResourceView* inputs[]{depth, normals.Get(), hasAlbedo ? albedo.Get() : nullptr, specular.Get(), seaDepth.Get()};
     ID3D11UnorderedAccessView* outputs[]{depthOut.access.Get(), normalOut.access.Get(), albedoOut.access.Get()};
     immediate->CSSetShader(packShader.Get(), nullptr, 0);
     immediate->CSSetConstantBuffers(0, 1, packParameters.GetAddressOf());
-    immediate->CSSetShaderResources(0, 4, inputs);
+    immediate->CSSetShaderResources(0, 5, inputs);
     immediate->CSSetUnorderedAccessViews(0, 3, outputs, nullptr);
     immediate->Dispatch(groups(width), groups(height), 1);
-    ID3D11ShaderResourceView* noInputs[4]{};
+    ID3D11ShaderResourceView* noInputs[5]{};
     ID3D11UnorderedAccessView* noOutputs[3]{};
-    immediate->CSSetShaderResources(0, 4, noInputs);
+    immediate->CSSetShaderResources(0, 5, noInputs);
     immediate->CSSetUnorderedAccessViews(0, 3, noOutputs, nullptr);
     immediate->CSSetShader(nullptr, nullptr, 0);
 }
@@ -827,7 +841,7 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     gi_textures::update(device.Get(), immediate.Get(), frame.newTextures);
     endStep(TexturesStep);
     if (const auto terrain = engine_scene::takeTerrain()) copyTerrain(*terrain, frame);
-    frame.seaLevel = sea::level();
+    frame.seaLevel = sea::planeLevel();
     auto* skyCube = traces.isPathTraced ? sky_capture::update(immediate.Get(), LightScale) : nullptr;
 
     // The game's velocity for its moving meshes, for the shadows' and the light's denoisers: only this
@@ -916,8 +930,10 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     frame.frameIndex = ++kicks;
     if (asked.asksRayReconstruction) guidesKick = kicks;
     frame.traces = traces;
-    frame.emissionScale = traces.isPathTraced ? options.emission * LightScale : 0;
+    frame.emissionScale = traces.isPathTraced ? options.emission * SelfLitShare * LightScale : 0;
     frame.emissionCap = MostEmission * LightScale;
+    frame.selfLight = remaster::tuneFileSelfLight;
+    frame.selfLightVersion = remaster::rulesVersion();
     reconstructionsAtKick = reconstructedFrames;
     lastTraces = traces;
     frame.showScene = asked.showsScene;

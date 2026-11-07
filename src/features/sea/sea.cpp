@@ -75,8 +75,12 @@ constexpr std::uint64_t ShownForMilliseconds = 60'000, ForgottenAfterMillisecond
 // Read on the CPU through the constant capture they were other draws' constants (levels from -62 m to 2000 m
 // within a second): the game's threads do not write them where it maps them.
 constexpr UINT GameMaterialSlot = 4, GameMaterialSize = 8 * game_constants::RegisterSize;
-// sea_shaders.hpp's cbuffers: Sea at b9 of every stage, the game's sea's material copy at b10.
-constexpr UINT ConstantSlot = 9, GameSeaSlot = 10;
+// sea_shaders.hpp's cbuffers: Sea at b9 of every stage, the game's sea's material copy at b10, its pixel
+// material's at b11 (the surface's pixel shader).
+constexpr UINT ConstantSlot = 9, GameSeaSlot = 10, GameSeaPixelSlot = 11;
+// The game's sea's foam textures in its pixel shader (inFoamTexture, inFoamTexture2), and where the surface
+// takes them.
+constexpr UINT GameFoamNoiseSlot = 3, GameFoamPatternSlot = 5, SurfaceFoamSlot = 3;
 struct Constants
 {
     float cascadeSizes[4], cascadeLow[4], cascadeHigh[4];
@@ -84,9 +88,10 @@ struct Constants
     float foamLeft, choppiness, gridSpacing;
     std::uint32_t gridCells;
     float microRoughness, waterAlbedo[3];
+    float hasGameFoam, foamCoverage, heightScale, padding;
 };
 
-static_assert(sizeof(Constants) == 96);
+static_assert(sizeof(Constants) == 112);
 
 struct Wanted
 {
@@ -157,19 +162,27 @@ ComPtr<ID3D11DeviceContext> immediate;
 ComPtr<ID3D11ComputeShader> spectrumShader, rowShader, columnShader, mapShader;
 ComPtr<ID3D11VertexShader> surfaceVertex;
 ComPtr<ID3D11PixelShader> surfacePixel;
-ComPtr<ID3D11Buffer> constantBuffer, indexBuffer, gameSeaMaterial;
-// The level's readback (level()): copied from gameSeaMaterial at present, read a second later.
+ComPtr<ID3D11Buffer> constantBuffer, indexBuffer, gameSeaMaterial, gameSeaPixelMaterial;
+// The game's sea's foam textures, as its near patches last bound them; null before.
+ComPtr<ID3D11ShaderResourceView> gameFoamNoise, gameFoamPattern;
+// The level's readback (planeLevel()): copied from gameSeaMaterial at present, read a second later.
 ComPtr<ID3D11Buffer> levelReadback;
+// Each tile's deepest trough below the level (deepest), read back with the level.
+ComPtr<ID3D11Buffer> deepestReadback;
+// The game's sea's pixel material beside it, for the log.
+ComPtr<ID3D11Buffer> pixelReadback;
+bool hasLoggedFoam{};
 bool isLevelReadbackPending{};
 std::uint64_t lastLevelRead{};
 std::optional<float> readLevel;
+float readDeepest{};
 // Handed over as the immediate context runs the lists: the frame being run has the sea in its G-buffer
 // (until its present); a list that copied the game's sea has run, so gameSeaMaterial holds its level.
 bool isSeaInFrameBeingRun{}, hasGameSeaCopy{};
 ComPtr<ID3D11RasterizerState> rasterizer;
 ComPtr<ID3D11DepthStencilState> depthState;
 ComPtr<ID3D11SamplerState> linearSampler, anisotropicSampler;
-WorkBuffer spectrum, foam;
+WorkBuffer spectrum, foam, deepest;
 Maps displacement, derivatives, moments;
 // The sea's depth where it drew, at the render size (surfaceDepth).
 ComPtr<ID3D11Texture2D> depthTexture;
@@ -265,11 +278,15 @@ bool ensurePipeline()
         const std::array<float, GameMaterialSize / 4> zeros{};
         const D3D11_SUBRESOURCE_DATA initial{zeros.data()};
         check(device->CreateBuffer(&copy, &initial, gameSeaMaterial.GetAddressOf()), "Creating the game's sea constants");
+        check(device->CreateBuffer(&copy, &initial, gameSeaPixelMaterial.GetAddressOf()), "Creating the game's sea pixel constants");
         D3D11_BUFFER_DESC readback{};
         readback.ByteWidth = GameMaterialSize;
         readback.Usage = D3D11_USAGE_STAGING;
         readback.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
         check(device->CreateBuffer(&readback, nullptr, levelReadback.GetAddressOf()), "Creating the sea level's readback");
+        check(device->CreateBuffer(&readback, nullptr, pixelReadback.GetAddressOf()), "Creating the sea foam's readback");
+        readback.ByteWidth = Cascades * 4;
+        check(device->CreateBuffer(&readback, nullptr, deepestReadback.GetAddressOf()), "Creating the sea troughs' readback");
         spectrumShader = kernel(shaders::Spectrum, "sea-spectrum");
         const D3D_SHADER_MACRO rows[]{{"COLUMNS", "0"}, {}}, columns[]{{"COLUMNS", "1"}, {}};
         rowShader = kernel(shaders::Fft, "sea-fft-rows", rows);
@@ -284,6 +301,7 @@ bool ensurePipeline()
 
         spectrum = makeWorkBuffer(Cascades * 2 * Texels * Texels, 16, "Creating the sea's spectrum");
         foam = makeWorkBuffer(Cascades * Texels * Texels, 4, "Creating the sea's foam");
+        deepest = makeWorkBuffer(Cascades, 4, "Creating the sea's troughs");
         displacement = makeMaps(DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the sea's displacement");
         derivatives = makeMaps(DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the sea's slopes");
         moments = makeMaps(DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the sea's slope spread");
@@ -337,16 +355,23 @@ void releasePipeline()
     constantBuffer.Reset();
     indexBuffer.Reset();
     gameSeaMaterial.Reset();
+    gameSeaPixelMaterial.Reset();
+    gameFoamNoise.Reset();
+    gameFoamPattern.Reset();
     levelReadback.Reset();
+    pixelReadback.Reset();
+    deepestReadback.Reset();
+    hasLoggedFoam = false;
     isLevelReadbackPending = false;
     readLevel.reset();
+    readDeepest = 0;
     // The game's sea's copy starts again from zeros.
     isSeaInFrameBeingRun = hasGameSeaCopy = false;
     rasterizer.Reset();
     depthState.Reset();
     linearSampler.Reset();
     anisotropicSampler.Reset();
-    spectrum = foam = {};
+    spectrum = foam = deepest = {};
     displacement = derivatives = moments = {};
     depthTexture.Reset();
     depthTarget.Reset();
@@ -383,7 +408,7 @@ void ensureDepthTarget(UINT width, UINT height)
 void simulate(ID3D11DeviceContext* context)
 {
     {
-        const SavedComputeState saved(context, {.buffers = GameSeaSlot + 1, .accesses = 5});
+        const SavedComputeState saved(context, {.buffers = GameSeaSlot + 1, .accesses = 6});
         ID3D11Buffer* const constants[]{constantBuffer.Get(), gameSeaMaterial.Get()};
         context->CSSetConstantBuffers(ConstantSlot, static_cast<UINT>(std::size(constants)), constants);
         context->CSSetUnorderedAccessViews(0, 1, spectrum.access.GetAddressOf(), nullptr);
@@ -395,8 +420,10 @@ void simulate(ID3D11DeviceContext* context)
         context->CSSetShader(columnShader.Get(), nullptr, 0);
         context->Dispatch(Texels, Cascades * 2, 1);
 
+        constexpr UINT nothing[4]{};
+        context->ClearUnorderedAccessViewUint(deepest.access.Get(), nothing);
         ID3D11UnorderedAccessView* const outputs[]{spectrum.access.Get(), displacement.access.Get(), derivatives.access.Get(), moments.access.Get(),
-            foam.access.Get()};
+            foam.access.Get(), deepest.access.Get()};
         context->CSSetUnorderedAccessViews(0, static_cast<UINT>(std::size(outputs)), outputs, nullptr);
         context->CSSetShader(mapShader.Get(), nullptr, 0);
         context->Dispatch(groups(Texels), groups(Texels), Cascades);
@@ -424,7 +451,7 @@ public:
         context->DSGetShader(domain.GetAddressOf(), nullptr, nullptr);
         context->GSGetShader(geometry.GetAddressOf(), nullptr, nullptr);
         context->PSGetShader(pixel.GetAddressOf(), nullptr, nullptr);
-        context->PSGetConstantBuffers(ConstantSlot, 1, pixelConstants.GetAddressOf());
+        context->PSGetConstantBuffers(ConstantSlot, ConstantCount, pixelConstants);
         context->PSGetShaderResources(0, ViewCount, pixelViews);
         context->PSGetSamplers(0, SamplerCount, pixelSamplers);
         context->RSGetState(rasterizer.GetAddressOf());
@@ -446,7 +473,7 @@ public:
         context->DSSetShader(domain.Get(), nullptr, 0);
         context->GSSetShader(geometry.Get(), nullptr, 0);
         context->PSSetShader(pixel.Get(), nullptr, 0);
-        context->PSSetConstantBuffers(ConstantSlot, 1, pixelConstants.GetAddressOf());
+        context->PSSetConstantBuffers(ConstantSlot, ConstantCount, pixelConstants);
         context->PSSetShaderResources(0, ViewCount, pixelViews);
         context->PSSetSamplers(0, SamplerCount, pixelSamplers);
         context->RSSetState(rasterizer.Get());
@@ -455,6 +482,7 @@ public:
         context->OMSetRenderTargets(TargetCount, targets, depth.Get());
 
         release(vertexConstants);
+        release(pixelConstants);
         release(vertexViews);
         release(pixelViews);
         release(pixelSamplers);
@@ -465,7 +493,7 @@ public:
     SavedSurfaceState& operator=(const SavedSurfaceState&) = delete;
 
 private:
-    static constexpr UINT ViewCount = 3, SamplerCount = 2, TargetCount = 4, ConstantCount = GameSeaSlot + 1 - ConstantSlot;
+    static constexpr UINT ViewCount = SurfaceFoamSlot + 2, SamplerCount = 2, TargetCount = 4, ConstantCount = GameSeaPixelSlot + 1 - ConstantSlot;
 
     template<class Object, std::size_t Count> static void release(Object* (&objects)[Count])
     {
@@ -488,7 +516,7 @@ private:
     ComPtr<ID3D11DomainShader> domain;
     ComPtr<ID3D11GeometryShader> geometry;
     ComPtr<ID3D11PixelShader> pixel;
-    ComPtr<ID3D11Buffer> pixelConstants;
+    ID3D11Buffer* pixelConstants[ConstantCount]{};
     ID3D11ShaderResourceView* pixelViews[ViewCount]{};
     ID3D11SamplerState* pixelSamplers[SamplerCount]{};
     ComPtr<ID3D11RasterizerState> rasterizer;
@@ -515,7 +543,9 @@ bool drawSea(ID3D11DeviceContext* context, const Constants& constants)
 
     const auto [width, height] = sizeOf(gameTargets[0].Get());
     ensureDepthTarget(width, height);
-    check(write(context, constantBuffer.Get(), constants), "Writing the sea's constants");
+    auto drawn = constants;
+    drawn.hasGameFoam = gameFoamNoise && gameFoamPattern ? 1.0f : 0.0f;
+    check(write(context, constantBuffer.Get(), drawn), "Writing the sea's constants");
     performance::Timed timed(context, performance::Pass::SeaWaves);
     simulate(context);
     timed.next(performance::Pass::SeaSurface);
@@ -537,14 +567,15 @@ bool drawSea(ID3D11DeviceContext* context, const Constants& constants)
 
     ID3D11ShaderResourceView* const maps[]{displacement.view.Get(), derivatives.view.Get(), moments.view.Get()};
     context->VSSetShader(surfaceVertex.Get(), nullptr, 0);
-    ID3D11Buffer* const buffers[]{constantBuffer.Get(), gameSeaMaterial.Get()};
-    context->VSSetConstantBuffers(ConstantSlot, static_cast<UINT>(std::size(buffers)), buffers);
+    ID3D11Buffer* const buffers[]{constantBuffer.Get(), gameSeaMaterial.Get(), gameSeaPixelMaterial.Get()};
+    context->VSSetConstantBuffers(ConstantSlot, 2, buffers);
     context->VSSetShaderResources(0, 1, maps);
     context->VSSetSamplers(0, 1, linearSampler.GetAddressOf());
     ID3D11SamplerState* const samplers[]{linearSampler.Get(), anisotropicSampler.Get()};
+    ID3D11ShaderResourceView* const pixelMaps[]{maps[0], maps[1], maps[2], gameFoamNoise.Get(), gameFoamPattern.Get()};
     context->PSSetShader(surfacePixel.Get(), nullptr, 0);
-    context->PSSetConstantBuffers(ConstantSlot, 1, constantBuffer.GetAddressOf());
-    context->PSSetShaderResources(0, static_cast<UINT>(std::size(maps)), maps);
+    context->PSSetConstantBuffers(ConstantSlot, static_cast<UINT>(std::size(buffers)), buffers);
+    context->PSSetShaderResources(0, static_cast<UINT>(std::size(pixelMaps)), pixelMaps);
     context->PSSetSamplers(0, static_cast<UINT>(std::size(samplers)), samplers);
     context->DrawIndexedInstanced(GridCells * GridCells * 6, Rings, 0, 0, 0);
     logOnce("Sea: drawn into the G-buffer, in place of the game's.");
@@ -555,6 +586,43 @@ bool drawSea(ID3D11DeviceContext* context, const Constants& constants)
 std::uint64_t keyOf(ID3D11DeviceContext* context)
 {
     return reinterpret_cast<std::uint64_t>(context);
+}
+
+// The game's near sea draw's foam, for the surface: its pixel material constants into their copy and its two
+// foam textures. Call with resourceMutex held, at the draw.
+void takeGameFoam(ID3D11DeviceContext* context)
+{
+    ComPtr<ID3D11Buffer> material;
+    context->PSGetConstantBuffers(GameMaterialSlot, 1, material.GetAddressOf());
+    D3D11_BUFFER_DESC desc{};
+    if (material) material->GetDesc(&desc);
+    ComPtr<ID3D11ShaderResourceView> noise, pattern;
+    context->PSGetShaderResources(GameFoamNoiseSlot, 1, noise.GetAddressOf());
+    context->PSGetShaderResources(GameFoamPatternSlot, 1, pattern.GetAddressOf());
+    // While a map loads its draws can hold a render target there (1920 x 1080 seen): only textures with levels.
+    const auto texelsOf = [](ID3D11ShaderResourceView* view) {
+        D3D11_TEXTURE2D_DESC texel{};
+        if (!view) return texel;
+        ComPtr<ID3D11Resource> resource;
+        view->GetResource(resource.GetAddressOf());
+        ComPtr<ID3D11Texture2D> texture;
+        if (SUCCEEDED(resource.As(&texture))) texture->GetDesc(&texel);
+        return texel;
+    };
+    const auto isFoam = [](const D3D11_TEXTURE2D_DESC& texel) { return texel.MipLevels > 1 && !(texel.BindFlags & D3D11_BIND_RENDER_TARGET); };
+    const auto noiseTexels = texelsOf(noise.Get()), patternTexels = texelsOf(pattern.Get());
+    if (desc.ByteWidth != GameMaterialSize || !isFoam(noiseTexels) || !isFoam(patternTexels)) return;
+
+    context->CopyResource(gameSeaPixelMaterial.Get(), material.Get());
+    if (noise != gameFoamNoise || pattern != gameFoamPattern)
+    {
+        const auto describe = [](const D3D11_TEXTURE2D_DESC& texel) {
+            return std::format("{} x {}, format {}, {} levels", texel.Width, texel.Height, static_cast<int>(texel.Format), texel.MipLevels);
+        };
+        log(std::format("Sea: the game's foam: noise {}; patterns {}.", describe(noiseTexels), describe(patternTexels)));
+    }
+    gameFoamNoise = noise;
+    gameFoamPattern = pattern;
 }
 
 // The game's near sea draw's material constants into their copy, once between two presents: the frames
@@ -575,9 +643,11 @@ void copyGameSea(ID3D11DeviceContext* context, std::uint64_t presented)
     context->CopyResource(gameSeaMaterial.Get(), material.Get());
     notes.note(keyOf(context), [](Notes& contextNotes) { contextNotes.isGameSeaCopied = true; });
     logOnce("Sea: its level and wind come from the game's sea.");
+    takeGameFoam(context);
 }
 
-// The sea's level for the CPU: the game's sea's copy, read back once a second, a present after its copy so the
+// The sea's level for the CPU, with the waves' deepest troughs below it: the game's sea's copy and the maps' troughs, read
+// back once a second, a present after their copies so the
 // CPU never waits for the GPU. Only while the sea draws, so after a list with the game's sea's copy ran and the
 // readback follows it on the GPU (read before, it found zeros: y 0, 23 m above the sea). Call with
 // resourceMutex held, on the immediate context at present.
@@ -594,8 +664,27 @@ void readBackLevel()
         std::memcpy(material, mapped.pData, sizeof(material));
         immediate->Unmap(levelReadback.Get(), 0);
         isLevelReadbackPending = false;
+        if (SUCCEEDED(immediate->Map(pixelReadback.Get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped)))
+        {
+            float pixel[8][4]{};
+            std::memcpy(pixel, mapped.pData, sizeof(pixel));
+            immediate->Unmap(pixelReadback.Get(), 0);
+            if (pixel[4][3] != 0 && !hasLoggedFoam)
+            {
+                hasLoggedFoam = true;
+                log(std::format("Sea: the game's foam: speed {:.3f}, amount {:.3f}, tile {:.2f} m.", pixel[1][2], pixel[4][3], material[1][3]));
+            }
+        }
         if (!readLevel || *readLevel != material[0][2]) log(std::format("Sea: its level is y {:.2f}.", material[0][2]));
         readLevel = material[0][2];
+        if (SUCCEEDED(immediate->Map(deepestReadback.Get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped)))
+        {
+            float troughs[Cascades]{};
+            std::memcpy(troughs, mapped.pData, sizeof(troughs));
+            immediate->Unmap(deepestReadback.Get(), 0);
+            readDeepest = 0;
+            for (const float trough : troughs) readDeepest += trough;
+        }
         return;
     }
 
@@ -603,6 +692,8 @@ void readBackLevel()
     if (now - lastLevelRead < 1000) return;
 
     immediate->CopyResource(levelReadback.Get(), gameSeaMaterial.Get());
+    immediate->CopyResource(pixelReadback.Get(), gameSeaPixelMaterial.Get());
+    immediate->CopyResource(deepestReadback.Get(), deepest.buffer.Get());
     isLevelReadbackPending = true;
     lastLevelRead = now;
 }
@@ -610,9 +701,12 @@ void readBackLevel()
 // The next frame's waves: the time, the wind turning towards the weather's, the tiles' wavenumbers.
 Constants constantsAfter(double elapsed, const Sea& sea)
 {
-    seconds += elapsed;
+    // The waves' own time: the foam fades on it too, so it lasts as long against the waves at any speed.
+    const double waveElapsed = elapsed * sea.speed;
+    seconds += waveElapsed;
     const auto weather = weather::state();
-    const float target = WindOf(weather.requested.value_or(weather::Type::Sunny)) * sea.waves;
+    // The wind is the weather's own: no setting raises it against that.
+    const float target = WindOf(weather.requested.value_or(weather::Type::Sunny));
     if (wind <= 0) wind = target;
     wind += (target - wind) * (1 - std::exp(-static_cast<float>(elapsed) / WindSeconds));
 
@@ -621,8 +715,10 @@ Constants constantsAfter(double elapsed, const Sea& sea)
     {
         constants.cascadeSizes[cascade] = CascadeSizes[cascade];
         // Each tile from where the next one's waves stop; the smallest to just below its texels' limit.
-        constants.cascadeLow[cascade] = cascade == 0 ? 1e-4f : 6 * 2 * Pi / CascadeSizes[cascade];
-        constants.cascadeHigh[cascade] = cascade + 1 < Cascades ? 6 * 2 * Pi / CascadeSizes[cascade + 1] : 0.95f * Pi * Texels / CascadeSizes[cascade];
+        // A tile takes the waves from `split` of the next one's tiles across down to its own: larger, the
+        // longer waves hold more of the spectrum and the sea shows fewer ripples.
+        constants.cascadeLow[cascade] = cascade == 0 ? 1e-4f : sea.split * 2 * Pi / CascadeSizes[cascade];
+        constants.cascadeHigh[cascade] = cascade + 1 < Cascades ? sea.split * 2 * Pi / CascadeSizes[cascade + 1] : 0.95f * Pi * Texels / CascadeSizes[cascade];
     }
 
     // JONSWAP for the wind and fetch. Past the fetch a wind fully develops the sea over, the sea grows no
@@ -631,20 +727,23 @@ Constants constantsAfter(double elapsed, const Sea& sea)
     const float speed = std::max(wind, 0.5f);
     const float fetch = std::min(Fetch, 1.58e4f * speed * speed / Gravity);
     const float dimensionless = Gravity * fetch / (speed * speed);
+    // The wavelength against the weather's sea: the peak's frequency (below 1 is longer waves, which travel
+    // slower too). The height moves the geometry alone, in the surface's vertex shader.
     constants.alpha = 0.076f * std::pow(dimensionless, -0.22f);
-    constants.peakFrequency = 22 * Gravity / speed * std::pow(dimensionless, -1.0f / 3);
+    constants.peakFrequency = 22 * Gravity / speed * std::pow(dimensionless, -1.0f / 3) * sea.peak;
     constants.peakBoost = std::max(7 * std::pow(dimensionless, -0.143f), 1.0f);
     // Wrapped well before float loses the fast ripples' phase: a wave's phase is its frequency times this.
     constants.time = static_cast<float>(std::fmod(seconds, 3600.0));
-    constants.foamLeft = std::exp(-static_cast<float>(elapsed) / FoamSeconds);
-    constants.choppiness = Choppiness;
+    constants.foamLeft = std::exp(-static_cast<float>(waveElapsed) / FoamSeconds);
+    constants.choppiness = Choppiness * sea.chop;
     constants.gridSpacing = GridSpacing;
     constants.gridCells = GridCells;
     // Cox and Munk's slope variance for the wind (both axes: 0.003 + 0.00512 U) less the tiles' own, which
     // offline came to about 0.0155 + 0.00135 U: the ripples shorter than the smallest tile's waves.
-    constants.microRoughness = std::max(0.00377f * speed - 0.0125f, 0.001f);
-    const float waterAlbedo[]{GI_SEA_ALBEDO};
-    std::copy(std::begin(waterAlbedo), std::end(waterAlbedo), constants.waterAlbedo);
+    constants.microRoughness = std::max(0.00377f * speed - 0.0125f, 0.001f) * sea.ripples;
+    std::copy(std::begin(sea.albedo), std::end(sea.albedo), constants.waterAlbedo);
+    constants.foamCoverage = sea.foamCoverage;
+    constants.heightScale = sea.height;
 
     return constants;
 }
@@ -810,12 +909,12 @@ void executing(ID3D11DeviceContext* context, std::uint64_t list) noexcept
     hasGameSeaCopy |= noted->isGameSeaCopied;
 }
 
-std::optional<float> level() noexcept
+std::optional<float> planeLevel() noexcept
 {
     std::lock_guard lock(resourceMutex);
-    if (!isSeaInFrameBeingRun) return std::nullopt;
+    if (!isSeaInFrameBeingRun || !readLevel) return std::nullopt;
 
-    return readLevel;
+    return *readLevel - readDeepest;
 }
 
 ComPtr<ID3D11ShaderResourceView> surfaceDepth(UINT width, UINT height) noexcept

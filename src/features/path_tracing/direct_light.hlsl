@@ -153,7 +153,7 @@ void TraceLampLight(uint2 did : SV_DispatchThreadID)
     float3 diffuseLight = 0.0f, specularLight = 0.0f;
     if (total > 0.0f)
     {
-        PixelSurface shadowSurface = PixelSurfaceAt(surface.world, DecodeNormal(g_Normal.Load(int3(did, 0))));
+        PixelSurface shadowSurface = PixelSurfaceAt(did, surface.world, DecodeNormal(g_Normal.Load(int3(did, 0))));
         float2 cone = PixelCone(surface.world, 0.0f);
         [unroll] for (uint k = 0; k < PickedLights; ++k)
         {

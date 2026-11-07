@@ -1,200 +1,107 @@
 # Phantom FX changelog
 
-## Unreleased
+## 2.0.0
 
-- **Global illumination is a little faster in open country.** Its rays and their bounces, also those of path-traced
-  reflections, now look 100 m for what they hit and take the sky's light past it. At 4K that saves about 0.7 ms of an
-  18 ms frame in Afghanistan and 0.3 ms in the jungle, and the picture looks the same. Turning off **Short rays** under
-  Global illumination brings back the old rays.
-- **The rays hand the GPU their work sooner.** Each frame the ray tracing worked out the sky's light for global
-  illumination over 8,192 directions on the CPU, and copied the scene's placements, 39,000 of them in the jungle. The sky's
-  light now takes a few hundred multiplications for the same result, and the placements are no longer copied. That work
-  held up the frame's rays, so at Mother Base at night a frame takes about 0.5 ms less (13.9 to 13.4 ms at 1080p with DLSS
-  Quality).
-- **Rays no longer pass what lies right beside a surface.** Global illumination and path-traced reflections could take a
-  surface close to the one they left for a copy of it and go through. Where the pixel's surface is known they now skip
-  nothing, as the shadow rays do, and a stand-in in front of it no longer hides it. No spot measured looks different, and
-  the cost is the same.
-- **Rooms no longer light up from inside their walls.** In a room's corners the rays of global illumination and of
-  path-traced reflections could start inside the next wall and find the sun there, which drew bright broken lines along
-  the seams. Their rays now leave the surface the pixel shows, as the shadow rays do, and white veins on bumpy walls went
-  with the same change. That leak also lit the walls themselves, so a room with little daylight is about twice as dark.
-  It costs about 1.4 ms a frame at 1440p under path tracing.
-- **Photo mode crawls with C.** Holding C moves the free camera at 0.5 m/s, next to Shift's 25 m/s, for
-  lining up a close shot.
-- **Path tracing can run far faster in the jungle.** Turn on **Opacity micromaps** under Global illumination and restart, on
-  an RTX 40 or newer. Rays then know which parts of leaves and other cut-outs are solid or clear without reading their
-  textures. At night in the jungle that saves about 4 ms of a 22 ms frame, and a few tenths of a millisecond elsewhere. Older
-  RTX cards emulate it and can run slower, so it is off by default. GPUs without DXR 1.2 ignore it.
-- **Path tracing is faster through foliage.** Rays test leaves and other cut-outs against their textures millions of times
-  a frame, and each test worked out afresh how sharp a texture to read. Each mesh now knows that once. The jungle saves
-  about 2 ms a frame and other places up to 1 ms, with the picture unchanged.
-- **Path tracing is faster where many lights burn.** Each pixel and each ray's hit now looks only at the lights that can
-  reach it, not at every light in the frame. At Mother Base at night that saves 4.4 ms of a 32 ms frame, about 31 to 36 fps,
-  and the picture stays the same.
-- **Destroyed props leave the ray-traced scene.** A barrel or window pane you broke kept casting its shadow and bouncing
-  light as if whole, and props near you were in the scene twice. The rays now see what the game draws.
-- **Path tracing is a little faster at night.** Bounced light's rays chase moonlight too faint to show only some of the time,
-  which saves a few tenths of a millisecond, most of it in the jungle.
-- **Rivers and liquids take the rays' reflections, and a river's bed takes the caustics.** Under path tracing the water
-  reflects what is around it, from where it is now and not where it was a frame ago, with the game's own ripples and the
-  rain's rings on it. It fades at the shore and behind the fog as the water itself does. It no longer takes the shadow map's
-  shadow where the rays replaced it on the ground: the bed's shadow stays in the light under it. **Caustics** put the
-  sunlight the waves focus on the bed, strongest just under the surface, fading with the depth, gone where the water meets
-  the shore or anything standing in it, in the shade, and as the sun leaves. They need no ray tracing.
-  **Atmosphere > Water caustics** has the switch and the **Intensity**.
+### New
 
-- **Depth of field: no more jagged edges around what is in focus.** The game decided what is blurred in blocks of
-  four pixels, so the blur bit into the rim of anything in focus in steps, and the lower the render size the wider
-  the steps: DLSS and Ray Reconstruction kept them as detail. Each pixel's own depth now decides, so in-focus edges
-  stay as clean as any other edge at every upscaling mode.
-- **Depth of field: a lens's blur for the background.** A new **Depth of field** item on the Camera page sets
-  **Background blur**. **Lens**, the default, spreads each point over a smooth disc, as a real lens does. **MGSV**
-  keeps the game's softer blur. What is in front of the focus keeps the game's blur with either.
-- **Motion blur moves to the Camera page.**
-- **The sea.** A new **Sea** switch under atmosphere replaces the sea around Mother Base: waves from a real
-  ocean spectrum that rise and roll with the wind, bigger in rain, with foam where their crests break. It is
-  lit like the rest of the world, so it reflects the sky, the sun and the platforms and takes their shadows;
-  with path tracing its reflections are traced. The ray-traced light under the platforms now bounces off the
-  water instead of the sky. A **Waves** slider sets the wind against the weather's. It costs about 0.3 ms.
-- **Path tracing.** A new **Path tracing** switch under lighting, with DLSS Ray Reconstruction and the
-  global illumination on: reflections are traced on every surface, sharp on smooth ones and spread on
-  rough ones, in place of the game's screen-space and sky reflections (water keeps the game's;
-  in rain, wet surfaces take the traced ones), and the sun and every lamp and flashlight light the scene
-  from the path tracer, each light with its own soft shadow where lights overlap, keeping the game's own
-  highlights on its materials. Each surface reflects
-  with the strength the game gives its material, and a **Reflections** slider makes them stronger or
-  weaker. Rays now see what the camera sees: surfaces they hit keep their roughness, shine and normal maps,
-  so shiny things stay shiny in reflections and reflections show other reflections. Glowing bulbs and signs
-  light what is around them, with a **Self-lit surfaces** slider. Reflections of the sky show the game's real
-  sky, with its horizon, clouds, sun glow and weather.
-- **Glass and mirrors reflect.** With path tracing, windows, vehicle glass, glasses, visors and mirrors show what is
-  really around them, at the strength the game gives each, in place of its small cube maps and the mirrors' painted
-  pictures. The rays see them too: light comes through, and they show in reflections.
-- **Rays see clothes and other layered materials in their real colours.** Many of the game's materials get their colour
-  from a second texture, and rays only read the first: Kaz's beige coat was white in a window's reflection, and the
-  light bouncing off such surfaces took the wrong colour. Reflections and the global illumination now see them as the
-  camera does.
-- **DLSS Ray Reconstruction.** A new **Ray Reconstruction** switch under the upscaler, for NVIDIA RTX GPUs,
-  shown while a ray-traced effect is on: NVIDIA's model cleans up the ray-traced global illumination,
-  shadows and lights and upscales in one step, in place of DLSS and the add-on's own denoisers, with a
-  choice of NVIDIA's presets. The global illumination then takes a sample at every pixel, for sharper,
-  quicker light, and the game's depth of field tells it where it blurs.
-- **SDR: no more banding in smooth fog and sky.** The game kept its picture in 8 bits from early in
-  the frame, so smooth fog showed bands a level or two apart. The picture now stays in 16-bit
-  colour until the end in SDR too, as with HDR, and a fine dither hides the last rounding. It costs
-  about 0.3 ms at 4K.
-- **Global illumination: light keeps bouncing.** The global illumination's light cache stopped after
-  the third surface. It now passes its own bounced light on every frame, so light bounces until it
-  fades. Its third bounce also counted only the rays that hit something, which made it too bright, most
-  in open ground. Bright, closed rooms gain the most; elsewhere the change is slight.
-- **Global illumination: steadier light along edges and in grass.** With DLSS or FSR jittering the
-  frame, the global illumination's denoiser started the light over along object edges every frame,
-  most in grass and bushes. Its half-resolution samples now stay on the surface they had the frame
-  before.
-- **Global illumination: the denoiser follows the camera exactly.** Its idea of where each pixel was
-  in the last frame was off by up to a fifth of a pixel near the camera, a little differently with
-  every frame's jitter. It is now worked out relative to the camera, in double precision.
-- **Diagnostics: the denoiser's own checks as a debug view.** **Global illumination denoiser (NRD)**
-  shows NVIDIA's validation layer for the global illumination's denoiser: its view depth, normals,
-  motion against a still scene and frames of history.
-- **Ray tracing: the helicopter's cabin has its walls.** Between missions the rays passed through the cabin's
-  walls, as it is held apart from the rest of the game's models: sunlight flooded in, and with path tracing the
-  cabin was about four times as bright as the game's own. It is now dark inside, with daylight through its windows.
-- **Path tracing: no ghost image after changing the upscaling mode.** In places without sunlight, such as
-  the hospital, changing the mode and going back left a frozen picture of the earlier view over the scene
-  until the game restarted. The reflections and lamps now always read the current frame's materials, and
-  keep them at any upscaling mode.
-- **Ray-traced shadows: no lit halo around sunlit characters.** A character in the sun in front of a
-  shaded wall left a lit band on the wall along their outline, wider the lower the render scale. The
-  shadow denoiser no longer mixes a pixel's shadow with what lies in front of or behind it.
-- **Ray-traced shadows no longer flicker along edges.** With DLSS or FSR jittering the frame, the
-  shadow denoiser often dropped a pixel's history along object edges and showed the raw, noisy rays
-  there. It now keeps the history from the last frame's pixels on the same surface.
-- **Motion blur: a moving character's outline no longer steps with upscaling.** With the game's motion
-  blur on and DLSS or FSR upscaling, a character walking past showed staircase steps along their
-  outline, 2-3 px wide at Quality and 5-6 px at Ultra Performance in 4K. The blur's velocity and depth
-  are now prepared at the same size the blur draws at, so the steps match native resolution's, except
-  at Ultra Performance, where they halve to the render pixel.
-- **Motion blur: the Strength slider works.** It never changed the blur. It now scales how far the
-  blur reaches, from none at 0% to the game's own at 100%; above 100% it reaches further up to the
-  game's limit.
-- **Motion blur is halved while frame generation runs**, as NVIDIA recommends: each frame shown covers
-  half the motion.
+- **Lighting Mode: Ray traced: Ultra** (path tracing, NVIDIA RTX with DLSS):
+  - Traced reflections on every surface, sharp on smooth ones and spread on rough ones, at the strength the game gives
+    each material. **Reflections** slider.
+  - Sunlight and every lamp and flashlight come from the rays, each with its own soft shadow.
+  - Reflections keep materials' roughness, shine and normal maps, and show the game's real sky.
+  - Glass and mirrors reflect what is really around them. Tinted lenses stay dark.
+  - Rivers and other liquids get traced reflections.
+  - Glowing bulbs and signs light their surroundings. **Self-lit surfaces** slider.
+- **DLSS Ray Reconstruction** for the ray-traced effects (NVIDIA RTX): replaces DLSS and the add-on's denoisers, with
+  NVIDIA's presets.
+- **Sea**: replaces the sea around Mother Base with ocean waves that follow the wind and weather, with the game's foam on
+  breaking crests. It reflects and takes shadows like the rest of the world. Sliders for **Wavelength**, **Height**,
+  **Ripples**, **Choppiness**, **Long waves**, **Wave speed** and **Foam**. About 0.3 ms.
+- **Water caustics**: sunlight patterns on river beds, with an **Intensity** slider. Needs no ray tracing.
+- **Glass in the ray-traced scene**: windows cast shadows, and light through them dims with the viewing angle and the
+  pane's dirt.
+- **Depth of field: Background blur**: **Lens** (default, a real lens's smooth blur) or **MGSV** (the game's).
+- **Opacity micromaps** (Global illumination, off by default, needs a restart): faster rays through foliage on RTX 40 and
+  newer. About 4 ms saved in the jungle at night.
+- **Photo mode**: hold C to move the camera slowly (0.5 m/s).
+- **Diagnostics**: debug views for the global illumination's denoiser (NRD) and for the ray-traced scene.
+
+### Changed
+
+- **New menu**, laid out like a game's graphics menu:
+  - Tabs: **Graphics**, **Sandbox**, **Budget** and **Diagnostics**.
+  - One line per effect with its value and cost. Click it to fold out its settings.
+  - A dot marks changed settings. Each has its own reset, plus **Reset all**.
+- **Lighting Mode**: Off, Screen-space, Ray traced or Ray traced: Ultra. Replaces the Budget page's presets and leaves
+  the frame rate and fog alone.
+- **One switch each for soft shadows and contact shadows**, shared by the sun and the lamps. Screen-space mode now gives
+  lamps soft shadows too. `soft_local_shadows` and `light_screen_space_shadows` in PhantomFX.ini are no longer read.
+- **SDR keeps the picture in 16-bit colour** until the end, so fog and sky no longer band. About 0.3 ms at 4K.
+- **Global illumination: light keeps bouncing** until it fades, instead of stopping after three bounces. Bright, closed
+  rooms gain the most.
+- **Motion blur is halved while frame generation runs**, as NVIDIA recommends.
+
+### Performance
+
+- Ray traced: Ultra:
+  - Each pixel checks only the lights that can reach it: 4.4 ms saved at Mother Base at night.
+  - Foliage textures are cheaper to test: up to 2 ms saved in the jungle.
+  - Rays skip moonlight too faint to show.
+  - Glass costs less to trace.
+- **Short rays** (Global illumination, on by default): rays look 100 m and take the sky's light past that. About 0.7 ms
+  saved in Afghanistan and 0.3 ms in the jungle at 4K.
+- The CPU hands ray-tracing work to the GPU sooner: about 0.5 ms saved at Mother Base at night.
+
+### Fixed
+
+- Ray-traced scene:
+  - Characters, the helicopter and swaying trees went missing with some other mods installed.
+  - Destroyed props kept casting shadows and bouncing light.
+  - The helicopter's cabin had no walls, so sunlight flooded in.
+  - Clothes and other layered materials had the wrong colour in reflections and bounced light (Kaz's coat was white).
+- Rays started inside walls in room corners and drew bright lines along the seams. Dim rooms are now about twice as dark.
+- Global illumination:
+  - Light flickered along object edges and in grass with upscaling.
+  - The denoiser misjudged motion near the camera.
+  - Spot lights' cone edges gave bright specks.
+- Ray-traced shadows:
+  - A lit halo around sunlit characters in front of shaded walls.
+  - Flicker along object edges with upscaling.
+- Depth of field: jagged steps around in-focus edges, worse at lower render sizes.
+- Motion blur:
+  - The **Strength** slider did nothing.
+  - A moving character's outline showed stair steps with upscaling.
 
 ## 1.9.0
 
 This release focuses on shadows, with a lot of it built by ZioPao.
 
-- **HDR: the sun is a disc again, not a ring.** With HDR on, the sky's sun was drawn as a bright
-  ring around a dimmer centre. The game's sky and the physical sky now keep the game's limit of 1,
-  so the sun stays a solid disc.
-- **The contact shadow sliders sit below both of their toggles.** Contrast, reach, thickness and fade
-  belong to the sun's contact shadows and the lamps' alike, so they now end the Shadows page, after
-  the lamps' toggle, instead of sitting inside the sun's.
-- **Lamp contact shadows count a caster within their own 5 mm, not Contact shadow thickness.** That
-  setting is a share of the depth left to the far plane, which grows with the distance: past 1% it
-  reaches the bound a caster may sit in and leaves no window at all, so the term silently died for
-  receivers past 10 m, and below that raising it narrowed the march where it widens the sun's trace.
-  The lamps now use a fixed 5 mm, and the setting shapes the sun's contact shadows alone.
-- **Lamp contact shadows read the depth buffer four texels at a time.** The march took one depth a
-  step, forty of them a pixel; a gather returns the four texels inside a two-pixel square for one
-  instruction, which is the ground two steps cover, so the same span now takes half the requests and
-  makes twice the comparisons. The caster window is compared in the buffer's own depth (`A + B / z`)
-  rather than per-texel view depth, so the two conversions a pair costs are shared by its four
-  samples. The image is the same span of shadow, sampled more finely.
-- **Lamp contact shadows skip what the light cannot light.** The march ran over every pixel a lamp's
-  volume covers, including the ones whose surface faces away from the light: the game clamps
-  `dot(normal, light)` at zero and scales both its diffuse and its specular by it, so those pixels get
-  no light and the shadow written for them is never read. They now return after one read of the
-  G-buffer's normal, and a lamp whose reach cannot touch the screen keeps the game's draws.
-- **Lamp contact shadows draw only the far faces of a light's volume.** The shadow draw drew both
-  faces of a closed volume and threw one result away. It now draws the far faces, as the game's
-  lighting draw does, so it covers the pixels that read the shadow at half the cost. The image is
-  unchanged.
-- **Lamp contact shadows cost a fraction of what they did.** Each lamp traced Bend Studio's
-  screen-space shadows in a compute pass over its whole screen rectangle, 120 samples a pixel, and
-  then drew its volume a second time to put the result in the light targets. The lamps now march the
-  depth buffer inside that draw: about 40 steps a pixel crowded near the surface, a caster counted
-  only within a quarter of a metre of the ray, and pixels the light cannot reach left without a
-  step. A lamp wholly past the contact shadows' fade keeps the game's draws. The sun keeps Bend's trace, which costs one to eight dispatches for each recording of
-  the depth it reads.
-- Fix a fine grid pattern over dark areas, worst at night and in fog with upscaling: the game added a
-  fixed 8x8 dither to its sky, its foggy scene and its glass before DLSS, which enlarged it with the
-  image. The dither is taken out of those shaders, and out of the physical sky. In SDR, smooth fog
-  can now show slight banding (#54); HDR has none.
-- Add **Contact shadow contrast**, **reach**, **thickness** and **fade** settings, under the shadows:
-  how dark and how hard the trace is (0.5 to 4, 1 by default), how far along the screen it marches
-  (8 to 120 pixels, 80 by default), how deep a surface counts as a contact (0.2% to 2.5% of its depth
-  to the far plane, 0.5% by default) and how far away it still shows (50 to 700 m, 500 by default,
-  full strength to 60% of that). All apply to the sun's and the lamps'.
-- Contact shadows now fade out with distance: before, one at 100 m was as sharp and as strong as the
-  one underfoot, and now the trace thins out and leaves the shadow map to it.
-- Reorganise the **Shadows** page: the ray-traced lights sit beside the ray-traced shadows, and the
-  contact shadows have a heading of their own under the soft shadows, with their two sliders.
-- Add **Lamp soft shadows (PCSS)**: point and spot lights with a shadow map filter it with
-  contact-hardening soft shadows instead of the game's four evenly sharp comparisons, so a lamp's
-  shadow is sharp where it meets a surface and widens with distance. Off by default; rebuilt copies
-  of `SSLighting2_Point` and `SSLighting2_Spot`.
-- Foliage (grass, bushes, tree leaves) casts screen-space contact shadows: the trace no longer
-  skips the foliage material, so clumps shade themselves.
-- Fix the game's motion blur looking pixelated while upscaling. It blurred a small copy of the image
-  from before DLSS (a third of the screen's width at Quality) and stretched it over the screen. It
-  now blurs DLSS's image at half the screen's size, as it does without upscaling.
-- With HDR, motion blur keeps highlights bright while the camera moves, at every upscaler setting:
-  the game blurred through an 8-bit copy, which clipped them at white.
-- Add **Motion blur** to the Display page: the game's own blur, now drawn with the upscaler on too,
-  with a **Strength** slider (0% to 200% of what the game's setting asks for). Off leaves it out
-  whatever the game's setting says.
+### New
+
+- **Lamp soft shadows (PCSS)**: a lamp's shadow is sharp where it meets a surface and softens with distance. Off by
+  default.
+- **Contact shadow settings**: **contrast**, **reach**, **thickness** and **fade**, for the sun and the lamps.
+- **Motion blur** on the Display page: the game's blur, now also with upscaling, with a **Strength** slider.
+
+### Changed
+
+- Contact shadows fade out with distance and leave far shadows to the shadow map.
+- Foliage casts contact shadows, so clumps shade themselves.
+- Lamp contact shadows cost a fraction of what they did.
+- The **Shadows** page is reorganised.
 - Ray-traced shadows:
-  - Sunlight no longer comes through building walls indoors. Solid stand-ins the game casts in
-    place of main-view-only walls block the sun's rays again; lamps' rays still pass them.
-  - Hair lets light through in part: each layer a ray crosses keeps half its light, so a thin
-    fringe casts a light shadow and thick hair a dark one, instead of every hair card casting a
-    solid black one.
-  - Scaffold tarps cast shadows, through the solid stand-in the game uses for them.
-  - Models the game has faded out are left out of the scene. A building shell at Mother Base, never
-    drawn, turned the wall behind it black up close with global illumination.
+  - Hair lets some light through instead of casting solid shadows.
+  - Scaffold tarps cast shadows.
+
+### Fixed
+
+- HDR: the sun was a ring instead of a disc.
+- A fine grid pattern over dark areas and fog with upscaling. In SDR, smooth fog can show slight banding (#54).
+- Motion blur was pixelated with upscaling, and clipped HDR highlights.
+- Lamp contact shadows stopped working past 10 m when **Contact shadow thickness** was raised.
+- Ray-traced shadows:
+  - Sunlight came through building walls indoors.
+  - A Mother Base wall turned black up close with global illumination.
 
 ## 1.8.0
 

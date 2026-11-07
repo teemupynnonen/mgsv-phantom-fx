@@ -1,3 +1,4 @@
+#include "remaster/lamps.hpp"
 #include "remaster/rule_file.hpp"
 #include "remaster/rules.hpp"
 
@@ -127,6 +128,30 @@ void readsBackWhatItWrote()
     expect(parseRules(writeRules({})).error.empty(), "A file without rules reads.");
 }
 
+// A lamp's rule reads back to the bit, so a lamp found at a place stays found; files from before lamps still read.
+void readsBackItsLamps()
+{
+    const LampRule corridor{.label = "Corridor spot", .location = 55, .at = {-1.4912f, 3.1734f, 20.9307f}, .brightness = 0.3f};
+    const auto parsed = parseRules(writeRules({}, {corridor}));
+
+    expect(parsed.error.empty() && parsed.lamps == std::vector{corridor}, "A lamp reads back as it was.");
+    expect(parseRules(R"({ "materials": [] })").lamps.empty() && parseRules(R"({ "materials": [] })").error.empty(), "A file without lamps reads.");
+    expect(!parseRules(R"({ "materials": [], "lamps": [{ "location": 55, "at": [1, 2], "brightness": 1 }] })").error.empty(), "A lamp needs three coordinates.");
+    expect(!parseRules(R"({ "materials": [], "lamps": [{ "location": 55, "at": [1, 2, 3], "brightness": -1 }] })").error.empty(),
+        "A lamp's brightness is never below zero.");
+}
+
+// A lamp is its map and its place: a draw's position differs from the file's by rounding, another map's lamp at the same
+// coordinates is another lamp, and so is the next lamp along a corridor.
+void findsALampByItsPlace()
+{
+    const std::vector<LampRule> rules{{.location = 55, .at = {-1.49f, 3.17f, 20.93f}, .brightness = 0}};
+
+    expect(lampRuleAt(rules, 55, {-1.4912f, 3.1734f, 20.9307f}) == &rules[0], "The same lamp, drawn, is the rule's.");
+    expect(lampRuleAt(rules, 50, {-1.49f, 3.17f, 20.93f}) == nullptr, "On another map it is another lamp.");
+    expect(lampRuleAt(rules, 55, {-1.49f, 3.17f, 19.40f}) == nullptr, "The next lamp is not the rule's.");
+}
+
 // A self-lit material as the game holds one (measured in the game, 2026-11-01): the technique's parameters by the
 // low half of their names; a byte for each register component, parameter << 2 | the value's component;
 // SelfColor in register 0, SelfColorIntensity in x of register 1, a third parameter in the rest.
@@ -253,20 +278,35 @@ void retuningKeepsAHandWrittenChangesSize()
     expect(moved.changes[0].to == Value{150, 9}, "A component the file changed and the material does not hold keeps the file's value.");
 }
 
-// What the panel's unsaved count says after each kind of edit.
-void countsUnsavedRules()
+// The panel's Rules tab: how each rule stands against the file after each kind of edit.
+std::vector<RuleState> statesOf(const std::vector<Rule>& now, const std::vector<Rule>& saved)
 {
+    std::vector<RuleState> states;
+    for (const auto& pair : paired(now, saved, isSameMaterialRule)) states.push_back(stateOf(pair));
+
+    return states;
+}
+
+void pairsRulesWithTheFile()
+{
+    using enum RuleState;
     const Rule lamp{.material = 1, .changes = {{.parameter = SelfColorIntensity, .from = {600}, .to = {300}}}};
     const Rule sign{.material = 2, .changes = {{.parameter = SelfColorIntensity, .from = {80}, .to = {40}}}};
+    const Rule twin{.material = 1, .changes = {{.parameter = SelfColorIntensity, .from = {2500}, .to = {1250}}}};
     Rule tuned = lamp;
     tuned.changes[0].to = {150};
+    Rule renamed = lamp;
+    renamed.label = "Hangar floods";
 
-    expect(unsavedCount(std::vector{lamp}, std::vector{lamp}) == 0, "Nothing changed, nothing unsaved.");
-    expect(unsavedCount(std::vector{lamp}, std::vector{tuned}) == 1, "A rule retuned is one change.");
-    expect(unsavedCount(std::vector{lamp}, std::vector{lamp, sign}) == 1, "A new rule is one change.");
-    expect(unsavedCount(std::vector{lamp, sign}, std::vector{lamp}) == 1, "A removed rule is one change.");
-    expect(unsavedCount(std::vector{lamp, sign}, std::vector{tuned}) == 2, "A retuned rule and a removed one are two.");
-    expect(unsavedCount(std::vector{lamp, lamp}, std::vector{lamp}) == 1, "One of two equal rules taken out is a change.");
+    expect(statesOf({lamp}, {lamp}) == std::vector{Saved}, "Nothing changed, nothing unsaved.");
+    expect(statesOf({tuned}, {lamp}) == std::vector{Changed}, "A rule retuned is the file's rule changed.");
+    expect(statesOf({renamed}, {lamp}) == std::vector{Changed}, "A rule named is changed.");
+    expect(statesOf({lamp, sign}, {lamp}) == std::vector{Saved, New}, "A rule not in the file is new.");
+    expect(statesOf({lamp}, {lamp, sign}) == std::vector{Saved, Removed}, "A rule gone from the file's is removed.");
+    expect(statesOf({tuned}, {lamp, sign}) == std::vector{Changed, Removed}, "A retuned rule and a removed one are two.");
+    expect(statesOf({lamp}, {lamp, lamp}) == std::vector{Saved, Removed}, "One of two equal rules taken out is removed.");
+    expect(statesOf({twin}, {lamp}) == std::vector{New, Removed}, "A material of the same name that starts elsewhere is another rule.");
+    expect(statesOf({lamp, tuned}, {lamp, lamp}) == std::vector{Saved, Changed}, "A changed rule pairs with the file's rule its twin left.");
 }
 
 void findsTheRulesOfAMaterial()
@@ -332,10 +372,12 @@ int main()
         retuningKeepsWhereItStarted();
         retuningBackDropsTheChange();
         retuningKeepsAHandWrittenChangesSize();
-        countsUnsavedRules();
+        pairsRulesWithTheFile();
         findsTheRulesOfAMaterial();
         tunesASelfLitMaterialAsAFileHasIt();
         aSelfLitRuleNeedsBothValues();
+        readsBackItsLamps();
+        findsALampByItsPlace();
     }
     catch (const std::exception& error)
     {

@@ -254,7 +254,7 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
     float3 normal = DecodeNormal(float4(encoded, 0.0f));
     float3 world = DepthPosition(pixel, depth);
     Random random = MakeRandom(did.x + did.y * LightSize().x, g_FrameIndex);
-    PixelSurface surface = PixelSurfaceAt(world, normal);
+    PixelSurface surface = PixelSurfaceAt(pixel, world, normal);
     float3 origin;
     float surfaceTolerance;
     PixelRayStart(surface, surface.normal, origin, surfaceTolerance);

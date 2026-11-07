@@ -15,6 +15,7 @@
 #include "passes/ray_tracing/ray_tracing.hpp"
 #include "passes/ray_tracing/shaders/gi_shared.h"
 #include "performance.hpp"
+#include "remaster/remaster.hpp"
 #include "resource_dump.hpp"
 
 #include <Windows.h>
@@ -424,6 +425,13 @@ std::optional<Light> noteOf(ID3D11DeviceContext* context, const GameLight* game)
         const float brightness = flashlightBrightness.load(std::memory_order_relaxed);
         for (auto& channel : noted.drawn.light.color) channel *= brightness;
         noted.drawn.light.falloff[2] /= std::pow(brightness, 8.0f);
+    }
+    else
+    {
+        // A lamp the remastering rules tune (remaster/README.md, "Lamps").
+        auto& lamp = noted.drawn.light;
+        const float brightness = remaster::lampBrightness(game_constants::toWorld(noted.drawn.scene, lamp.position, 1), {lamp.color[0], lamp.color[1], lamp.color[2]});
+        for (auto& channel : lamp.color) channel *= brightness;
     }
 
     return noted;

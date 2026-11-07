@@ -1,5 +1,5 @@
 // The Phantom FX settings window in ReShade's overlay: fxui's frame budget window with Phantom FX's
-// sections and settings. The costs and states come from menu_budget.cpp, the budget page from
+// sections and settings. The costs and states come from menu_budget.cpp, the Budget tab from
 // performance_menu.cpp.
 #include "character.hpp"
 #include "core.hpp"
@@ -24,7 +24,10 @@
 #include <algorithm>
 #include <array>
 #include <format>
+#include <cstdio>
 #include <functional>
+#include <iterator>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -40,41 +43,8 @@ using fxui::State;
 using fxui::Tone;
 using upscaler::FrameGenerationMode;
 using upscaler::Mode;
-using upscaler::Preset;
 using upscaler::Upscaler;
-using upscaler::label;
 using upscaler::multiplier;
-using upscaler::upscales;
-
-// The upscaler's one line on what it is doing right now.
-void drawStatus(const upscaler::Status& state, const Upscaling& wanted)
-{
-    const auto& name = state.upscalerName;
-    const auto nativeMode = label(Mode::Dlaa, wanted.upscaler);
-    // FSR has no presets.
-    const auto preset = wanted.upscaler == Upscaler::Fsr ? std::string()
-                        : state.rayReconstruction        ? std::format(", preset {}", label(wanted.reconstructionPreset))
-                                                         : std::format(", preset {}", label(wanted.dlssPreset));
-    if (!state.supportedBuild) fxui::statusLine(Tone::Bad, "This game version is not supported, so upscaling stays off.");
-    else if (wanted.mode == Mode::Off) fxui::statusLine(Tone::Dim, "Upscaling is off. The game's FXAA is in use.");
-    else if (state.failed) fxui::statusLine(Tone::Bad, std::format("{} stopped: {} Choose a mode or upscaler again to retry.", name, state.failure));
-    else if (upscales(wanted.mode) && !state.upscalingAvailable)
-        fxui::statusLine(Tone::Bad, std::format("Upscaling is unavailable (see PhantomFX.log); {} still works.", nativeMode));
-    else if (core::currentDiagnostics().gameFxaa) fxui::statusLine(Tone::Warn, "Showing the game's FXAA for comparison (Diagnostics).");
-    else if (!state.fxaaRecognised) fxui::statusLine(Tone::Warn, "Waiting for the game to draw its anti-aliasing.");
-    else if (!state.running && state.lastFallback.empty()) fxui::statusLine(Tone::Warn, std::format("{} is waiting for the game's 3D view.", name));
-    else if (!state.running) fxui::statusLine(Tone::Warn, std::format("{} is waiting: {}.", name, state.lastFallback));
-    else if (state.renderWidth == state.outputWidth && state.renderHeight == state.outputHeight)
-        fxui::statusLine(Tone::Ok, std::format("{} {} active at {}\xC3\x97{}{}.", name, nativeMode, state.outputWidth, state.outputHeight, preset));
-    else
-        fxui::statusLine(Tone::Ok, std::format("{} {} active: renders {}\xC3\x97{}, outputs {}\xC3\x97{}{}.", name, label(wanted.mode, wanted.upscaler),
-            state.renderWidth, state.renderHeight, state.outputWidth, state.outputHeight, preset));
-
-    if (wanted.upscaler != Upscaler::Dlss || !wanted.rayReconstruction || !state.running || state.rayReconstruction) return;
-
-    fxui::statusLine(Tone::Warn, state.reconstructionAvailable ? "Ray Reconstruction waits for a ray-traced effect; DLSS runs meanwhile."
-                                                               : "Ray Reconstruction could not run here (see PhantomFX.log); DLSS runs instead.");
-}
 
 // What the running game adds to a feature's item, beside its description.
 struct ItemStatus
@@ -145,11 +115,192 @@ public:
     std::vector<std::pair<float*, SliderInfo>> sliders;
 };
 
-// One section's features, each an item with its settings below it while it is on.
+// What each toggle and choice is by default, with a lighting step applied: what its reset gives back.
+// Sliders carry theirs (SliderInfo::standard).
+class Standards final : public SettingVisitor
+{
+public:
+    void toggle(bool& value, const ToggleInfo& info) override { values.emplace(info.iniKey, value ? 1 : 0); }
+
+    void choice(int& value, const ChoiceInfo& info) override { values.emplace(info.iniKey, value); }
+
+    std::optional<int> of(std::string_view iniKey) const
+    {
+        const auto found = values.find(iniKey);
+        return found == values.end() ? std::nullopt : std::optional(found->second);
+    }
+
+    std::optional<bool> of(const ToggleInfo& info) const
+    {
+        const auto standard = of(info.iniKey);
+        return standard ? std::optional(*standard != 0) : std::nullopt;
+    }
+
+private:
+    // The keys are the features' string literals, so they outlive the settings described.
+    std::map<std::string_view, int> values;
+};
+
+// Settings{} with `step` applied, so the Ray Reconstruction Ultra asks for is no change.
+const Standards& standardsOf(LightingStep step)
+{
+    static const auto described = [] {
+        std::array<Standards, static_cast<std::size_t>(LightingStep::Count)> byStep;
+        for (std::size_t i = 0; i < byStep.size(); ++i)
+        {
+            Settings settings;
+            applyLightingStep(settings, static_cast<LightingStep>(i));
+            describe(settings, byStep[i]);
+        }
+        return byStep;
+    }();
+
+    return described[static_cast<std::size_t>(step)];
+}
+
+// What the items are drawn against this frame.
+struct MenuFrame
+{
+    const Standards& standards; // With the lighting step the menu shows
+    std::string_view resetting; // The item whose "Reset all" was pressed the frame before
+};
+
+// "Reset all" pressed in an item puts its settings back on the next frame (MenuFrame::resetting).
+std::string resetNext;
+
+constexpr std::string_view RaysId = "rays", ModeId = "lighting";
+
+// As its readout shows it, so a value the slider cannot tell from its default counts as the default.
+bool isAtStandard(float value, const SliderInfo& info)
+{
+    const auto readout = [&](float v) {
+        char text[64];
+        std::snprintf(text, sizeof(text), info.format, v * info.readoutScale);
+        return std::string(text);
+    };
+
+    return readout(value) == readout(info.standard);
+}
+
+// The items with a setting off its default, for the dot on their lines. A setting shown in other
+// features' items counts in each of them (SliderInfo::shownIn).
+class ChangedItems final : public SettingVisitor
+{
+public:
+    explicit ChangedItems(const Standards& standards) : standards(standards) {}
+
+    void feature(bool&, const FeatureInfo& info) override { current = info.menuId; }
+
+    void feature(const FeatureInfo& info) override { current = info.menuId; }
+
+    void toggle(bool& value, const ToggleInfo& info) override
+    {
+        if (info.visible && value != standards.of(info).value_or(value)) mark(itemOf(info.isRaySetting));
+    }
+
+    void choice(int& value, const ChoiceInfo& info) override
+    {
+        if (info.visible && !info.isItemValue && value != standards.of(info.iniKey).value_or(value)) mark(itemOf(info.isRaySetting));
+    }
+
+    void slider(float& value, const SliderInfo& info) override
+    {
+        if (!info.visible || isAtStandard(value, info)) return;
+
+        if (info.shownIn.empty()) mark(current);
+        else std::ranges::copy(info.shownIn, std::back_inserter(effects));
+    }
+
+    bool has(std::string_view id, std::optional<Effect> effect = {}) const
+    {
+        return std::ranges::find(ids, id) != ids.end() || (effect && std::ranges::find(effects, *effect) != effects.end());
+    }
+
+private:
+    std::string_view itemOf(bool isRaySetting) const { return isRaySetting ? RaysId : current; }
+
+    void mark(std::string_view id) { ids.push_back(id); }
+
+    const Standards& standards;
+
+    std::string_view current;
+    std::vector<std::string_view> ids;
+    std::vector<Effect> effects;
+};
+
+const char* const ResetAllTip = "Every setting here back to its default.";
+
+// A toggle in an item: the item's "Reset all" puts it back, and it shows while the item is open.
+void toggleInItem(bool& value, const ToggleInfo& info, const Standards& standards, bool isResetting, bool isShown)
+{
+    const auto standard = standards.of(info);
+    if (isResetting && standard) value = *standard;
+    if (!isShown || !info.visible) return;
+
+    ImGui::BeginDisabled(!info.enabled);
+    fxui::checkbox(info.label, value, info.tip, standard);
+    ImGui::EndDisabled();
+}
+
+// The choices as the menu offers them: those in `unsupported`, which this GPU cannot run, greyed out.
+std::vector<Choice<int>> choicesOf(const ChoiceInfo& info, std::span<const int> unsupported)
+{
+    std::vector<Choice<int>> choices;
+    for (const auto& choice : info.choices)
+    {
+        const bool isUnsupported = std::ranges::find(unsupported, choice.value) != unsupported.end();
+        choices.push_back({.value = choice.value, .label = choice.label, .enabled = !isUnsupported, .tip = isUnsupported ? "This GPU does not support it." : nullptr});
+    }
+
+    return choices;
+}
+
+// A choice in an item, as toggleInItem() takes a toggle.
+void choiceInItem(int& value, const ChoiceInfo& info, std::span<const int> unsupported, const Standards& standards, bool isResetting, bool isShown)
+{
+    const auto standard = standards.of(info.iniKey);
+    if (isResetting && standard) value = *standard;
+    if (!isShown || !info.visible) return;
+
+    const auto choices = choicesOf(info, unsupported);
+    ImGui::BeginDisabled(!info.enabled);
+    if (info.control == ChoiceControl::Dropdown) fxui::combo(info.label, value, std::span<const Choice<int>>(choices), info.tip, standard);
+    else fxui::segmented(info.label, value, std::span<const Choice<int>>(choices), info.tip, standard);
+    ImGui::EndDisabled();
+}
+
+// A choice as its item's value, on the item's line (ChoiceInfo::isItemValue).
+void drawItemValue(int& value, const ChoiceInfo& info, std::span<const int> unsupported)
+{
+    const auto choices = choicesOf(info, unsupported);
+    std::vector<fxui::Option> options;
+    for (const auto& choice : choices) options.push_back({.label = choice.label, .enabled = choice.enabled, .tip = choice.tip});
+    const auto selected = std::ranges::find(choices, value, &Choice<int>::value);
+
+    ImGui::BeginDisabled(!info.enabled);
+    if (const int picked = fxui::itemChoice(static_cast<int>(selected - choices.begin()), options); picked >= 0) value = choices[static_cast<std::size_t>(picked)].value;
+    ImGui::EndDisabled();
+}
+
+// The button under an item's settings while one of them is off its default.
+void drawResetAll(std::string_view id, const char* tip = ResetAllTip)
+{
+    fxui::gap(4);
+    if (fxui::button("Reset all", tip)) resetNext = id;
+}
+
+// Which features of a page get an item.
+using FeatureFilter = std::function<bool(const FeatureInfo&)>;
+
+// One section's features, each an item that folds out to its settings. The rays' settings are left
+// to the Rays item (drawRays).
 class MenuPage final : public SettingVisitor
 {
 public:
-    MenuPage(Section section, const SharedControls& shared, bool isRayTracing) : section(section), shared(shared), isRayTracing(isRayTracing) {}
+    MenuPage(Section section, const SharedControls& shared, const ChangedItems& changed, const MenuFrame& frame, FeatureFilter shows)
+        : section(section), shared(shared), changed(changed), frame(frame), shows(std::move(shows))
+    {
+    }
 
     ~MenuPage() { endItem(); }
 
@@ -162,69 +313,73 @@ public:
 
     void toggle(bool& value, const ToggleInfo& info) override
     {
-        if (!open() || !info.visible || (info.needsRayTracing && !isRayTracing)) return;
-
-        ImGui::BeginDisabled(!info.enabled);
-        fxui::checkbox(info.label, value, info.tip);
-        ImGui::EndDisabled();
+        if (!info.isRaySetting) toggleInItem(value, info, frame.standards, isResetting(), isOpen());
     }
 
     void slider(float& value, const SliderInfo& info) override
     {
-        if (open() && info.visible && info.shownIn.empty()) drawSlider(value, info);
+        if (!info.shownIn.empty()) return;
+
+        if (isResetting()) value = info.standard;
+        if (isOpen() && info.visible) drawSlider(value, info);
     }
 
     void choice(int& value, const ChoiceInfo& info) override
     {
-        if (!open() || !info.visible || (info.needsRayTracing && !isRayTracing)) return;
+        if (info.isRaySetting) return;
 
-        std::vector<Choice<int>> choices;
-        for (const auto& choice : info.choices)
+        if (info.isItemValue)
         {
-            const bool unsupported = std::ranges::find(status.unsupported, choice.value) != status.unsupported.end();
-            choices.push_back({.value = choice.value, .label = choice.label, .enabled = !unsupported, .tip = unsupported ? "This GPU does not support it." : nullptr});
+            if (item) drawItemValue(value, info, status.unsupported);
+            return;
         }
 
-        ImGui::BeginDisabled(!info.enabled);
-        if (info.control == ChoiceControl::Dropdown) fxui::combo(info.label, value, std::span<const Choice<int>>(choices), info.tip);
-        else fxui::segmented(info.label, value, std::span<const Choice<int>>(choices), info.tip);
-        ImGui::EndDisabled();
+        choiceInItem(value, info, status.unsupported, frame.standards, isResetting(), isOpen());
     }
 
 private:
-    bool open() const { return item && *item; }
+    bool isOpen() const { return item && *item; }
+
+    bool isResetting() const { return item && frame.resetting == itemId; }
 
     // A switched feature without a budget line shows working while on; a budget line's state, switch
-    // and message take the place of these (fxui.hpp).
+    // and message take the place of these (fxui.hpp). A feature that shares the item's switch goes on
+    // in that item (FeatureInfo::menuId).
     void startItem(const FeatureInfo& info, bool* on)
     {
-        endItem();
-        if (info.section != section) return;
+        if (item && itemId == info.menuId) return;
 
-        if (info.heading) fxui::subheading(info.heading);
+        endItem();
+        if (info.section != section || !shows(info)) return;
 
         status = nextFeatureStatus ? nextFeatureStatus() : ItemStatus{};
         const auto state = status.state ? status.state : on ? std::optional(*on ? State::Working : State::Off) : std::nullopt;
         item.emplace(fxui::ItemSpec{.id = info.menuId, .name = info.name, .tech = info.tech, .tag = info.tag, .tip = info.tip, .summary = info.summary,
-            .keywords = info.keywords, .toggle = on, .state = state, .message = status.message});
+            .keywords = info.keywords, .isChanged = changed.has(info.menuId, info.effect), .toggle = on, .state = state, .message = status.message});
+        itemId = info.menuId;
         effect = info.effect;
     }
 
     // Other features' settings shown in this item come last, each once a page: in the first of its
-    // items that is open.
+    // items that is open. Then the reset of them all.
     void endItem()
     {
-        if (open() && effect)
+        if (item && effect)
             for (auto& [value, info] : shared.sliders)
             {
-                const bool shownHere = info.visible && std::ranges::find(info.shownIn, *effect) != info.shownIn.end();
-                if (!shownHere || std::ranges::find(sharedShown, value) != sharedShown.end()) continue;
+                const bool isShownHere = info.visible && std::ranges::find(info.shownIn, *effect) != info.shownIn.end();
+                if (!isShownHere) continue;
+
+                if (isResetting()) *value = info.standard;
+                if (!isOpen() || std::ranges::find(sharedShown, value) != sharedShown.end()) continue;
 
                 drawSlider(*value, info);
                 sharedShown.push_back(value);
             }
+        if (isOpen() && changed.has(itemId, effect)) drawResetAll(itemId);
 
         item.reset();
+        itemId = {};
         effect.reset();
     }
 
@@ -254,75 +409,191 @@ private:
 
     Section section;
     const SharedControls& shared;
-    bool isRayTracing; // A ray-traced effect is on in the settings
+    const ChangedItems& changed;
+    const MenuFrame& frame;
+    FeatureFilter shows;
 
     std::function<ItemStatus()> nextFeatureStatus;
     ItemStatus status;
     std::optional<fxui::Item> item;
+    std::string_view itemId;
     std::optional<Effect> effect;
     std::vector<const float*> sharedShown;
 };
 
-// The section's features, in the menu's order.
-void drawFeatures(Section section, Settings& wanted)
+// The section's features, in the menu's order: those `shows` takes, by default all.
+void drawFeatures(Section section, Settings& wanted, const MenuFrame& frame, FeatureFilter shows = [](const FeatureInfo&) { return true; })
 {
     SharedControls shared;
     describe(wanted, shared);
-    MenuPage page(section, shared, planEffects(wanted, {}).tracesScene());
+    ChangedItems changed(frame.standards);
+    describe(wanted, changed);
+    MenuPage page(section, shared, changed, frame, std::move(shows));
     forEachFeature(wanted, [&](auto& feature) {
         page.nextStatus([&feature] { return statusOf(feature); });
         describe(feature, page);
     });
 }
 
-void drawUpscaling(const upscaler::Status& state, Settings& wanted)
+void drawSection(Section section, Settings& wanted, const MenuFrame& frame)
 {
-    const fxui::Page page(Section::Upscaling, "Anti-aliasing and upscaling in place of the game's FXAA, and frames generated between the rendered ones.");
+    const fxui::Page page(section);
     if (!page) return;
 
-    drawStatus(state, wanted.upscaling);
-    drawFeatures(Section::Upscaling, wanted);
+    drawFeatures(section, wanted, frame);
 }
 
-void drawShadows(Settings& wanted)
+// The settings the ray-traced effects share, from the features that hold them (ToggleInfo::isRaySetting).
+class RaySettings final : public SettingVisitor
 {
-    const fxui::Page page(Section::Shadows, "Shadows of the sun and of lamps. The ray-traced ones replace the screen-space ones while on.");
-    if (!page) return;
+public:
+    RaySettings(bool isShown, const MenuFrame& frame) : isShown(isShown), isResetting(frame.resetting == RaysId), standards(frame.standards) {}
 
-    drawFeatures(Section::Shadows, wanted);
+    void toggle(bool& value, const ToggleInfo& info) override
+    {
+        if (info.isRaySetting) toggleInItem(value, info, standards, isResetting, isShown);
+    }
+
+    void choice(int& value, const ChoiceInfo& info) override
+    {
+        if (info.isRaySetting) choiceInItem(value, info, {}, standards, isResetting, isShown);
+    }
+
+private:
+    bool isShown{}, isResetting{};
+    const Standards& standards;
+};
+
+void drawRays(Settings& wanted, const MenuFrame& frame)
+{
+    ChangedItems changed(frame.standards);
+    describe(wanted, changed);
+    const bool isChanged = changed.has(RaysId);
+    const fxui::Item item({.id = RaysId.data(),
+        .name = "Rays",
+        .summary = "Shared by every ray-traced effect.",
+        .keywords = "ray tracing DLSS Ray Reconstruction preset denoiser opacity micromaps short rays",
+        .isChanged = isChanged});
+
+    RaySettings settings(static_cast<bool>(item), frame);
+    describe(wanted, settings);
+    if (item && isChanged) drawResetAll(RaysId);
 }
 
-void drawLighting(Settings& wanted)
+struct StepText
 {
-    const fxui::Page page(Section::Lighting,
-        "Light that bounces between surfaces, and the shade where they meet. Global illumination replaces both screen-space effects while on.");
-    if (!page) return;
+    const char* label;
+    const char* detail;
+    const char* description;
+};
 
-    drawFeatures(Section::Lighting, wanted);
+constexpr std::array<StepText, static_cast<std::size_t>(LightingStep::Count)> StepTexts{{
+    {"Off", "Any GPU", "The game's own shadows and light."},
+    {"Screen-space", "Any GPU", "Softer shadows and bounce light, from what is on screen."},
+    {"Ray traced", "A GPU that ray traces: NVIDIA RTX, AMD Radeon RX 6000 and newer, Intel Arc", "Shadows and bounce light traced through the whole scene."},
+    {"Ray traced: Ultra", "NVIDIA RTX, with DLSS", "Ray traced, plus traced reflections, sunlight and lamplight."},
+}};
+
+constexpr const char* UltraNeedsDlss = "Needs DLSS Ray Reconstruction. Under Image > Upscaler, pick DLSS and a mode other than Off.";
+
+// A step shows the items of the effects it adds. Ultra also shows bounce light's: path tracing needs
+// it, and replaces the other ray-traced effects.
+bool isShownInStep(Effect effect, LightingStep step)
+{
+    const auto added = effectsAddedBy(step);
+    return std::ranges::find(added, effect) != added.end() || (step == LightingStep::Ultra && effect == Effect::GlobalIllumination);
 }
 
-void drawAtmosphere(Settings& wanted)
+// What is switched off that `step` switches on, by the items' names: "Contact shadows and Bounce light (SSILVB)".
+std::string offInStep(const Settings& wanted, LightingStep step)
 {
-    const fxui::Page page(Section::Atmosphere, "Fog with the sun shadowed in it, and the sky.");
-    if (!page) return;
+    auto asStep = wanted;
+    applyLightingStep(asStep, step);
+    auto asWanted = wanted; // switchOf() takes settings it may change
+    std::vector<std::string> names;
+    for (const auto effect : AllEffects)
+    {
+        // A feature without a key of its own goes with the item before it.
+        const auto& feature = featureOf(effect);
+        if (feature.iniKey.empty() || switchOf(asStep, effect) == switchOf(asWanted, effect)) continue;
 
-    drawFeatures(Section::Atmosphere, wanted);
+        names.push_back(feature.tech ? std::format("{} ({})", feature.name, feature.tech) : std::string(feature.name));
+    }
+
+    if (asStep.upscaling.rayReconstruction != wanted.upscaling.rayReconstruction) names.emplace_back("Ray Reconstruction");
+
+    std::string off;
+    for (std::size_t i = 0; i < names.size(); ++i) off += (i == 0 ? "" : i + 1 == names.size() ? " and " : ", ") + names[i];
+
+    return off;
 }
 
-void drawCamera(Settings& wanted)
+// The lighting step, as the first line's value, then the items of the effects it runs. During a
+// search, every lighting item.
+void drawLighting(Settings& wanted, const fxui::Budget& budget, const MenuFrame& frame)
 {
-    const fxui::Page page(Section::Camera, "Depth of field, motion blur and the lens of photo mode.");
+    const fxui::Page page(Section::Lighting);
     if (!page) return;
 
-    drawFeatures(Section::Camera, wanted);
-}
+    if (frame.resetting == ModeId) applyLightingStep(wanted, lightingStepOf(wanted));
 
-void drawDisplay(Settings& wanted)
-{
-    const fxui::Page page(Section::Display, "HDR output, and the frame rate cap.");
-    if (!page) return;
+    const auto step = lightingStepOf(wanted);
+    const auto& text = StepTexts[static_cast<std::size_t>(step)];
+    const bool isMixed = !isLightingAsStep(wanted);
+    const bool canRunUltra = wanted.upscaling.upscaler == Upscaler::Dlss && wanted.upscaling.mode != Mode::Off;
+    const bool isUltraStopped = step == LightingStep::Ultra && !canRunUltra;
+    {
+        const fxui::Item item({.id = ModeId.data(),
+            .name = "Mode",
+            .summary = text.description,
+            .keywords = "lighting step off screen-space ray traced ultra path tracing",
+            .isChanged = isMixed,
+            .state = isUltraStopped ? std::optional(State::NotRunning) : step == LightingStep::Game ? std::optional(State::Off) : std::nullopt,
+            .message = isUltraStopped ? UltraNeedsDlss : "",
+            .ms = budget.total(static_cast<int>(Section::Lighting))});
 
-    drawFeatures(Section::Display, wanted);
+        std::array<fxui::Option, static_cast<std::size_t>(LightingStep::Count)> options;
+        for (std::size_t i = 0; i < options.size(); ++i) options[i] = {.label = StepTexts[i].label, .tip = StepTexts[i].description};
+        if (!canRunUltra)
+        {
+            auto& ultra = options[static_cast<std::size_t>(LightingStep::Ultra)];
+            ultra.enabled = false;
+            ultra.tip = UltraNeedsDlss;
+        }
+        if (const int picked = fxui::itemChoice(static_cast<int>(step), options); picked >= 0) applyLightingStep(wanted, static_cast<LightingStep>(picked));
+
+        if (item)
+        {
+            fxui::fact("Needs", text.detail);
+            if (isMixed)
+            {
+                fxui::note(fxui::Tone::Warn, std::format("Your own mix: {} off.", offInStep(wanted, step)));
+                drawResetAll(ModeId, "Every lighting effect back as this mode sets it.");
+            }
+        }
+    }
+
+    // Also an effect a step beneath adds that nothing replaces, on or off: such as SSILVB with bounce
+    // light off, which runs in its place.
+    const auto plan = planEffects(wanted, {});
+    const auto isShown = [&](Effect effect) {
+        if (isShownInStep(effect, step)) return true;
+
+        for (int below = 1; below < static_cast<int>(step); ++below)
+        {
+            const auto added = effectsAddedBy(static_cast<LightingStep>(below));
+            if (std::ranges::find(added, effect) != added.end()) return !plan.replacers[effect];
+        }
+
+        return false;
+    };
+    // Features that share a switch show with either effect, under the first one's name (FeatureInfo::menuId).
+    drawFeatures(Section::Lighting, wanted, frame, [&](const FeatureInfo& feature) {
+        if (fxui::isSearching()) return true;
+
+        return std::ranges::any_of(AllEffects, [&](Effect effect) { return std::string_view(featureOf(effect).menuId) == feature.menuId && isShown(effect); });
+    });
+    if (fxui::isSearching() || step == LightingStep::RayTraced || step == LightingStep::Ultra) drawRays(wanted, frame);
 }
 
 // "06:30" for a time in hours.
@@ -354,7 +625,7 @@ void drawWeather()
 
     const fxui::Item item({.id = "weather",
         .name = "Weather and time",
-        .summary = "The game's clock and weather, to see the sky in every condition.",
+        .summary = "Set the clock and the weather.",
         .keywords = "time of day clock sunny cloudy rainy sandstorm foggy fog density",
         .state = state,
         .message = message});
@@ -401,7 +672,7 @@ void drawCharacter()
 
     const fxui::Item item({.id = "character",
         .name = "Character",
-        .summary = "Play as another of the game's characters, in any outfit. A checkpoint keeps it.",
+        .summary = "Play as anyone, in any outfit.",
         .keywords = "Snake avatar soldier Ocelot Quiet outfit face",
         .state = state,
         .message = message});
@@ -431,9 +702,9 @@ void drawCharacter()
         character::chooseFace(faces[*picked].id);
 }
 
-void drawWorld()
+void drawSandbox()
 {
-    const fxui::Page page(Section::World, "The world's weather and time, and who you play.");
+    const fxui::Page page(Section::Sandbox);
     if (!page) return;
 
     drawWeather();
@@ -442,7 +713,7 @@ void drawWorld()
 
 void drawDiagnostics(const upscaler::Status& state)
 {
-    const fxui::Page page(Section::Diagnostics, "For troubleshooting. Leave these at their defaults.");
+    const fxui::Page page(Section::Diagnostics);
     if (!page) return;
 
     auto options = core::currentDiagnostics();
@@ -525,11 +796,12 @@ void draw()
     const auto before = wanted;
     const auto state = upscaler::status();
     bool enhancements = core::enhancementsOn();
+    const auto resetting = std::exchange(resetNext, {});
+    const MenuFrame frame{.standards = standardsOf(lightingStepOf(wanted)), .resetting = resetting};
     // The costs show in every part of the window, so its passes are timed while it is open.
     performance::watch();
     const auto budget = menu::budget(wanted, performance::status().costs);
 
-    constexpr fxui::Key keys[]{{"F1", "Effects on/off"}, {"F2", "Photo mode"}, {"F3", "Hide the HUD"}, {"F4", "Photo blur"}};
     {
         const fxui::Window window(menu::sections(), budget,
             {.name = "Phantom FX",
@@ -538,16 +810,13 @@ void draw()
                 .masterKey = "F1",
                 .masterTip = "Soft shadows, contact shadows, GTVBAO, SSILVB, the volumetric fog and the ray tracing together, as set in their sections. "
                              "Off shows the game's own lighting for comparison; F1 toggles it at any time. Not saved: each start begins with them on.",
-                .masterOff = "Off: the game's own lighting.",
-                .keys = keys});
-        performance::drawBudget(wanted);
-        drawUpscaling(state, wanted);
-        drawShadows(wanted);
-        drawLighting(wanted);
-        drawAtmosphere(wanted);
-        drawCamera(wanted);
-        drawDisplay(wanted);
-        drawWorld();
+                .masterOff = "Off: the game's own lighting."});
+        drawLighting(wanted, budget, frame);
+        drawSection(Section::Image, wanted, frame);
+        drawSection(Section::World, wanted, frame);
+        drawSection(Section::Camera, wanted, frame);
+        drawSandbox();
+        performance::drawBudget();
         drawDiagnostics(state);
         if constexpr (DevTools) dev::drawPage();
     }
