@@ -273,7 +273,17 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
         CountDiagnostic(GI_COUNTER_NEAR_HITS, hit.hit && hit.distance < 0.25f);
         float3 light;
         float3 afterUpdate = 0.0f; // The first ray's cell's light as it stands, to weigh its direction
-        if (!hit.hit)
+        // Sunk under the terrain, a ray heading down meets the game's ground just below, which the scene lacks: it passed under
+        // the one-sided terrain into the sky, and lit a prone arm's underside above the open ground (a debug case, 2026-11-05).
+        // Its distance is how deep the surface is sunk, the ground's distance as near as it is known. Only a miss heading down
+        // reads the terrain: read for every pixel, it cost 0.05 ms at 4K.
+        float sunkDepth = !hit.hit && direction.y < 0.0f ? SunkUnderTerrain(surface) : 0.0f;
+        if (sunkDepth > 0.0f)
+        {
+            light = 0.0f;
+            totalDistance += sunkDepth;
+        }
+        else if (!hit.hit)
         {
             light = SkyRadiance(direction);
             totalDistance += MISS_DISTANCE;
@@ -285,7 +295,7 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
             HitMaterial material = HitMaterialOf(visibility, 0.0f, true);
             float3 hitWorld = material.world, hitNormal = material.geometric, albedo = material.albedo;
             bool leaf = material.isLeaf;
-            float3 hitOrigin = OffsetFromTriangle(hitWorld, hitNormal);
+            float3 hitOrigin = LiftOffTriangle(hitWorld, hitNormal);
             float tolerance = CopyTolerance(hitWorld);
             light = DiffuseRayEmission(visibility, material.emission) + HitOwnLight(material, -direction, hitOrigin, tolerance, random);
             MaxDiagnostic(GI_COUNTER_MAX_ALBEDO, albedo);
@@ -296,7 +306,7 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
             float weight;
             float3 side = BounceSide(hitNormal, leaf, random, weight);
             float3 bounceDirection = mapToCosineHemisphere(random.rand2(), side);
-            float3 bounceOrigin = all(side == hitNormal) ? hitOrigin : OffsetFromTriangle(hitWorld, side);
+            float3 bounceOrigin = all(side == hitNormal) ? hitOrigin : LiftOffTriangle(hitWorld, side);
             SceneHit bounce = TraceFromSurface(bounceOrigin, side, tolerance, bounceDirection, LightRayReach());
             CountDiagnostic(GI_COUNTER_BOUNCE_HITS, bounce.hit);
             float3 throughput = albedo * weight;
@@ -416,7 +426,7 @@ void PopulateMultibounceCells(uint did : SV_DispatchThreadID)
 
     // Cosine-weighted: the Lambert BRDF over its pdf is the albedo.
     float3 direction = mapToCosineHemisphere(random.rand2(), normal);
-    float3 origin = OffsetFromTriangle(world, normal);
+    float3 origin = LiftOffTriangle(world, normal);
     SceneHit hit = TraceFromSurface(origin, normal, CopyTolerance(world), direction, LightRayReach());
     CountDiagnostic(GI_COUNTER_MULTIBOUNCE_AWAY, !hit.hit);
     uint cellIndex = kGI1_InvalidId;
