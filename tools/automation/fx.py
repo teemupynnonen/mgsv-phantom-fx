@@ -300,7 +300,7 @@ def boot(timeout=180.0):
 MAPS = {"afghanistan": 30010, "africa": 30020, "motherbase": 30050}
 
 
-def travel(destination, place=None, timeout=90.0, again=False):
+def travel(destination, place=None, timeout=180.0, again=False):
     """Leaves for another free roam, at `place` when given, and returns once it plays: after its loading has
     been seen to start. The game refuses to leave while busy (a fade, a save), so the request repeats until
     it goes. Each poll is a boot step, which closes popups and leaves the loading tips."""
@@ -643,4 +643,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
