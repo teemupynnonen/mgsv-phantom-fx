@@ -333,18 +333,38 @@ CABINS = {40010, 40020, 40050}
 def cabin(code=40050, timeout=120.0):
     """Leaves for the cabin, or from it for a free roam, and returns once that plays. The title screen is the
     same scene, but the title moves on by itself: a freeze there can land in a loading screen, where nothing renders."""
-    clear = f"lua TppMission.ReserveMissionClear{{missionClearType = TppDefine.MISSION_CLEAR_TYPE.FROM_HELISPACE, nextMissionId = {code}}}"
-    state = 'lua vars.missionCode .. " " .. tostring(TppSequence.GetCurrentSequenceName()) .. " " .. tostring(TppMission.CheckMissionState())'
+    # The game's own TppMission.lua raises from a mission clear asked for before the mission scripts are up ("attempt to
+    # index global 'svars'"), and under another mod's hooks an error becomes the game's death (0xC00000FF, 2026-11-08). So
+    # the clear waits for the mission's globals and is called inside a pcall, whose error comes back as text.
+    ready = 'lua tostring(type((svars))) .. " " .. tostring(type((gvars))) .. " " .. tostring(type((TppMission)))'
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        if run([ready]).splitlines()[-1] == "table table table":
+            break
+        run(["wait 30"])
+
+    clear = (f'lua local ok, err = pcall(function() TppMission.ReserveMissionClear{{missionClearType = TppDefine.MISSION_CLEAR_TYPE.FROM_HELISPACE, nextMissionId = {code}}} end)'
+             ' return tostring(ok) .. " " .. tostring(err)')
+    # Each call in its own parentheses: mid-load they return nothing, and tostring() of nothing raises.
+    state = 'lua vars.missionCode .. " " .. tostring((TppSequence.GetCurrentSequenceName())) .. " " .. tostring((TppMission.CheckMissionState()))'
     print(run([clear]), end="")
     deadline = time.monotonic() + timeout
+    asked = time.monotonic()
     while time.monotonic() < deadline:
         lines = run([f"lua {BOOT_STEP}", state]).splitlines()
-        if lines[-2:][0] == f"{code} Seq_Game_MainGame true" or lines[-1] == f"{code} Seq_Game_MainGame true":
+        # Arrived: the cabin's mission and its sequence. Whether the game calls the mission state true there varies.
+        if any(line.startswith(f"{code} Seq_Game_MainGame") for line in lines[-2:]):
             return
 
+        # The game refuses a clear asked while it is still loading (after a travel): ask again, not too often.
+        if time.monotonic() - asked > 10:
+            run([clear])
+            asked = time.monotonic()
+
+        run(["wait 30"])
         time.sleep(0.5)
 
-    raise TimeoutError(f"not in the cabin after {timeout} s")
+    raise TimeoutError(f"not in the cabin after {timeout} s: the game is at {lines[-1] if lines else 'nothing'}")
 
 
 LOCATIONS = {"afgh": "afghanistan", "mafr": "africa", "mtbs": "motherbase"}
@@ -420,10 +440,19 @@ def go_back(state):
     if mission not in names or state.get("cutscene") == "true":
         print("A story mission or cutscene: the place comes back, what it put there does not.")
 
+    # Out of the cabin before a travel: there the game reports the free roam's mission code while it sits in the cabin, and a
+    # travel from it waits for a load that never comes (2026-11-08).
+    playing = run([f"lua {BOOT_STEP}"]).splitlines()[-1].endswith(" playing")
+    if here in CABINS or not playing:
+        cabin(MAPS["motherbase"])
+        here = MAPS["motherbase"]
+
     x, y, z = state["player"].split()
-    # A full load there, also within the map: a warp streamed the jungle in under path tracing at once and the GPU
-    # timed out (0x887A0005, 2026-11-07), where a load, as from the player's save, does not.
-    travel(name, f"{x} {y} {z}", again=here == MAPS[name])
+    # A travel asks for a load of the map the game is already in, and never completes. Within the map the player moves.
+    if here == MAPS[name]:
+        print(run([f"lua TppPlayer.Warp{{pos={{{x}, {y}, {z}}}, rotY=0}}"]), end="")
+    else:
+        travel(name, f"{x} {y} {z}")
 
 
 def wait_for_scene(least=5000, timeout=90.0):
@@ -445,7 +474,9 @@ def wait_for_scene(least=5000, timeout=90.0):
         last = lines[1] if len(lines) > 1 else last
         instances = re.search(r"the game's scene: (\d+) instances", text)
         lit = re.search(r"GPU: scene [\d.]+ ms, light ([\d.]+) ms", text)
-        if last.endswith(" playing") and instances and int(instances.group(1)) >= least and lit and float(lit.group(1)) >= 1.0:
+        # The cabin holds far fewer instances than a free roam, and its sequence is Seq_Game_MainGame rather than free play.
+        playing = last.endswith(" playing") or " Seq_Game_MainGame" in last
+        if playing and instances and int(instances.group(1)) >= least and lit and float(lit.group(1)) >= 1.0:
             return
 
         time.sleep(1)
@@ -456,7 +487,7 @@ def wait_for_scene(least=5000, timeout=90.0):
 def record_at(state, name):
     """The running copy at a case's or a scenario's spot, recorded there as the case `name`."""
     go_back(state)
-    wait_for_scene()
+    wait_for_scene(least=500 if int(state.get("mission", 0)) in CABINS else 5000)
     weather = state.get("weather", "-1")
     sky = [f"clock {state['clock']}"] if "clock" in state else []
     sky.append("weather off" if weather.startswith("-1") else f"weather {weather}")

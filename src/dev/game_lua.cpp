@@ -73,14 +73,16 @@ const game_code::Expected Checked[]{{BeginScopeRva, BeginScopeCode}, {EndScopeRv
 
 // Called with the code, its chunk name and whether to try it as an expression first. While the code
 // runs, print() collects lines instead of calling the game's. It returns the lines and the code's
-// values as one string, or raises them with the error and its stack.
+// values as one string, or the error and its stack. It never raises: another mod's hooks over the game's Lua (Infinite
+// Heaven's IHHook) turn an error raised past them into the game's death (0xC00000FF, 2026-11-08). A failure comes back as
+// LuaError + the text instead.
 constexpr std::string_view Harness = R"(
 return function(code, name, expression)
   local chunk = expression and loadstring("return " .. code, name)
   if not chunk then
     local problem
     chunk, problem = loadstring(code, name)
-    if not chunk then error(problem, 0) end
+    if not chunk then return "ERROR " .. tostring(problem) end
   end
 
   local lines = {}
@@ -98,7 +100,7 @@ return function(code, name, expression)
   print = gamePrint
   if not results[1] then
     lines[#lines + 1] = tostring(results[2])
-    error(table.concat(lines, "\n"), 0)
+    return "ERROR " .. table.concat(lines, "\n")
   end
 
   if results.n > 1 then add(unpack(results, 2, results.n)) end
@@ -156,6 +158,8 @@ std::optional<Outcome> run(std::string_view code, std::string_view name, bool ex
     }
     const char* const text = reinterpret_cast<ToString>(engine + ToStringRva)(lua, -1, nullptr);
     Outcome outcome{.ran = status == 0, .text = text ? text : ""};
+    // The harness reports a script's failure in its text rather than raising, as it must under another mod's hooks.
+    if (outcome.text.starts_with("ERROR ")) outcome = {.ran = false, .text = outcome.text.substr(6)};
     reinterpret_cast<EndScope>(engine + EndScopeRva)(&scope);
 
     return outcome;
