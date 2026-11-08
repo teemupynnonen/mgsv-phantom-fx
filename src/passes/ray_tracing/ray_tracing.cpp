@@ -1372,7 +1372,8 @@ void saveTextures(ID3D11DeviceContext* context, const std::filesystem::path& fol
         const std::pair<const char*, ID3D11Resource*> textures[]{{"depth", depthOut.texture.Get()}, {"normal", normalOut.texture.Get()},
             {"albedo", albedoOut.texture.Get()}, {"light", output.texture.Get()}, {"sun-shadow", shadowOutput.texture.Get()},
             {"lamp-shadow", lampShadow.Get()}, {"reflection", reflectionOutput.texture.Get()}, {"lamp-diffuse", lampDiffuseOutput.texture.Get()},
-            {"lamp-specular", lampSpecularOutput.texture.Get()}};
+            {"lamp-specular", lampSpecularOutput.texture.Get()}, {"reflection-map", reflectionMapOutput.texture.Get()},
+            {"reflection-distance", reflectionDistanceOutput.texture.Get()}};
         for (const auto& [name, texture] : textures)
             if (texture) saveTexture(context, texture, DXGI_FORMAT_UNKNOWN, folder / (std::string(name) + ".dds"));
     }

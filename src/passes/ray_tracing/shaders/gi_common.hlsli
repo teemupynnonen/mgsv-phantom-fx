@@ -336,19 +336,6 @@ float3 OffsetFromScreenSurface(float3 position, float3 normal)
     return position + normal * (0.02f + 0.002f * distanceToEye);
 }
 
-// Wächter and Binder's offset for a point on a triangle (Ray Tracing Gems, chapter 6).
-float3 OffsetFromTriangle(float3 position, float3 normal)
-{
-    const float origin = 1.0f / 32.0f;
-    const float floatScale = 1.0f / 65536.0f;
-    const float intScale = 256.0f;
-
-    int3 intN = int3(normal * intScale);
-    float3 positionI = asfloat(asint(position) + select(position < 0, -intN, intN));
-    float3 positionF = position + normal * floatScale;
-    return select(abs(position) < origin, positionF, positionI);
-}
-
 // ---- The scene's geometry ----
 
 // An instance's kind (GI_INSTANCE_*), and its first geometry's row of the table.
@@ -760,10 +747,21 @@ float CopyTolerance(float3 position)
     return min(0.05f + 0.005f * distance(position, g_Frame.eye.xyz), 0.5f);
 }
 
+// A copy faces the way the surface does, so a ray leaving the surface meets the copy's back: on a model, DXR's front
+// (StopsShadowRay). A surface facing the ray is something else: until 2026-11-06 any parallel one counted, and with the
+// rays from a hit lifted 3 mm, not 3 cm, the bounce rays from a pipe 1 to 2 cm off a room's wall still took the wall for a
+// copy of the pipe and went through it (docs/DEVELOPMENT.md, "Rays leaving a hit"). Cut-out geometry, which the game
+// mostly draws two-sided, is a copy from either side; the terrain and the sea, culled from behind, never are.
 bool IsCopyOfSurface(SceneHit hit, float3 normal, float3 direction, float tolerance)
 {
     float height = hit.distance * dot(direction, normal);
-    return height >= 0.0f && height < tolerance && abs(dot(HitNormal(hit, direction), normal)) > 0.85f;
+    if (height < 0.0f || height >= tolerance) return false;
+    if (abs(dot(HitNormal(hit, direction), normal)) <= 0.85f) return false;
+
+    GIInstanceDesc desc = g_Instances[hit.instance];
+    if (!(InstanceKind(desc) & GI_INSTANCE_MODEL)) return false;
+
+    return hit.frontFace || (g_Geometries[FirstGeometry(desc) + hit.geometry].flags & GI_GEOMETRY_CUT_OUT) != 0;
 }
 
 // Whether a hit stops a ray towards a light as the game's shadow maps would have it. They are drawn with
@@ -1259,16 +1257,17 @@ PixelSurface PixelSurfaceAt(uint2 pixel, float3 position, float3 gbufferNormal)
     return surface;
 }
 
-// A ray's start off a point on the scene's own surface: 16 float steps of the point's largest
+// A ray's start off a point on the scene's own surface, a pixel's or a hit's: 16 float steps of the point's largest
 // coordinate along the normal, about 2 mm at 1,200 m from the map's origin, where the game's maps reach.
 // The point is worked out from the triangle's corners, and the ray is traced in the instance's own space,
 // each a few steps of the largest coordinate off in any direction: a character's transform turns the
-// error of a large coordinate into the others. Wächter and Binder's offset (OffsetFromTriangle, 256 steps
+// error of a large coordinate into the others. Wächter and Binder's offset (Ray Tracing Gems, chapter 6: 256 steps
 // of each coordinate on its own) lifted the start about 3 cm in the field, more than the folds of a
 // character's clothes, so it sat inside the next fold and his chest was shadowed in strips; and next to
 // nothing in the helicopter, whose floor lies near the map's origin across but 1,200 m up, so a face
-// turned sideways hit its own triangle in every other frame (the shadow probe, 2026-10-24). Coordinates
-// under 128 m count as 128: a large model's own coordinates reach that far.
+// turned sideways hit its own triangle in every other frame (the shadow probe, 2026-10-24). Rays from hits kept
+// it until 2026-11-06, and those from a pipe 1 to 2 cm off a room's wall left from inside the wall (docs/DEVELOPMENT.md,
+// "Rays leaving a hit"). Coordinates under 128 m count as 128: a large model's own coordinates reach that far.
 float3 LiftOffTriangle(float3 position, float3 normal)
 {
     const float steps = 16.0f;
