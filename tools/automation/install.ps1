@@ -54,9 +54,16 @@ if (Test-Path $Runtime) {
 # Ray Reconstruction's library, which the player's folder has and a build does not.
 Copy-Item (Join-Path $Steam 'nvngx_dlssd.dll') $Game -Force
 $saves = Join-Path $Game 'PhantomFX-automation\saves'
+# The game keeps its graphics, audio and language settings in TPP_CONFIG_DATA among the saves, and the copy's own game
+# writes the one set in its menu there. Seeding the saves replaced it with the seed's, so a copy set to the maximum came back
+# below Extra High, where the path tracing fails (2026-11-07). It is kept over the seed when the copy has one.
+$ownConfig = Join-Path $env:TEMP 'phantom-fx-copy-TPP_CONFIG_DATA'
+$keepConfig = Test-Path (Join-Path $saves 'TPP_CONFIG_DATA')
+if ($keepConfig) { Copy-Item (Join-Path $saves 'TPP_CONFIG_DATA') $ownConfig -Force }
 if (Test-Path $saves) { Remove-Item $saves -Recurse -Force }
 New-Item -ItemType Directory -Force $saves | Out-Null
 Copy-Item (Join-Path $SeedSaves '*') $saves
+if ($keepConfig) { Copy-Item $ownConfig (Join-Path $saves 'TPP_CONFIG_DATA') -Force }
 
 # The game's user data folder for the run, with the player's display and quality settings.
 $userData = Join-Path $Game 'PhantomFX-automation\local'
