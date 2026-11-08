@@ -348,6 +348,9 @@ def cabin(code=40050, timeout=120.0):
     # Each call in its own parentheses: mid-load they return nothing, and tostring() of nothing raises.
     state = 'lua vars.missionCode .. " " .. tostring((TppSequence.GetCurrentSequenceName())) .. " " .. tostring((TppMission.CheckMissionState()))'
     print(run([clear]), end="")
+    # A mission clear rebuilds the game's script state for a frame or two, and a Lua call inside that killed the game
+    # (0xC00000FF in ntdll, 2026-11-08). The wait commands run on the game's own thread, so they are safe there.
+    run(["wait 90"])
     deadline = time.monotonic() + timeout
     asked = time.monotonic()
     while time.monotonic() < deadline:
@@ -362,7 +365,6 @@ def cabin(code=40050, timeout=120.0):
             asked = time.monotonic()
 
         run(["wait 30"])
-        time.sleep(0.5)
 
     raise TimeoutError(f"not in the cabin after {timeout} s: the game is at {lines[-1] if lines else 'nothing'}")
 
@@ -552,10 +554,19 @@ def run_scenarios(names, accept):
 
     lines = [f"# Scenarios {run_name}", ""]
     failures = 0
+    need_restart = False
     for scenario in chosen:
         name = scenario["name"]
         folder = cases() / f"{run_name}-{name}"
         problems = []
+        # A game that died takes the rest with it unless it is started again: one crash must not end the run.
+        if need_restart:
+            try:
+                restart_copy(PLAYER_GAME / "PhantomFX.ini")
+                print(f"in the game again after {boot():.1f} s", flush=True)
+                need_restart = False
+            except (OSError, TimeoutError, GameGone) as error:
+                print(f"could not restart the copy: {error}", flush=True)
         try:
             record_at(scenario, folder.name)
             report.write(folder)
@@ -572,6 +583,9 @@ def run_scenarios(names, accept):
                 scenario["expect"] = measured
                 keep_baseline(name, folder)
             run(["release"])
+        except GameGone as error:
+            problems.append(f"did not run, the game exited or crashed: {error}")
+            need_restart = True
         except (OSError, KeyError, ValueError, TimeoutError) as error:
             problems.append(f"did not run: {error}")
 
