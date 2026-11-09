@@ -131,7 +131,8 @@ void fewestPixelsDroppedPastTheCap()
 
 void sameChoiceInAnyOrder()
 {
-    // Past the cap, lights alike in pixels and distance but for their colour, each at its own place.
+    // Past the cap, lights alike in pixels, each at its own place: whichever order they come in, the same ones
+    // go without, and the order they are taken in does not change.
     std::vector<DrawnLight> lights;
     for (std::size_t i = 0; i <= GI_MAX_LOCAL_LIGHTS; ++i)
     {
@@ -149,6 +150,7 @@ void sameChoiceInAnyOrder()
     auto reversed = lights;
     std::ranges::reverse(reversed);
     expect(keysTaken(lights) == keysTaken(reversed), "The same lights are chosen, in the same order, whatever order the game drew them in.");
+    expect(chooseFrom(lights).overCap == 1, "One light past the cap goes without, whichever order it came in.");
 }
 
 // A distant lamp's reach is a few render pixels: the upscaler's jitter, under a pixel, moves its edges across
@@ -214,19 +216,19 @@ void aPlacesLightsComeAndGoTogether()
 // pixels larger: the wall lamp it lights would blink between the rays and the game's unshadowed draw.
 void aPlaceTakenLastTimeKeepsItsPlace()
 {
-    auto smaller = growingLights(0); // No lights yet: the two below are the only ones
+    std::vector<DrawnLight> lights;
     auto kept = aroundCamera(100, 100);
     auto rival = aroundCamera(110, 100); // Reaches more
     rival.light.position[0] = 0.05f;     // At another place
-    smaller.push_back(kept);
-    smaller.push_back(rival);
+    lights.push_back(kept);
+    lights.push_back(rival);
 
-    const auto fresh = chooseFrom(smaller, cameraAt({}), {});
+    const auto fresh = chooseFrom(lights);
     expect(fresh.taken.front() == 1, "Without history the place reaching more pixels is taken first.");
 
     const auto keptOnly = std::vector{kept};
     const auto keptPlace = chooseFrom(keptOnly).places.front();
-    const auto keptAgain = chooseFrom(smaller, cameraAt({}), std::span{&keptPlace, 1});
+    const auto keptAgain = chooseFrom(lights, cameraAt({}), std::span{&keptPlace, 1});
     expect(keptAgain.taken.front() == 0, "A place the rays had last time keeps its place against a rival a tenth larger.");
 }
 
