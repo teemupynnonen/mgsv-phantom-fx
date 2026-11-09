@@ -76,9 +76,9 @@ struct Choice
 };
 
 // The chosen lights among `lights` for the frame `camera` draws: those drawn from its eye (within a
-// millimetre) that reach any pixel, most pixels first, then the nearest, then by key (keyOf), up to the
-// light cap (GI_MAX_LOCAL_LIGHTS). Past it, those reaching the fewest go without, the same ones frame
-// after frame, whatever order the game drew them in.
+// millimetre) that reach any pixel without the upscaler's jitter, most pixels first, then the nearest, then
+// by key (keyOf), up to the light cap (GI_MAX_LOCAL_LIGHTS). Past it, those reaching the fewest go without,
+// the same ones frame after frame, whatever order the game drew them in and wherever the jitter put them.
 Choice choose(std::span<const DrawnLight* const> lights, const game_constants::SceneConstants& camera);
 
 // A light the same from frame to frame: its kind, where it is in the world to the centimetre, and its colour.

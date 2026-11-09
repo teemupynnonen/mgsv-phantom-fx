@@ -1,5 +1,21 @@
 # Phantom FX changelog
 
+## Unreleased
+
+### Fixed
+
+- **A lamp drawn as two spots no longer makes its wall flicker.** Africa's villa lamps are two spots at one place, one up
+  and one down. Each could win a place among the traced lights while the other lost it, so the wall was lit by the rays
+  one frame and by the game's unshadowed draw the next. Lights at one place are now chosen together, and the places of
+  the last frame keep a small advantage, so a place at the light cap does not change hands. At the villa's lamps with
+  DLSS Ultra Performance and the camera still, the wall's brightness went `0.23 -> 0.79` in single frames; it now stays
+  within `0.25 -> 0.28`.
+- **Wall lamps no longer swap their light between frames while you move.** A lamp in Africa's villa is two spots at one
+  place, one up and one down, and the game draws the downward one without a shadow map from a distance. Alike in kind,
+  place and colour, the two shared one identity and one volume box, so each was cut to the other's box: the wall lit
+  above the lamp one frame and below it the next. A spot's direction is now part of its identity. The lights a frame
+  traces also no longer change with the upscaler's jitter, which could move a distant lamp's edges across a pixel.
+
 ## 2.0.1
 
 ### Fixed
