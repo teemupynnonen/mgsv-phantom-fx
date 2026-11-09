@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **Wall lamps no longer flicker with the upscaler, however still the camera.** The game works its light volumes out on
+  the CPU, already in screen space, so the upscaler's jitter reached the depth they test against but not them: a lamp
+  whose volume lies on the wall passed or failed the depth test by that frame's jitter, up to 1.5 render pixels at Ultra
+  Performance. The game's 24 light vertex shaders are now made from one that adds the jitter, and the ray-traced lights'
+  redraw adds it too. At Africa's villa lamps, camera still, DLSS Ultra Performance, 40 frames: `0.24%` of the pixels
+  flickered before, `0.000%` after.
+
 - **A lamp drawn as two spots no longer makes its wall flicker.** Africa's villa lamps are two spots at one place, one up
   and one down. Each could win a place among the traced lights while the other lost it, so the wall was lit by the rays
   one frame and by the game's unshadowed draw the next. Lights at one place are now chosen together, and the places of
