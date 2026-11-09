@@ -81,19 +81,25 @@ DrawnLight aroundCamera(float width, float height, float distance = 1)
     return light;
 }
 
-Choice chooseFrom(const std::vector<DrawnLight>& lights, const SceneConstants& camera = cameraAt({}))
+Choice chooseFrom(const std::vector<DrawnLight>& lights, const SceneConstants& camera = cameraAt({}),
+    std::span<const std::uint64_t> placesTaken = {})
 {
     std::vector<const DrawnLight*> pointers;
     for (const auto& light : lights) pointers.push_back(&light);
 
-    return choose(pointers, camera);
+    return choose(pointers, camera, placesTaken);
 }
 
 // `count` lights, each reaching more pixels than the one before.
 std::vector<DrawnLight> growingLights(std::size_t count)
 {
     std::vector<DrawnLight> lights;
-    for (std::size_t i = 0; i < count; ++i) lights.push_back(aroundCamera(100.0f + static_cast<float>(i), 100));
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        lights.push_back(aroundCamera(100.0f + static_cast<float>(i), 100));
+        // Each at its own place: lights at one place are taken and left together, as a lamp's two spots are.
+        lights.back().light.position[0] = 0.05f * static_cast<float>(i);
+    }
 
     return lights;
 }
@@ -125,12 +131,14 @@ void fewestPixelsDroppedPastTheCap()
 
 void sameChoiceInAnyOrder()
 {
-    // Past the cap, lights alike in pixels and distance but for their colour.
+    // Past the cap, lights alike in pixels, each at its own place: whichever order they come in, the same ones
+    // go without, and the order they are taken in does not change.
     std::vector<DrawnLight> lights;
     for (std::size_t i = 0; i <= GI_MAX_LOCAL_LIGHTS; ++i)
     {
         lights.push_back(aroundCamera(100, 100));
         lights.back().light.color[0] = 1.0f + static_cast<float>(i);
+        lights.back().light.position[0] = 0.05f * static_cast<float>(i);
     }
 
     const auto keysTaken = [](const std::vector<DrawnLight>& from) {
@@ -142,6 +150,86 @@ void sameChoiceInAnyOrder()
     auto reversed = lights;
     std::ranges::reverse(reversed);
     expect(keysTaken(lights) == keysTaken(reversed), "The same lights are chosen, in the same order, whatever order the game drew them in.");
+    expect(chooseFrom(lights).overCap == 1, "One light past the cap goes without, whichever order it came in.");
+}
+
+// A distant lamp's reach is a few render pixels: the upscaler's jitter, under a pixel, moves its edges across
+// pixel boundaries, so the lamps at the cap swapped from frame to frame with the camera still, each drawn
+// path traced one frame and by the game, unshadowed, the next (2026-11-07, Africa at night, 20,000 lights
+// past the cap in ten seconds).
+void jitterLeavesChoiceAlone()
+{
+    std::vector<DrawnLight> lights;
+    for (std::size_t i = 0; i <= GI_MAX_LOCAL_LIGHTS; ++i)
+        lights.push_back(lightAt(QuarticPoint, {0.37f * static_cast<float>(i % 7) - 1.1f, 0.21f * static_cast<float>(i % 5) - 0.4f,
+                                                30.0f + 0.013f * static_cast<float>(i)}, 0.5f + 0.0007f * static_cast<float>(i)));
+
+    const auto keysTaken = [&](float x, float y) {
+        auto jittered = lights;
+        for (auto& light : jittered)
+        {
+            light.scene.cameraCenterOffset[0] = x;
+            light.scene.cameraCenterOffset[1] = y;
+        }
+        std::vector<std::uint64_t> keys;
+        for (const auto index : chooseFrom(jittered).taken) keys.push_back(keyOf(jittered[index]));
+        std::ranges::sort(keys);
+
+        return keys;
+    };
+    const auto still = keysTaken(0, 0);
+    // A Halton sequence's first offsets, in NDC of a 100 x 100 viewport: half a pixel at most.
+    for (const auto [x, y] : {std::pair{0.0f, 0.0033f}, {-0.005f, -0.0033f}, {0.0025f, 0.0078f}, {-0.0075f, -0.0011f}})
+        expect(keysTaken(x, y) == still, "The upscaler's jitter does not change which lights the rays take.");
+}
+
+// Africa's villa wall lamps are two spots at one place, one up and one down (2026-11-08). Traced separately, one could
+// fit the cap while the other did not, and the wall they light blinked between the two draws.
+void aPlacesLightsComeAndGoTogether()
+{
+    // Room under the cap: both spots of the place are taken.
+    std::vector<DrawnLight> roomy = growingLights(GI_MAX_LOCAL_LIGHTS - 4);
+    auto up = lightAt(QuarticSpot, {0, 1, 40}, 6);
+    auto down = up;
+    down.light.axis[1] = -1;
+    roomy.push_back(up);
+    roomy.push_back(down);
+    const auto taken = chooseFrom(roomy);
+    expect(std::ranges::find(taken.taken, roomy.size() - 2) != taken.taken.end()
+            && std::ranges::find(taken.taken, roomy.size() - 1) != taken.taken.end(),
+        "Two spots at one place are taken together.");
+
+    // At the cap, one more light would not fit: both are left out together, not one of the two.
+    std::vector<DrawnLight> lights = growingLights(GI_MAX_LOCAL_LIGHTS - 2);
+    lights.push_back(up);
+    lights.push_back(down);
+    lights.push_back(aroundCamera(150, 150)); // The biggest: always taken
+
+    const auto choice = chooseFrom(lights);
+    const auto takenUp = std::ranges::find(choice.taken, lights.size() - 3) != choice.taken.end();
+    const auto takenDown = std::ranges::find(choice.taken, lights.size() - 2) != choice.taken.end();
+    expect(takenUp == takenDown && !takenUp, "Two spots at one place are both left out when their place does not fit.");
+    expect(choice.overCap == 2, "Both spots of the place left out are counted.");
+}
+
+// A place the rays took last time keeps a fifth's advantage, so at the cap it is not handed to a place a few
+// pixels larger: the wall lamp it lights would blink between the rays and the game's unshadowed draw.
+void aPlaceTakenLastTimeKeepsItsPlace()
+{
+    std::vector<DrawnLight> lights;
+    auto kept = aroundCamera(100, 100);
+    auto rival = aroundCamera(110, 100); // Reaches more
+    rival.light.position[0] = 0.05f;     // At another place
+    lights.push_back(kept);
+    lights.push_back(rival);
+
+    const auto fresh = chooseFrom(lights);
+    expect(fresh.taken.front() == 1, "Without history the place reaching more pixels is taken first.");
+
+    const auto keptOnly = std::vector{kept};
+    const auto keptPlace = chooseFrom(keptOnly).places.front();
+    const auto keptAgain = chooseFrom(lights, cameraAt({}), std::span{&keptPlace, 1});
+    expect(keptAgain.taken.front() == 0, "A place the rays had last time keeps its place against a rival a tenth larger.");
 }
 
 void otherEyeLeftAndCounted()
@@ -248,6 +336,21 @@ void sameKeyFromTwoCameras()
     expect(keyOf(fromOrigin) == keyOf(fromElsewhere), "A light keeps its key from any camera.");
 }
 
+// A wall lamp in Africa's villa: two spots at one place, alike but for where they point (2026-11-07).
+void spotsPointingApartHaveTwoKeys()
+{
+    auto up = lightAt(SixteenthSpot, {3, 1, 7}, 6);
+    up.light.axis[1] = 1;
+    auto down = up;
+    down.light.axis[1] = -1;
+    expect(keyOf(up) != keyOf(down), "Two spots at one place pointing apart are two lights.");
+
+    auto alsoUp = lightAt(SixteenthSpot, {2, 1, 5}, 6);
+    alsoUp.scene = cameraAt({1, 0, 2});
+    alsoUp.light.axis[1] = 1;
+    expect(keyOf(alsoUp) == keyOf(up), "A spot keeps its key from any camera.");
+}
+
 void kindOrColourChangesKey()
 {
     const auto lamp = lightAt(QuarticPoint, {3, 1, 7}, 4);
@@ -268,6 +371,9 @@ int main()
         allTakenAtTheCap();
         fewestPixelsDroppedPastTheCap();
         sameChoiceInAnyOrder();
+        jitterLeavesChoiceAlone();
+        aPlacesLightsComeAndGoTogether();
+        aPlaceTakenLastTimeKeepsItsPlace();
         otherEyeLeftAndCounted();
         noPixelNotTaken();
         wholeViewportWhenInside();
@@ -279,6 +385,7 @@ int main()
         shadowStartAtMapNearPlane();
         sameKeyFromTwoCameras();
         kindOrColourChangesKey();
+        spotsPointingApartHaveTwoKeys();
         std::cout << "Light choice tests passed.\n";
 
         return 0;

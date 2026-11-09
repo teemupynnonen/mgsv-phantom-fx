@@ -1,5 +1,48 @@
 # Phantom FX changelog
 
+## Unreleased
+
+- **The Mother Base emblem shows again in Sortie Prep, and stands where it should.** It was a black square in front of
+  Snake, the horse and the helicopter. The game builds the emblem in a corner of its screen buffer as a save loads, which
+  the upscaler's full-resolution UI had taken over, so the game kept an empty emblem; and the emblem, the one UI image the
+  game hides behind the characters, was tested against no depth at all. Both are as the game draws them now, with the
+  upscaler's jitter taken back out of the depth, so its edge along a character no longer flickers; and where a character's
+  edge covers part of a pixel, the emblem is blended in under it, so no band of backdrop shows between the two.
+
+- **Wall lamps no longer flicker with the upscaler, however still the camera.** The game works its light volumes out on
+  the CPU, already in screen space, so the upscaler's jitter reached the depth they test against but not them: a lamp
+  whose volume lies on the wall passed or failed the depth test by that frame's jitter, up to 1.5 render pixels at Ultra
+  Performance. The game's 24 light vertex shaders are now made from one that adds the jitter, and the ray-traced lights'
+  redraw adds it too. At Africa's villa lamps, camera still, DLSS Ultra Performance, 40 frames: `0.24%` of the pixels
+  flickered before, `0.000%` after.
+
+- **A lamp drawn as two spots no longer makes its wall flicker.** Africa's villa lamps are two spots at one place, one up
+  and one down. Each could win a place among the traced lights while the other lost it, so the wall was lit by the rays
+  one frame and by the game's unshadowed draw the next. Lights at one place are now chosen together, and the places of
+  the last frame keep a small advantage, so a place at the light cap does not change hands. At the villa's lamps with
+  DLSS Ultra Performance and the camera still, the wall's brightness went `0.23 -> 0.79` in single frames; it now stays
+  within `0.25 -> 0.28`.
+  
+- **Wall lamps no longer swap their light between frames while you move.** A lamp in Africa's villa is two spots at one
+  place, one up and one down, and the game draws the downward one without a shadow map from a distance. Alike in kind,
+  place and colour, the two shared one identity and one volume box, so each was cut to the other's box: the wall lit
+  above the lamp one frame and below it the next. A spot's direction is now part of its identity. The lights a frame
+  traces also no longer change with the upscaler's jitter, which could move a distant lamp's edges across a pixel.
+
+- **A swaying jungle tree shades the floor under it.** The tree is skinned, so the scene took it for a character and
+  dropped all its stand-ins, its canopy card among them: the sun then reached 12.5% of the frame where the game's shadow
+  map blocked it, and the jungle's rock came out flat and bright. A character's stand-in with the decal alpha bit is now
+  kept as a rigid model's cut-out stand-in, which only rays towards lights meet and whose alpha lets them through: at the
+  case's rock the sun's shadow now disagrees on 4.3% of the frame. A character's other stand-ins, copies of an outfit, stay
+  dropped.
+
+- **The jungle floor keeps its shade under the trees.** A tree fern's fronds are drawn in the main view alone, and the
+  game casts their shadow through a flat card hung in the crown. The rays saw neither, so the canopy hid nothing and the
+  floor under it went flat and bright. The card is now in the scene for the sun and the lamps alone, as the game's shadow
+  map has it, and it casts through its alpha: at the case's ground pixel the floor is as dark as the game's. The fronds
+  stay out of the scene: in, every global illumination and reflection ray paid to test them, 4.5 of a 6.7 ms frame at the
+  case, and the card already casts that shade for 2 ms.
+
 ## 2.0.1
 
 ### Fixed

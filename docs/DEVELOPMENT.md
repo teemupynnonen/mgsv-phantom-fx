@@ -85,7 +85,9 @@ traced, as today), texture copies arriving and replacing one another, a layered 
 pool, characters built, refitted and made again, the palette budget, frames without a newer list, the
 instance cap's order and the terrain rings' remaking. `tests/light_choice_tests.cpp`:
 which lights a kick gives the rays: the most pixels first, then the nearest, the light cap's edge, the
-same choice whatever order the lights come in, a
+same choice whatever order the lights come in and wherever the upscaler's jitter put each light's edges,
+two spots at one place pointing apart taken as two lights, and two spots at one place taken or left out
+together, a
 light drawn from another eye left and counted, one reaching no pixel left out; a light's reach (around
 the camera, behind it, a narrow spot's, the viewport's corner); a light as the rays take it (its range,
 its rays' radius, where its shadow map starts) and its key from two cameras. `tests/game_shaders_tests.cpp`:
@@ -228,7 +230,7 @@ what draws it, when that is the feature's own.
 | File | Purpose |
 | --- | --- |
 | `src/render_scale.cpp`, `src/render_scale.hpp` | Hook on the renderer's per-frame step: the engine renders at the requested size |
-| `src/ui_redirect.cpp`, `src/ui_redirect.hpp` | The draw call every module sees; the grading, the 2D pass and `GammaControl` on output-size targets while the engine renders below them |
+| `src/ui_redirect.cpp`, `src/ui_redirect.hpp`, `src/ui_redirect_shaders.hpp` | The draw call every module sees; the grading, the 2D pass and `GammaControl` on output-size targets while the engine renders below them, with the scene's depth for the 2D pass's depth-tested draws |
 | `src/game_constants.hpp` | The game's constant buffers by name (see "Constant buffers"): the system, scene, sun and lamp light, material, object, bones and probe constants, each with its slot, and a light pass's view space in the world |
 | `src/constant_capture.cpp`, `src/constant_capture.hpp` | The constant capture: what each of the game's threads last wrote to the constant buffers the contact shadows and the ray tracing read, copied at the game's unmap after the upscaler's jitter, read by type and only at the size written |
 | `src/camera.cpp`, `src/camera.hpp` | The main camera in the scene constants: main-view recognition, jitter, reprojection, camera cuts |
@@ -242,6 +244,7 @@ what draws it, when that is the feature's own.
 | `src/weather.cpp`, `src/weather.hpp` | The overlay's weather and time control, on the Sandbox tab (see "Weather and time") |
 | `src/sun_movement.cpp`, `src/sun_movement.hpp` | The sun and moon move every frame instead of in the game's steps (see "Sun movement") |
 | `src/game_dither.cpp`, `src/game_dither.hpp` | The game's colour dither taken out of its shaders as they are made (see "Dither") |
+| `src/game_light_volumes.cpp`, `src/game_light_volumes.hpp` | The game's light volumes moved by the upscaler's jitter, in its 24 light vertex shaders as they are made (see "Ray-traced lights", "The jitter on the game's light volumes") |
 | `src/dev_tools.hpp` | Whether the build has the Developer page (the dev preset) |
 | `src/dev/` | The development tools, in a dev build alone; its README says how to detach them. `dev.*`: the core's one door to them, and the Developer page |
 | `src/dev/game_lua.cpp`, `src/dev/game_lua.hpp` | Lua in the game's script state, and the Developer page's console (see "Game Lua") |
@@ -403,6 +406,11 @@ reads state; the frame renders unchanged. Its files go into that folder:
   call lists shaders, targets, depth, viewport, blend, depth state, shader resources, UAVs and
   constant buffers. `frame-<n>-writers.txt` lists the call stacks of constant buffer maps by size.
   Once both are written, a "Frame captured" toast with the file name shows at the right of the screen.
+- `trigger.txt` (a shader hash, or any text of a record line) makes F10 wait for a rare call: it
+  records frame after frame, each over the last, until a line has that text, then keeps that frame
+  and the one before it as `frame-<n>-before.txt`. F10 again stops waiting and keeps the frame.
+  It costs a record a frame while it waits, and the folders the lights and the scene dumped into go as
+  it turns over, all but the frame before's.
 - `dump.txt` (`<checksum> <count>` per line) makes the first calls with those shaders add their
   constant buffer contents (as the game wrote them on that thread) and save their textures as DDS
   in `frame-<n>/` once their command list has run, so a list's textures are as it left them, not as
@@ -598,6 +606,12 @@ shows what it printed and returned, or its error with the stack.
   While the code runs, `print` collects lines in place of the game's; the code runs under `xpcall`
   with `debug.traceback` when the game has the debug library. The lines and the returned values come
   back as one string; an error is raised again with the lines before it.
+- **Hooks.** Before the tools run, each function above is checked against this build's bytes at its
+  address (`game_code::matchesPastHooks`). A function another mod hooked is accepted when the rest of
+  the bytes, past the hook's jump and the `int3`/`nop` it fills the rest of the cut instruction with,
+  are this build's. Infinite Heaven's IHHook hooks these functions, so its game's Lua tools call
+  through it. A function whose code differs elsewhere still makes the tools unavailable, and the log
+  names its address.
 
 ### Travel
 
@@ -1611,8 +1625,41 @@ rate"), the photo mode hooks (see "Photo mode"), the game loop hooks (see "Frame
     `m_viewportSize.xy` copied over from a buffer holding the output size (a partial copy into a
     constant buffer, which Direct3D 11.1 drivers allow). A clear of the scene target from such a
     context goes to the output target.
+  - Only draws whose viewport covers the scene target are made there. As a save loads, the game
+    builds the Mother Base emblem with `Draw2D` shaders in corners of the scene target (1024x1024,
+    512x512 and 256x256 from 0,0, then 128x128 down to 8x8 in a row from 256,0) and reads it back
+    into the BC3 texture the sortie prep shows. Made on the output target, the game read back an
+    empty corner and the emblem was black at every mode until the next load (2026-11-04).
   - Every clear of a render-size depth-stencil also clears the output-size one, so the 2D pass's
     stencil masks work.
+  - A `Draw2D` draw that tests depth, blending over, is made in two passes of its own
+    (`compositeBehind`): into a float scratch layer, premultiplied; then over the
+    target, through `shaders::CompositeBehind`. The sortie prep's emblem is the only such draw in
+    the F10 records (frame 20182, #874: `Draw2D_Ui2_BL`, `greater_equal`, no depth write) and the
+    one UI image the game hides behind the 3D view: without the scene's depth it passed everywhere
+    and stood in front of Snake and the horse. The second pass reads the game's render-size
+    depth-stencil, without the upscaler's jitter (the scene is drawn jittered) and without the
+    one-pixel holes hair leaves in it (a dither pattern the image's upscaler fills and the depth
+    keeps). Read nearest against the draw's depth, the emblem's edge changed with the jitter every
+    frame, and nearest again over 2x2 closed the holes but grew every outline by a render pixel, a
+    band of backdrop between a character and the emblem. So the pixel's coverage is measured
+    instead: the depth is compared with the draw's at four places across the pixel, bilinearly, and
+    the emblem is blended in by `1 - coverage`. Where the pixel is partly the character, the grey
+    the upscaler mixed into it is replaced too: the backdrop is taken from nearby places nothing
+    covers, and the emblem takes its place (`out = pixel + (1 - cover) * (emblem - alpha * backdrop)`).
+    A depth-tested draw the composite cannot take, one that blends other than over (the training
+    area's circles, additive, in Mother Base's records) or one with stencil, is drawn on the output
+    target with the filled depth as before.
+    Depth a redirected 2D draw writes stays on the output-size depth, so a later fill drops it;
+    none writes depth in the records.
+  - Without upscaling (DLAA), the game draws the emblem itself, against its own render-size depth
+    and so against the jitter: the same two-pass draw is made in place on the scene target. Only for
+    draws that test depth, leave stencil alone and blend over; the rest stay the game's own.
+  - The composite's surfaces are made when first needed (the layer in `R16G16B16A16_FLOAT`, the
+    backdrop in the target's format) and again when the target's size or format changes. The stretch
+    that fills a depth-stencil with the scene's depth, `fillDepth` and `shaders::StretchDepth`, stays
+    for a draw the composite cannot take: it writes `SV_Depth` through a full-screen triangle, with
+    the stencil left alone.
   - `GammaControl` reads the output target's `_SRGB` view in place of the scene target.
   - When `GammaControl`'s viewport has its scene's size and the back buffer is larger (the exclusive
     fullscreen box), every `GammaControl` draw gets the viewport and scissor over the whole back
@@ -2852,7 +2899,22 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   stand-in (model `84a1b19dea6952c1`, mesh 9) kept 80 to 100% of a room's main lamp, an unshadowed spot,
   off its wall 0.9 m from it (the lamp probe), and the scene view went red over the room: the camera's
   rays met stand-ins short of what the game drew. Cut-out stand-ins stay in, for the main-view cut-out
-  meshes left out (the pylon's lattice).
+  meshes left out (the pylon's lattice). Since 2026-11-07 only rays towards lights meet them
+  (`MeshRole::CutOutStandIn`: `GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_SHADOW_ONLY`). In Africa's jungle each tree
+  fern's fronds (model `84a1f5deb4c61e59`, mesh 0, alpha 0x80 shadow 0x01) are drawn in the main view alone,
+  and the game casts them through a canopy card (model `84a3bde77c6368f3`, 10 triangles, about 22 x 22 m,
+  alpha 0xa0 shadow 0x42) 14 to 20 m up, one a tree. Met by every ray, the cards were a lid over the forest:
+  the camera's ray met one at 36 m where the game drew ground at 105 m, they stood in front of 14% of the
+  frame, and the floor under them lost the sky's light while the sun's shadow matched the game's.
+  Their fronds are cut out and are in the scene only beside a solid stand-in, as since 2026-11-09: alone they
+  are dropped, and the card casts for them. In, the fronds cost every global illumination and reflection ray
+  4.5 ms of the case's 6.7 ms frame (1280x720, 240 frames), the card 2 ms, for the same shade. A structure whose
+  meshes all let a light's rays through is
+  `GI_MASK_VIEW_ONLY`, which those rays skip whole, so its fronds may take an opacity micromap. A jungle tree
+  with a canopy card is skinned, and so was taken for a character until 2026-11-09, its card dropped with its other
+  stand-ins: the sun then reached the floor the game's map shades (`84a0fe379b794365`, no shadow over 12.5% of the
+  frame at the case's rock). A character's stand-in with the decal alpha bit is now kept as a rigid model's cut-out
+  stand-in, for rays towards lights alone; those without it stay dropped, as a woman's outfit's was (2026-10-24).
   Since 2026-10-27 a solid stand-in is kept again where its model's main view shows cut-out meshes the
   scene leaves out (shadow bit 0 with alpha bit 5 or 7), as the only thing the rays have of them, and
   only for rays towards lights (`GI_GEOMETRY_SHADOW_ONLY`, `StopsRay`): every other ray passes it, and
@@ -3249,6 +3311,18 @@ With DLSS Ray Reconstruction denoising, the rays go out without the filter (see 
   (`c6.z^(-1/16)`) the brightness's square root further, where the brighter light falls to the same
   dimness. Set when the light is noted, so its redrawn light, its shadow rays and its bounce all have
   it. Only the look: the game's guards see as before.
+- **The jitter on the game's light volumes** (`src/game_light_volumes.cpp`, 2026-11-09). The volumes come
+  in clip space, worked out on the CPU from the game's own camera, so the upscaler's jitter, which only
+  goes into the scene constants, reached the depth they test but not them: a lamp's volume lying on a
+  wall passed or failed the marking draw's `greater_equal` by that frame's jitter. Africa's villa lamps
+  flickered with the camera still, `0.24%` of the pixels at DLSS Ultra Performance and `0.000%` with the
+  jitter off, at 40 frames; the smaller the render scale, the larger the jitter in render pixels, the
+  worse. All 24 of the game's light vertex shaders are one code under a name each (2026-11-09), so each
+  is made from `game_light_volumes`' own, which adds `cPSScene`'s `c28` (the jitter in NDC) times `w` to
+  the clip position and then works out the sampling position as the game's does: `m_renderInfo` times
+  `m_renderBuffer.zwzw` from `cVSSystem` for the viewport within the targets. At the villa lamps after
+  it, `0.000%` with the effects on or off. The lights drawn again add it to their copies of the volumes,
+  and their bounds come from the volume through the unjittered `m_projectionView`.
 - **Drawn with.** Each kind of light (point or spot, mask or not, `SSLighting2` or `NA`) is drawn again
   with the game's own shader for it with specular and without a shadow map, which reads `c8.x` and the
   specular tables at `t8` and `t9`; a light whose own shader has no specular gets a scale of 1, as the
