@@ -147,6 +147,7 @@ private:
         std::uint64_t offset{}, size{}; // In the structure pool
         std::uint64_t scratch{}, updateScratch{}; // Bytes a build and a refit need
         bool built{}, compacted{}, queued{};
+        bool castsNothing{}; // Every geometry lets rays towards lights through: its instances are GI_MASK_VIEW_ONLY
 
         // Micromaps: the geometries that take one; what their descriptions point at, a geometry each; the micromaps it holds.
         std::vector<std::uint32_t> micromapped;
