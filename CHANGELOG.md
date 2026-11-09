@@ -12,11 +12,11 @@
   dropped.
 
 - **The jungle floor keeps its shade under the trees.** A tree fern's fronds are drawn in the main view alone, and the
-  game casts their shadow through a flat card hung in the crown. The rays saw neither, so the canopy hid nothing from
-  the sky and the floor under it went flat and bright. Both are in the scene now: the card stops only light from the
-  sun and lamps, as the game's shadow map does, and the fronds stop the sky's and the bounce, by their alpha. At the
-  case's ground pixel the floor is as dark as the game's and 34 of 64 bounce rays leave under the canopy instead of 5.
-  The fronds are cut out, so opacity micromaps keep them cheap.
+  game casts their shadow through a flat card hung in the crown. The rays saw neither, so the canopy hid nothing and the
+  floor under it went flat and bright. The card is now in the scene for the sun and the lamps alone, as the game's shadow
+  map has it, and it casts through its alpha: at the case's ground pixel the floor is as dark as the game's. The fronds
+  stay out of the scene: in, every global illumination and reflection ray paid to test them, 4.5 of a 6.7 ms frame at the
+  case, and the card already casts that shade for 2 ms.
 
 ## 2.0.1
 

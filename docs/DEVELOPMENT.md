@@ -2859,10 +2859,10 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   alpha 0xa0 shadow 0x42) 14 to 20 m up, one a tree. Met by every ray, the cards were a lid over the forest:
   the camera's ray met one at 36 m where the game drew ground at 105 m, they stood in front of 14% of the
   frame, and the floor under them lost the sky's light while the sun's shadow matched the game's.
-  Their fronds are in the scene since the same day (`MeshRole::MainViewCutOut`: cut out by their alpha, and
-  rays towards lights pass them, so the game's shadow map still answers for the sun): without them the
-  camera's and the bounce's rays saw open sky through the canopy, and the floor came out as flat as the
-  game's, 34 of 64 bounce rays leaving under it. A structure whose meshes all let a light's rays through is
+  Their fronds are cut out and are in the scene only beside a solid stand-in, as since 2026-11-09: alone they
+  are dropped, and the card casts for them. In, the fronds cost every global illumination and reflection ray
+  4.5 ms of the case's 6.7 ms frame (1280x720, 240 frames), the card 2 ms, for the same shade. A structure whose
+  meshes all let a light's rays through is
   `GI_MASK_VIEW_ONLY`, which those rays skip whole, so its fronds may take an opacity micromap. A jungle tree
   with a canopy card is skinned, and so was taken for a character until 2026-11-09, its card dropped with its other
   stand-ins: the sun then reached the floor the game's map shades (`84a0fe379b794365`, no shadow over 12.5% of the

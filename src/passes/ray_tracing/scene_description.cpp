@@ -127,7 +127,8 @@ constexpr float CutOutThreshold = 0.5f;
 // - The object brush's bushes and grass cast no shadow in the game: their meshes are taken as leaves
 //   all the same, for the rays' shadows; the brush's props are solid.
 // - A self-lit mesh is taken for its light, whatever else it is, but for an additive glow card, which is no surface.
-std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isCharacter, bool isVegetation, bool areMainViewCutOutsDropped, bool isSelfLit,
+std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isCharacter, bool isVegetation, bool areMainViewCutOutsDropped,
+    bool hasSolidStandIn, bool isSelfLit,
     std::optional<MeshRole> materialRole)
 {
     if (isSelfLit && !(alpha & AdditiveAlpha)) return MeshRole::Emissive;
@@ -150,7 +151,7 @@ std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isC
     }
 
     if (isSeeThrough) return std::nullopt;
-    if (isCutOut && isMainViewOnly) return MeshRole::MainViewCutOut;
+    if (isCutOut && isMainViewOnly) return hasSolidStandIn ? std::optional(MeshRole::MainViewCutOut) : std::nullopt;
     if (isCutOut) return isVegetation ? MeshRole::Leaf : isStandIn ? MeshRole::CutOutStandIn : MeshRole::CutOut;
     if (isStandIn)
     {
@@ -516,12 +517,15 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
 
     // Whether the main view shows cut-out meshes the scene drops: the solid stand-ins are then kept (roleOf).
     const bool isVegetation = source == Source::ObjectBrush;
-    bool areMainViewCutOutsDropped{};
+    bool areMainViewCutOutsDropped{}, hasSolidStandIn{};
     for (std::uint32_t mesh = 0; mesh < b[Meshes].count && !isVegetation; ++mesh)
     {
         std::uint8_t alpha{}, shadow{};
         if (file.at(b[Meshes].offset + 48ull * mesh, alpha) && file.at(b[Meshes].offset + 48ull * mesh + 1, shadow))
+        {
             areMainViewCutOutsDropped |= (shadow & CastsNoShadow) && (alpha & (CutOutAlpha | DecalAlpha));
+            hasSolidStandIn |= (shadow & ShadowMapsOnly) && !(shadow & CastsNoShadow) && !(alpha & (CutOutAlpha | DecalAlpha | TranslucentAlpha));
+        }
     }
 
     for (std::uint32_t mesh = 0; mesh < b[Meshes].count; ++mesh)
@@ -541,7 +545,7 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
         if (technique == MirrorTechnique) materialRole = MeshRole::Mirror;
         else if (vectorOf(file, *layout, materialInstance, GlassColorParameter)) materialRole = MeshRole::Glass;
 
-        auto role = roleOf(alpha, shadow, model->bones != 0, isVegetation, areMainViewCutOutsDropped, isSelfLit, materialRole);
+        auto role = roleOf(alpha, shadow, model->bones != 0, isVegetation, areMainViewCutOutsDropped, hasSolidStandIn, isSelfLit, materialRole);
         const bool isDropped = !role;
         if (isDropped)
         {
