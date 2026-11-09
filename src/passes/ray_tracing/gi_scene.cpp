@@ -447,6 +447,8 @@ std::uint64_t Scene::uploadRoom() const
     return GeometryUploadBytes - geometryUploaded;
 }
 
+// A structure of this model's geometries; one whose every geometry lets rays towards lights through is marked
+// castsNothing, so its instances take GI_MASK_VIEW_ONLY (addInstance) and those rays skip them whole.
 std::optional<BlasId> Scene::createBlas(Use use, const std::vector<Geometry>& geometries)
 {
     if (geometries.empty()) return std::nullopt;

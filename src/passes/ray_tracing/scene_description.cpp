@@ -170,6 +170,7 @@ std::optional<LayerTechnique> layerTechniqueOf(std::uint64_t technique)
     return found != std::ranges::end(LayerTechniques) ? std::optional{*found} : std::nullopt;
 }
 
+// What a role tells the rays: GI_GEOMETRY_* (shaders/gi_shared.h), the cut-out ones testing the mesh's alpha.
 std::uint32_t flagsOf(MeshRole role)
 {
     switch (role)
@@ -663,6 +664,7 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
     return model;
 }
 
+// Whether the rays test the mesh's alpha (CutOutBlocks): every role it cuts holes in that is in the scene.
 bool isCutOut(MeshRole role)
 {
     return role == MeshRole::CutOut || role == MeshRole::Leaf || role == MeshRole::Hair || role == MeshRole::CutOutStandIn
