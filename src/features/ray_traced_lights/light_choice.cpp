@@ -97,7 +97,7 @@ std::optional<D3D11_RECT> reachOf(const DrawnLight& light)
     return D3D11_RECT{left + rect->min[0], top + rect->min[1], left + rect->max[0], top + rect->max[1]};
 }
 
-Choice choose(std::span<const DrawnLight* const> lights, const SceneConstants& camera)
+Choice choose(std::span<const DrawnLight* const> lights, const SceneConstants& camera, std::span<const std::uint64_t> placesTaken)
 {
     struct Reaching
     {
@@ -106,7 +106,10 @@ Choice choose(std::span<const DrawnLight* const> lights, const SceneConstants& c
         std::uint64_t key;
         std::uint64_t place; // Its light's place to the centimetre: two spots at one lamp share it
         std::size_t index;
+        float rank; // Its pixels, a fifth more when the rays had its place last time
     };
+
+    const auto wasTaken = [placesTaken](std::uint64_t place) { return std::ranges::find(placesTaken, place) != placesTaken.end(); };
 
     Choice choice;
     std::vector<Reaching> reaching;
@@ -131,15 +134,21 @@ Choice choose(std::span<const DrawnLight* const> lights, const SceneConstants& c
         // two must come and go together. Traced one frame and left to the game's unshadowed draw the next, the wall they
         // light changed brightness every few frames with the camera still (2026-11-08).
         const auto at = game_constants::toWorld(light.scene, light.light.position, 1);
-        std::uint64_t place = 0;
-        for (const float coordinate : at) place = place * 31 + static_cast<std::uint64_t>(std::llround(coordinate * 100));
-        reaching.push_back({(reach->right - reach->left) * (reach->bottom - reach->top),
-            std::sqrt(position[0] * position[0] + position[1] * position[1] + position[2] * position[2]), keyOf(light), place, i});
+        std::uint64_t place = 1469598103934665603ull; // FNV-1a, so two places cannot share a hash by adding up
+        for (const float coordinate : at)
+        {
+            place ^= static_cast<std::uint64_t>(static_cast<std::int64_t>(std::llround(coordinate * 100)));
+            place *= 1099511628211ull;
+        }
+        const LONG pixels = (reach->right - reach->left) * (reach->bottom - reach->top);
+        reaching.push_back({pixels, std::sqrt(position[0] * position[0] + position[1] * position[1] + position[2] * position[2]),
+            keyOf(light), place, i, static_cast<float>(pixels) * (wasTaken(place) ? 1.2f : 1.0f)});
     }
 
     // Exact ties go by the key, so the choice depends on which lights there are, not on the order the game
     // drew them in.
-    std::sort(reaching.begin(), reaching.end(), [](const Reaching& a, const Reaching& b) {
+    std::ranges::stable_sort(reaching, [](const Reaching& a, const Reaching& b) {
+        if (a.rank != b.rank) return a.rank > b.rank;
         if (a.pixels != b.pixels) return a.pixels > b.pixels;
         if (a.distance != b.distance) return a.distance < b.distance;
 
@@ -147,44 +156,25 @@ Choice choose(std::span<const DrawnLight* const> lights, const SceneConstants& c
     });
 
     // Whole places, up to the cap: one whose lights do not all fit is left for the game's draw, all of it, rather than
-    // half traced. The same places as the last kick keep a bonus, so a place at the edge does not change hands for a pixel.
-    static std::vector<std::uint64_t> lastPlaces;
-    const auto wasTaken = [](std::uint64_t place) { return std::ranges::find(lastPlaces, place) != lastPlaces.end(); };
-    std::vector<std::uint64_t> places;
-    for (const auto& each : reaching)
-        if (std::ranges::find(places, each.place) == places.end()) places.push_back(each.place);
-
-    const auto rank = [&](const Reaching& light) {
-        return light.pixels * (wasTaken(light.place) ? 1.2 : 1.0);
-    };
-    std::ranges::stable_sort(reaching, [&](const Reaching& a, const Reaching& b) -> bool {
-        const auto first = rank(a), second = rank(b);
-        if (first != second) return first > second;
-        if (a.pixels != b.pixels) return a.pixels > b.pixels;
-        if (a.distance != b.distance) return a.distance < b.distance;
-
-        return a.key < b.key;
-    });
-
-    std::vector<std::uint64_t> taken;
+    // half traced. `handled` keeps its lights from being asked about again; only the places actually taken go back in
+    // `choice.places`, for the next call's bonus.
+    std::vector<std::uint64_t> handled;
     for (const auto& each : reaching)
     {
-        if (std::ranges::find(taken, each.place) != taken.end()) continue; // Its place is already taken
+        if (std::ranges::find(handled, each.place) != handled.end()) continue; // Its place was already answered
+        handled.push_back(each.place);
 
         const auto members = std::ranges::count(reaching, each.place, &Reaching::place);
         if (choice.taken.size() + static_cast<std::size_t>(members) > GI_MAX_LOCAL_LIGHTS)
         {
             choice.overCap += static_cast<std::size_t>(members);
-            taken.push_back(each.place); // Taken as skipped: its lights are not to be asked about again
             continue;
         }
 
-        taken.push_back(each.place);
+        choice.places.push_back(each.place);
         for (const auto& member : reaching)
             if (member.place == each.place) choice.taken.push_back(member.index);
     }
-
-    lastPlaces = taken;
 
     return choice;
 }
