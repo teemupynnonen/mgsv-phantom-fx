@@ -85,7 +85,9 @@ traced, as today), texture copies arriving and replacing one another, a layered 
 pool, characters built, refitted and made again, the palette budget, frames without a newer list, the
 instance cap's order and the terrain rings' remaking. `tests/light_choice_tests.cpp`:
 which lights a kick gives the rays: the most pixels first, then the nearest, the light cap's edge, the
-same choice whatever order the lights come in, a
+same choice whatever order the lights come in and wherever the upscaler's jitter put each light's edges,
+two spots at one place pointing apart taken as two lights, and two spots at one place taken or left out
+together, a
 light drawn from another eye left and counted, one reaching no pixel left out; a light's reach (around
 the camera, behind it, a narrow spot's, the viewport's corner); a light as the rays take it (its range,
 its rays' radius, where its shadow map starts) and its key from two cameras. `tests/game_shaders_tests.cpp`:
