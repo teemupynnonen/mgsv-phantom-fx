@@ -40,7 +40,9 @@ enum class MeshRole : std::uint8_t
     MainViewOnly, // A rigid model's solid mesh the game never draws into its shadow maps: rays towards lights pass it
     Emissive,     // A self-lit mesh (a bulb, a sign): it gives light, takes none, and rays towards lights pass it
     ShadowOnly,   // A rigid model's stand-in for main-view cut-outs the scene drops (a tarp's): only rays towards lights meet it
-    SunShadowOnly // Any other rigid model's solid stand-in: of the rays towards lights, only the sun's meet it
+    SunShadowOnly, // Any other rigid model's solid stand-in: of the rays towards lights, only the sun's meet it
+    CutOutStandIn,  // A rigid model's cut-out stand-in (a pylon's lattice, a tree's canopy card): cut out, and only rays towards lights meet it
+    MainViewCutOut  // A rigid model's cut-out mesh the game never casts (a tree fern's fronds): cut out, and rays towards lights pass it
 };
 
 // Why the scene leaves a model out. A revealed scene (engine_scene::Reveal) takes it all the same, with

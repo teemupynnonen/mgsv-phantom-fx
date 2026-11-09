@@ -2,7 +2,7 @@
 # (install.ps1 writes them, src/dev/save_redirect.hpp points the game at them).
 param(
     [string]$Game = (Join-Path $env:USERPROFILE 'Documents\Development\mgsv-automation\game'),
-    [string]$Steam = 'C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP',
+    [string]$Steam = $(if ($env:PHANTOM_FX_GAME) { $env:PHANTOM_FX_GAME } else { 'C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP' }),
     # Off-screen by default: the game keeps rendering there (not when minimised), out of the way.
     [switch]$Visible
 )
@@ -42,11 +42,14 @@ $process = Start-Process (Join-Path $Game 'mgsvtpp.exe') -WorkingDirectory $Game
 for ($second = 0; -not $Visible -and $second -lt 60 -and -not $process.HasExited; $second++) {
     Start-Sleep -Seconds 1
     $process.Refresh()
+    # An exited process has no handle at all: skip it rather than end the script before the player's files are checked.
+    $window = $process.MainWindowHandle
+    if (-not $window -or $window -eq [System.IntPtr]::Zero) { continue }
     $rect = New-Object Automation.Window+Rect
-    if ($process.MainWindowHandle -ne 0 -and [Automation.Window]::GetWindowRect($process.MainWindowHandle, [ref]$rect) -and $rect.Left -gt -1000) {
-        [Automation.Window]::SetWindowPos($process.MainWindowHandle, [System.IntPtr]::Zero, -6000, 100, 0, 0, $NoSizeNoOrderNoActivate) | Out-Null
+    if ([Automation.Window]::GetWindowRect($window, [ref]$rect) -and $rect.Left -gt -1000) {
+        [Automation.Window]::SetWindowPos($window, [System.IntPtr]::Zero, -6000, 100, 0, 0, $NoSizeNoOrderNoActivate) | Out-Null
     }
-    if ($process.MainWindowHandle -ne 0 -and [Automation.Window]::GetForegroundWindow() -eq $process.MainWindowHandle) {
+    if ([Automation.Window]::GetForegroundWindow() -eq $window) {
         [Automation.Window]::SetForegroundWindow($player) | Out-Null
     }
 }

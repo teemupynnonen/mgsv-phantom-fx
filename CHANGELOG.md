@@ -23,6 +23,20 @@
   above the lamp one frame and below it the next. A spot's direction is now part of its identity. The lights a frame
   traces also no longer change with the upscaler's jitter, which could move a distant lamp's edges across a pixel.
 
+- **A swaying jungle tree shades the floor under it.** The tree is skinned, so the scene took it for a character and
+  dropped all its stand-ins, its canopy card among them: the sun then reached 12.5% of the frame where the game's shadow
+  map blocked it, and the jungle's rock came out flat and bright. A character's stand-in with the decal alpha bit is now
+  kept as a rigid model's cut-out stand-in, which only rays towards lights meet and whose alpha lets them through: at the
+  case's rock the sun's shadow now disagrees on 4.3% of the frame. A character's other stand-ins, copies of an outfit, stay
+  dropped.
+
+- **The jungle floor keeps its shade under the trees.** A tree fern's fronds are drawn in the main view alone, and the
+  game casts their shadow through a flat card hung in the crown. The rays saw neither, so the canopy hid nothing and the
+  floor under it went flat and bright. The card is now in the scene for the sun and the lamps alone, as the game's shadow
+  map has it, and it casts through its alpha: at the case's ground pixel the floor is as dark as the game's. The fronds
+  stay out of the scene: in, every global illumination and reflection ray paid to test them, 4.5 of a 6.7 ms frame at the
+  case, and the card already casts that shade for 2 ms.
+
 ## 2.0.1
 
 ### Fixed

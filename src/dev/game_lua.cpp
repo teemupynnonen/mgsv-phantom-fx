@@ -2,6 +2,7 @@
 
 #include "device_check.hpp"
 #include "game_code.hpp"
+#include "log.hpp"
 
 #include <Windows.h>
 #include <mutex>
@@ -72,14 +73,16 @@ const game_code::Expected Checked[]{{BeginScopeRva, BeginScopeCode}, {EndScopeRv
 
 // Called with the code, its chunk name and whether to try it as an expression first. While the code
 // runs, print() collects lines instead of calling the game's. It returns the lines and the code's
-// values as one string, or raises them with the error and its stack.
+// values as one string, or the error and its stack. It never raises: another mod's hooks over the game's Lua (Infinite
+// Heaven's IHHook) turn an error raised past them into the game's death (0xC00000FF, 2026-11-08). A failure comes back as
+// LuaError + the text instead.
 constexpr std::string_view Harness = R"(
 return function(code, name, expression)
   local chunk = expression and loadstring("return " .. code, name)
   if not chunk then
     local problem
     chunk, problem = loadstring(code, name)
-    if not chunk then error(problem, 0) end
+    if not chunk then return "\1ERROR " .. tostring(problem) end
   end
 
   local lines = {}
@@ -97,7 +100,7 @@ return function(code, name, expression)
   print = gamePrint
   if not results[1] then
     lines[#lines + 1] = tostring(results[2])
-    error(table.concat(lines, "\n"), 0)
+    return "\1ERROR " .. table.concat(lines, "\n")
   end
 
   if results.n > 1 then add(unpack(results, 2, results.n)) end
@@ -112,7 +115,20 @@ Console published;
 
 bool isSupported() noexcept
 {
-    static const bool expected = isSupportedGameBuild() && game_code::matches(Checked);
+    static const bool expected = [] {
+        if (!isSupportedGameBuild()) return false;
+
+        for (const auto& one : Checked)
+        {
+            if (game_code::matchesPastHooks({&one, 1})) continue;
+
+            log("Game Lua: unexpected code at " + hex(one.rva) + ", so the Lua tools are unavailable.");
+            return false;
+        }
+        if (!game_code::matches(Checked)) log("Game Lua: another mod hooks the game's Lua; the Lua tools call through its hooks.");
+
+        return true;
+    }();
 
     return expected;
 }
@@ -126,7 +142,10 @@ std::optional<Outcome> run(std::string_view code, std::string_view name, bool ex
     if (!system || !*reinterpret_cast<void**>(system + 8)) return std::nullopt;
 
     Scope scope;
-    reinterpret_cast<BeginScope>(engine + BeginScopeRva)(&scope, true, true);
+    // Not the queued work: another mod's Lua (Infinite Heaven's MgsvSaves.Tick, once a frame) is queued there, and running
+    // it inside this scope re-enters Lua through the hooks IHHook has over it, which crashed the game (0xC0000005 at
+    // 0x2B31D2, beside the script system, 2026-11-07). The game runs its own queue at the next frame.
+    reinterpret_cast<BeginScope>(engine + BeginScopeRva)(&scope, true, false);
     void* const lua = *reinterpret_cast<void**>(scope.system + 8);
     int status = reinterpret_cast<LoadBuffer>(engine + LoadBufferRva)(lua, Harness.data(), Harness.size(), "=PhantomFX harness");
     if (status == 0) status = reinterpret_cast<Call>(engine + CallRva)(lua, 0, 1, 0);
@@ -139,6 +158,10 @@ std::optional<Outcome> run(std::string_view code, std::string_view name, bool ex
     }
     const char* const text = reinterpret_cast<ToString>(engine + ToStringRva)(lua, -1, nullptr);
     Outcome outcome{.ran = status == 0, .text = text ? text : ""};
+    // The harness reports a script's failure in its text rather than raising, as it must under another mod's hooks.
+    // The marker starts with \1, which a script's own output cannot: a result that starts with "ERROR " is a result.
+    constexpr std::string_view FailureMarker = "\1ERROR ";
+    if (outcome.text.starts_with(FailureMarker)) outcome = {.ran = false, .text = outcome.text.substr(FailureMarker.size())};
     reinterpret_cast<EndScope>(engine + EndScopeRva)(&scope);
 
     return outcome;
