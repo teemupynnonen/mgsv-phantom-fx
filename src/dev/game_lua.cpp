@@ -82,7 +82,7 @@ return function(code, name, expression)
   if not chunk then
     local problem
     chunk, problem = loadstring(code, name)
-    if not chunk then return "ERROR " .. tostring(problem) end
+    if not chunk then return "\1ERROR " .. tostring(problem) end
   end
 
   local lines = {}
@@ -100,7 +100,7 @@ return function(code, name, expression)
   print = gamePrint
   if not results[1] then
     lines[#lines + 1] = tostring(results[2])
-    return "ERROR " .. table.concat(lines, "\n")
+    return "\1ERROR " .. table.concat(lines, "\n")
   end
 
   if results.n > 1 then add(unpack(results, 2, results.n)) end
@@ -159,7 +159,9 @@ std::optional<Outcome> run(std::string_view code, std::string_view name, bool ex
     const char* const text = reinterpret_cast<ToString>(engine + ToStringRva)(lua, -1, nullptr);
     Outcome outcome{.ran = status == 0, .text = text ? text : ""};
     // The harness reports a script's failure in its text rather than raising, as it must under another mod's hooks.
-    if (outcome.text.starts_with("ERROR ")) outcome = {.ran = false, .text = outcome.text.substr(6)};
+    // The marker starts with \1, which a script's own output cannot: a result that starts with "ERROR " is a result.
+    constexpr std::string_view FailureMarker = "\1ERROR ";
+    if (outcome.text.starts_with(FailureMarker)) outcome = {.ran = false, .text = outcome.text.substr(FailureMarker.size())};
     reinterpret_cast<EndScope>(engine + EndScopeRva)(&scope);
 
     return outcome;

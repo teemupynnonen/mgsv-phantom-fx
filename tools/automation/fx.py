@@ -71,24 +71,27 @@ def cases():
 
 # Seconds a command file may wait before the game takes it: it takes one each frame start, so far more is a stuck game.
 PICKUP_TIMEOUT = 30.0
-# Where each run's watch on PhantomFX.log starts: the log's size when this process first looked.
+# Where each run's watch on PhantomFX.log stands: the log's size at the last look.
 log_start = {}
 
 
 def device_lost_since(_started):
-    """Whether the game's log has reported a removed GPU device (DXGI_ERROR_DEVICE_REMOVED) since this process first
-    looked at it."""
+    """Whether the game's log has reported a removed GPU device (DXGI_ERROR_DEVICE_REMOVED) since the last look. The
+    offset moves on, so one removal is reported once and the log is never read from the start again."""
     log = game_folder / "PhantomFX.log"
     try:
         size = log.stat().st_size
     except FileNotFoundError:
         return False
-    start = log_start.setdefault(log, size)
+    start = log_start.get(log, size)
     if size < start:
-        log_start[log] = start = 0  # A new game started and the log began again
+        start = 0  # A new game started and the log began again
+    found = False
     with open(log, "rb") as file:
         file.seek(start)
-        return b"0x887A0005" in file.read()
+        found = b"0x887A0005" in file.read()
+    log_start[log] = size
+    return found
 
 
 class GameGone(RuntimeError):
@@ -565,8 +568,14 @@ def run_scenarios(names, accept):
                 restart_copy(PLAYER_GAME / "PhantomFX.ini")
                 print(f"in the game again after {boot():.1f} s", flush=True)
                 need_restart = False
-            except (OSError, TimeoutError, GameGone) as error:
+            except (OSError, TimeoutError, GameGone, subprocess.CalledProcessError, SystemExit) as error:
+                # Without a game the scenario would only wait out its timeouts: record it and go on.
                 print(f"could not restart the copy: {error}", flush=True)
+                problems.append(f"did not run, the copy did not start again: {error}")
+                failures += 1
+                lines += [f"- **{name}**: WORSE: {problems[-1]}", f"  {scenario['why']}", f"  {folder}", ""]
+                print(f"{name}: WORSE: {problems[-1]}", flush=True)
+                continue
         try:
             record_at(scenario, folder.name)
             report.write(folder)
