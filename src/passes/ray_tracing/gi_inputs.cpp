@@ -26,8 +26,9 @@ using Microsoft::WRL::ComPtr;
 using namespace game_constants;
 using game_shaders::VertexShader;
 
-// The skinned meshes noted between kicks at most.
+// The skinned meshes and terrain patches noted between kicks at most.
 constexpr std::size_t MaxDrawnBones = 2048;
+constexpr std::size_t MaxDrawnPatches = 4096;
 
 std::atomic<bool> active{};
 
@@ -82,6 +83,11 @@ struct HookTimer
 std::mutex bonesMutex;
 std::vector<DrawnBones> drawnBones;
 
+// The draws' terrain patches since the last kick (takeDrawnPatches), and the buffers the last one read its mesh from.
+std::mutex patchesMutex;
+std::vector<DrawnPatch> drawnPatches;
+std::optional<PatchMeshSource> meshSource;
+
 #if PHANTOM_FX_DEV_TOOLS
 // Diagnostics (recordRigidDraws): where the main camera's rigid model draws put their models, while asked.
 std::atomic<bool> recordingRigid{};
@@ -123,6 +129,29 @@ void noteBones(ID3D11DeviceContext* context, const SceneConstants& scene, const 
     std::lock_guard lock(bonesMutex);
     if (drawnBones.size() < MaxDrawnBones) drawnBones.push_back(drawn);
 }
+
+// Notes a terrain patch's draw: the rect of the virtual heightmap it draws (cb5 c9), its index range, its camera; and
+// the buffers it reads its mesh from, noted again when they change.
+void notePatch(ID3D11DeviceContext* context, const SceneConstants& scene, const ObjectConstants& object, const ui_redirect::DrawCall& call)
+{
+    PatchMeshSource source;
+    context->IAGetIndexBuffer(source.indices.GetAddressOf(), &source.indexFormat, &source.indexOffset);
+    context->IAGetVertexBuffers(0, 1, source.vertices.GetAddressOf(), &source.vertexStride, &source.vertexOffset);
+    if (!source.indices || !source.vertices) return;
+
+    DrawnPatch drawn{.firstIndex = call.first, .indexCount = call.count, .baseVertex = call.vertexOffset};
+    std::copy_n(object.localParam[0], 4, drawn.uvScaleOffset.begin());
+    std::copy_n(object.localParam[1], 3, drawn.worldScale.begin());
+    std::copy_n(object.localParam[2], 3, drawn.worldOffset.begin());
+    std::copy_n(scene.eye, 3, drawn.eye.begin());
+
+    ComPtr<ID3D11InputLayout> layout;
+    context->IAGetInputLayout(layout.GetAddressOf());
+    source.vertexFormat = game_shaders::positionFormatOf(layout.Get());
+    std::lock_guard lock(patchesMutex);
+    if (drawnPatches.size() < MaxDrawnPatches) drawnPatches.push_back(drawn);
+    if (meshSource != source) meshSource = std::move(source);
+}
 }
 
 void detach() noexcept
@@ -133,6 +162,11 @@ void detach() noexcept
     {
         std::lock_guard lock(executedMutex);
         executed.reset();
+    }
+    {
+        std::lock_guard lock(patchesMutex);
+        drawnPatches.clear();
+        meshSource.reset();
     }
 }
 
@@ -182,6 +216,7 @@ void drawIndexed(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call
         {
             const auto* material = constant_capture::writtenTo<TerrainMaterialConstants>(constants[2].Get());
             if (material) engine_scene::noteTerrain(context, *object, *material);
+            notePatch(context, *scene, *object, call);
         }
 
         // A skinned mesh (useWeightCount set): its bones as drawn, for the scene's characters.
@@ -263,6 +298,34 @@ std::vector<DrawnBones> takeDrawnBones(const SceneConstants& camera) noexcept
     }
 
     return taken;
+}
+
+std::vector<DrawnPatch> takeDrawnPatches(const SceneConstants& camera) noexcept
+{
+    std::vector<DrawnPatch> taken;
+    try
+    {
+        std::lock_guard lock(patchesMutex);
+        for (const auto& drawn : drawnPatches)
+        {
+            bool isSameEye = true;
+            for (int i = 0; i < 3; ++i) isSameEye = isSameEye && std::abs(drawn.eye[i] - camera.eye[i]) <= 1e-3f;
+            if (isSameEye) taken.push_back(drawn);
+        }
+
+        drawnPatches.clear();
+    }
+    catch (...)
+    {
+    }
+
+    return taken;
+}
+
+std::optional<PatchMeshSource> patchMeshSource() noexcept
+{
+    std::lock_guard lock(patchesMutex);
+    return meshSource;
 }
 
 std::optional<SceneConstants> takeCamera() noexcept

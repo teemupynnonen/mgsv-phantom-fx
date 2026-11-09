@@ -336,19 +336,6 @@ float3 OffsetFromScreenSurface(float3 position, float3 normal)
     return position + normal * (0.02f + 0.002f * distanceToEye);
 }
 
-// Wächter and Binder's offset for a point on a triangle (Ray Tracing Gems, chapter 6).
-float3 OffsetFromTriangle(float3 position, float3 normal)
-{
-    const float origin = 1.0f / 32.0f;
-    const float floatScale = 1.0f / 65536.0f;
-    const float intScale = 256.0f;
-
-    int3 intN = int3(normal * intScale);
-    float3 positionI = asfloat(asint(position) + select(position < 0, -intN, intN));
-    float3 positionF = position + normal * floatScale;
-    return select(abs(position) < origin, positionF, positionI);
-}
-
 // ---- The scene's geometry ----
 
 // An instance's kind (GI_INSTANCE_*), and its first geometry's row of the table.
@@ -760,10 +747,21 @@ float CopyTolerance(float3 position)
     return min(0.05f + 0.005f * distance(position, g_Frame.eye.xyz), 0.5f);
 }
 
+// A copy faces the way the surface does, so a ray leaving the surface meets the copy's back: on a model, DXR's front
+// (StopsShadowRay). A surface facing the ray is something else: until 2026-11-06 any parallel one counted, and with the
+// rays from a hit lifted 3 mm, not 3 cm, the bounce rays from a pipe 1 to 2 cm off a room's wall still took the wall for a
+// copy of the pipe and went through it (docs/DEVELOPMENT.md, "Rays leaving a hit"). Cut-out geometry, which the game
+// mostly draws two-sided, is a copy from either side; the terrain and the sea, culled from behind, never are.
 bool IsCopyOfSurface(SceneHit hit, float3 normal, float3 direction, float tolerance)
 {
     float height = hit.distance * dot(direction, normal);
-    return height >= 0.0f && height < tolerance && abs(dot(HitNormal(hit, direction), normal)) > 0.85f;
+    if (height < 0.0f || height >= tolerance) return false;
+    if (abs(dot(HitNormal(hit, direction), normal)) <= 0.85f) return false;
+
+    GIInstanceDesc desc = g_Instances[hit.instance];
+    if (!(InstanceKind(desc) & GI_INSTANCE_MODEL)) return false;
+
+    return hit.frontFace || (g_Geometries[FirstGeometry(desc) + hit.geometry].flags & GI_GEOMETRY_CUT_OUT) != 0;
 }
 
 // Whether a hit stops a ray towards a light as the game's shadow maps would have it. They are drawn with
@@ -1074,6 +1072,68 @@ float VisibilityFromSurface(float3 origin, float3 normal, float tolerance, float
     return blocked ? 0.0f : transmittance;
 }
 
+// ---- The game's terrain ----
+// The game's virtual heightmap, as its terrain vertex shaders read it (NewTerrain_*: t0 the page
+// table, t1 the height atlas), for the rays: rings of cells around the camera, finer near
+// (TerrainGrid in gi_scene.hlsl).
+Texture2D<float4> g_TerrainPages : register(t14);
+Texture2D<float> g_TerrainHeights : register(t15);
+
+float2 TerrainUv(float2 xz)
+{
+    return min((xz - g_Frame.terrainOffset.xz) / g_Frame.terrainScale.xz, 0.999756f);
+}
+
+// The atlas tile (xy) and level of detail (z) resident for virtual heightmap coordinates.
+float3 TerrainTile(float2 virtualUv)
+{
+    return floor(g_TerrainPages.SampleLevel(g_PointSampler, virtualUv, 0.0f).xyz * 255.4f);
+}
+
+// The height at virtual heightmap coordinates, before the terrain's scale: the tile's texel in the atlas.
+float TerrainHeight(float2 virtualUv)
+{
+    float3 tile = TerrainTile(virtualUv);
+    float2 tileUv = frac(virtualUv * g_Frame.terrainUvConverter.xy * exp2(-tile.z)) + tile.xy;
+    float2 physicalUv = tileUv * g_Frame.terrainUvConverter.zw + g_Frame.terrainTexelCorrect.xy;
+    return g_TerrainHeights.SampleLevel(g_LinearSampler, physicalUv, 0.0f);
+}
+
+float3 TerrainPoint(float2 xz)
+{
+    return float3(xz.x, TerrainHeight(TerrainUv(xz)) * g_Frame.terrainScale.y + g_Frame.terrainOffset.y, xz.y);
+}
+
+// The game's terrain vertex at virtual heightmap coordinates, as its terrain vertex shader (NewTerrain_Depth) places
+// it: the coordinates clamped as it clamps them, then (u, height, v) x its draw's scale + offset (cb5 c10, c11).
+float3 TerrainVertex(float2 virtualUv, float3 scale, float3 offset)
+{
+    float2 uv = min(virtualUv, 0.999756f);
+    return float3(uv.x, TerrainHeight(uv), uv.y) * scale + offset;
+}
+
+// The scene's terrain over `xz`: its innermost ring's two triangles over the cell, split as TerrainGrid splits them, not
+// the heightmap between the cell's corners. Minus infinity outside that ring, or without terrain.
+float SceneTerrainHeight(float2 xz)
+{
+    float4 ring = g_Frame.terrainRings[0];
+    float2 cells = (xz - ring.xy) / ring.z;
+    if (g_Frame.terrainScale.w == 0.0f || any(cells < 0.0f) || any(cells >= ring.w)) return -FLT_MAX;
+
+    float2 corner = ring.xy + floor(cells) * ring.z;
+    float2 f = frac(cells);
+    float h10 = TerrainPoint(corner + float2(ring.z, 0.0f)).y, h01 = TerrainPoint(corner + float2(0.0f, ring.z)).y;
+    if (f.x + f.y <= 1.0f)
+    {
+        float h00 = TerrainPoint(corner).y;
+        return h00 + f.x * (h10 - h00) + f.y * (h01 - h00);
+    }
+
+    float h11 = TerrainPoint(corner + ring.z).y;
+
+    return h11 + (1.0f - f.x) * (h01 - h11) + (1.0f - f.y) * (h10 - h11);
+}
+
 // ---- Where a pixel's rays leave its surface ----
 // The scene's own surface where a ray from the eye through the pixel meets it near the depth's point: its
 // exact point and its triangle's normal, from which a ray leaves past that very surface (LiftOffTriangle),
@@ -1104,6 +1164,48 @@ bool IsStandIn(SceneHit hit)
     return IsShadowOnly(hit.instance, hit.geometry) || (InstanceKind(g_Instances[hit.instance]) & GI_INSTANCE_SEA) != 0;
 }
 
+// The terrain's top, where the game drew a surface facing the other way. The terrain stands up to 3 cm off the ground
+// the game draws (TerrainGap), above it there, so Snake's arm lying there dips under it: the search took the terrain 4 cm before the arm's underside
+// as its surface, and the rays left upwards from it into the sky, a pale band along the
+// arm's edge at 2.4x the arm's light (a debug case, 2026-11-05). The camera's ray sees only the terrain's top.
+bool IsTerrainFacingAway(SceneHit hit, float3 direction, float3 gbufferNormal)
+{
+    if ((InstanceKind(g_Instances[hit.instance]) & GI_INSTANCE_TERRAIN) == 0) return false;
+
+    return dot(FacingNormal(LoadTriangle(hit.instance, hit.geometry, hit.primitive), direction), gbufferNormal) < 0.0f;
+}
+
+// How far the terrain may stand off the ground the game draws, along the ground's normal, and still be taken as it. The game
+// draws its terrain from patches whose grid coarsens with distance (32 down to 4 cells a patch), the scene's rings from 1 m
+// cells, so the two part by up to 3 cm on a slope (a debug case, 2026-11-05); the scene takes the game's own patches where it
+// drew them (TerrainPatches), and the rings stand only where it did not.
+static const float TerrainGap = 0.03f;
+
+// The terrain under a ground pixel the search for its surface missed. Along a camera ray grazing the ground, a 3 cm gap is
+// 10 cm, past that search's reach: the pixels by a boot resting on a slope left from the depth's point, lifted 2.3 cm into
+// the boot, and their ground went black, 7x darker than the game's (50 of 64 rays inside the boot). The terrain within
+// TerrainGap of the depth's point along the terrain's own normal is taken, however far along the ray: the G-buffer's normal
+// is the bumps', and read 3.6 cm for a 1.8 cm gap there. Only where that normal is the ground's, within 60 degrees of the
+// terrain's: a boot's side by the ground is not the terrain.
+SceneHit TerrainUnderPixel(float3 position, float3 direction, float surfaceDistance, float3 gbufferNormal)
+{
+    // Nowhere near the terrain, as most pixels the search misses are (a roof the scene leaves out, leaves): no ray. Traced for
+    // every one, it cost 0.3 ms at 4K on a tin roof. Twice the gap upright is that gap along a slope's normal up to 60 degrees.
+    SceneHit hit = (SceneHit)0;
+    if (abs(SceneTerrainHeight(position.xz) - position.y) > 2.0f * TerrainGap) return hit;
+
+    const float reach = TerrainGap / 0.05f; // A camera ray down to 3 degrees off the ground
+    hit = TraceClosest(g_Frame.eye.xyz, direction, max(surfaceDistance - reach, 0.0f), surfaceDistance + reach, GI_MASK_TERRAIN, false, false,
+        float2(0.0f, g_Frame.rayCone.x));
+    if (!hit.hit) return hit;
+
+    float3 terrainNormal = FacingNormal(LoadTriangle(hit.instance, hit.geometry, hit.primitive), direction);
+    float gap = abs(hit.distance - surfaceDistance) * abs(dot(direction, terrainNormal));
+    hit.hit = gap <= TerrainGap && dot(terrainNormal, gbufferNormal) >= 0.5f;
+
+    return hit;
+}
+
 PixelSurface PixelSurfaceAt(uint2 pixel, float3 position, float3 gbufferNormal)
 {
     PixelSurface surface;
@@ -1129,17 +1231,22 @@ PixelSurface PixelSurfaceAt(uint2 pixel, float3 position, float3 gbufferNormal)
     float tolerance = 0.03f + 0.02f * surfaceDistance;
     float searchFrom = max(surfaceDistance - tolerance, 0.0f);
     SceneHit hit;
-    // A stand-in is not the surface: what the game drew may lie behind it.
+    bool isPassedOver = false;
+    // A stand-in, or the terrain where the game drew a surface facing the other way, is not the surface: what the game drew
+    // may lie behind it.
     for (uint attempt = 0; attempt < 4; ++attempt)
     {
         hit = TraceClosest(g_Frame.eye.xyz, direction, searchFrom, surfaceDistance + tolerance, GI_MASK_SCENE, true, false, float2(0.0f, g_Frame.rayCone.x));
-        if (!hit.hit || !IsStandIn(hit)) break;
+        isPassedOver = hit.hit && (IsStandIn(hit) || IsTerrainFacingAway(hit, direction, gbufferNormal));
+        if (!isPassedOver) break;
 
         // A triangle's hit lies strictly past a ray's TMin, so this one drops out and what lies right behind it stays.
         searchFrom = hit.distance;
     }
 
-    if (!hit.hit || abs(hit.distance - surfaceDistance) > tolerance || IsStandIn(hit)) return surface;
+    bool isFound = hit.hit && abs(hit.distance - surfaceDistance) <= tolerance && !isPassedOver;
+    if (!isFound) hit = TerrainUnderPixel(position, direction, surfaceDistance, gbufferNormal);
+    if (!hit.hit) return surface;
 
     SceneTriangle t = LoadTriangle(hit.instance, hit.geometry, hit.primitive);
     float3 normal = cross(t.v1 - t.v0, t.v2 - t.v0);
@@ -1155,16 +1262,17 @@ PixelSurface PixelSurfaceAt(uint2 pixel, float3 position, float3 gbufferNormal)
     return surface;
 }
 
-// A ray's start off a point on the scene's own surface: 16 float steps of the point's largest
+// A ray's start off a point on the scene's own surface, a pixel's or a hit's: 16 float steps of the point's largest
 // coordinate along the normal, about 2 mm at 1,200 m from the map's origin, where the game's maps reach.
 // The point is worked out from the triangle's corners, and the ray is traced in the instance's own space,
 // each a few steps of the largest coordinate off in any direction: a character's transform turns the
-// error of a large coordinate into the others. Wächter and Binder's offset (OffsetFromTriangle, 256 steps
+// error of a large coordinate into the others. Wächter and Binder's offset (Ray Tracing Gems, chapter 6: 256 steps
 // of each coordinate on its own) lifted the start about 3 cm in the field, more than the folds of a
 // character's clothes, so it sat inside the next fold and his chest was shadowed in strips; and next to
 // nothing in the helicopter, whose floor lies near the map's origin across but 1,200 m up, so a face
-// turned sideways hit its own triangle in every other frame (the shadow probe, 2026-10-24). Coordinates
-// under 128 m count as 128: a large model's own coordinates reach that far.
+// turned sideways hit its own triangle in every other frame (the shadow probe, 2026-10-24). Rays from hits kept
+// it until 2026-11-06, and those from a pipe 1 to 2 cm off a room's wall left from inside the wall (docs/DEVELOPMENT.md,
+// "Rays leaving a hit"). Coordinates under 128 m count as 128: a large model's own coordinates reach that far.
 float3 LiftOffTriangle(float3 position, float3 normal)
 {
     const float steps = 16.0f;
@@ -1201,36 +1309,17 @@ float3 SunSample(float2 samples)
     return normalize(toSun + DiscOffset(toSun, g_Frame.shadowParams.x, samples));
 }
 
-// ---- The game's terrain ----
-// The game's virtual heightmap, as its terrain vertex shaders read it (NewTerrain_*: t0 the page
-// table, t1 the height atlas), for the rays: rings of cells around the camera, finer near
-// (TerrainGrid in gi_scene.hlsl).
-Texture2D<float4> g_TerrainPages : register(t14);
-Texture2D<float> g_TerrainHeights : register(t15);
-
-float2 TerrainUv(float2 xz)
+// How deep a pixel's model or character lies under the scene's terrain, as something lying on the ground sinks into it: the
+// terrain stands up to 3 cm off the ground the game draws (TerrainGap), above it in places, so a prone body's underside dips
+// under it (a debug case, 2026-11-05). 0 above the terrain, and deeper than a quarter metre, where it is a cliff's recess the heightmap runs over, not the
+// ground under it. 0 too on the terrain itself, and at the depth's point, which may be the game's own ground under the terrain.
+float SunkUnderTerrain(PixelSurface surface)
 {
-    return min((xz - g_Frame.terrainOffset.xz) / g_Frame.terrainScale.xz, 0.999756f);
-}
+    if (!surface.isExact || (InstanceKind(g_Instances[surface.hit.instance]) & GI_INSTANCE_TERRAIN) != 0) return 0.0f;
 
-// The atlas tile (xy) and level of detail (z) resident for virtual heightmap coordinates.
-float3 TerrainTile(float2 virtualUv)
-{
-    return floor(g_TerrainPages.SampleLevel(g_PointSampler, virtualUv, 0.0f).xyz * 255.4f);
-}
+    float depth = SceneTerrainHeight(surface.position.xz) - surface.position.y;
 
-// The height at virtual heightmap coordinates, before the terrain's scale: the tile's texel in the atlas.
-float TerrainHeight(float2 virtualUv)
-{
-    float3 tile = TerrainTile(virtualUv);
-    float2 tileUv = frac(virtualUv * g_Frame.terrainUvConverter.xy * exp2(-tile.z)) + tile.xy;
-    float2 physicalUv = tileUv * g_Frame.terrainUvConverter.zw + g_Frame.terrainTexelCorrect.xy;
-    return g_TerrainHeights.SampleLevel(g_LinearSampler, physicalUv, 0.0f);
-}
-
-float3 TerrainPoint(float2 xz)
-{
-    return float3(xz.x, TerrainHeight(TerrainUv(xz)) * g_Frame.terrainScale.y + g_Frame.terrainOffset.y, xz.y);
+    return depth > 0.0f && depth < 0.25f ? depth : 0.0f;
 }
 
 #endif

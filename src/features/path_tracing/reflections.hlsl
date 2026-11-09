@@ -129,10 +129,16 @@ float ScreenTravel(float3 from, float3 to)
     return length((end.xy / end.w - start.xy / start.w) * float2(0.5f, -0.5f));
 }
 
-// The light the cache holds for a hit, its own and what it reflects, diffuse; false where no ray has lit that cell yet.
+// The light the cache holds for a hit, its own and what it reflects, diffuse; false where no ray has lit that cell yet, and
+// for a hit nearer than a cell is wide, which the cache cannot tell from what lies around it. A cell is a tile deep along the
+// ray's main axis, a metre at a room's distance, through the wall: the cell at the back of a pipe 2 cm off a dark room's wall
+// held light that the pipe lit afresh had none of, and the rays from the wall beside the pipe drew a pale line along it at
+// 4 to 10 times the wall's light (a debug case, 2026-11-06).
 bool CachedLight(float3 position, float3 direction, float hitDistance, out float3 light)
 {
     light = 0.0f;
+    if (hitDistance < HashGridCache_CellSize(position)) return false;
+
     uint tileIndex;
     bool isNewTile;
     uint cellIndex = HashGridCache_InsertCell(position, direction, hitDistance, tileIndex, isNewTile);
@@ -163,7 +169,7 @@ SceneHit TraceReflectionRay(inout float3 origin, inout float3 normal, inout floa
         bool isReflected = random.rand() < luminance(glass.specularColor);
         normal = isReflected ? glass.geometric : -glass.geometric;
         if (isReflected) direction = reflect(direction, glass.normal);
-        origin = OffsetFromTriangle(glass.world, normal);
+        origin = LiftOffTriangle(glass.world, normal);
         // Going on, a wall behind the pane is no copy of it: a mirror's would be skipped, and the room behind it shown.
         tolerance = isReflected ? CopyTolerance(glass.world) : 0.0f;
     }
@@ -198,7 +204,7 @@ float3 ReflectedLight(float3 origin, float3 normal, float tolerance, float3 dire
         if (material.isSelfLit) return light;
 
         float3 toEye = -direction;
-        origin = OffsetFromTriangle(material.world, material.geometric);
+        origin = LiftOffTriangle(material.world, material.geometric);
         normal = material.geometric;
         tolerance = CopyTolerance(material.world);
         light += throughput * HitOwnLight(material, toEye, origin, tolerance, random);
@@ -225,7 +231,7 @@ float3 ReflectedLight(float3 origin, float3 normal, float tolerance, float3 dire
         float weight;
         float3 side = BounceSide(material.geometric, material.isLeaf, random, weight);
         float3 bounceDirection = mapToCosineHemisphere(random.rand2(), side);
-        float3 bounceOrigin = all(side == material.geometric) ? origin : OffsetFromTriangle(material.world, side);
+        float3 bounceOrigin = all(side == material.geometric) ? origin : LiftOffTriangle(material.world, side);
         SceneHit bounce = TraceFromSurface(bounceOrigin, side, tolerance, bounceDirection, LightRayReach());
         throughput *= material.albedo * (weight / (1.0f - specularShare));
         if (!bounce.hit) return light + throughput * SkyRadiance(bounceDirection);
@@ -275,6 +281,15 @@ void TraceReflections(uint2 did : SV_DispatchThreadID)
     float hitDistance;
     bool isRough = normalRoughness.w >= RoughSurface;
     float3 light = ReflectedLight(origin, surface.normal, tolerance, direction, PixelCone(world, g_Frame.rayCone.x + alpha), isRough, random, hitDistance);
+    // Sunk under the terrain, a ray heading down meets the game's ground just below, which the scene lacks, not the sky
+    // (TraceLight). Read only when the first ray met nothing: read for every ray heading down, it cost 0.05 ms at 4K on a sloped roof.
+    float sunkDepth = hitDistance == SkyHitDistance && direction.y < 0.0f ? SunkUnderTerrain(surface) : 0.0f;
+    if (sunkDepth > 0.0f)
+    {
+        light = 0.0f;
+        hitDistance = sunkDepth;
+    }
+
     float3 exposed = RemoveNaNs(light) * g_Frame.nearFar.w;
     bool isGameBlended = hitDistance < SkyHitDistance && specularAlbedo.a > 0.0f;
     float fresnel = GameFresnel(normalRoughness.w, saturate(dot(normal, toEye)));

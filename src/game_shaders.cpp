@@ -21,6 +21,7 @@ std::shared_mutex mutex;
 std::unordered_map<IUnknown*, const GameShader*> rows;
 std::array<ComPtr<ID3D11PixelShader>, std::size(GameShaders)> firsts;
 std::unordered_map<IUnknown*, VertexShader> vertexShaders;
+std::unordered_map<IUnknown*, DXGI_FORMAT> positionFormats;
 std::vector<ComPtr<IUnknown>> owners;
 
 const GameShader* rowOf(std::string_view checksum)
@@ -103,6 +104,31 @@ VertexShader vertexShaderOf(IUnknown* shader) noexcept
     return found != vertexShaders.end() ? found->second : VertexShader::Other;
 }
 
+void inputLayoutCreated(IUnknown* layout, DXGI_FORMAT positionFormat) noexcept
+{
+    if (!layout || positionFormat == DXGI_FORMAT_UNKNOWN) return;
+
+    try
+    {
+        std::unique_lock lock(mutex);
+        positionFormats[layout] = positionFormat;
+        owners.emplace_back(layout);
+    }
+    catch (...)
+    {
+    }
+}
+
+DXGI_FORMAT positionFormatOf(IUnknown* layout) noexcept
+{
+    if (!layout) return DXGI_FORMAT_UNKNOWN;
+
+    std::shared_lock lock(mutex);
+    const auto found = positionFormats.find(layout);
+
+    return found != positionFormats.end() ? found->second : DXGI_FORMAT_UNKNOWN;
+}
+
 ID3D11PixelShader* firstCreated(const GameShader& row) noexcept
 {
     std::shared_lock lock(mutex);
@@ -114,6 +140,7 @@ void forget() noexcept
     std::unique_lock lock(mutex);
     rows.clear();
     vertexShaders.clear();
+    positionFormats.clear();
     for (auto& first : firsts) first.Reset();
     owners.clear();
 }

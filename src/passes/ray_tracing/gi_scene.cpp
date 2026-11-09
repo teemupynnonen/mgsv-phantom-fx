@@ -648,7 +648,11 @@ std::optional<std::uint32_t> Scene::addInstance(BlasId id, const float* transfor
     // Only the terrain and the sea are one-sided (GI_RAY_FLAGS); the game's meshes are often open shells. The
     // sea's rays from the waves' troughs below its plane pass its back.
     const std::uint32_t flags = (kind & (GI_INSTANCE_TERRAIN | GI_INSTANCE_SEA)) ? 0 : D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
-    desc.idAndMask = (kind & 0xFFFFFFu) | ((blas.castsNothing ? GI_MASK_VIEW_ONLY : GI_MASK_CASTS) << 24);
+    // The rays towards lights skip what casts no shadow (blas.castsNothing) whole; a search of the terrain alone takes the
+    // terrain's rings and patches by their own bit.
+    const std::uint32_t mask = (blas.castsNothing ? GI_MASK_VIEW_ONLY : GI_MASK_CASTS)
+        | ((kind & GI_INSTANCE_TERRAIN) ? GI_MASK_TERRAIN : 0);
+    desc.idAndMask = (kind & 0xFFFFFFu) | (mask << 24);
     desc.hitGroupAndFlags = (blas.firstGeometry & 0xFFFFFFu) | (flags << 24);
     const auto blasAddress = address(blas);
     desc.blas = {static_cast<std::uint32_t>(blasAddress), static_cast<std::uint32_t>(blasAddress >> 32)};
