@@ -340,7 +340,7 @@ void solidStandInsCastTheSunAlone()
 
 void pylonLattice()
 {
-    expect(rigid({{32, 1}, {128, 66}}) == Roles{MeshRole::MainViewCutOut, MeshRole::CutOutStandIn}, "A pylon's lattice casts through its cut-out stand-in.");
+    expect(rigid({{32, 1}, {128, 66}}) == Roles{Dropped, MeshRole::CutOutStandIn}, "A pylon's lattice is dropped; its cut-out stand-in casts for light rays alone.");
 }
 
 // Alpha bit 4 is no glass: it marks a mesh drawn forward, after the G-buffer, most of them fox3DFW_ConstantSRGB (the game's
@@ -399,7 +399,7 @@ void innerWallsMainViewOnly()
 // fern's fronds (2026-11-07): without them the jungle's floor saw open sky through its canopy.
 void mainViewCutOutsCastNothing()
 {
-    expect(rigid({{32, 1}, {160, 65}}) == Roles{MeshRole::MainViewCutOut, MeshRole::MainViewCutOut},
+    expect(rigid({{32, 1}, {160, 65}}) == Roles{Dropped, Dropped},
         "Cut-out meshes and decals the main view alone shows are taken, and cast nothing.");
 }
 
@@ -443,7 +443,7 @@ void bushesAreLeaves()
 
 void sameFileDependsOnSource()
 {
-    expect(rolesOf({{160, 65}, {160, 64}}, Source::VisibilityManager) == Roles{MeshRole::MainViewCutOut, MeshRole::CutOut},
+    expect(rolesOf({{160, 65}, {160, 64}}, Source::VisibilityManager) == Roles{Dropped, MeshRole::CutOut},
         "A bush's file from a visibility manager takes a rigid model's roles.");
 }
 
@@ -462,7 +462,7 @@ void materialPerRole()
 
     const auto tree = modelOf({{128, 1}, {160, 66}}, Source::VisibilityManager);
     expect(flagsOf(*tree, 1) == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_SHADOW_ONLY), "Only rays towards lights meet a tree's canopy card, by its alpha.");
-    expect(flagsOf(*tree, 0) == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_NO_SHADOW), "Rays towards lights pass a tree's fronds, the others meet them by their alpha.");
+    expect(modelOf({{128, 1}}, Source::VisibilityManager)->dropped.size() == 1, "A tree fern's fronds are dropped: its canopy card casts for them.");
 
     const auto bush = modelOf({{160, 64}}, Source::ObjectBrush);
     expect(flagsOf(*bush, 0) == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_LEAF), "Leaves are cut out and let light through.");
