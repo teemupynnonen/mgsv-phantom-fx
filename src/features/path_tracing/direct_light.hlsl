@@ -29,7 +29,9 @@ float3 MaskAt(GILocalLight light, float3 world)
 
     float4 position = float4(world, 1.0f);
     float3 projected = float3(dot(light.mask[0], position), dot(light.mask[1], position), dot(light.mask[2], position));
-    if (projected.z <= 0.0f) return 0.0f;
+    // The game's shaders divide whatever the sign (Lighting_Spot_NA_Mask_NSpec_NShdw's disassembly): behind the mask's plane a wall
+    // lamp's mask, mirrored, still lights the wall above it, where a cut to 0 left it dark.
+    if (abs(projected.z) < 1e-6f) return 0.0f;
 
     float2 uv = projected.xy / projected.z * 0.5f + 0.5f;
     uv = frac(float2(uv.x, 1.0f - uv.y));

@@ -85,6 +85,7 @@ cbuffer LightPass : register(b0)
     float4 ViewToUv;
     uint4 Shadow;
     uint4 Volume; // x: 1 for 32-bit indices, y: the vertices' stride, z: where they start
+    float4 Jitter; // xy: the upscaler's jitter in NDC, which the game's volumes lack (game_light_volumes.hpp)
 };
 
 ByteAddressBuffer Drawn : register(t0);
@@ -93,6 +94,7 @@ void main(uint id : SV_VertexID, out float4 position : SV_Position, out float4 c
 {
     uint index = Volume.x ? Drawn.Load(id * 4) : (Drawn.Load((id * 2) & ~3u) >> ((id % 2) * 16)) & 0xFFFF;
     position = asfloat(Drawn.Load4(Volume.z + index * Volume.y));
+    position.xy += Jitter.xy * position.w;
     clip = position;
     sampling = float4((position.xy * float2(0.5, -0.5) + 0.5 * position.w) * ViewToUv.xy + ViewToUv.zw * position.w, position.zw);
 }
@@ -167,6 +169,7 @@ struct PassConstants
     float viewToUv[4];
     std::uint32_t shadow[4];
     std::uint32_t volume[4];
+    float jitter[4];
 };
 
 struct BoundsConstants
@@ -257,6 +260,8 @@ ComPtr<ID3D11Buffer> passBuffer, sceneBuffer, lightBuffer, materialBuffer;
 bool pipelineFailed{};
 // The frame's lights from the lists run so far, and whether a list with a draw point has run.
 std::vector<Light> frameLights;
+// The places of the lights the rays took at the last kick: a place they had keeps a small advantage (light_choice).
+std::vector<std::uint64_t> lightingPlaces;
 bool drawPointRan{};
 // The volumes' bounds: the shader and its output, its copies on their way back, the lights each holds by
 // slot, and this frame's so far.
@@ -562,7 +567,8 @@ void drawAgain(const Light& light)
     const auto& viewport = drawn.viewport;
     const PassConstants pass{{viewport.Width / static_cast<float>(width), viewport.Height / static_cast<float>(height),
                                  viewport.TopLeftX / static_cast<float>(width), viewport.TopLeftY / static_cast<float>(height)},
-        {0, share ? 1u : 0u, 0, 0}, {volume.wideIndices ? 1u : 0u, volume.stride, VolumeVertexStart, 0}};
+        {0, share ? 1u : 0u, 0, 0}, {volume.wideIndices ? 1u : 0u, volume.stride, VolumeVertexStart, 0},
+        {drawn.scene.cameraCenterOffset[0], drawn.scene.cameraCenterOffset[1], 0, 0}};
     auto constants = drawn.light;
     if (!drawn.game->specular) constants.specularScale = AddedSpecular;
     check(write(immediate, passBuffer.Get(), pass), "Writing the lights' constants");
@@ -622,8 +628,11 @@ void measureVolumes()
         const auto& volume = light.volume;
         if (!volume.view || light.drawn.game->flashlight || frameBoundsLights.size() >= GI_MAX_LOCAL_LIGHTS) continue;
 
+        // The volume's vertices are the game's, without the jitter its m_projectionView has.
+        auto scene = light.drawn.scene;
+        camera::applyJitter(scene, {-scene.cameraCenterOffset[0], -scene.cameraCenterOffset[1]});
         camera::Matrix projectionView{};
-        for (std::size_t i = 0; i < projectionView.size(); ++i) projectionView[i] = light.drawn.scene.projectionView[i / 4][i % 4];
+        for (std::size_t i = 0; i < projectionView.size(); ++i) projectionView[i] = scene.projectionView[i / 4][i % 4];
         const auto clipToWorld = camera::inverse(projectionView);
         BoundsConstants constants{{}, {volume.wideIndices ? 1u : 0u, volume.stride, VolumeVertexStart, volume.count},
             {static_cast<std::uint32_t>(frameBoundsLights.size()), 0, 0, 0}};
@@ -1012,7 +1021,8 @@ std::vector<TracedLight> takeForTrace(const SceneConstants& camera) noexcept
                         drawn.push_back(&light.drawn);
                     }
 
-            const auto choice = light_choice::choose(drawn, camera);
+            const auto choice = light_choice::choose(drawn, camera, lightingPlaces);
+            lightingPlaces = choice.places;
             otherFrame += choice.otherFrame;
             overCap += choice.overCap;
             if constexpr (DevTools) perf_record::onLights(choice.taken.size(), choice.overCap);

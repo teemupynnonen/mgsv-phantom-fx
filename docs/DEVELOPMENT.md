@@ -85,7 +85,9 @@ traced, as today), texture copies arriving and replacing one another, a layered 
 pool, characters built, refitted and made again, the palette budget, frames without a newer list, the
 instance cap's order and the terrain rings' remaking. `tests/light_choice_tests.cpp`:
 which lights a kick gives the rays: the most pixels first, then the nearest, the light cap's edge, the
-same choice whatever order the lights come in, a
+same choice whatever order the lights come in and wherever the upscaler's jitter put each light's edges,
+two spots at one place pointing apart taken as two lights, and two spots at one place taken or left out
+together, a
 light drawn from another eye left and counted, one reaching no pixel left out; a light's reach (around
 the camera, behind it, a narrow spot's, the viewport's corner); a light as the rays take it (its range,
 its rays' radius, where its shadow map starts) and its key from two cameras. `tests/game_shaders_tests.cpp`:
@@ -242,6 +244,7 @@ what draws it, when that is the feature's own.
 | `src/weather.cpp`, `src/weather.hpp` | The overlay's weather and time control, on the Sandbox tab (see "Weather and time") |
 | `src/sun_movement.cpp`, `src/sun_movement.hpp` | The sun and moon move every frame instead of in the game's steps (see "Sun movement") |
 | `src/game_dither.cpp`, `src/game_dither.hpp` | The game's colour dither taken out of its shaders as they are made (see "Dither") |
+| `src/game_light_volumes.cpp`, `src/game_light_volumes.hpp` | The game's light volumes moved by the upscaler's jitter, in its 24 light vertex shaders as they are made (see "Ray-traced lights", "The jitter on the game's light volumes") |
 | `src/dev_tools.hpp` | Whether the build has the Developer page (the dev preset) |
 | `src/dev/` | The development tools, in a dev build alone; its README says how to detach them. `dev.*`: the core's one door to them, and the Developer page |
 | `src/dev/game_lua.cpp`, `src/dev/game_lua.hpp` | Lua in the game's script state, and the Developer page's console (see "Game Lua") |
@@ -3270,6 +3273,18 @@ With DLSS Ray Reconstruction denoising, the rays go out without the filter (see 
   (`c6.z^(-1/16)`) the brightness's square root further, where the brighter light falls to the same
   dimness. Set when the light is noted, so its redrawn light, its shadow rays and its bounce all have
   it. Only the look: the game's guards see as before.
+- **The jitter on the game's light volumes** (`src/game_light_volumes.cpp`, 2026-11-09). The volumes come
+  in clip space, worked out on the CPU from the game's own camera, so the upscaler's jitter, which only
+  goes into the scene constants, reached the depth they test but not them: a lamp's volume lying on a
+  wall passed or failed the marking draw's `greater_equal` by that frame's jitter. Africa's villa lamps
+  flickered with the camera still, `0.24%` of the pixels at DLSS Ultra Performance and `0.000%` with the
+  jitter off, at 40 frames; the smaller the render scale, the larger the jitter in render pixels, the
+  worse. All 24 of the game's light vertex shaders are one code under a name each (2026-11-09), so each
+  is made from `game_light_volumes`' own, which adds `cPSScene`'s `c28` (the jitter in NDC) times `w` to
+  the clip position and then works out the sampling position as the game's does: `m_renderInfo` times
+  `m_renderBuffer.zwzw` from `cVSSystem` for the viewport within the targets. At the villa lamps after
+  it, `0.000%` with the effects on or off. The lights drawn again add it to their copies of the volumes,
+  and their bounds come from the volume through the unjittered `m_projectionView`.
 - **Drawn with.** Each kind of light (point or spot, mask or not, `SSLighting2` or `NA`) is drawn again
   with the game's own shader for it with specular and without a shadow map, which reads `c8.x` and the
   specular tables at `t8` and `t9`; a light whose own shader has no specular gets a scale of 1, as the

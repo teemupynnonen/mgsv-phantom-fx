@@ -4,6 +4,25 @@
 
 ### Fixed
 
+- **Wall lamps no longer flicker with the upscaler, however still the camera.** The game works its light volumes out on
+  the CPU, already in screen space, so the upscaler's jitter reached the depth they test against but not them: a lamp
+  whose volume lies on the wall passed or failed the depth test by that frame's jitter, up to 1.5 render pixels at Ultra
+  Performance. The game's 24 light vertex shaders are now made from one that adds the jitter, and the ray-traced lights'
+  redraw adds it too. At Africa's villa lamps, camera still, DLSS Ultra Performance, 40 frames: `0.24%` of the pixels
+  flickered before, `0.000%` after.
+
+- **A lamp drawn as two spots no longer makes its wall flicker.** Africa's villa lamps are two spots at one place, one up
+  and one down. Each could win a place among the traced lights while the other lost it, so the wall was lit by the rays
+  one frame and by the game's unshadowed draw the next. Lights at one place are now chosen together, and the places of
+  the last frame keep a small advantage, so a place at the light cap does not change hands. At the villa's lamps with
+  DLSS Ultra Performance and the camera still, the wall's brightness went `0.23 -> 0.79` in single frames; it now stays
+  within `0.25 -> 0.28`.
+- **Wall lamps no longer swap their light between frames while you move.** A lamp in Africa's villa is two spots at one
+  place, one up and one down, and the game draws the downward one without a shadow map from a distance. Alike in kind,
+  place and colour, the two shared one identity and one volume box, so each was cut to the other's box: the wall lit
+  above the lamp one frame and below it the next. A spot's direction is now part of its identity. The lights a frame
+  traces also no longer change with the upscaler's jitter, which could move a distant lamp's edges across a pixel.
+
 - **A swaying jungle tree shades the floor under it.** The tree is skinned, so the scene took it for a character and
   dropped all its stand-ins, its canopy card among them: the sun then reached 12.5% of the frame where the game's shadow
   map blocked it, and the jungle's rock came out flat and bright. A character's stand-in with the decal alpha bit is now
