@@ -260,6 +260,8 @@ ComPtr<ID3D11Buffer> passBuffer, sceneBuffer, lightBuffer, materialBuffer;
 bool pipelineFailed{};
 // The frame's lights from the lists run so far, and whether a list with a draw point has run.
 std::vector<Light> frameLights;
+// The places of the lights the rays took at the last kick: a place they had keeps a small advantage (light_choice).
+std::vector<std::uint64_t> lightingPlaces;
 bool drawPointRan{};
 // The volumes' bounds: the shader and its output, its copies on their way back, the lights each holds by
 // slot, and this frame's so far.
@@ -1019,7 +1021,8 @@ std::vector<TracedLight> takeForTrace(const SceneConstants& camera) noexcept
                         drawn.push_back(&light.drawn);
                     }
 
-            const auto choice = light_choice::choose(drawn, camera);
+            const auto choice = light_choice::choose(drawn, camera, lightingPlaces);
+            lightingPlaces = choice.places;
             otherFrame += choice.otherFrame;
             overCap += choice.overCap;
             if constexpr (DevTools) perf_record::onLights(choice.taken.size(), choice.overCap);

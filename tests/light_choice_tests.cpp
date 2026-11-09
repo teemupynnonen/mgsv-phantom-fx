@@ -81,12 +81,13 @@ DrawnLight aroundCamera(float width, float height, float distance = 1)
     return light;
 }
 
-Choice chooseFrom(const std::vector<DrawnLight>& lights, const SceneConstants& camera = cameraAt({}))
+Choice chooseFrom(const std::vector<DrawnLight>& lights, const SceneConstants& camera = cameraAt({}),
+    std::span<const std::uint64_t> placesTaken = {})
 {
     std::vector<const DrawnLight*> pointers;
     for (const auto& light : lights) pointers.push_back(&light);
 
-    return choose(pointers, camera);
+    return choose(pointers, camera, placesTaken);
 }
 
 // `count` lights, each reaching more pixels than the one before.
@@ -130,12 +131,13 @@ void fewestPixelsDroppedPastTheCap()
 
 void sameChoiceInAnyOrder()
 {
-    // Past the cap, lights alike in pixels and distance but for their colour.
+    // Past the cap, lights alike in pixels and distance but for their colour, each at its own place.
     std::vector<DrawnLight> lights;
     for (std::size_t i = 0; i <= GI_MAX_LOCAL_LIGHTS; ++i)
     {
         lights.push_back(aroundCamera(100, 100));
         lights.back().light.color[0] = 1.0f + static_cast<float>(i);
+        lights.back().light.position[0] = 0.05f * static_cast<float>(i);
     }
 
     const auto keysTaken = [](const std::vector<DrawnLight>& from) {
@@ -183,12 +185,20 @@ void jitterLeavesChoiceAlone()
 // fit the cap while the other did not, and the wall they light blinked between the two draws.
 void aPlacesLightsComeAndGoTogether()
 {
-    // At the cap: one more light would not fit, and it shares its place with another.
-    std::vector<DrawnLight> lights = growingLights(GI_MAX_LOCAL_LIGHTS - 2);
-    auto up = lightAt(QuarticPoint, {0, 1, 40}, 6);
+    // Room under the cap: both spots of the place are taken.
+    std::vector<DrawnLight> roomy = growingLights(GI_MAX_LOCAL_LIGHTS - 4);
+    auto up = lightAt(QuarticSpot, {0, 1, 40}, 6);
     auto down = up;
     down.light.axis[1] = -1;
-    down.game = &QuarticSpot;
+    roomy.push_back(up);
+    roomy.push_back(down);
+    const auto taken = chooseFrom(roomy);
+    expect(std::ranges::find(taken.taken, roomy.size() - 2) != taken.taken.end()
+            && std::ranges::find(taken.taken, roomy.size() - 1) != taken.taken.end(),
+        "Two spots at one place are taken together.");
+
+    // At the cap, one more light would not fit: both are left out together, not one of the two.
+    std::vector<DrawnLight> lights = growingLights(GI_MAX_LOCAL_LIGHTS - 2);
     lights.push_back(up);
     lights.push_back(down);
     lights.push_back(aroundCamera(150, 150)); // The biggest: always taken
@@ -196,7 +206,28 @@ void aPlacesLightsComeAndGoTogether()
     const auto choice = chooseFrom(lights);
     const auto takenUp = std::ranges::find(choice.taken, lights.size() - 3) != choice.taken.end();
     const auto takenDown = std::ranges::find(choice.taken, lights.size() - 2) != choice.taken.end();
-    expect(takenUp == takenDown, "Two spots at one place are both taken or both left out.");
+    expect(takenUp == takenDown && !takenUp, "Two spots at one place are both left out when their place does not fit.");
+    expect(choice.overCap == 2, "Both spots of the place left out are counted.");
+}
+
+// A place the rays took last time keeps a fifth's advantage, so at the cap it is not handed to a place a few
+// pixels larger: the wall lamp it lights would blink between the rays and the game's unshadowed draw.
+void aPlaceTakenLastTimeKeepsItsPlace()
+{
+    auto smaller = growingLights(0); // No lights yet: the two below are the only ones
+    auto kept = aroundCamera(100, 100);
+    auto rival = aroundCamera(110, 100); // Reaches more
+    rival.light.position[0] = 0.05f;     // At another place
+    smaller.push_back(kept);
+    smaller.push_back(rival);
+
+    const auto fresh = chooseFrom(smaller, cameraAt({}), {});
+    expect(fresh.taken.front() == 1, "Without history the place reaching more pixels is taken first.");
+
+    const auto keptOnly = std::vector{kept};
+    const auto keptPlace = chooseFrom(keptOnly).places.front();
+    const auto keptAgain = chooseFrom(smaller, cameraAt({}), std::span{&keptPlace, 1});
+    expect(keptAgain.taken.front() == 0, "A place the rays had last time keeps its place against a rival a tenth larger.");
 }
 
 void otherEyeLeftAndCounted()
@@ -340,6 +371,7 @@ int main()
         sameChoiceInAnyOrder();
         jitterLeavesChoiceAlone();
         aPlacesLightsComeAndGoTogether();
+        aPlaceTakenLastTimeKeepsItsPlace();
         otherEyeLeftAndCounted();
         noPixelNotTaken();
         wholeViewportWhenInside();
