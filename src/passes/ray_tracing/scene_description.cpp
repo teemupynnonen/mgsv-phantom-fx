@@ -106,7 +106,9 @@ constexpr float CutOutThreshold = 0.5f;
 // - Glass and mirrors are taken for their material, whatever their bytes, for the reflections: every other ray passes them.
 // - Any other mesh drawn forward that the main view alone shows is dropped: the game never casts it.
 // - A character is taken as the main view shows it: its stand-ins dropped, its see-through meshes cut
-//   out by their alpha, and those the game never casts with, its hair, let light through in part.
+//   out by their alpha, and those the game never casts with, its hair, let light through in part. A
+//   swaying tree is a character, and its canopy card (a stand-in with the decal alpha bit) is kept as a
+//   rigid tree's is: without it the sun reached a jungle floor the game shades (2026-11-09).
 // - A rigid model is taken as the game casts: see-through meshes are dropped. Every decal is taken as
 //   cut out, until the game's own per-mesh pass mask is read. A solid mesh the main view alone shows (a
 //   room's inner walls) stops every ray but those towards lights, and so do cut-out meshes and decals the
@@ -139,7 +141,9 @@ std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isC
 
     if (isCharacter)
     {
-        if (isStandIn) return std::nullopt;
+        // A swaying tree is a character too, and casts its canopy through a card (decal alpha bit, shadow 0x42) as a
+        // rigid tree does: the card stays in for rays towards lights. Its other stand-ins are an outfit's copies.
+        if (isStandIn) return (alpha & DecalAlpha) ? std::optional(MeshRole::CutOutStandIn) : std::nullopt;
         if (!isCutOut && !isSeeThrough) return MeshRole::Solid;
 
         return (isMainViewOnly || isSeeThrough) ? MeshRole::Hair : isVegetation ? MeshRole::Leaf : MeshRole::CutOut;

@@ -2863,7 +2863,11 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   rays towards lights pass them, so the game's shadow map still answers for the sun): without them the
   camera's and the bounce's rays saw open sky through the canopy, and the floor came out as flat as the
   game's, 34 of 64 bounce rays leaving under it. A structure whose meshes all let a light's rays through is
-  `GI_MASK_VIEW_ONLY`, which those rays skip whole, so its fronds may take an opacity micromap.
+  `GI_MASK_VIEW_ONLY`, which those rays skip whole, so its fronds may take an opacity micromap. A jungle tree
+  with a canopy card is skinned, and so was taken for a character until 2026-11-09, its card dropped with its other
+  stand-ins: the sun then reached the floor the game's map shades (`84a0fe379b794365`, no shadow over 12.5% of the
+  frame at the case's rock). A character's stand-in with the decal alpha bit is now kept as a rigid model's cut-out
+  stand-in, for rays towards lights alone; those without it stay dropped, as a woman's outfit's was (2026-10-24).
   Since 2026-10-27 a solid stand-in is kept again where its model's main view shows cut-out meshes the
   scene leaves out (shadow bit 0 with alpha bit 5 or 7), as the only thing the rays have of them, and
   only for rays towards lights (`GI_GEOMETRY_SHADOW_ONLY`, `StopsRay`): every other ray passes it, and

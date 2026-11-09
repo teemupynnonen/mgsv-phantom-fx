@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **A swaying jungle tree shades the floor under it.** The tree is skinned, so the scene took it for a character and
+  dropped all its stand-ins, its canopy card among them: the sun then reached 12.5% of the frame where the game's shadow
+  map blocked it, and the jungle's rock came out flat and bright. A character's stand-in with the decal alpha bit is now
+  kept as a rigid model's cut-out stand-in, which only rays towards lights meet and whose alpha lets them through: at the
+  case's rock the sun's shadow now disagrees on 4.3% of the frame. A character's other stand-ins, copies of an outfit, stay
+  dropped.
+
 - **The jungle floor keeps its shade under the trees.** A tree fern's fronds are drawn in the main view alone, and the
   game casts their shadow through a flat card hung in the crown. The rays saw neither, so the canopy hid nothing from
   the sky and the floor under it went flat and bright. Both are in the scene now: the card stops only light from the

@@ -430,6 +430,14 @@ void characterStandInDropped()
     expect(character({{0, 2}, {32, 2}}) == Roles{Dropped, Dropped}, "A character's stand-ins are dropped.");
 }
 
+// A swaying jungle tree is a character (model 84a0fe379b794365, 2026-11-09): its canopy card (alpha 0xa0
+// shadow 0x42, 10 triangles) shades the floor in the game; dropped, the sun lit 12.5% of the frame there.
+void swayingTreeCanopyCard()
+{
+    expect(character({{160, 66}, {128, 66}}) == Roles{MeshRole::CutOutStandIn, MeshRole::CutOutStandIn},
+        "A swaying tree's canopy card casts through its alpha, for rays towards lights alone.");
+}
+
 void characterMainViewSolid()
 {
     expect(character({{0, 1}}) == Roles{MeshRole::Solid}, "A character's solid meshes cast, even those the game never casts with.");
@@ -687,6 +695,7 @@ int main()
         shadowByteThreeDropped();
         hairTaken();
         characterStandInDropped();
+        swayingTreeCanopyCard();
         characterMainViewSolid();
         bushesAreLeaves();
         sameFileDependsOnSource();
