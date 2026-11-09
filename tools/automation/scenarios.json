@@ -8,12 +8,12 @@
     "clock": "52781",
     "weather": "0",
     "expect": {
-      "scene_lacks": 3.434,
-      "in_front": 0.003,
-      "in_sky": 0.014,
-      "extra_shadow": 2.088,
-      "missing_shadow": 0.729,
-      "light": 0.831
+      "scene_lacks": 3.906,
+      "in_front": 0.001,
+      "in_sky": 0.027,
+      "extra_shadow": 2.07,
+      "missing_shadow": 0.919,
+      "light": 0.865
     }
   },
   {
@@ -44,12 +44,12 @@
     "clock": "56889",
     "weather": "0",
     "expect": {
-      "scene_lacks": 5.156,
-      "in_front": 2.486,
-      "in_sky": 0.012,
-      "extra_shadow": 6.667,
-      "missing_shadow": 0.962,
-      "light": 1.154
+      "scene_lacks": 5.873,
+      "in_front": 2.077,
+      "in_sky": 0.02,
+      "extra_shadow": 6.29,
+      "missing_shadow": 0.867,
+      "light": 1.029
     }
   },
   {
@@ -61,12 +61,12 @@
     "clock": "52990",
     "weather": "0",
     "expect": {
-      "scene_lacks": 5.494,
-      "in_front": 0.008,
-      "in_sky": 0.54,
-      "extra_shadow": 0.532,
-      "missing_shadow": 0.173,
-      "light": 0.882
+      "scene_lacks": 5.505,
+      "in_front": 0.003,
+      "in_sky": 0.539,
+      "extra_shadow": 0.539,
+      "missing_shadow": 0.178,
+      "light": 0.963
     },
     "via": "afghanistan"
   },
@@ -81,12 +81,12 @@
     "clock": "56590",
     "weather": "0 0",
     "expect": {
-      "scene_lacks": 1.219,
+      "scene_lacks": 1.331,
       "in_front": 0.001,
-      "in_sky": 0.027,
-      "extra_shadow": 0.464,
-      "missing_shadow": 0.228,
-      "light": 0.689
+      "in_sky": 0.035,
+      "extra_shadow": 0.668,
+      "missing_shadow": 0.205,
+      "light": 0.724
     }
   }
 ]
