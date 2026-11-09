@@ -9,6 +9,16 @@
   upscaler's jitter taken back out of the depth, so its edge along a character no longer flickers; and where a character's
   edge covers part of a pixel, the emblem is blended in under it, so no band of backdrop shows between the two.
 
+## 2.0.1
+
+### Fixed
+
+- Ray-traced light where things touch the ground: no pale glow under Snake's arm when he lies prone, and no black
+  patches on the ground by a boot or a knee resting on a slope.
+- The ray-traced ground is now the game's own terrain as it draws it, near and far, so shadows, bounce light and
+  reflections meet the ground where it really is.
+- Ray-traced bounce light and reflections no longer leak in from outside: no orange glow or pale lines along pipes,
+  frames and furniture standing close to a room's wall.
 
 ## 2.0.0
 

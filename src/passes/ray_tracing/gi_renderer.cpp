@@ -1026,6 +1026,7 @@ Result render(Frame& frame)
         .characters = frame.characters,
         .newTextures = frame.newTextures,
         .terrainEye = terrain ? std::optional(frame.eye) : std::nullopt,
+        .terrainPatches = {.draws = frame.terrainPatches, .mesh = frame.terrainPatchMesh},
         .seaCentre = frame.seaLevel ? std::optional(std::array{frame.eye[0], *frame.seaLevel, frame.eye[2]}) : std::nullopt,
         .shouldListInstances = frame.debugShadows || std::ranges::any_of(trace::inOrder(), [&](const auto* each) { return each->listsInstances(frame); }),
         .selfLight = frame.selfLight,
@@ -1108,6 +1109,16 @@ Result render(Frame& frame)
         const auto paletteRows = palettes.size() / 4;
         const auto paletteOffset = uploads.reserve(16, paletteRows);
         std::memcpy(uploads.data + paletteOffset, palettes.data(), palettes.size() * sizeof(float));
+        std::uint32_t patchCount{};
+        for (const auto& ring : update.terrain) patchCount += static_cast<std::uint32_t>(ring.patches.size());
+        const auto patchesOffset = uploads.reserve(sizeof(GITerrainPatch), patchCount);
+        std::uint32_t patchesWritten{};
+        for (const auto& ring : update.terrain)
+        {
+            std::memcpy(uploads.data + patchesOffset + patchesWritten * sizeof(GITerrainPatch), ring.patches.data(), ring.patches.size() * sizeof(GITerrainPatch));
+            patchesWritten += static_cast<std::uint32_t>(ring.patches.size());
+        }
+
         const auto micromapJobs = scene.micromapJobs();
         const auto micromapJobCount = static_cast<std::uint32_t>(micromapJobs.size());
         const auto micromapJobsOffset = uploads.reserve(sizeof(GIMicromapJob), micromapJobCount);
@@ -1123,12 +1134,18 @@ Result render(Frame& frame)
             constants.terrainOffset = {t.offset[0], t.offset[1], t.offset[2], 0.0f};
             constants.terrainUvConverter = {t.uvConverter[0], t.uvConverter[1], t.uvConverter[2], t.uvConverter[3]};
             constants.terrainTexelCorrect = {t.texelCorrect[0], t.texelCorrect[1], t.texelCorrect[2], t.texelCorrect[3]};
+            std::uint32_t firstPatch{};
             for (std::uint32_t r = 0; r < GI_TERRAIN_RINGS; ++r)
             {
                 const auto& ring = update.terrain[r];
+                const auto patches = static_cast<std::uint32_t>(ring.patches.size());
                 constants.terrainRings[r] = {ring.corner[0], ring.corner[1], ring.cellSize, static_cast<float>(GI_TERRAIN_CELLS)};
                 (&constants.terrainRingOffsets.x)[r] = static_cast<std::uint32_t>(ring.poolOffset);
+                constants.terrainPatchRings[r] = {static_cast<std::uint32_t>(ring.patchPoolOffset), firstPatch, patches, 0};
+                firstPatch += patches;
             }
+
+            constants.terrainPatchMesh = {static_cast<std::uint32_t>(update.patchMeshIndexOffset), static_cast<std::uint32_t>(update.patchMeshVertexOffset), 0, 0};
         }
         if (traces.tracesLight) s.light->fill(constants, frame.verticalFov, parity);
         if (traces.tracesSun) s.shadows->fill(constants);
@@ -1158,6 +1175,7 @@ Result render(Frame& frame)
         descriptors.buffer(binding::NewGeometries, s.upload[slot].Get(), newGeometriesOffset, 4, newGeometryCount);
         descriptors.buffer(binding::SkinRecords, s.upload[slot].Get(), skinOffset, sizeof(GISkinRecord), skinCount);
         descriptors.buffer(binding::Palettes, s.upload[slot].Get(), paletteOffset, 16, paletteRows);
+        descriptors.buffer(binding::TerrainPatches, s.upload[slot].Get(), patchesOffset, sizeof(GITerrainPatch), patchCount);
         descriptors.buffer(binding::Instances, scene.instanceBuffer(), 0, sizeof(GIInstanceDesc), instanceCount);
         descriptors.rawBuffer(binding::GeometryPool, scene.pool(), gi_scene::Scene::PoolBytes);
         descriptors.buffer(binding::Geometries, scene.geometryTable(), 0, sizeof(GIGeometry), MaxGeometries);
@@ -1230,7 +1248,10 @@ Result render(Frame& frame)
         if (newGeometryCount) recorder.dispatch(Kernel::ClearNewGeometries, groups(newGeometryCount, 64));
 
         for (std::uint32_t r = 0; r < GI_TERRAIN_RINGS; ++r)
+        {
             if (update.terrain[r].isRemade) recorder.dispatch(Kernel::TerrainGrid, groups(GI_TERRAIN_CELLS, 8), groups(GI_TERRAIN_CELLS, 8), {r});
+            if (update.terrain[r].arePatchesWritten) recorder.dispatch(Kernel::TerrainPatches, groups(GI_TERRAIN_PATCH_TRIANGLES, 64), 1, {r});
+        }
 
         if (skinCount) recorder.dispatch(Kernel::Skin, groups(skinVertices, 64), 1, {skinVertices, skinCount});
 

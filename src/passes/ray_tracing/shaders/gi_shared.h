@@ -63,8 +63,17 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_TERRAIN_RINGS 4u
 #define GI_TERRAIN_CELLS 256u
 
-// The instances' mask: every ray takes them all.
+// The game's own terrain patches a ring takes in place of its cells (TerrainPatches): at most so many a ring, of at most
+// so many triangles together (32 of the game's finest, 32 x 32 cells a patch).
+#define GI_TERRAIN_PATCHES 64u
+#define GI_TERRAIN_PATCH_TRIANGLES 65536u
+// How far a patch's rect may miss a ring cell's, in metres, and still be taken to cover it (its float error).
+#define GI_TERRAIN_PATCH_SLACK 1e-3f
+
+// The instances' masks: every ray takes the scene; the terrain's rings carry GI_MASK_TERRAIN too, for a search of the terrain
+// alone (TerrainUnderPixel).
 #define GI_MASK_SCENE 1u
+#define GI_MASK_TERRAIN 2u
 
 // The shadow probe's global illumination rays, one a thread of its group.
 #define GI_PROBE_LIGHT_RAYS 64u
@@ -210,6 +219,10 @@ struct GIFrameConstants
     float4 terrainTexelCorrect; // xy: b4 c1.xy
     float4 terrainRings[GI_TERRAIN_RINGS]; // xy: the ring's lowest corner (world x, z); z: cell size; w: cells across
     uint4 terrainRingOffsets;   // Each ring's first vertex, in bytes into the geometry pool
+    uint4 terrainPatchMesh;     // The game's patch mesh (TerrainPatches), bytes into the pool: x its indices (32-bit), y its
+                                // vertices (two floats each)
+    uint4 terrainPatchRings[GI_TERRAIN_RINGS]; // Each ring's patches: x their triangles' vertices, bytes into the pool; y the
+                                               // first of them in g_TerrainPatches; z how many
     // Ray cones for the textures' levels of detail (gi_common.hlsli, TextureLod): x the angle a pixel
     // spans, radians.
     float4 rayCone;
@@ -246,6 +259,21 @@ struct GISkinRecord
     uint firstBone;    // The character's palette: three float4 rows a bone from this one, in g_Palettes
     uint bindNormalOffset;  // Its normals and tangents (GIGeometry::normalOffset); 0 without
     uint posedNormalOffset; // And where they go posed
+};
+
+// A terrain patch the game's main camera drew (NewTerrain_Depth), as the scene takes it: the draw's rect of the virtual
+// heightmap, its index range in the game's patch mesh, its rect of the world and where its triangles start among the
+// frame's patches'. Records are sorted by their first triangle and adjoin.
+struct GITerrainPatch
+{
+    float4 uvScaleOffset; // cb5 c9: a vertex's virtual heightmap uv = its own x xy + zw
+    float4 worldScale;    // cb5 c10, c11: its world point = (u, height, v) x scale + offset, the draw's own
+    float4 worldOffset;
+    float4 worldRect;     // World x, z: its lowest corner (xy), its highest (zw)
+    uint firstIndex;
+    uint indexCount;
+    uint baseVertex;
+    uint firstTriangle;
 };
 
 #define GI_MICROMAP_FORMAT_4_STATE 2u

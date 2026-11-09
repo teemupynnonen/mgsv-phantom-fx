@@ -236,6 +236,11 @@ void pixelShaderCreated(const void* code, std::size_t size, IUnknown* shader) no
 void vertexShaderCreated(const void* code, std::size_t size, IUnknown* shader) noexcept;
 // Other for a shader the add-on does not know.
 VertexShader vertexShaderOf(IUnknown* shader) noexcept;
+// As the game creates an input layout: the format of its POSITION element, for a draw that decodes the vertices it
+// binds (the terrain's patch mesh, gi_inputs.cpp).
+void inputLayoutCreated(IUnknown* layout, DXGI_FORMAT positionFormat) noexcept;
+// DXGI_FORMAT_UNKNOWN for a layout the add-on was not told of.
+DXGI_FORMAT positionFormatOf(IUnknown* layout) noexcept;
 // The first shader the game created from the row's code, to draw with the game's own shader (the
 // ray-traced lights' twins); null until then. Held until forget.
 ID3D11PixelShader* firstCreated(const GameShader& row) noexcept;
