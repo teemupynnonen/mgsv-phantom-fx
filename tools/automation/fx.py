@@ -118,7 +118,12 @@ def run(lines, timeout=600.0):
     while True:
         now = time.monotonic()
         if now > deadline:
-            (link() / f"{name}.cmd").unlink(missing_ok=True)  # Not for a game that starts later
+            command = link() / f"{name}.cmd"
+            unpicked = command.exists()
+            command.unlink(missing_ok=True)  # Not for a game that starts later
+            # A deadline of 30 s passes before the check above runs: a command still there is a frozen game, not a slow one.
+            if unpicked and now - started_at > PICKUP_TIMEOUT:
+                raise GameGone(f"the game in {game_folder} took no command for {PICKUP_TIMEOUT:.0f} s: it is frozen or stuck loading")
             raise TimeoutError(f"no result for {name} in {timeout} s: is a dev build running in {game_folder}?")
         if now > next_check:
             next_check = now + 3
@@ -277,6 +282,8 @@ def wait_for_scripts(timeout=90.0, least_seconds=45.0):
 
         time.sleep(0.5)
 
+    raise TimeoutError(f"the game's scripts did not answer after {timeout:.0f} s: read {link() / 'launch.log'}")
+
 
 def boot(timeout=180.0):
     """Steps the game from wherever it is into free roam; returns the seconds it took."""
@@ -345,6 +352,8 @@ def cabin(code=40050, timeout=120.0):
         if run([ready]).splitlines()[-1] == "table table table":
             break
         run(["wait 30"])
+    else:
+        raise TimeoutError("the mission's script globals did not appear in 60 s: not asking for a mission clear")
 
     clear = (f'lua local ok, err = pcall(function() TppMission.ReserveMissionClear{{missionClearType = TppDefine.MISSION_CLEAR_TYPE.FROM_HELISPACE, nextMissionId = {code}}} end)'
              ' return tostring(ok) .. " " .. tostring(err)')
@@ -512,7 +521,7 @@ def replay(name=None):
     record_at(state_of(original), again)
     print(report.write(cases() / again))
     view = report.same_view(original, cases() / again)
-    print(f"Back at the same view: {view[0]:.1f}% of the game's surfaces match, the eye {view[1]:.3f} m away." if view else "No comparison: a record is missing, or the render sizes differ.")
+    print(f"Back at the same view: {view[0]:.1f}% of the game's surfaces match, the eye {view[1]:.3f} m away." if view else "No comparison: a record is missing, or the render sizes' aspects differ.")
 
 
 def load_scenarios():
@@ -582,7 +591,9 @@ def run_scenarios(names, accept):
             measured = json.loads((folder / "numbers.json").read_text())
             baseline = BASELINES / name
             view = report.same_view(baseline, folder) if (baseline / "scene.bin").exists() else None
-            if view and (view[0] < report.LEAST_SAME_VIEW or view[1] > report.MOST_EYE_METRES):
+            if (baseline / "scene.bin").exists() and view is None:
+                problems.append("no comparison with the baseline: another aspect ratio")
+            elif view and (view[0] < report.LEAST_SAME_VIEW or view[1] > report.MOST_EYE_METRES):
                 problems.append(f"did not reach the view: {view[0]:.0f}% of the surfaces match, the eye {view[1]:.2f} m away")
             if not accept:
                 problems += report.worse(scenario["expect"], measured)

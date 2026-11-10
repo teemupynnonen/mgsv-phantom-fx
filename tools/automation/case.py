@@ -316,6 +316,10 @@ def same_view(first, second):
     # Another render size: the copy runs windowed at whatever the desktop allows, a case in the player's game
     # at their resolution. The second reads nearest at the first's pixels.
     if a.pixels.shape != b.pixels.shape:
+        # Another aspect pairs other camera rays with a pixel, so the share would compare two frames rather than two
+        # draws of one: no answer instead of a number.
+        if abs(a.width / a.height - b.width / b.height) > 0.01:
+            return None
         height, width = near.shape
         rows = np.minimum((np.arange(height) + 0.5) * b.pixels.shape[0] / height, b.pixels.shape[0] - 1).astype(int)
         columns = np.minimum((np.arange(width) + 0.5) * b.pixels.shape[1] / width, b.pixels.shape[1] - 1).astype(int)
