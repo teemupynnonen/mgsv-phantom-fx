@@ -43,11 +43,14 @@ $process = Start-Process (Join-Path $Game 'mgsvtpp.exe') -WorkingDirectory $Game
 for ($second = 0; -not $Visible -and $second -lt 60 -and -not $process.HasExited; $second++) {
     Start-Sleep -Seconds 1
     $process.Refresh()
+    # While the window is created the handle is zero, and a zero handle passed as one cannot be. It is read
+    # with the rect each time, as it changes.
+    $handle = [System.IntPtr]$process.MainWindowHandle
     $rect = New-Object Automation.Window+Rect
-    if ($process.MainWindowHandle -ne 0 -and [Automation.Window]::GetWindowRect($process.MainWindowHandle, [ref]$rect) -and $rect.Left -gt -1000) {
-        [Automation.Window]::SetWindowPos($process.MainWindowHandle, [System.IntPtr]::Zero, -6000, 100, 0, 0, $NoSizeNoOrderNoActivate) | Out-Null
+    if ($handle -ne [System.IntPtr]::Zero -and [Automation.Window]::GetWindowRect($handle, [ref]$rect) -and $rect.Left -gt -1000) {
+        [Automation.Window]::SetWindowPos($handle, [System.IntPtr]::Zero, -6000, 100, 0, 0, $NoSizeNoOrderNoActivate) | Out-Null
     }
-    if ($process.MainWindowHandle -ne 0 -and [Automation.Window]::GetForegroundWindow() -eq $process.MainWindowHandle) {
+    if ($handle -ne [System.IntPtr]::Zero -and [Automation.Window]::GetForegroundWindow() -eq $handle) {
         [Automation.Window]::SetForegroundWindow($player) | Out-Null
     }
 }
