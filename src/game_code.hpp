@@ -28,12 +28,12 @@ inline bool matches(std::span<const Expected> expected) noexcept
     return std::ranges::all_of(expected, [](const Expected& one) { return std::memcmp(image() + one.rva, one.code.data(), one.code.size()) == 0; });
 }
 
-// The bytes another mod's hook wrote over the start of a function: jmp rel32, or jmp [rip + 0] with its
-// target after it; 0 when there is none.
+// The bytes another mod's hook wrote over the start of a function: jmp rel32, or jmp [rip + disp32] (14 with the
+// target after it when disp32 is 0, 6 otherwise); 0 when there is none.
 inline std::size_t hookJumpLength(const std::uint8_t* at) noexcept
 {
     if (at[0] == 0xE9) return 5;
-    if (at[0] == 0xFF && at[1] == 0x25) return 14;
+    if (at[0] == 0xFF && at[1] == 0x25) return (at[2] | at[3] | at[4] | at[5]) ? 6 : 14;
     return 0;
 }
 
