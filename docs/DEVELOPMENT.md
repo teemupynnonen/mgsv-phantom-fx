@@ -3391,7 +3391,8 @@ Not handled:
   2026-10-26): as a light is drawn again, a compute pass takes its volume's vertices (clip space, as
   copied from its draw) through the inverse of its pass's `m_projectionView` into their lowest and
   highest corners, read back three frames later and kept by light (its kind, its place to the
-  centimetre, its colour; the game's lights hold still). `LocalLightAt` gives no light outside them (2 cm
+  centimetre, its colour; the game's lights hold still). A light whose key is already kept is not
+  measured again, so a frame of still lights costs no bounds passes. `LocalLightAt` gives no light outside them (2 cm
   spare), so the bounce, the share's picks and the lamp probe keep each light within its box, as the
   game and the light drawn again do. Before, the global illumination's bounce lit every surface within a
   light's reach: in the prologue's hospital three bluish fill lights 200 m wide and a 250 m spot

@@ -526,6 +526,14 @@ Volume volumeOf(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call)
     }
 }
 
+// Whether the light's bounds are already known. The game's lights hold still, and a move of a centimetre
+// or more changes its key, so one measurement lasts.
+bool hasVolumeBounds(const DrawnLight& light)
+{
+    std::lock_guard lock(boundsMutex);
+    return volumeBounds.contains(light_choice::keyOf(light));
+}
+
 // The bounds of the light's volume as read back, if they have come back yet. A flashlight's moves with it.
 std::optional<Bounds> volumeBoundsOf(const DrawnLight& light)
 {
@@ -620,7 +628,9 @@ void measureVolumes()
     for (const auto& light : frameLights)
     {
         const auto& volume = light.volume;
-        if (!volume.view || light.drawn.game->flashlight || frameBoundsLights.size() >= GI_MAX_LOCAL_LIGHTS) continue;
+        if (!volume.view || light.drawn.game->flashlight || frameBoundsLights.size() >= GI_MAX_LOCAL_LIGHTS
+            || hasVolumeBounds(light.drawn))
+            continue;
 
         camera::Matrix projectionView{};
         for (std::size_t i = 0; i < projectionView.size(); ++i) projectionView[i] = light.drawn.scene.projectionView[i / 4][i % 4];
