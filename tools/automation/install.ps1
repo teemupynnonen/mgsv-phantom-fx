@@ -21,17 +21,27 @@ if (Get-Process mgsvtpp -ErrorAction SilentlyContinue) { throw 'The game is runn
 
 # The game's own files, linked once.
 if (-not (Test-Path (Join-Path $Game 'mgsvtpp.exe'))) {
+    # A hard link cannot cross volumes: on another one a folder is a junction and a loose file a copy. The
+    # folders are the game's own and read only while it runs.
+    $sameVolume = [System.IO.Path]::GetPathRoot($Game) -eq [System.IO.Path]::GetPathRoot($Steam)
     foreach ($item in 'master', 'mgo', 'CustomSoundtrack', 'D-Mod', 'mgsvtpp.exe', 'mgsvmgo.exe', 'steam_api64.dll', 'steam_appid.txt', 'version_info.txt') {
         $path = Join-Path $Steam $item
         if (Test-Path $path -PathType Container) {
-            Get-ChildItem $path -Recurse -File | ForEach-Object {
-                $link = Join-Path $Game $_.FullName.Substring($Steam.Length)
-                New-Item -ItemType Directory -Force (Split-Path $link) | Out-Null
-                New-Item -ItemType HardLink -Path $link -Target $_.FullName | Out-Null
+            if ($sameVolume) {
+                Get-ChildItem $path -Recurse -File | ForEach-Object {
+                    $link = Join-Path $Game $_.FullName.Substring($Steam.Length)
+                    New-Item -ItemType Directory -Force (Split-Path $link) | Out-Null
+                    New-Item -ItemType HardLink -Path $link -Target $_.FullName | Out-Null
+                }
+            } else {
+                New-Item -ItemType Directory -Force $Game | Out-Null
+                New-Item -ItemType Junction -Path (Join-Path $Game $item) -Target $path | Out-Null
             }
         } else {
             New-Item -ItemType Directory -Force $Game | Out-Null
-            New-Item -ItemType HardLink -Path (Join-Path $Game $item) -Target $path | Out-Null
+            $link = Join-Path $Game $item
+            if ($sameVolume) { New-Item -ItemType HardLink -Path $link -Target $path | Out-Null }
+            else { Copy-Item $path $link }
         }
     }
 }
