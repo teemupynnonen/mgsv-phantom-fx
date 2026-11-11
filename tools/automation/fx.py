@@ -231,7 +231,7 @@ def travel(destination, place=None, timeout=300.0):
         state = run([f"lua {BOOT_STEP}"]).splitlines()[1].split()
         playing = state[-1] == "playing"
         if not playing:
-            loading_seen = True
+            if asked: loading_seen = True
         elif loading_seen and state[0] == str(code):
             return
         elif not loading_seen and state[0] != str(code) and time.monotonic() - asked > 5:
