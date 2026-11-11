@@ -3392,7 +3392,9 @@ Not handled:
   copied from its draw) through the inverse of its pass's `m_projectionView` into their lowest and
   highest corners, read back three frames later and kept by light (its kind, its place to the
   centimetre, its colour; the game's lights hold still). A light whose key is already kept is not
-  measured again, so a frame of still lights costs no bounds passes. `LocalLightAt` gives no light outside them (2 cm
+  measured again, so a frame of still lights costs no bounds passes. A travel drops all of them, the
+  new map's lights not being the old map's where a key repeats (automation's travel; a player's
+  helicopter flight is not seen here). `LocalLightAt` gives no light outside them (2 cm
   spare), so the bounce, the share's picks and the lamp probe keep each light within its box, as the
   game and the light drawn again do. Before, the global illumination's bounce lit every surface within a
   light's reach: in the prologue's hospital three bluish fill lights 200 m wide and a 250 m spot

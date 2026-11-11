@@ -903,6 +903,14 @@ void detach() noexcept
     }
 }
 
+void forgetVolumeBounds() noexcept
+{
+    std::scoped_lock lock(resourceMutex, boundsMutex);
+    frameBoundsLights.clear();
+    for (auto& lights : readbackLights) lights.clear();
+    volumeBounds.clear();
+}
+
 void configure(const Configuration& configuration) noexcept
 {
     // Path tracing lights them from their records (path_tracing::addLampLight), with or without the ray-traced lights.
