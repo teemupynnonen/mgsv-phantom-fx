@@ -230,6 +230,9 @@ def travel(destination, place=None, timeout=300.0):
     while time.monotonic() < deadline:
         state = run([f"lua {BOOT_STEP}"]).splitlines()[1].split()
         playing = state[-1] == "playing"
+        # A boot that comes up in the destination, with nothing asked for and no place to reach, needs no journey.
+        if playing and state[0] == str(code) and not asked and not place:
+            return
         if not playing:
             if asked: loading_seen = True
         elif loading_seen and state[0] == str(code):
