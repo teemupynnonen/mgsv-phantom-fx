@@ -57,6 +57,22 @@ constexpr std::uint64_t SettledFrames = 60;
 constexpr std::uint32_t DefaultCaptureFrames = 120;
 // Presents after a probe's pixel changes before its text has that pixel: a readback's frames in flight.
 constexpr std::string_view ProbeWait = "wait 8";
+// Frames between looks at where the game is while its startup logos would show.
+constexpr std::uint32_t LogoPollFrames = 30;
+// The game shows konamiLogo, kjpLogo and foxLogo six seconds each in this sequence (init_sequence.lua,
+// Seq_Demo_ShowKonamiAndFoxLogo). Deleted and the sequence left as Infinite Heaven's skipLogos does, the
+// pre-title comes at once.
+constexpr std::string_view LogoSkipScript = R"(
+if not TppSequence then return "" end
+local dropped = 0
+for _, name in ipairs({ "konamiLogo", "kjpLogo", "foxLogo" }) do
+  local splash = SplashScreen and SplashScreen.GetSplashScreenWithName(name)
+  if splash then SplashScreen.Delete(splash); dropped = dropped + 1 end
+end
+local sequence = TppSequence.GetCurrentSequenceName()
+if sequence == "Seq_Demo_ShowKonamiAndFoxLogo" then TppUiCommand.StartPreTitleSequence() end
+return sequence .. (dropped > 0 and (" dropped " .. dropped) or "")
+)";
 
 std::filesystem::path folder; // Empty while off
 std::atomic<std::uint64_t> presents{};
@@ -87,6 +103,8 @@ struct Script
 };
 std::optional<Script> script;
 std::uint32_t framesSincePoll{};
+std::uint32_t framesSinceLogos{};
+bool logosPassed{}; // A copy that holds `skip-logos`, once the game is past its startup logos
 bool probeTurnedOnView{};
 
 std::optional<std::filesystem::path> nextCommandFile()
@@ -716,9 +734,29 @@ void caseKey() noexcept
     if (!folder.empty()) caseAsked = true;
 }
 
+// The game's startup logos, dropped for a copy that holds `skip-logos` in its folder: a fresh run spends
+// eighteen seconds on them before the title (init_sequence.lua, LogoSkipScript).
+void skipStartupLogos() noexcept
+{
+    if (logosPassed || ++framesSinceLogos < LogoPollFrames) return;
+
+    framesSinceLogos = 0;
+    std::error_code error;
+    if (!std::filesystem::exists(folder / "skip-logos", error)) return;
+
+    const auto outcome = game_lua::run(LogoSkipScript, "=skip logos", false);
+    if (!outcome) return;
+
+    const auto& text = outcome->text;
+    if (text.find(" dropped ") != std::string::npos || text.starts_with("Seq_Demo_ShowKonamiAndFoxLogo")) log("Startup logos: " + text);
+    logosPassed = text.starts_with("Seq_Game_");
+}
+
 void onFrameStart() noexcept
 {
     if (folder.empty()) return;
+
+    skipStartupLogos();
 
     try
     {

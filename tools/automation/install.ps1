@@ -56,6 +56,8 @@ $saves = Join-Path $Game 'PhantomFX-automation\saves'
 if (Test-Path $saves) { Remove-Item $saves -Recurse -Force }
 New-Item -ItemType Directory -Force $saves | Out-Null
 Copy-Item (Join-Path $SeedSaves '*') $saves
+# The copy drops the game's startup logos, which cost eighteen seconds of every run (automation.cpp).
+New-Item -ItemType File -Force (Join-Path $Game 'PhantomFX-automation\skip-logos') | Out-Null
 
 # The game's user data folder for the run: its own display settings, windowed at 1920x1080.
 $userData = Join-Path $Game 'PhantomFX-automation\local'
