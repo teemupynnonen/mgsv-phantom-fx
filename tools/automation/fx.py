@@ -310,6 +310,17 @@ def boot(timeout=180.0):
 MAPS = {"afghanistan": 30010, "africa": 30020, "motherbase": 30050}
 
 
+def at_place(place, tolerance=1.5):
+    """Whether the player stands within `tolerance` metres of `place`, as a travel asked."""
+    try:
+        have = [float(value) for value in run(["lua vars.playerPosX .. ' ' .. vars.playerPosY .. ' ' .. vars.playerPosZ"]).splitlines()[1].split()]
+    except (IndexError, ValueError):
+        return False
+
+    want = [float(value) for value in place.split()]
+    return all(abs(a - b) <= tolerance for a, b in zip(want, have))
+
+
 def travel(destination, place=None, timeout=180.0, again=False):
     """Leaves for another free roam, at `place` when given, and returns once it plays: after its loading has
     been seen to start. The game refuses to leave while busy (a fade, a save), so the request repeats until
@@ -327,7 +338,10 @@ def travel(destination, place=None, timeout=180.0, again=False):
         if not playing:
             if asked: loading_seen = True
         elif loading_seen and state[0] == str(code):
-            return
+            # The mission code changes before the arrival's checkpoint puts the player down and restores its
+            # clock and camera; those would overwrite whatever a scenario sets next, so wait for the player.
+            if not place or at_place(place):
+                return
         elif not loading_seen and (again or state[0] != str(code)) and time.monotonic() - asked > 5:
             run([f"travel {destination}" + (f" {place}" if place else "")])
             asked = time.monotonic()
@@ -498,6 +512,18 @@ def wait_for_scene(least=5000, timeout=90.0):
     raise TimeoutError(f"no scene after {timeout:.0f} s: the game is at {last}")
 
 
+def camera_at(state):
+    """Whether the running copy renders from the camera `state` asks for: a centimetre and a milliradian."""
+    want = [float(value) for value in state["camera"].split()[:5]]
+    try:
+        line = run(["status"]).splitlines()[1]
+        have = [float(value) for value in line.split(" camera ", 1)[1].split()[:5]]
+    except (IndexError, ValueError):
+        return False
+
+    return all(abs(a - b) <= (0.02 if i < 3 else 0.002) for i, (a, b) in enumerate(zip(want, have)))
+
+
 def record_at(state, name):
     """The running copy at a case's or a scenario's spot, recorded there as the case `name`."""
     go_back(state)
@@ -505,7 +531,13 @@ def record_at(state, name):
     weather = state.get("weather", "-1")
     sky = [f"clock {state['clock']}"] if "clock" in state else []
     sky.append("weather off" if weather.startswith("-1") else f"weather {weather}")
-    run(["release", "wait_scene"] + sky + ["wait 120", f"camera {state['camera']}", "wait 60", "wait_scene", f"case {name}"])
+    run(["release", "wait_scene"] + sky + ["wait 120", f"camera {state['camera']}", "wait 60", "wait_scene"])
+    # A held pose applies on the game's camera update; a case frozen before that keeps the save's camera.
+    for _ in range(3):
+        if camera_at(state):
+            break
+        run([f"camera {state['camera']}", "wait 60"])
+    run([f"case {name}"])
 
 
 def replay(name=None):

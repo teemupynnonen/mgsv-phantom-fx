@@ -104,6 +104,7 @@ struct Script
 std::optional<Script> script;
 std::uint32_t framesSincePoll{};
 std::uint32_t framesSinceLogos{};
+std::uint32_t freezeWaits{}; // Frames a freeze has waited for its camera to be the one asked for
 bool logosPassed{}; // A copy that holds `skip-logos`, once the game is past its startup logos
 bool probeTurnedOnView{};
 
@@ -185,6 +186,15 @@ bool isSameValue(std::string_view a, std::string_view b)
 std::string text(const held_camera::Pose& pose)
 {
     return std::format("{} {} {} {} {} {}", pose.position[0], pose.position[1], pose.position[2], pose.yaw, pose.pitch, pose.focalLength);
+}
+
+// Whether the game rendered from `rendered` the pose `wanted` asks for: a centimetre and a milliradian.
+bool isSameCamera(const held_camera::Pose& rendered, const held_camera::Pose& wanted)
+{
+    for (int i = 0; i < 3; ++i)
+        if (std::abs(rendered.position[i] - wanted.position[i]) > 0.01f) return false;
+
+    return std::abs(std::remainder(rendered.yaw - wanted.yaw, 6.2831853f)) < 0.001f && std::abs(rendered.pitch - wanted.pitch) < 0.001f;
 }
 
 // A pose's five numbers; its focal length is read apart, as `move` puts its frames before it.
@@ -309,8 +319,25 @@ void run(Script& running, const std::string& line)
     }
     else if (command == "freeze")
     {
-        if (const auto camera = held_camera::lastCamera()) held_camera::hold(*camera);
-        else running.output += "error: no camera yet\n";
+        // Freeze at the camera asked for: photo mode applies a held pose on its next camera update, and a
+        // case that froze before that kept the game's camera instead, at the save's old pose. Five seconds
+        // of frames is enough for any update to come; it says so when none does.
+        const auto wanted = held_camera::requested();
+        const auto camera = held_camera::lastCamera();
+        if (wanted && (!camera || !isSameCamera(*camera, *wanted)) && freezeWaits < 300)
+        {
+            ++freezeWaits;
+            running.lines.push_front("freeze");
+        }
+        else
+        {
+            if (wanted && (!camera || !isSameCamera(*camera, *wanted)))
+                running.output += std::format("error: the camera never applied: asked {}, rendered {}\n", text(*wanted),
+                    camera ? text(*camera) : std::string("none"));
+            freezeWaits = 0;
+            if (camera) held_camera::hold(*camera);
+            else running.output += "error: no camera yet\n";
+        }
     }
     else if (command == "release")
     {
