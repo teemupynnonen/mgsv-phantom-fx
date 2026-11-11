@@ -195,7 +195,7 @@ return vars.missionCode .. " " .. tostring(sequence) .. (playing and " playing" 
 """.strip().replace("\n", " ")
 
 
-def boot(timeout=600.0):
+def boot(timeout=180.0):
     """Steps the game from wherever it is into free roam; returns the seconds it took."""
     start = time.monotonic()
     last = None
