@@ -32,7 +32,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-PLAYER_GAME = Path(os.environ.get("PHANTOM_FX_GAME", r"C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP"))
+PLAYER_GAME = Path(os.environ.get("PHANTOM_FX_GAME") or r"C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP")
 AUTOMATION_GAME = Path.home() / "Documents" / "Development" / "mgsv-automation" / "game"
 LINK = "PhantomFX-automation"
 # What is expected of each scenario, in the repository; their pictures and depth, which stay on this machine.
@@ -352,7 +352,7 @@ def record_at(state, name):
     weather = state.get("weather", "-1")
     sky = [f"clock {state['clock']}"] if "clock" in state else []
     sky.append("weather off" if weather.startswith("-1") else f"weather {weather}")
-    run(["release", "wait_scene"] + sky + ["wait 120", f"camera {state['camera']}", "wait 60", f"case {name}"])
+    run(["release", "wait_scene"] + sky + ["wait 120", f"camera {state['camera']}", "wait 60", "wait_scene", f"case {name}"])
 
 
 def replay(name=None):
