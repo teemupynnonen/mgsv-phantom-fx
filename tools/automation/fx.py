@@ -349,7 +349,7 @@ def record_at(state, name):
     weather = state.get("weather", "-1")
     sky = [f"clock {state['clock']}"] if "clock" in state else []
     sky.append("weather off" if weather.startswith("-1") else f"weather {weather}")
-    run(sky + ["wait 120", f"camera {state['camera']}", "wait 60", "wait_scene", f"case {name}"])
+    run(["release", "wait_scene"] + sky + ["wait 120", f"camera {state['camera']}", "wait 60", f"case {name}"])
 
 
 def replay(name=None):
