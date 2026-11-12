@@ -463,6 +463,8 @@ void materialPerRole()
     expect(flagsOf(*building, 0) == 0, "A solid mesh stops every ray.");
     expect(flagsOf(*building, 1) == GI_GEOMETRY_CUT_OUT, "A cut-out mesh is tested by its alpha.");
     expect(flagsOf(*building, 2) == GI_GEOMETRY_NO_SHADOW, "Rays towards lights pass a main-view-only mesh.");
+    expect(flagsOf(*building, 3) == (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_NO_SHADOW),
+        "A main-view cut-out kept beside its stand-in meets the camera's rays by its alpha, and passes light rays.");
     expect(flagsOf(*building, 4) == GI_GEOMETRY_SHADOW_ONLY, "Only rays towards lights meet a tarp's stand-in.");
 
     const auto rock = modelOf({{0, 1}, {0, 2}}, Source::VisibilityManager);
