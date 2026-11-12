@@ -305,6 +305,17 @@ def write(case):
     return report
 
 
+def rays(record):
+    """The camera rays at the four corners of `record`'s frame, a unit direction each: they differ with the lens, and
+    a little with the eye, so a replay of one case keeps them within a degree."""
+    inverse = np.asarray(record.header["inverse"], np.float64).reshape(4, 4)
+    corners = np.array([[-1, -1, 0.5, 1], [1, -1, 0.5, 1], [-1, 1, 0.5, 1], [1, 1, 0.5, 1]])
+    world = corners @ inverse.T
+    eye = np.asarray(record.header["eye"][:3], np.float64)
+    directions = world[:, :3] - world[:, 3:4] * eye
+    return directions / np.linalg.norm(directions, axis=1, keepdims=True)
+
+
 def same_view(first, second):
     """How nearly two cases show the same frame, the game's own surfaces in each compared pixel by pixel: the
     share that match, percent, and how far apart the eyes are; none without records of one size."""
@@ -312,6 +323,13 @@ def same_view(first, second):
         return None
 
     a, b = Record(Path(first) / "scene"), Record(Path(second) / "scene")
+    # Another lens: the same pose pairs other camera rays with a pixel, so the share would compare two frames
+    # rather than two draws of one. The corner rays tell it without needing the lens: a 21 mm and a 30 mm case
+    # differ by degrees where a replay's own error is a fraction of one. No answer, not a number under the
+    # threshold.
+    if not np.allclose(rays(a), rays(b), atol=0.017):  # About a degree
+        return None
+
     near, far = a.pixels["game_distance"], np.asarray(b.pixels["game_distance"])
     # Another render size: the copy runs windowed at whatever the desktop allows, a case in the player's game
     # at their resolution. The second reads nearest at the first's pixels.
