@@ -70,10 +70,14 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 // How far a patch's rect may miss a ring cell's, in metres, and still be taken to cover it (its float error).
 #define GI_TERRAIN_PATCH_SLACK 1e-3f
 
-// The instances' masks: every ray takes the scene; the terrain's rings carry GI_MASK_TERRAIN too, for a search of the terrain
-// alone (TerrainUnderPixel).
-#define GI_MASK_SCENE 1u
-#define GI_MASK_TERRAIN 2u
+// The instances' masks. An instance whose geometry all lets rays towards lights through (GI_GEOMETRY_NO_SHADOW: a tree fern's
+// fronds) is GI_MASK_VIEW_ONLY, so those rays skip it whole, its micromaps' opaque triangles too; every other is GI_MASK_CASTS.
+// Every other ray takes both (GI_MASK_SCENE). The terrain's rings and patches carry GI_MASK_TERRAIN too, for a search of the
+// terrain alone (TerrainUnderPixel).
+#define GI_MASK_CASTS 1u
+#define GI_MASK_VIEW_ONLY 2u
+#define GI_MASK_SCENE (GI_MASK_CASTS | GI_MASK_VIEW_ONLY)
+#define GI_MASK_TERRAIN 4u
 
 // The shadow probe's global illumination rays, one a thread of its group.
 #define GI_PROBE_LIGHT_RAYS 64u
@@ -376,7 +380,7 @@ struct GILightProbe
 struct GIInstanceDesc
 {
     float4 transform[3];   // Object to world, rows applied as dot(row, float4(v, 1))
-    uint idAndMask;        // InstanceID (GI_INSTANCE_*) in the low 24 bits, InstanceMask (GI_MASK_SCENE) in the high 8
+    uint idAndMask;        // InstanceID (GI_INSTANCE_*) in the low 24 bits, InstanceMask (GI_MASK_CASTS or GI_MASK_VIEW_ONLY, and GI_MASK_TERRAIN on the terrain) in the high 8
     uint hitGroupAndFlags; // InstanceContributionToHitGroupIndex (its first geometry's slot) in the low 24, flags in the high 8
     uint2 blas;
 };
