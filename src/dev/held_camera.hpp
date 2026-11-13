@@ -21,6 +21,8 @@ void setLive(bool isLive) noexcept;
 bool isLive() noexcept;
 // The camera the game's last camera update rendered from; empty before the first.
 std::optional<Pose> lastCamera() noexcept;
+// The pose held for the game's next camera update, not the one last rendered.
+std::optional<Pose> requested() noexcept;
 
 // From photo mode's camera update: the held camera for this update, a moving one a step on, and the camera it used.
 std::optional<Pose> next() noexcept;

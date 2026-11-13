@@ -77,6 +77,13 @@ std::optional<Pose> lastCamera() noexcept
     return renderedPose;
 }
 
+std::optional<Pose> requested() noexcept
+{
+    std::scoped_lock lock(poseMutex);
+
+    return heldPose;
+}
+
 std::optional<Pose> next() noexcept
 {
     std::scoped_lock lock(poseMutex);

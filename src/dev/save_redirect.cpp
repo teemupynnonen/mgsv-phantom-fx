@@ -119,6 +119,12 @@ std::wstring redirected(LPCWSTR path)
 
     if (path[length] && path[length] != L'\\' && path[length] != L'/') return {};
 
+    // The display and quality settings stay the player's, the very file their game runs with: a copy that read a file of its
+    // own started below Extra High, where the path tracing fails, and never applied the maximum its menu saved (2026-11-08).
+    // launch.ps1 puts the player's files back when the run ends, so whatever the copy writes there is undone.
+    const std::wstring_view name{path + length};
+    if (name.ends_with(L"TPP_GRAPHICS_CONFIG") || name.ends_with(L"TPP_GRAPHICS_CONFIG.bak")) return {};
+
     return userDataFolder.wstring() + (path + length);
 }
 

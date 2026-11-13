@@ -8,12 +8,12 @@
     "clock": "52781",
     "weather": "0",
     "expect": {
-      "scene_lacks": 3.434,
-      "in_front": 0.003,
-      "in_sky": 0.014,
-      "extra_shadow": 2.088,
-      "missing_shadow": 0.729,
-      "light": 0.831
+      "scene_lacks": 4.238,
+      "in_front": 0.004,
+      "in_sky": 0.016,
+      "extra_shadow": 2.87,
+      "missing_shadow": 1.436,
+      "light": 0.866
     }
   },
   {
@@ -27,12 +27,12 @@
     "clock": "66600",
     "weather": "1 0",
     "expect": {
-      "scene_lacks": 18.956,
-      "in_front": 1.009,
-      "in_sky": 0.006,
-      "extra_shadow": 2.716,
-      "missing_shadow": 1.232,
-      "light": 0.782
+      "scene_lacks": 18.824,
+      "in_front": 1.925,
+      "in_sky": 0.022,
+      "extra_shadow": 2.48,
+      "missing_shadow": 0.983,
+      "light": 1.019
     }
   },
   {
@@ -44,12 +44,12 @@
     "clock": "56889",
     "weather": "0",
     "expect": {
-      "scene_lacks": 5.156,
-      "in_front": 2.486,
-      "in_sky": 0.012,
-      "extra_shadow": 6.667,
-      "missing_shadow": 0.962,
-      "light": 1.154
+      "scene_lacks": 6.99,
+      "in_front": 1.882,
+      "in_sky": 0.023,
+      "extra_shadow": 6.633,
+      "missing_shadow": 1.884,
+      "light": 1.036
     }
   },
   {
@@ -61,12 +61,12 @@
     "clock": "52990",
     "weather": "0",
     "expect": {
-      "scene_lacks": 5.494,
-      "in_front": 0.008,
-      "in_sky": 0.54,
-      "extra_shadow": 0.532,
-      "missing_shadow": 0.173,
-      "light": 0.882
+      "scene_lacks": 5.504,
+      "in_front": 0.002,
+      "in_sky": 0.539,
+      "extra_shadow": 0.641,
+      "missing_shadow": 0.181,
+      "light": 0.915
     },
     "via": "afghanistan"
   },
@@ -81,12 +81,12 @@
     "clock": "56590",
     "weather": "0 0",
     "expect": {
-      "scene_lacks": 1.219,
-      "in_front": 0.001,
-      "in_sky": 0.027,
-      "extra_shadow": 0.464,
-      "missing_shadow": 0.228,
-      "light": 0.689
+      "scene_lacks": 1.395,
+      "in_front": 0.003,
+      "in_sky": 0.024,
+      "extra_shadow": 0.583,
+      "missing_shadow": 0.207,
+      "light": 0.77
     }
   }
 ]
