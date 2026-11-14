@@ -597,7 +597,16 @@ shows what it printed and returned, or its error with the stack.
   whether to try the code as an expression first (`return ` before it, as an interactive Lua does).
   While the code runs, `print` collects lines in place of the game's; the code runs under `xpcall`
   with `debug.traceback` when the game has the debug library. The lines and the returned values come
-  back as one string; an error is raised again with the lines before it.
+  back as one string. A script's failure does not raise: it comes back as text that starts with `\1ERROR `,
+  which no script's own output can, with the lines before it and the error last. It must not raise, because
+  another mod's hooks over the game's Lua turn an error raised past them into the game's death.
+- **Hooks.** Before the tools run, the seven functions the harness calls are checked against this build's
+  bytes at their address (`game_code::matchesPastHooks`): the scope's begin and end, `luaL_loadbuffer`,
+  `lua_pcall`, `lua_tolstring`, `lua_pushlstring` and `lua_pushboolean`. A function another mod hooked is
+  accepted when the rest of the bytes, past the hook's jump and the `int3`/`nop` it fills the rest of the
+  cut instruction with, are this build's. Infinite Heaven's IHHook hooks these functions, so its game's Lua
+  tools call through it. A function whose code differs elsewhere still makes the tools unavailable, and the
+  log names its address.
 
 ### Travel
 
