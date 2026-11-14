@@ -13,6 +13,10 @@
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_FLAGS_RELWITHDEBINFO": "/O2 /Ob2 /DNDEBUG",
+        "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "/O2 /Ob2 /DNDEBUG",
+        "CMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO": "/DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF",
+        "CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO": "/DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF",
         "CMAKE_EXPORT_COMPILE_COMMANDS": true
       }
     },
