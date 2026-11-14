@@ -69,6 +69,7 @@ struct Options
     bool debugShadows{}; // Diagnostics: the shadow debug view and probe (shadowDebug, shadowProbe), with the shadows
     bool shadowStarts{}; // Diagnostics: the debug view shows where the shadow rays leave each pixel
     bool twoSidedShadows{}; // Diagnostics: every surface blocks rays towards lights from both sides, as until 2026-10-26
+    bool mainViewCastsSun{}; // Diagnostics: a model's main-view-only meshes block the sun where it has a sun stand-in (GI_GEOMETRY_STOOD_IN)
     gi_renderer::LightDebugView lightDebugView{}; // Diagnostics: over the image (lightDebug)
 
     bool logOften{};   // Diagnostics: the light's statistics logged every few frames (as each readback returns), not every ten seconds
@@ -1015,6 +1016,7 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     frame.debugShadows = shadowDebug != nullptr;
     frame.shadowStarts = options.shadowStarts;
     frame.twoSidedShadows = options.twoSidedShadows;
+    frame.mainViewCastsSun = options.mainViewCastsSun;
     frame.lightDebugView = options.lightDebugView;
     frame.lightRays = static_cast<std::uint32_t>(std::clamp(options.lightPixelRays, 1, 4));
     frame.usesShortLightRays = options.usesShortLightRays;
@@ -1139,6 +1141,7 @@ void configure(const Configuration& configuration) noexcept
         .debugShadows = diagnostics.debugView == DebugView::ShadowRays || diagnostics.debugView == DebugView::ShadowStarts,
         .shadowStarts = diagnostics.debugView == DebugView::ShadowStarts,
         .twoSidedShadows = diagnostics.twoSidedShadows,
+        .mainViewCastsSun = diagnostics.mainViewCastsSun,
         .lightDebugView = diagnostics.debugView == DebugView::LightHistory      ? gi_renderer::LightDebugView::History
                           : diagnostics.debugView == DebugView::LightValidation ? gi_renderer::LightDebugView::Validation
                                                                                 : gi_renderer::LightDebugView::None,

@@ -15,8 +15,10 @@ namespace
 using namespace game_lights;
 using game_constants::SceneConstants;
 
-// A light sits inside its lamp's model: a ray ends this far short of it, or the light's size if larger.
-constexpr float LightClearance = 0.1f;
+// A light sits inside its lamp's model: a ray ends this far short of it, or the light's size if larger. At 10 cm a wall
+// lamp's own fitting (Africa's villa, model 84a1909ed59bcd81) blocked its upward spot 17 to 20 cm out, all of its light on
+// the wall above, which the game, unshadowed, lights (the lamp probe, 2026-11-07).
+constexpr float LightClearance = 0.25f;
 // The radius a light's shadow rays spread over where the game gives it no size, or shadows it with a
 // shadow map, whose four-sample filter is sharp whatever its size (which only widens its specular): a
 // bulb's, so its shadows soften with distance as a real lamp's do.
@@ -95,15 +97,19 @@ std::optional<D3D11_RECT> reachOf(const DrawnLight& light)
     return D3D11_RECT{left + rect->min[0], top + rect->min[1], left + rect->max[0], top + rect->max[1]};
 }
 
-Choice choose(std::span<const DrawnLight* const> lights, const SceneConstants& camera)
+Choice choose(std::span<const DrawnLight* const> lights, const SceneConstants& camera, std::span<const std::uint64_t> placesTaken)
 {
     struct Reaching
     {
         LONG pixels;
         float distance;
         std::uint64_t key;
+        std::uint64_t place; // Its light's place to the centimetre: two spots at one lamp share it
         std::size_t index;
+        float rank; // Its pixels, a fifth more when the rays had its place last time
     };
+
+    const auto wasTaken = [placesTaken](std::uint64_t place) { return std::ranges::find(placesTaken, place) != placesTaken.end(); };
 
     Choice choice;
     std::vector<Reaching> reaching;
@@ -116,30 +122,59 @@ Choice choose(std::span<const DrawnLight* const> lights, const SceneConstants& c
             continue;
         }
 
-        const auto reach = reachOf(light);
+        // Ranked by its reach without the upscaler's jitter: under a pixel, it moved a distant lamp's few
+        // pixels' edges, and the lamps at the cap swapped every frame with the camera still.
+        auto unjittered = light;
+        unjittered.scene.cameraCenterOffset[0] = unjittered.scene.cameraCenterOffset[1] = 0;
+        const auto reach = reachOf(unjittered);
         if (!reach) continue;
 
         const float* position = light.light.position;
-        reaching.push_back({(reach->right - reach->left) * (reach->bottom - reach->top),
-            std::sqrt(position[0] * position[0] + position[1] * position[1] + position[2] * position[2]), keyOf(light), i});
+        // Its place in the world to the centimetre: a lamp drawn as two spots, one up and one down, is one place, and the
+        // two must come and go together. Traced one frame and left to the game's unshadowed draw the next, the wall they
+        // light changed brightness every few frames with the camera still (2026-11-08).
+        const auto at = game_constants::toWorld(light.scene, light.light.position, 1);
+        std::uint64_t place = 1469598103934665603ull; // FNV-1a, so two places cannot share a hash by adding up
+        for (const float coordinate : at)
+        {
+            place ^= static_cast<std::uint64_t>(static_cast<std::int64_t>(std::llround(coordinate * 100)));
+            place *= 1099511628211ull;
+        }
+        const LONG pixels = (reach->right - reach->left) * (reach->bottom - reach->top);
+        reaching.push_back({pixels, std::sqrt(position[0] * position[0] + position[1] * position[1] + position[2] * position[2]),
+            keyOf(light), place, i, static_cast<float>(pixels) * (wasTaken(place) ? 1.2f : 1.0f)});
     }
 
     // Exact ties go by the key, so the choice depends on which lights there are, not on the order the game
     // drew them in.
-    std::sort(reaching.begin(), reaching.end(), [](const Reaching& a, const Reaching& b) {
+    std::ranges::stable_sort(reaching, [](const Reaching& a, const Reaching& b) {
+        if (a.rank != b.rank) return a.rank > b.rank;
         if (a.pixels != b.pixels) return a.pixels > b.pixels;
         if (a.distance != b.distance) return a.distance < b.distance;
 
         return a.key < b.key;
     });
 
-    if (reaching.size() > GI_MAX_LOCAL_LIGHTS)
+    // Whole places, up to the cap: one whose lights do not all fit is left for the game's draw, all of it, rather than
+    // half traced. `handled` keeps its lights from being asked about again; only the places actually taken go back in
+    // `choice.places`, for the next call's bonus.
+    std::vector<std::uint64_t> handled;
+    for (const auto& each : reaching)
     {
-        choice.overCap = reaching.size() - GI_MAX_LOCAL_LIGHTS;
-        reaching.resize(GI_MAX_LOCAL_LIGHTS);
-    }
+        if (std::ranges::find(handled, each.place) != handled.end()) continue; // Its place was already answered
+        handled.push_back(each.place);
 
-    for (const auto& each : reaching) choice.taken.push_back(each.index);
+        const auto members = std::ranges::count(reaching, each.place, &Reaching::place);
+        if (choice.taken.size() + static_cast<std::size_t>(members) > GI_MAX_LOCAL_LIGHTS)
+        {
+            choice.overCap += static_cast<std::size_t>(members);
+            continue;
+        }
+
+        choice.places.push_back(each.place);
+        for (const auto& member : reaching)
+            if (member.place == each.place) choice.taken.push_back(member.index);
+    }
 
     return choice;
 }
@@ -151,6 +186,12 @@ std::uint64_t keyOf(const DrawnLight& light)
     const auto mix = [&](std::uint64_t value) { key = (key ^ value) * 0x100000001B3ull; };
     for (const float coordinate : at) mix(static_cast<std::uint64_t>(std::llround(coordinate * 100)));
     for (const float channel : light.light.color) mix(std::bit_cast<std::uint32_t>(channel));
+    // Where a spot points, to the hundredth: a wall lamp in Africa's villa is two spots of one kind and colour at one place,
+    // one up and one down (the lamp probe, 2026-11-07). With one key, each took the other's volume bounds, and its light
+    // was cut to them: the wall lit above the lamp one frame and below it the next.
+    if (light.game->shape == Shape::Spot)
+        for (const float component : normalized(game_constants::toWorld(light.scene, light.light.axis, 0)))
+            mix(static_cast<std::uint64_t>(std::llround(component * 100)));
 
     return key;
 }

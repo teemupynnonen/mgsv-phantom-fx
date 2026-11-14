@@ -85,7 +85,9 @@ traced, as today), texture copies arriving and replacing one another, a layered 
 pool, characters built, refitted and made again, the palette budget, frames without a newer list, the
 instance cap's order and the terrain rings' remaking. `tests/light_choice_tests.cpp`:
 which lights a kick gives the rays: the most pixels first, then the nearest, the light cap's edge, the
-same choice whatever order the lights come in, a
+same choice whatever order the lights come in and wherever the upscaler's jitter put each light's edges,
+two spots at one place pointing apart taken as two lights, and two spots at one place taken or left out
+together, a
 light drawn from another eye left and counted, one reaching no pixel left out; a light's reach (around
 the camera, behind it, a narrow spot's, the viewport's corner); a light as the rays take it (its range,
 its rays' radius, where its shadow map starts) and its key from two cameras. `tests/game_shaders_tests.cpp`:
@@ -242,6 +244,7 @@ what draws it, when that is the feature's own.
 | `src/weather.cpp`, `src/weather.hpp` | The overlay's weather and time control, on the Sandbox tab (see "Weather and time") |
 | `src/sun_movement.cpp`, `src/sun_movement.hpp` | The sun and moon move every frame instead of in the game's steps (see "Sun movement") |
 | `src/game_dither.cpp`, `src/game_dither.hpp` | The game's colour dither taken out of its shaders as they are made (see "Dither") |
+| `src/game_light_volumes.cpp`, `src/game_light_volumes.hpp` | The game's light volumes moved by the upscaler's jitter, in its 24 light vertex shaders as they are made (see "Ray-traced lights", "The jitter on the game's light volumes") |
 | `src/dev_tools.hpp` | Whether the build has the Developer page (the dev preset) |
 | `src/dev/` | The development tools, in a dev build alone; its README says how to detach them. `dev.*`: the core's one door to them, and the Developer page |
 | `src/dev/game_lua.cpp`, `src/dev/game_lua.hpp` | Lua in the game's script state, and the Developer page's console (see "Game Lua") |
@@ -597,7 +600,21 @@ shows what it printed and returned, or its error with the stack.
   whether to try the code as an expression first (`return ` before it, as an interactive Lua does).
   While the code runs, `print` collects lines in place of the game's; the code runs under `xpcall`
   with `debug.traceback` when the game has the debug library. The lines and the returned values come
-  back as one string; an error is raised again with the lines before it.
+  back as one string. A script's failure does not raise: it comes back as text that starts with `\1ERROR `,
+  which no script's own output can, with the lines before it and the error last. It must not raise, because
+  another mod's hooks over the game's Lua turn an error raised past them into the game's death.
+- **Hooks.** Before the tools run, the seven functions the harness calls are checked against this build's
+  bytes at their address (`game_code::matchesPastHooks`): the scope's begin and end, `luaL_loadbuffer`,
+  `lua_pcall`, `lua_tolstring`, `lua_pushlstring` and `lua_pushboolean`. A function another mod hooked is
+  accepted when the rest of the bytes, past the hook's jump and the `int3`/`nop` it fills the rest of the
+  cut instruction with, are this build's. Infinite Heaven's IHHook hooks these functions, so its game's Lua
+  tools call through it. A function whose code differs elsewhere still makes the tools unavailable, and the
+  log names its address. The check's limits: it knows two openings, `jmp rel32` (`E9`) and `jmp [rip + disp32]`
+  (`FF 25`, with its target after it when the displacement is zero, 14 bytes, else 6), so an opening of
+  another shape — a short `jmp` (`EB`), a push-and-return trampoline, `mov rax` + `jmp rax` — leaves the tools
+  unavailable although the game may be fine. It compares from that opening only up to the bytes it holds for
+  each function, and only at start-up: a hook installed later, or a patch of the body that leaves the first
+  bytes this build's, is not seen. And it needs at least 8 bytes of the expected code past the opening.
 
 ### Travel
 
@@ -2852,7 +2869,22 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   stand-in (model `84a1b19dea6952c1`, mesh 9) kept 80 to 100% of a room's main lamp, an unshadowed spot,
   off its wall 0.9 m from it (the lamp probe), and the scene view went red over the room: the camera's
   rays met stand-ins short of what the game drew. Cut-out stand-ins stay in, for the main-view cut-out
-  meshes left out (the pylon's lattice).
+  meshes left out (the pylon's lattice). Since 2026-11-07 only rays towards lights meet them
+  (`MeshRole::CutOutStandIn`: `GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_SHADOW_ONLY`). In Africa's jungle each tree
+  fern's fronds (model `84a1f5deb4c61e59`, mesh 0, alpha 0x80 shadow 0x01) are drawn in the main view alone,
+  and the game casts them through a canopy card (model `84a3bde77c6368f3`, 10 triangles, about 22 x 22 m,
+  alpha 0xa0 shadow 0x42) 14 to 20 m up, one a tree. Met by every ray, the cards were a lid over the forest:
+  the camera's ray met one at 36 m where the game drew ground at 105 m, they stood in front of 14% of the
+  frame, and the floor under them lost the sky's light while the sun's shadow matched the game's.
+  Their fronds are cut out and are in the scene only beside a solid stand-in, as since 2026-11-09: alone they
+  are dropped, and the card casts for them. In, the fronds cost every global illumination and reflection ray
+  4.5 ms of the case's 6.7 ms frame (1280x720, 240 frames), the card 2 ms, for the same shade. A structure whose
+  meshes all let a light's rays through is
+  `GI_MASK_VIEW_ONLY`, which those rays skip whole, so its fronds may take an opacity micromap. A jungle tree
+  with a canopy card is skinned, and so was taken for a character until 2026-11-09, its card dropped with its other
+  stand-ins: the sun then reached the floor the game's map shades (`84a0fe379b794365`, no shadow over 12.5% of the
+  frame at the case's rock). A character's stand-in with the decal alpha bit is now kept as a rigid model's cut-out
+  stand-in, for rays towards lights alone; those without it stay dropped, as a woman's outfit's was (2026-10-24).
   Since 2026-10-27 a solid stand-in is kept again where its model's main view shows cut-out meshes the
   scene leaves out (shadow bit 0 with alpha bit 5 or 7), as the only thing the rays have of them, and
   only for rays towards lights (`GI_GEOMETRY_SHADOW_ONLY`, `StopsRay`): every other ray passes it, and
@@ -3249,6 +3281,24 @@ With DLSS Ray Reconstruction denoising, the rays go out without the filter (see 
   (`c6.z^(-1/16)`) the brightness's square root further, where the brighter light falls to the same
   dimness. Set when the light is noted, so its redrawn light, its shadow rays and its bounce all have
   it. Only the look: the game's guards see as before.
+- **The jitter on the game's light volumes** (`src/game_light_volumes.cpp`, 2026-11-09). The volumes come
+  in clip space, worked out on the CPU from the game's own camera, so the upscaler's jitter, which only
+  goes into the scene constants, reached the depth they test but not them: a lamp's volume lying on a
+  wall passed or failed the marking draw's `greater_equal` by that frame's jitter. Africa's villa lamps
+  flickered with the camera still, `0.24%` of the pixels at DLSS Ultra Performance and `0.000%` with the
+  jitter off, at 40 frames; the smaller the render scale, the larger the jitter in render pixels, the
+  worse. All 24 of the game's light vertex shaders are one code under a name each (2026-11-09), so each
+  is made from `game_light_volumes`' own, which adds `cPSScene`'s `c28` (the jitter in NDC) times `w` to
+  the clip position and then works out the sampling position as the game's does: `m_renderInfo` times
+  `m_renderBuffer.zwzw` from `cVSSystem` for the viewport within the targets. At the villa lamps after
+  it, `0.000%` with the effects on or off. The lights drawn again add it to their copies of the volumes,
+  and their bounds come from the volume through the unjittered `m_projectionView`. The shift is in NDC
+  times `w`, so it holds for any projection: a perspective pass scales it with depth, and an orthographic
+  one (`w` 1) moves by the jitter itself. It is read from the scene constants the draw binds, not from a
+  camera of the add-on's: a light's draws bind the main camera's, which is why the jitter reaches them; a
+  pass whose `c28` is zero gets no shift, so the shader is a no-op there rather than a wrong shift — the
+  game without the upscaler, or a view the add-on did not jitter, such as the intro mirror's smaller one
+  when the frames it starts on are not the main camera's.
 - **Drawn with.** Each kind of light (point or spot, mask or not, `SSLighting2` or `NA`) is drawn again
   with the game's own shader for it with specular and without a shadow map, which reads `c8.x` and the
   specular tables at `t8` and `t9`; a light whose own shader has no specular gets a scale of 1, as the

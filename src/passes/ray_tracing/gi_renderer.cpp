@@ -1153,7 +1153,7 @@ Result render(Frame& frame)
         const auto probePixel = frame.probePixel.value_or(std::array{frame.width / 2, frame.height / 2});
         constants.shadowDiagnostics = {frame.twoSidedShadows ? 1u : 0u, frame.shadowStarts ? 1u : 0u, std::min(probePixel[0], frame.width - 1),
             std::min(probePixel[1], frame.height - 1)};
-        constants.lightDiagnostics = {0, 0, lightDebug ? static_cast<std::uint32_t>(frame.lightDebugView) : 0u, 0};
+        constants.lightDiagnostics = {0, 0, lightDebug ? static_cast<std::uint32_t>(frame.lightDebugView) : 0u, frame.mainViewCastsSun ? 1u : 0u};
         constants.reconstruction = {traces.isForReconstruction ? 1u : 0u, materialSpecular ? 1u : 0u, skyCube ? 1u : 0u, 0};
         constants.emission = {frame.emissionScale, frame.emissionCap, 0, 0};
         constants.closestRayFlags = {s.hasMicromapSupport ? GI_RAY_FLAG_FORCE_OMM_2_STATE : 0u, 0, 0, 0};
