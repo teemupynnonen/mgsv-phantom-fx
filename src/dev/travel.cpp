@@ -1,5 +1,6 @@
 #include "dev/travel.hpp"
 
+#include "features/ray_traced_lights/local_lights.hpp"
 #include "fxui/fxui.hpp"
 #include "dev/game_lua.hpp"
 #include "log.hpp"
@@ -121,6 +122,9 @@ bool depart(std::string_view code, std::string_view tool, std::string_view targe
         fxui::toast(fxui::Tone::Warn, tool, outcome->text);
         return false;
     }
+
+    // The new map's lights are not the old map's, even where a key repeats.
+    local_lights::forgetVolumeBounds();
 
     return true;
 }

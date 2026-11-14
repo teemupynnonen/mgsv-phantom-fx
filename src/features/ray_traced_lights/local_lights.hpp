@@ -39,6 +39,9 @@ void noteDrawPoint(ID3D11DeviceContext* context) noexcept;
 // deferred context.
 void recorded(std::uint64_t into, std::uint64_t from) noexcept;
 void forget(std::uint64_t contextOrList) noexcept;
+// Drops the kept volume bounds and those on their way back, for when the world under the lights changed:
+// another map repeats some keys, and its boxes are not the old map's.
+void forgetVolumeBounds() noexcept;
 
 // ---- Immediate context ----
 // A light for the rays, with a masked spot's mask (the game's t4) for path tracing.
