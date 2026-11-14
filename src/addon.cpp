@@ -35,6 +35,7 @@
 #include "frame_log.hpp"
 #include "fxui/fxui.hpp"
 #include "game_dither.hpp"
+#include "game_light_volumes.hpp"
 #include "game_loop.hpp"
 #include "game_shaders.hpp"
 #include "log.hpp"
@@ -472,6 +473,19 @@ bool onCreatePipeline(device* device, pipeline_layout, uint32_t count, const pip
     bool changed{};
     for (uint32_t i = 0; i < count; ++i)
     {
+        if (subobjects[i].type == pipeline_subobject_type::vertex_shader && subobjects[i].data)
+        {
+            auto* shader = static_cast<shader_desc*>(subobjects[i].data);
+            if (const auto* jittered = game_light_volumes::jittered(reinterpret_cast<ID3D11Device*>(device->get_native()), shader->code, shader->code_size))
+            {
+                shader->code = jittered->data();
+                shader->code_size = jittered->size();
+                changed = true;
+            }
+
+            continue;
+        }
+
         if (subobjects[i].type != pipeline_subobject_type::pixel_shader || !subobjects[i].data) continue;
 
         auto* shader = static_cast<shader_desc*>(subobjects[i].data);
