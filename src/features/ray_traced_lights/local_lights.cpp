@@ -180,6 +180,8 @@ struct BoundsConstants
 // later, by light (keyOf): the global illumination's bounce and the rays' picks keep it within them, as
 // the game does. The game's lights hold still, so the last frame's bounds are this frame's.
 constexpr std::uint32_t BoundsReadbacks = 3;
+// Frames a light goes undrawn before its bounds go: a map change's loading screen outlasts it, so a new map never meets the old one's.
+constexpr std::uint32_t ForgetBoundsAfter = 60;
 
 // A light's volume as its draws had it bound (a box, for a spot its cone within one), copied: the game
 // lights only within it (docs/DEVELOPMENT.md, "Ray-traced lights", "Within the game's volume").
@@ -268,10 +270,15 @@ std::array<std::vector<std::uint64_t>, BoundsReadbacks> readbackLights;
 std::vector<std::uint64_t> frameBoundsLights;
 std::uint32_t boundsFrame{};
 
-// The bounds read back, by light; taken at the kick. Kept until detach: the ten-second log counts them,
-// as a light whose key changes every frame would add one each frame.
+// The bounds read back, by light, with the frame it was last drawn in; taken at the kick.
+struct KeptBounds
+{
+    Bounds bounds;
+    std::uint32_t lastDrawn{};
+};
+
 std::mutex boundsMutex;
-std::unordered_map<std::uint64_t, Bounds> volumeBounds;
+std::unordered_map<std::uint64_t, KeptBounds> volumeBounds;
 
 // Diagnostics, logged every ten seconds: lights drawn with their shadow and without it (recorded after
 // the kick, or the shadow not traced), those of them drawn without their volume, left to the next frame's
@@ -526,12 +533,16 @@ Volume volumeOf(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call)
     }
 }
 
-// Whether the light's bounds are already known. The game's lights hold still, and a move of a centimetre
-// or more changes its key, so one measurement lasts.
-bool hasVolumeBounds(const DrawnLight& light)
+// Whether the light's bounds are known, keeping them for another while if they are.
+bool renewVolumeBounds(const DrawnLight& light)
 {
     std::lock_guard lock(boundsMutex);
-    return volumeBounds.contains(light_choice::keyOf(light));
+    const auto found = volumeBounds.find(light_choice::keyOf(light));
+    if (found == volumeBounds.end()) return false;
+
+    found->second.lastDrawn = boundsFrame;
+
+    return true;
 }
 
 // The bounds of the light's volume as read back, if they have come back yet. A flashlight's moves with it.
@@ -543,7 +554,7 @@ std::optional<Bounds> volumeBoundsOf(const DrawnLight& light)
     const auto found = volumeBounds.find(light_choice::keyOf(light));
     if (found == volumeBounds.end()) return std::nullopt;
 
-    return found->second;
+    return found->second.bounds;
 }
 
 // The light once more, within the game's volume for it: on the volume's far faces its shadow into the
@@ -628,8 +639,8 @@ void measureVolumes()
     for (const auto& light : frameLights)
     {
         const auto& volume = light.volume;
-        if (!volume.view || light.drawn.game->flashlight || frameBoundsLights.size() >= GI_MAX_LOCAL_LIGHTS
-            || hasVolumeBounds(light.drawn))
+        if (!volume.view || light.drawn.game->flashlight || renewVolumeBounds(light.drawn)
+            || frameBoundsLights.size() >= GI_MAX_LOCAL_LIGHTS)
             continue;
 
         camera::Matrix projectionView{};
@@ -670,6 +681,11 @@ void readVolumeBounds()
     if (!boundsBuffer) return;
 
     const auto slot = boundsFrame++ % BoundsReadbacks;
+    {
+        std::lock_guard lock(boundsMutex);
+        std::erase_if(volumeBounds, [](const auto& kept) { return boundsFrame - kept.second.lastDrawn > ForgetBoundsAfter; });
+    }
+
     if (!frameBoundsLights.empty())
     {
         immediate->CopyResource(boundsReadbacks[slot].Get(), boundsBuffer.Get());
@@ -689,7 +705,8 @@ void readVolumeBounds()
     {
         std::lock_guard lock(boundsMutex);
         for (std::size_t i = 0; i < lights.size(); ++i)
-            volumeBounds[lights[i]] = {corners[i * 8], corners[i * 8 + 1], corners[i * 8 + 2], corners[i * 8 + 4], corners[i * 8 + 5], corners[i * 8 + 6]};
+            volumeBounds[lights[i]] = {{corners[i * 8], corners[i * 8 + 1], corners[i * 8 + 2], corners[i * 8 + 4], corners[i * 8 + 5], corners[i * 8 + 6]},
+                boundsFrame};
     }
 
     immediate->Unmap(boundsReadbacks[oldest].Get(), 0);
@@ -901,14 +918,6 @@ void detach() noexcept
         std::lock_guard lock(boundsMutex);
         volumeBounds.clear();
     }
-}
-
-void forgetVolumeBounds() noexcept
-{
-    std::scoped_lock lock(resourceMutex, boundsMutex);
-    frameBoundsLights.clear();
-    for (auto& lights : readbackLights) lights.clear();
-    volumeBounds.clear();
 }
 
 void configure(const Configuration& configuration) noexcept
