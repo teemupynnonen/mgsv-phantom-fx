@@ -143,8 +143,20 @@ The code is laid out by what it does for the player:
   one feature stays in its folder.
 - `src/passes/`: the game's passes that several features change, and what they share there. A
   feature plugs into a pass; the pass composes the features' parts into the game's draw.
-- `src/`: the add-on itself (the core, the window, the cost measurement) and what everything shares
-  (the game's code, the camera, Direct3D helpers, the log).
+- `src/core/`: the static library every add-on links, and what more than one of them uses (see "The core").
+- `src/`: the add-on itself (the settings in force, the window, the cost measurement) and what only it uses
+  (the camera, the 2D-pass redirect, the frame log).
+
+### The core
+
+`phantom_fx_core` (`src/core/`, namespace `fxcore`) is the static library an add-on links for what more than one of
+them uses: the frame's slots and draw chain (`order.hpp`), the frame latch, the log and clock, the Direct3D helpers,
+the game's constants, shaders and lights, the constant capture and the settings file format. Its headers keep the names
+they had in `src/`, so the add-on includes `"log.hpp"` or `"game_shaders.hpp"` unchanged; those files keep the
+`phantom_fx` namespace, while the core's own code is `fxcore`.
+
+`docs/addon-core.md` is the integration guide: the CMake target and what it publishes, how a feature declares its slot
+and priority, the settings file, threading, testing, and what the core does not provide yet.
 
 ### The add-on
 
@@ -229,13 +241,13 @@ what draws it, when that is the feature's own.
 | --- | --- |
 | `src/render_scale.cpp`, `src/render_scale.hpp` | Hook on the renderer's per-frame step: the engine renders at the requested size |
 | `src/ui_redirect.cpp`, `src/ui_redirect.hpp` | The draw call every module sees; the grading, the 2D pass and `GammaControl` on output-size targets while the engine renders below them |
-| `src/game_constants.hpp` | The game's constant buffers by name (see "Constant buffers"): the system, scene, sun and lamp light, material, object, bones and probe constants, each with its slot, and a light pass's view space in the world |
-| `src/constant_capture.cpp`, `src/constant_capture.hpp` | The constant capture: what each of the game's threads last wrote to the constant buffers the contact shadows and the ray tracing read, copied at the game's unmap after the upscaler's jitter, read by type and only at the size written |
+| `src/core/game/game_constants.hpp` | The game's constant buffers by name (see "Constant buffers"): the system, scene, sun and lamp light, material, object, bones and probe constants, each with its slot, and a light pass's view space in the world |
+| `src/core/capture/constant_capture.cpp`, `src/core/capture/constant_capture.hpp` | The constant capture: what each of the game's threads last wrote to the constant buffers the contact shadows and the ray tracing read, copied at the game's unmap after the upscaler's jitter, read by type and only at the size written |
 | `src/camera.cpp`, `src/camera.hpp` | The main camera in the scene constants: main-view recognition, jitter, reprojection, camera cuts |
-| `src/game_shaders.cpp`, `src/game_shaders.hpp` | The game's shaders the add-on knows, in one table: each pixel shader's checksum, the game pass it draws and what tells it apart from its pass's others (a sun's shadow map, a light's kind); its vertex shaders by source name (the 2D pass, models, terrain); its input layouts' position formats. Every copy the game makes is known; a draw looks its pixel shader up once (`DrawnShader`) |
-| `src/game_lights.hpp` | What a point or spot light shader is (its row in `game_shaders.hpp`), for the local light pass and the ray-traced lights: its kind and twin, a light's range, its sphere on screen |
-| `src/device_check.cpp`, `src/device_check.hpp` | Lets the game start under ReShade (see below); the build check |
-| `src/game_code.hpp` | The game's image, checks of its code, hooks (MinHook) and code patches |
+| `src/core/game/game_shaders.cpp`, `src/core/game/game_shaders.hpp` | The game's shaders the add-on knows, in one table: each pixel shader's checksum, the game pass it draws and what tells it apart from its pass's others (a sun's shadow map, a light's kind); its vertex shaders by source name (the 2D pass, models, terrain); its input layouts' position formats. Every copy the game makes is known; a draw looks its pixel shader up once (`DrawnShader`) |
+| `src/core/game/game_lights.hpp` | What a point or spot light shader is (its row in `game_shaders.hpp`), for the local light pass and the ray-traced lights: its kind and twin, a light's range, its sphere on screen |
+| `src/core/game/device_check.cpp`, `src/core/game/device_check.hpp` | Lets the game start under ReShade (see below); the build check |
+| `src/core/game/game_code.hpp` | The game's image, checks of its code, hooks (MinHook) and code patches |
 | `src/game_memory.hpp` | Guarded reads of the game's objects |
 | `src/game_loop.cpp`, `src/game_loop.hpp` | Hooks on the main loop's frame start and end, for Reflex and the weather menu |
 | `src/fidelityfx.cpp`, `src/fidelityfx.hpp` | Loads the AMD FSR API, for FSR upscaling and frame generation |
@@ -258,13 +270,13 @@ what draws it, when that is the feature's own.
 | `src/dev/save_redirect.cpp`, `src/dev/save_redirect.hpp` | The automation copy of the game: its saves, backups and display settings kept apart from the player's |
 | `tools/automation/` | Dev builds: `fx.py` talks to the running game, `case.py` reports a debug case, `perf.py` reads and compares the costs on file, `scout.py` scouts showcase shots (a pose, time and weather, Phantom FX on and off, kept in a shot list), `install.ps1` and `launch.ps1` run the automation copy; `check_release.py` fails if any of it reached a release build |
 | `src/resource_dump.cpp`, `src/resource_dump.hpp` | Format names, constant rows, DDS saving for the dumps |
-| `src/shader_bytecode.cpp`, `src/shader_bytecode.hpp` | DXBC checksum (bytes 4 to 20 of the container), the instruction walk, the output saturation patch, the dither patch |
-| `src/log.cpp`, `src/log.hpp` | `PhantomFX.log` beside the add-on, one per game session |
-| `src/clock.hpp` | `QueryPerformanceCounter` ticks and the milliseconds between them |
-| `src/frame_latch.hpp` | A module's settings as configure sets them and as the frame being recorded uses them, latched at present |
+| `src/core/shader_bytecode.cpp`, `src/core/shader_bytecode.hpp` | DXBC checksum (bytes 4 to 20 of the container), the instruction walk, the output saturation patch, the dither patch |
+| `src/core/log.cpp`, `src/core/log.hpp` | `PhantomFX.log` beside the add-on, one per game session |
+| `src/core/clock.hpp` | `QueryPerformanceCounter` ticks and the milliseconds between them |
+| `src/core/frame_latch.hpp` | A module's settings as configure sets them and as the frame being recorded uses them, latched at present |
 | `src/command_list_notes.hpp` | A module's notes by deferred context, then by command list, until the immediate context runs it; their merge in the order they run, and their expiry (see "What the add-on changes", "Command lists") |
-| `src/hresult.hpp` | `check`: a failed Direct3D or Windows call as an exception naming the step |
-| `src/d3d11_helpers.hpp` | Direct3D 11 helpers for the effects: shader compiles, dynamic constant buffers, compute textures, texture sizes |
+| `src/core/hresult.hpp` | `check`: a failed Direct3D or Windows call as an exception naming the step |
+| `src/core/d3d11_helpers.hpp` | Direct3D 11 helpers for the effects: shader compiles, dynamic constant buffers, compute textures, texture sizes |
 | `src/d3d12_helpers.hpp` | Direct3D 12 helpers for the ray tracing, FSR and the presenter: barriers, the device on Direct3D 11's GPU behind ReShade's proxy, shared textures and fences opened in Direct3D 12 |
 | `src/version.rc.in` | Version resource template: name, author and version from `CMakeLists.txt` |
 

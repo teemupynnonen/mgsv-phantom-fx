@@ -4,7 +4,7 @@ Status: in progress. Branch `feat/core-library`, written 2026-11-21.
 
 Goal: a reusable rendering core, extracted from PhantomFX, that every later add-on links against. A static library,
 not an injected DLL: an add-on that wants it must be built against it. No ABI, no version handshake, no load-order
-coupling.
+coupling. `docs/addon-core.md` is the integration guide a new add-on follows.
 
 The first consumer after PhantomFX is the body-blood add-on. It is **deferred**: nothing in this plan may depend on
 it landing. Build the core so it can, then stop.

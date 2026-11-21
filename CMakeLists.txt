@@ -255,7 +255,7 @@ target_include_directories(phantom_fx_core PUBLIC src src/core src/core/game src
 target_compile_features(phantom_fx_core PUBLIC cxx_std_20)
 target_compile_definitions(phantom_fx_core PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(phantom_fx_core PRIVATE /W4 /WX /permissive- /utf-8)
-target_link_libraries(phantom_fx_core PUBLIC d3d11 d3dcompiler PRIVATE minhook)
+target_link_libraries(phantom_fx_core PUBLIC d3d11 d3dcompiler minhook)
 
 # The add-on uses ReShade's ImGui through the overlay function table, so none is linked.
 add_library(phantom_fx SHARED src/addon.cpp src/core.cpp src/modules.cpp src/features/upscaling/upscaler.cpp src/features/upscaling/render_size_plan.cpp src/features/upscaling/frames.cpp src/menu.cpp src/menu_budget.cpp src/fxui/fxui.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES} src/camera.cpp
