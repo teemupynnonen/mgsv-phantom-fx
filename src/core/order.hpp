@@ -1,6 +1,6 @@
 #pragma once
 
-#include <array>
+#include <algorithm>
 #include <cstddef>
 #include <vector>
 
@@ -24,23 +24,50 @@ inline constexpr std::size_t SlotCount = 7;
 
 const char* label(Slot slot);
 
-// One feature in one slot. A lower priority runs first; equal priorities keep the order they were
-// added in, so a feature that only needs "before lighting" does not depend on registration order.
-struct Step
-{
-    int priority{};
-    const void* owner{};
-};
-
-class Schedule
+// What runs in one slot, in priority order. Equal priorities keep the order they were added in, so a
+// feature that only needs "before lighting" does not depend on registration order. The first step that
+// takes the work ends the list: a draw is drawn in the game's place exactly once.
+template<class... Args> class Chain
 {
 public:
-    // False when `owner` already holds a step in `slot`.
-    bool add(Slot slot, int priority, const void* owner);
-    const std::vector<Step>& ordered(Slot slot) const;
+    using Run = bool (*)(Args...);
+
+    // False when `run` already holds a step.
+    bool add(int priority, const char* name, Run run)
+    {
+        for (const auto& step : steps)
+            if (step.run == run) return false;
+
+        // After every equal priority: registration order decides between equals.
+        const auto at = std::upper_bound(steps.begin(), steps.end(), priority, [](int value, const Step& step) { return value < step.priority; });
+        steps.insert(at, Step{priority, name, run});
+
+        return true;
+    }
+
+    // Runs the steps in order until one takes the work. Returns the winner's name, or nullptr.
+    const char* run(Args... args) const
+    {
+        for (const auto& step : steps)
+            if (step.run(args...)) return step.name;
+
+        return nullptr;
+    }
+
+    bool empty() const
+    {
+        return steps.empty();
+    }
 
 private:
-    std::array<std::vector<Step>, SlotCount> slots;
+    struct Step
+    {
+        int priority;
+        const char* name;
+        Run run;
+    };
+
+    std::vector<Step> steps;
 };
 
 // A draw belongs to one feature: the first claim takes it and a second is refused, which the caller

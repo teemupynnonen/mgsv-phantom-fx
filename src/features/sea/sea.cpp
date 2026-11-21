@@ -28,6 +28,7 @@
 
 namespace phantom_fx::sea
 {
+using fxcore::FrameLatch;
 namespace
 {
 using Microsoft::WRL::ComPtr;

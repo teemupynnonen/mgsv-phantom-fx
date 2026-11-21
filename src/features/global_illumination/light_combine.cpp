@@ -19,6 +19,7 @@
 
 namespace phantom_fx::light_combine
 {
+using fxcore::FrameLatch;
 namespace
 {
 using Microsoft::WRL::ComPtr;

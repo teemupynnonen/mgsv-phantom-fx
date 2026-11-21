@@ -10,6 +10,7 @@
 #include "character.hpp"
 #include "constant_capture.hpp"
 #include "core.hpp"
+#include "core/order.hpp"
 #include "d3d12_helpers.hpp"
 #include "dev/dev.hpp"
 #include "dev_tools.hpp"
@@ -77,6 +78,33 @@ command_list* immediateList{};
 bool overlayOpen{};
 // ReShade's runtime, which draws its effects and overlay on the back buffer in the colour space it is told.
 effect_runtime* effects{};
+
+// The draw owners in priority order, the first that takes a draw drawing it in the game's place.
+using DrawOwners = fxcore::Chain<ID3D11DeviceContext*, const ui_redirect::DrawCall&, game_shaders::DrawnShader&>;
+DrawOwners drawOwners;
+DrawOwners drawIndexedOwners;
+
+void registerDrawOwners()
+{
+    // Each takes game passes of its own (the upscaler also the 2D pass), so their order does not matter.
+    drawOwners.add(10, "atmosphere", atmosphere::draw);
+    drawOwners.add(20, "indirect light pass", indirect_light_pass::draw);
+    drawOwners.add(30, "sun light pass", sun_light_pass::draw);
+    drawOwners.add(40, "path tracing", path_tracing::draw);
+    drawOwners.add(50, "sea", sea::draw);
+    drawOwners.add(60, "hdr", hdr::draw);
+    drawOwners.add(70, "depth of field", depth_of_field::draw);
+    drawOwners.add(80, "upscaler", upscaler::draw);
+
+    // A point or spot light's draws have two; the ray-traced lights come first, so the local light
+    // pass never draws a light the rays shadow.
+    drawIndexedOwners.add(10, "local lights", local_lights::draw);
+    drawIndexedOwners.add(20, "local light pass", local_light_pass::draw);
+    drawIndexedOwners.add(30, "sea", sea::draw);
+    drawIndexedOwners.add(40, "forward water pass", forward_water_pass::draw);
+    drawIndexedOwners.add(50, "glass", glass::draw);
+    drawIndexedOwners.add(60, "upscaler", upscaler::draw);
+}
 
 ID3D11DeviceContext* native(command_list* list)
 {
@@ -262,11 +290,8 @@ bool onDraw(command_list* list, uint32_t vertices, uint32_t instances, uint32_t 
         return true;
     }
 
-    // 3. The owners. Each takes game passes of its own (the upscaler also the 2D pass), so their order
-    // does not matter.
-    const bool drawn = atmosphere::draw(context, call, shader) || indirect_light_pass::draw(context, call, shader)
-        || sun_light_pass::draw(context, call, shader) || path_tracing::draw(context, call, shader) || sea::draw(context, call, shader)
-        || hdr::draw(context, call, shader) || depth_of_field::draw(context, call, shader) || upscaler::draw(context, call, shader);
+    // 3. The owners, in priority order: the first that takes the draw draws it in the game's place.
+    const bool drawn = drawOwners.run(context, call, shader) != nullptr;
 
     // The game's sky, then again for the rays; the physical sky's own draw does the same (atmosphere.cpp).
     if (!drawn && sky_capture::isWanted())
@@ -293,10 +318,8 @@ bool onDrawIndexed(command_list* list, uint32_t indices, uint32_t instances, uin
     game_shaders::DrawnShader shader(context);
     ray_tracing::note(context, call, shader);
     sea::note(context, call, shader);
-    // The one order among the owners that matters: a point or spot light's draws have two, and the
-    // ray-traced lights come first, so the local light pass never draws a light the rays shadow.
-    if (hiddenUi(list) || local_lights::draw(context, call, shader) || local_light_pass::draw(context, call, shader) || sea::draw(context, call, shader)
-        || forward_water_pass::draw(context, call, shader) || glass::draw(context, call, shader) || upscaler::draw(context, call, shader))
+    // The one order among the owners that matters is a light's two draws (registerDrawOwners).
+    if (hiddenUi(list) || drawIndexedOwners.run(context, call, shader) != nullptr)
         return true;
 
     // The sky's dome and clouds, then again for the rays.
@@ -664,6 +687,8 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshadeMo
         GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN, reinterpret_cast<LPCWSTR>(&AddonInit), &pinned);
         presenter::install(directory, mode == upscaler::FrameGenerationMode::Fsr ? presenter::Route::Fsr : presenter::Route::Streamline);
     }
+
+    registerDrawOwners();
 
     reshade::register_event<reshade::addon_event::init_command_queue>(onInitCommandQueue);
     reshade::register_event<reshade::addon_event::destroy_command_queue>(onDestroyCommandQueue);

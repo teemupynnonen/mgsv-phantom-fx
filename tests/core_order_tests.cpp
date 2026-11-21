@@ -1,13 +1,15 @@
+#include "core/frame_latch.hpp"
 #include "core/order.hpp"
 
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace
 {
 using fxcore::DrawClaim;
-using fxcore::Schedule;
+using fxcore::FrameLatch;
 using fxcore::Slot;
 
 void expect(bool condition, const char* message)
@@ -15,61 +17,80 @@ void expect(bool condition, const char* message)
     if (!condition) throw std::runtime_error(message);
 }
 
-std::vector<const void*> owners(const Schedule& schedule, Slot slot)
-{
-    std::vector<const void*> result;
-    for (const auto& step : schedule.ordered(slot))
-        result.push_back(step.owner);
+std::vector<std::string> calls;
 
-    return result;
+bool recordsFirst(int&)
+{
+    calls.emplace_back("first");
+    return false;
+}
+
+bool recordsSecond(int&)
+{
+    calls.emplace_back("second");
+    return false;
+}
+
+bool recordsThird(int&)
+{
+    calls.emplace_back("third");
+    return false;
+}
+
+bool takesTheWork(int&)
+{
+    calls.emplace_back("takes");
+    return true;
 }
 
 void lowerPriorityRunsFirst()
 {
-    int later{};
-    int earlier{};
-    Schedule schedule;
+    int work{};
+    fxcore::Chain<int&> chain;
+    calls.clear();
 
-    expect(schedule.add(Slot::GameDraw, 20, &later), "Add the later step.");
-    expect(schedule.add(Slot::GameDraw, 10, &earlier), "Add the earlier step.");
-    expect(owners(schedule, Slot::GameDraw) == std::vector<const void*>{&earlier, &later}, "A lower priority runs first.");
+    expect(chain.add(20, "second", recordsSecond), "Add the later step.");
+    expect(chain.add(10, "first", recordsFirst), "Add the earlier step.");
+    expect(chain.run(work) == nullptr, "No step took the work.");
+    expect(calls == std::vector<std::string>{"first", "second"}, "A lower priority runs first.");
 }
 
 void equalPrioritiesKeepRegistrationOrder()
 {
-    int first{};
-    int second{};
-    int third{};
-    Schedule schedule;
+    int work{};
+    fxcore::Chain<int&> chain;
+    calls.clear();
 
-    schedule.add(Slot::GameDraw, 5, &first);
-    schedule.add(Slot::GameDraw, 5, &third);
-    schedule.add(Slot::GameDraw, 5, &second);
-    expect(owners(schedule, Slot::GameDraw) == std::vector<const void*>{&first, &third, &second}, "Equal priorities keep the order they were added in.");
+    chain.add(5, "first", recordsFirst);
+    chain.add(5, "third", recordsThird);
+    chain.add(5, "second", recordsSecond);
+    chain.run(work);
+    expect(calls == std::vector<std::string>{"first", "third", "second"}, "Equal priorities keep the order they were added in.");
 }
 
-void slotsAreIndependent()
+void theFirstWinnerEndsTheList()
 {
-    int draw{};
-    int present{};
-    Schedule schedule;
+    int work{};
+    fxcore::Chain<int&> chain;
+    calls.clear();
 
-    schedule.add(Slot::GameDraw, 5, &draw);
-    schedule.add(Slot::BeforePresent, 5, &present);
-    expect(owners(schedule, Slot::GameDraw) == std::vector<const void*>{&draw}, "A step stays in its slot.");
-    expect(owners(schedule, Slot::BeforePresent) == std::vector<const void*>{&present}, "Another slot holds its own steps.");
-    expect(owners(schedule, Slot::SceneReady).empty(), "A slot nobody uses is empty.");
+    chain.add(10, "declines", recordsFirst);
+    chain.add(20, "takes", takesTheWork);
+    chain.add(30, "never", recordsSecond);
+    expect(std::string(chain.run(work)) == "takes", "The step that took the work is named.");
+    expect(calls == std::vector<std::string>{"first", "takes"}, "No step after the winner runs.");
 }
 
-void aFeatureHoldsOneStepPerSlot()
+void theSameStepIsAddedOnce()
 {
-    int feature{};
-    Schedule schedule;
+    int work{};
+    fxcore::Chain<int&> chain;
+    calls.clear();
 
-    expect(schedule.add(Slot::GameDraw, 5, &feature), "Add a feature.");
-    expect(!schedule.add(Slot::GameDraw, 9, &feature), "The same feature cannot hold two steps in one slot.");
-    expect(schedule.ordered(Slot::GameDraw).size() == 1, "The refused step was not added.");
-    expect(schedule.add(Slot::Overlay, 5, &feature), "The same feature may work in another slot.");
+    expect(chain.add(10, "takes", takesTheWork), "Add a step.");
+    expect(!chain.add(20, "takes again", takesTheWork), "The same step cannot be added twice.");
+    chain.run(work);
+    expect(calls == std::vector<std::string>{"takes"}, "The refused step does not run.");
 }
 
 void oneWinnerPerDraw()
@@ -87,6 +108,20 @@ void oneWinnerPerDraw()
     claim.clear();
     expect(claim.take(&second), "The next draw is free.");
 }
+
+void aFrameKeepsTheSettingsItStartedWith()
+{
+    FrameLatch<int> latch;
+
+    latch.set(1);
+    expect(latch.latest() == 1, "Latest holds the change.");
+    expect(latch.frame() == 0, "No frame has started yet.");
+    expect(latch.present() == 1, "The next frame starts with the latest settings.");
+
+    latch.set(2);
+    expect(latch.frame() == 1, "The frame being recorded keeps its settings.");
+    expect(latch.present() == 2, "The frame after it takes the change.");
+}
 }
 
 int main()
@@ -95,9 +130,10 @@ int main()
     {
         lowerPriorityRunsFirst();
         equalPrioritiesKeepRegistrationOrder();
-        slotsAreIndependent();
-        aFeatureHoldsOneStepPerSlot();
+        theFirstWinnerEndsTheList();
+        theSameStepIsAddedOnce();
         oneWinnerPerDraw();
+        aFrameKeepsTheSettingsItStartedWith();
         std::cout << "Core order tests passed.\n";
 
         return 0;

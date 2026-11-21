@@ -2,7 +2,7 @@
 
 #include <mutex>
 
-namespace phantom_fx
+namespace fxcore
 {
 // A module's settings as configure sets them, and as the frame being recorded uses them. Configure and
 // the game's recording run on different threads; present starts the next frame with the latest

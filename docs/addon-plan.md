@@ -9,16 +9,17 @@ coupling.
 The first consumer after PhantomFX is the body-blood add-on. It is **deferred**: nothing in this plan may depend on
 it landing. Build the core so it can, then stop.
 
-Done so far: step 1 (`phantom_fx_core`, `core/order`, `core_order_tests`) and step 2 (game access and utilities moved
+Done so far: step 1 (`phantom_fx_core`, `core/order`, `core_order_tests`), step 2 (game access and utilities moved
 under `src/core/`; their headers keep their names, so the add-on's includes did not change; the suites link the
-library). Remaining: steps 3–5.
+library) and step 3 (`Chain` runs the draw owners, `FrameLatch` lives in core). Remaining: steps 4–5.
 
 ## Target layout
 
 ```
 src/core/
   log, clock, hresult, d3d11_helpers, shader_bytecode
-  order/     the schedule: slots, priorities, one winner per draw
+  order/     the slots, Chain (priorities, one winner per draw), DrawClaim
+  frame_latch.hpp  the frame being recorded keeps the settings it started with
   game/      game_code, game_constants, game_lights, game_shaders, device_check
   capture/   constant_capture
   settings/  generic store, SettingVisitor
@@ -82,9 +83,9 @@ rest of the repo: `expect()` helpers, one executable per suite, CTest, no new fr
 also removes the source lists every test target duplicates today (`upscaler_tests` recompiles the settings and all 20
 feature translation units).
 
-1. `core_order_tests` — slot order, stable priority sort, a second claim refused and logged, one winner per draw,
-   `FrameLatch` freezing settings for the frame being recorded. This encodes the ordering rules; it is the check that
-   catches a draw-chain regression without the game running.
+1. `core_order_tests` — priority order, equal priorities keeping registration order, the first winner ending the
+   list, a step added once, one winner per draw, and `FrameLatch` holding the frame's settings. This encodes the
+   ordering rules; it is the check that catches a draw-chain regression without the game running.
 2. `core_settings_tests` — defaults, ranges, ini round-trip, unknown keys ignored, and every key on every feature
    struct surviving save/load. This is the guard against a setting that does nothing.
 3. Repointed, not rewritten: `shader_bytecode_tests`, `game_shaders_tests`, `kernel_table_tests` link the library and
