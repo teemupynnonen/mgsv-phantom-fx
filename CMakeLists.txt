@@ -240,6 +240,13 @@ set(PHANTOM_FX_FEATURES src/features/upscaling/settings.cpp src/features/frame_g
     src/features/indirect_light/settings.cpp src/features/path_tracing/settings.cpp src/features/volumetric_fog/settings.cpp src/features/sea/settings.cpp src/features/water_caustics/settings.cpp src/features/photo_mode/settings.cpp src/features/hdr/settings.cpp src/features/frame_rate/settings.cpp
     src/features/motion_blur/settings.cpp src/features/depth_of_field/settings.cpp)
 
+# The parts every add-on shares: no ReShade calls, no game hooks, so its tests run without either.
+add_library(phantom_fx_core STATIC src/core/order.cpp)
+target_include_directories(phantom_fx_core PUBLIC src)
+target_compile_features(phantom_fx_core PUBLIC cxx_std_20)
+target_compile_definitions(phantom_fx_core PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(phantom_fx_core PRIVATE /W4 /WX /permissive- /utf-8)
+
 # The add-on uses ReShade's ImGui through the overlay function table, so none is linked.
 add_library(phantom_fx SHARED src/addon.cpp src/core.cpp src/modules.cpp src/features/upscaling/upscaler.cpp src/features/upscaling/render_size_plan.cpp src/features/upscaling/frames.cpp src/menu.cpp src/menu_budget.cpp src/fxui/fxui.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES} src/camera.cpp src/constant_capture.cpp
     src/device_check.cpp src/features/motion_blur/motion_blur.cpp src/features/upscaling/fxaa.cpp src/features/frame_rate/frame_rate.cpp src/render_scale.cpp src/ui_redirect.cpp src/frame_log.cpp src/resource_dump.cpp
@@ -254,7 +261,7 @@ add_dependencies(phantom_fx gi_kernels)
 target_include_directories(phantom_fx PRIVATE src "${GI_SHADER_DIR}")
 target_include_directories(phantom_fx SYSTEM PRIVATE "${RESHADE_DIR}/include" "${RESHADE_DIR}/imgui" "${STREAMLINE_DIR}/include" third_party
     "${FIDELITYFX_DIR}")
-target_link_libraries(phantom_fx PRIVATE minhook ngx NRD d3d11 d3d12 dxgi d3dcompiler)
+target_link_libraries(phantom_fx PRIVATE phantom_fx_core minhook ngx NRD d3d11 d3d12 dxgi d3dcompiler)
 target_compile_features(phantom_fx PRIVATE cxx_std_20)
 target_compile_definitions(phantom_fx PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX ImTextureID=ImU64 PHANTOM_FX_VERSION="${PROJECT_VERSION}"
     PHANTOM_FX_DIAGNOSTIC_LOG=$<BOOL:${PHANTOM_FX_DIAGNOSTIC_LOG}> PHANTOM_FX_DEV_TOOLS=$<BOOL:${PHANTOM_FX_DEV_TOOLS}>)
@@ -294,6 +301,11 @@ install(FILES licenses/AMD-FidelityFX-LICENSE.txt licenses/Bend-Studio-SSS-LICEN
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(core_order_tests tests/core_order_tests.cpp)
+    target_link_libraries(core_order_tests PRIVATE phantom_fx_core)
+    target_compile_options(core_order_tests PRIVATE /W4 /WX /permissive- /utf-8)
+    add_test(NAME core_order COMMAND core_order_tests)
+
     add_executable(upscaler_tests tests/upscaler_tests.cpp src/features/upscaling/render_size_plan.cpp src/features/upscaling/frames.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES} src/camera.cpp src/constant_capture.cpp
         src/log.cpp src/shader_bytecode.cpp src/features/global_illumination/gi_lighting.cpp)
     target_include_directories(upscaler_tests PRIVATE src)
