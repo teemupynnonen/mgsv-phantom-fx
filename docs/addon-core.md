@@ -6,18 +6,28 @@ add-on that was not built against the core cannot use it, and two add-ons never 
 
 PhantomFX is the first consumer. A second one is expected; anything the core does not do yet is listed at the end.
 
-## A new add-on in this repository
+## Linking it
 
-1. Put ReShade's exports in `addons/<name>.cpp`: `NAME`, `DESCRIPTION`, `AddonInit`, `AddonUninit`.
-2. Give it a shared library target whose name ends `.addon64`, and link the core:
+The core is its own CMake project, `src/core/CMakeLists.txt`. A second add-on adds it and links the target; it does not
+need PhantomFX, ReShade or the game:
 
 ```cmake
+# A project elsewhere on disk, or the add-on's own folder:
+add_subdirectory(path/to/mgsv-phantom-fx/src/core core)
+
 add_library(my_addon SHARED addons/my_addon.cpp src/...)
 target_link_libraries(my_addon PRIVATE phantom_fx_core)
 target_compile_options(my_addon PRIVATE /W4 /WX /permissive- /utf-8)
+set_target_properties(my_addon PROPERTIES OUTPUT_NAME MyAddon SUFFIX .addon64)
 ```
 
-3. Nothing else is needed. `phantom_fx_core` publishes:
+In this repository the root `CMakeLists.txt` already adds it, so only the last three lines are needed. The core
+fetches MinHook itself when the consumer does not already have it, and builds with the consumer's runtime (`/MT` in
+PhantomFX). Its tests are built when it is the top-level project, or when `PHANTOM_FX_CORE_TESTS` is on.
+
+It can also be built alone: `cmake -S src/core -B build`, then `ctest --test-dir build`.
+
+`phantom_fx_core` publishes:
 
 | What | Value |
 | --- | --- |
@@ -26,8 +36,9 @@ target_compile_options(my_addon PRIVATE /W4 /WX /permissive- /utf-8)
 | Definitions | `WIN32_LEAN_AND_MEAN`, `NOMINMAX` |
 | Libraries | `d3d11`, `d3dcompiler`, `minhook` |
 
-4. `AddonInit` and `AddonUninit` stay yours. The core registers no ReShade events, draws no overlay and opens no
-   log by itself.
+ReShade's exports stay yours: `NAME`, `DESCRIPTION`, `AddonInit`, `AddonUninit` in `addons/<name>.cpp`. `AddonInit`
+and `AddonUninit` are the add-on's own. The core registers no ReShade events, draws no overlay and opens no log by
+itself.
 
 Two add-ons replace different things. ReShade delivers events in load order and offers no priorities between add-ons,
 so there is no ordering to rely on across DLL boundaries.

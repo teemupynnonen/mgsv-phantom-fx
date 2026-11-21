@@ -30,7 +30,8 @@ addons/phantomfx.cpp   AddonInit/AddonUninit, fxcore::initialize, registration
 ```
 
 One CMake target, `phantom_fx_core` (namespace `fxcore`, so it does not collide with PhantomFX's own
-`phantom_fx::core`), linked by PhantomFX and by its tests. `dev/` (automation, DevKit) stays PhantomFX-only.
+`phantom_fx::core`), built by its own CMake project at `src/core/CMakeLists.txt` and linked by PhantomFX, its tests and
+any other add-on. `dev/` (automation, DevKit) stays PhantomFX-only.
 
 Deferred to the blood add-on: the overlay/pages framework, the texture registry and `engine_scene::GameTexture`,
 the blood feature itself, and the core build-hash check between DLLs. Revisit each when the second add-on exists.

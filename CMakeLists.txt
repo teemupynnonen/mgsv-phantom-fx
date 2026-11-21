@@ -9,6 +9,8 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "Phantom FX must be built for 64-bit Windows.")
 endif()
 
+include(CTest)
+
 # The statistics logged every few seconds, and the measurements behind them, are for development
 # (the dev preset); a release logs only what happens once: startup, sizes, failures.
 option(PHANTOM_FX_DIAGNOSTIC_LOG "Log the periodic statistics used in development" OFF)
@@ -240,25 +242,12 @@ set(PHANTOM_FX_FEATURES src/features/upscaling/settings.cpp src/features/frame_g
     src/features/indirect_light/settings.cpp src/features/path_tracing/settings.cpp src/features/volumetric_fog/settings.cpp src/features/sea/settings.cpp src/features/water_caustics/settings.cpp src/features/photo_mode/settings.cpp src/features/hdr/settings.cpp src/features/frame_rate/settings.cpp
     src/features/motion_blur/settings.cpp src/features/depth_of_field/settings.cpp)
 
-# The parts every add-on shares: no ReShade calls, no game hooks, so its tests run without either.
-# Its headers keep their names, so the add-on's includes did not change when they moved.
-add_library(phantom_fx_core STATIC
-    src/core/order.cpp
-    src/core/log.cpp
-    src/core/settings/ini.cpp
-    src/core/shader_bytecode.cpp
-    src/core/game/game_shaders.cpp
-    src/core/game/device_check.cpp
-    src/core/capture/constant_capture.cpp
-)
-target_include_directories(phantom_fx_core PUBLIC src src/core src/core/game src/core/capture)
-target_compile_features(phantom_fx_core PUBLIC cxx_std_20)
-target_compile_definitions(phantom_fx_core PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
-target_compile_options(phantom_fx_core PRIVATE /W4 /WX /permissive- /utf-8)
-target_link_libraries(phantom_fx_core PUBLIC d3d11 d3dcompiler minhook)
+# The parts every add-on links: its own CMake project, so a second add-on builds it too.
+set(PHANTOM_FX_CORE_TESTS ON)
+add_subdirectory(src/core)
 
 # The add-on uses ReShade's ImGui through the overlay function table, so none is linked.
-add_library(phantom_fx SHARED src/addon.cpp src/core.cpp src/modules.cpp src/features/upscaling/upscaler.cpp src/features/upscaling/render_size_plan.cpp src/features/upscaling/frames.cpp src/menu.cpp src/menu_budget.cpp src/fxui/fxui.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES} src/camera.cpp
+add_library(phantom_fx SHARED src/addon.cpp src/core.cpp src/modules.cpp src/features/upscaling/upscaler.cpp src/features/upscaling/render_size_plan.cpp src/features/upscaling/frames.cpp src/menu.cpp src/menu_budget.cpp src/fxui/fxui.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES}
     src/features/motion_blur/motion_blur.cpp src/features/upscaling/fxaa.cpp src/features/frame_rate/frame_rate.cpp src/render_scale.cpp src/ui_redirect.cpp src/frame_log.cpp src/resource_dump.cpp
     src/game_dither.cpp src/features/frame_generation/presenter.cpp src/features/frame_generation/frame_generation.cpp src/game_loop.cpp src/passes/contact_shadow_trace.cpp src/passes/sun_light_pass.cpp src/features/sun_contact_shadows/sun_contact_shadows.cpp
     src/passes/local_light_pass.cpp src/features/lamp_contact_shadows/lamp_contact_shadows.cpp src/features/lamp_soft_shadows/lamp_soft_shadows.cpp
@@ -309,18 +298,7 @@ install(FILES licenses/AMD-FidelityFX-LICENSE.txt licenses/Bend-Studio-SSS-LICEN
     licenses/XeGTAO-LICENSE.txt licenses/SSRT3-LICENSE.txt licenses/RenoDX-LICENSE.txt
     licenses/UnrealEngineSkyAtmosphere-LICENSE.txt licenses/Capsaicin-LICENSE.txt DESTINATION PhantomFX COMPONENT addon)
 
-include(CTest)
 if(BUILD_TESTING)
-    add_executable(core_order_tests tests/core_order_tests.cpp)
-    target_link_libraries(core_order_tests PRIVATE phantom_fx_core)
-    target_compile_options(core_order_tests PRIVATE /W4 /WX /permissive- /utf-8)
-    add_test(NAME core_order COMMAND core_order_tests)
-
-    add_executable(core_settings_tests tests/core_settings_tests.cpp)
-    target_link_libraries(core_settings_tests PRIVATE phantom_fx_core)
-    target_compile_options(core_settings_tests PRIVATE /W4 /WX /permissive- /utf-8)
-    add_test(NAME core_settings COMMAND core_settings_tests)
-
     add_executable(settings_tests tests/settings_tests.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES})
     target_include_directories(settings_tests PRIVATE src)
     target_link_libraries(settings_tests PRIVATE phantom_fx_core)
@@ -329,7 +307,7 @@ if(BUILD_TESTING)
     target_compile_options(settings_tests PRIVATE /W4 /WX /permissive- /utf-8)
     add_test(NAME settings COMMAND settings_tests)
 
-    add_executable(upscaler_tests tests/upscaler_tests.cpp src/features/upscaling/render_size_plan.cpp src/features/upscaling/frames.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES} src/camera.cpp
+    add_executable(upscaler_tests tests/upscaler_tests.cpp src/features/upscaling/render_size_plan.cpp src/features/upscaling/frames.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES}
         src/features/global_illumination/gi_lighting.cpp)
     target_include_directories(upscaler_tests PRIVATE src)
     target_link_libraries(upscaler_tests PRIVATE phantom_fx_core d3d11 d3dcompiler)
