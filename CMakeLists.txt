@@ -245,6 +245,7 @@ set(PHANTOM_FX_FEATURES src/features/upscaling/settings.cpp src/features/frame_g
 add_library(phantom_fx_core STATIC
     src/core/order.cpp
     src/core/log.cpp
+    src/core/settings/ini.cpp
     src/core/shader_bytecode.cpp
     src/core/game/game_shaders.cpp
     src/core/game/device_check.cpp
@@ -314,6 +315,19 @@ if(BUILD_TESTING)
     target_link_libraries(core_order_tests PRIVATE phantom_fx_core)
     target_compile_options(core_order_tests PRIVATE /W4 /WX /permissive- /utf-8)
     add_test(NAME core_order COMMAND core_order_tests)
+
+    add_executable(core_settings_tests tests/core_settings_tests.cpp)
+    target_link_libraries(core_settings_tests PRIVATE phantom_fx_core)
+    target_compile_options(core_settings_tests PRIVATE /W4 /WX /permissive- /utf-8)
+    add_test(NAME core_settings COMMAND core_settings_tests)
+
+    add_executable(settings_tests tests/settings_tests.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES})
+    target_include_directories(settings_tests PRIVATE src)
+    target_link_libraries(settings_tests PRIVATE phantom_fx_core)
+    target_compile_features(settings_tests PRIVATE cxx_std_20)
+    target_compile_definitions(settings_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(settings_tests PRIVATE /W4 /WX /permissive- /utf-8)
+    add_test(NAME settings COMMAND settings_tests)
 
     add_executable(upscaler_tests tests/upscaler_tests.cpp src/features/upscaling/render_size_plan.cpp src/features/upscaling/frames.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES} src/camera.cpp
         src/features/global_illumination/gi_lighting.cpp)

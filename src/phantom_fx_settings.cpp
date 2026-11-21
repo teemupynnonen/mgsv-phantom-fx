@@ -1,5 +1,6 @@
 #include "phantom_fx_settings.hpp"
 
+#include "core/settings/ini.hpp"
 #include "dev_tools.hpp"
 
 #include <Windows.h>
@@ -19,34 +20,10 @@ namespace phantom_fx
 {
 namespace
 {
-std::string_view trim(std::string_view text)
-{
-    const auto begin = text.find_first_not_of(" \t\r");
-    return begin == text.npos ? std::string_view{} : text.substr(begin, text.find_last_not_of(" \t\r") - begin + 1);
-}
-
-template<class T> bool number(std::string_view text, T& result)
-{
-    T value{};
-    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
-    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()) return false;
-
-    result = value;
-
-    return true;
-}
-
-// Each leaves the setting as it is when the text is not valid.
-void readFlag(std::string_view value, bool& result)
-{
-    if (value == "0" || value == "1") result = value == "1";
-}
-
-void readFloat(std::string_view value, float& result, float low, float high)
-{
-    float parsed{};
-    if (number(value, parsed) && std::isfinite(parsed)) result = std::clamp(parsed, low, high);
-}
+using fxcore::settings::number;
+using fxcore::settings::readFlag;
+using fxcore::settings::readFloat;
+using fxcore::settings::trim;
 
 // The choice PhantomFX.ini names: by its key, or by its value when it has none.
 const SettingChoice* choiceNamed(const ChoiceInfo& info, std::string_view text)
@@ -61,7 +38,7 @@ const SettingChoice* choiceNamed(const ChoiceInfo& info, std::string_view text)
     return nullptr;
 }
 
-using IniValues = std::map<std::string, std::string, std::less<>>;
+using IniValues = fxcore::settings::Values;
 
 class IniReader final : public SettingVisitor
 {
@@ -339,17 +316,7 @@ Settings loadSettings(const std::filesystem::path& path)
         throw std::runtime_error("Cannot read the Phantom FX settings.");
     }
 
-    IniValues values;
-    std::string line;
-    while (std::getline(input, line))
-    {
-        const auto separator = line.find('=');
-        if (separator == line.npos) continue;
-
-        values.insert_or_assign(std::string(trim(std::string_view(line).substr(0, separator))), std::string(trim(std::string_view(line).substr(separator + 1))));
-    }
-
-    if (input.bad()) throw std::runtime_error("Cannot read the Phantom FX settings.");
+    IniValues values = fxcore::settings::read(input);
 
     Settings settings;
     IniReader reader(values);

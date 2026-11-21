@@ -11,7 +11,8 @@ it landing. Build the core so it can, then stop.
 
 Done so far: step 1 (`phantom_fx_core`, `core/order`, `core_order_tests`), step 2 (game access and utilities moved
 under `src/core/`; their headers keep their names, so the add-on's includes did not change; the suites link the
-library) and step 3 (`Chain` runs the draw owners, `FrameLatch` lives in core). Remaining: steps 4–5.
+library), step 3 (`Chain` runs the draw owners, `FrameLatch` lives in core) and step 4 (`core/settings` owns the file
+format and its readers; `core_settings_tests` and `settings_tests` cover them). Remaining: step 5.
 
 ## Target layout
 
@@ -40,7 +41,7 @@ the blood feature itself, and the core build-hash check between DLLs. Revisit ea
 | --- | --- | --- |
 | Game access | 1,445 | `constant_capture` 257, `game_constants` 181, `game_shaders` 469, `shader_bytecode` 388, `game_files` 201, `game_code` 58, `device_check` 64 |
 | Utilities | 456 | `log` 84, `clock` 27, `hresult` 17, `d3d11_helpers` 328 |
-| Settings | ~450 | a generic store (sections, keys, ranges, defaults, load/save) plus `SettingVisitor`; the per-feature structs stay with PhantomFX |
+| Settings | ~150 | `core/settings/ini`: the file format, `key=value`, flags, clamped floats; the visitor and the per-feature structs stay with PhantomFX |
 | Ordering | ~150 new | the scheduler below |
 
 `ui_redirect` does not move: it belongs to a page, and pages are deferred.
@@ -67,14 +68,16 @@ Rules that must survive the port:
 
 ## Settings split
 
-`phantom_fx_settings.hpp` today is one `Settings` struct holding 20 feature structs. It becomes:
+`phantom_fx_settings.hpp` today is one `Settings` struct holding 20 feature structs. What moved, and what did not:
 
-- **core:** a key/value store with sections, ranges, defaults, ini load and save; `describe()` keeps working through
-  `SettingVisitor`.
-- **PhantomFX:** its 20 structs, unchanged in shape.
+- **core:** `core/settings/ini` — `key=value` parsing, the file's reader, flags, clamped floats and full-text numbers.
+  Nothing there knows what a setting means.
+- **PhantomFX:** `SettingVisitor`, its info structs and the 20 feature structs. They describe PhantomFX's effects, so
+  moving them would drag `Effect` into core for a consumer that does not exist yet. `core_settings_tests` covers the
+  format; `settings_tests` moves every described setting off its default, saves, loads and compares.
 
-This is the widest change in the port (25 fields, 20 structs) and the most likely source of silent breakage: a feature
-that ignores its slider.
+The widest change in the port is therefore the test, not a rewrite: a feature that ignores its slider now fails
+`settings_tests` instead of surprising the player.
 
 ## Tests
 
@@ -86,9 +89,11 @@ feature translation units).
 1. `core_order_tests` — priority order, equal priorities keeping registration order, the first winner ending the
    list, a step added once, one winner per draw, and `FrameLatch` holding the frame's settings. This encodes the
    ordering rules; it is the check that catches a draw-chain regression without the game running.
-2. `core_settings_tests` — defaults, ranges, ini round-trip, unknown keys ignored, and every key on every feature
-   struct surviving save/load. This is the guard against a setting that does nothing.
-3. Repointed, not rewritten: `shader_bytecode_tests`, `game_shaders_tests`, `kernel_table_tests` link the library and
+2. `core_settings_tests` — the file format: trimming, a line without a key or an `=`, an empty value, a later key
+   replacing an earlier one, flags that take only 0 and 1, floats clamped to their range, text that is not a number.
+3. `settings_tests` — every setting moved off its default, saved and read back; unknown keys ignored; a missing file
+   the first launch; a value outside its range refused at save.
+4. Repointed, not rewritten: `shader_bytecode_tests`, `game_shaders_tests`, `kernel_table_tests` link the library and
    change include paths to `core/...`. Pure helpers (`hresult`, log formatting, game constants) get assertions.
 
 Not tested: ReShade plumbing, device and swapchain hooks, pass helpers that need a live context. Those stay in the
@@ -101,7 +106,7 @@ in-game cases.
 | 1 | **Skeleton core.** CMake static lib, `core/order` (`Schedule`, `DrawClaim`), `core_order_tests`, `phantom_fx` links it. ReShade event dispatch stays in `addon.cpp` until a moved handler needs it. | 0.5 day |
 | 2 | **Move game access and utilities.** File moves, include fixes, tests link the lib. PhantomFX's tests stay green. | 1 day |
 | 3 | **Ordering.** Slots, priorities, single-winner claims, state scopes, frame latch; convert `addon.cpp`'s chains; `core_order_tests`. | 1 day |
-| 4 | **Settings split.** Core store, PhantomFX's 20 structs, `core_settings_tests`. | 1.5 days |
+| 4 | **Settings split.** `core/settings/ini`, the add-on's visitors on top, `core_settings_tests` and `settings_tests`. | 1 day |
 | 5 | **Regression.** Every case rerun by the player. | 1–2 days, gated on the player |
 
 Coding: about 4 days. Verification adds one to two days, because every in-game case waits on the player.
