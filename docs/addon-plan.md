@@ -9,13 +9,17 @@ coupling.
 The first consumer after PhantomFX is the body-blood add-on. It is **deferred**: nothing in this plan may depend on
 it landing. Build the core so it can, then stop.
 
+Done so far: step 1 (`phantom_fx_core`, `core/order`, `core_order_tests`) and step 2 (game access and utilities moved
+under `src/core/`; their headers keep their names, so the add-on's includes did not change; the suites link the
+library). Remaining: steps 3–5.
+
 ## Target layout
 
 ```
 src/core/
   log, clock, hresult, d3d11_helpers, shader_bytecode
   order/     the schedule: slots, priorities, one winner per draw
-  game/      game_code, game_constants, game_shaders, game_files, device_check
+  game/      game_code, game_constants, game_lights, game_shaders, device_check
   capture/   constant_capture
   settings/  generic store, SettingVisitor
   passes/    scissor/fullscreen helpers, state scopes
