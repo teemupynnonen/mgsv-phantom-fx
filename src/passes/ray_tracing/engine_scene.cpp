@@ -114,15 +114,8 @@ constexpr std::uint64_t MaxGroupInstances = 4096, MaxFileBytes = 64ull << 20;
 constexpr std::uint32_t UnreadableRetries = 600;
 // New model files read a take at most; the rest wait for the next takes.
 constexpr std::uint64_t ParseBytesPerTake = 8ull << 20;
-// A grass clump's own offset in the game's wave (its instances' inParameter.x): a scattered value in
-// [0, 2 pi) from its place, so neighbours do not lean as one.
-constexpr float ClumpPhaseX = 12.9898f, ClumpPhaseZ = 78.233f, ClumpPhaseScale = 43758.5453f, TwoPi = 6.2831853f;
-
-float clumpPhase(float x, float z)
-{
-    const float scattered = std::sin(x * ClumpPhaseX + z * ClumpPhaseZ) * ClumpPhaseScale;
-    return (scattered - std::floor(scattered)) * TwoPi;
-}
+// The game's per-clump wind phase: its placement record's scale byte, over 255, in radians.
+constexpr float ClumpPhasePerByte = 6.2831853f / 255.0f;
 
 using VisibilityTest = void (*)(std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t,
     std::uintptr_t, std::uintptr_t, std::uintptr_t);
@@ -703,18 +696,22 @@ void snapshot()
     // vegetation draws' material constants (gi_inputs.cpp), a scattered offset a clump, its feet held at
     // the placement's base. The clone's props stand. Until the game drew vegetation, none sways.
     const auto latestWind = vegetationWind();
-    engine_brush::collect([&](std::uintptr_t resource, std::span<const scene_description::Transform> transforms, std::uint8_t plugin) {
+    engine_brush::collect([&](std::uintptr_t resource, std::span<const scene_description::Transform> transforms, std::span<const std::uint8_t> scales,
+                              std::uint8_t plugin) {
         if (const auto hash = modelResource(resource, ModelFile::Rigid, Source::ObjectBrush))
-            for (const auto& transform : transforms)
+            for (std::size_t i = 0; i < transforms.size(); ++i)
             {
                 if (!plugin || !latestWind.seen)
                 {
-                    instances.push_back({*hash, transform, 0});
+                    instances.push_back({*hash, transforms[i], 0});
                     continue;
                 }
 
-                const auto lean = latestWind.base + latestWind.amplitude * std::sin(latestWind.phase + clumpPhase(transform[3], transform[11]));
-                instances.push_back({*hash, scene_description::leanedByWind(transform, lean * latestWind.directionX, lean * latestWind.directionZ), 0});
+                // The game's own per-clump phase: the placement's scale byte as radians, plus the material's
+                // wave phase; the lean's direction and size are the material's.
+                const auto phase = latestWind.phase + static_cast<float>(scales[i]) * ClumpPhasePerByte;
+                const auto lean = latestWind.base + latestWind.amplitude * std::sin(phase);
+                instances.push_back({*hash, scene_description::leanedByWind(transforms[i], lean * latestWind.directionX, lean * latestWind.directionZ), 0});
             }
     });
 

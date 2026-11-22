@@ -89,6 +89,7 @@ struct Group
 {
     std::uintptr_t resource{};
     std::vector<scene_description::Transform> transforms;
+    std::vector<std::uint8_t> scales; // Each placement's scale byte, which the game also reads as its wind phase
     std::uint8_t kind{};
 };
 std::unordered_map<std::uintptr_t, std::vector<Group>> readBlocks;
@@ -225,6 +226,7 @@ std::vector<Group> readBlock(std::uintptr_t block, const NamedPlugins& named)
             made.resource = plugin.resource;
             made.kind = plugin.kind;
             made.transforms.push_back(transformOf(centreX + x16 / UnitsPerMetre, y, centreZ + z16 / UnitsPerMetre, rotation, scale));
+            made.scales.push_back(scaleByte);
         }
 
         if (!made.transforms.empty()) groups.push_back(std::move(made));
@@ -253,7 +255,8 @@ std::string hook(std::uintptr_t base) noexcept
     return " The object brush's constructors are hooked: the scene takes its vegetation.";
 }
 
-void collect(const std::function<void(std::uintptr_t resource, std::span<const scene_description::Transform> transforms, std::uint8_t plugin)>& place)
+void collect(const std::function<void(std::uintptr_t resource, std::span<const scene_description::Transform> transforms,
+    std::span<const std::uint8_t> scales, std::uint8_t plugin)>& place)
 {
     std::vector<std::uintptr_t> liveBrushes, liveBlocks;
     {
@@ -291,7 +294,7 @@ void collect(const std::function<void(std::uintptr_t resource, std::span<const s
 
         for (const auto& group : found->second)
         {
-            place(group.resource, group.transforms, group.kind);
+            place(group.resource, group.transforms, group.scales, group.kind);
             placements += static_cast<std::uint32_t>(group.transforms.size());
             kinds[group.kind] += static_cast<std::uint32_t>(group.transforms.size());
         }
