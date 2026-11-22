@@ -449,6 +449,27 @@ void bushesAreLeaves()
         "The object brush's bushes and grass are leaves, though the game never casts them; its props are solid.");
 }
 
+// The wind's lean, for the grass the game sways on screen: the clump's feet stay on the ground and its tops
+// move along the wind by the lean times their height.
+void windLeansGrassFromItsBase()
+{
+    const auto worldOf = [](const Transform& transform, const Vertex& vertex) {
+        std::array<float, 3> world{};
+        for (std::size_t row = 0; row < 3; ++row)
+            world[row] = transform[row * 4] * vertex[0] + transform[row * 4 + 1] * vertex[1] + transform[row * 4 + 2] * vertex[2] + transform[row * 4 + 3];
+        return world;
+    };
+    const auto close = [](const std::array<float, 3>& a, const std::array<float, 3>& b) {
+        return std::abs(a[0] - b[0]) < 1e-5f && std::abs(a[1] - b[1]) < 1e-5f && std::abs(a[2] - b[2]) < 1e-5f;
+    };
+    const Transform placement{1, 0, 0, 2, 0, 1, 0, 3, 0, 0, 1, -4}; // Upright, standing at (2, 3, -4).
+    expect(close(worldOf(leanedByWind(placement, 0, 0), {0, 1, 0}), worldOf(placement, {0, 1, 0})), "No wind leaves a grass clump as it was.");
+
+    const auto leaned = leanedByWind(placement, 0.1f, -0.2f);
+    expect(close(worldOf(leaned, {0, 0, 0}), {2, 3, -4}), "A grass clump's feet stay on the ground.");
+    expect(close(worldOf(leaned, {0, 1, 0}), {2.1f, 4, -4.2f}), "Its top leans along the wind by the lean times its height.");
+}
+
 void sameFileDependsOnSource()
 {
     expect(rolesOf({{160, 65}, {160, 64}}, Source::VisibilityManager) == Roles{Dropped, MeshRole::CutOut},
@@ -698,6 +719,7 @@ int main()
         swayingTreeCanopyCard();
         characterMainViewSolid();
         bushesAreLeaves();
+        windLeansGrassFromItsBase();
         sameFileDependsOnSource();
         materialPerRole();
         cutOutWaitsForTexture();

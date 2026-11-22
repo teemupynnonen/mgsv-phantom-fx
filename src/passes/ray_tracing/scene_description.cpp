@@ -740,4 +740,20 @@ Material materialOf(const ModelPart& part, const MaterialTextures& textures, Sel
 
     return material;
 }
+
+Transform leanedByWind(Transform placement, float leanX, float leanZ)
+{
+    // World x and z take the row that gives world y, so every point moves by the lean times its height
+    // over the placement's origin, and that origin (the ground under a grass clump) keeps its place.
+    const float base = placement[7];
+    for (std::size_t i = 0; i < 4; ++i)
+    {
+        placement[i] += leanX * placement[4 + i];
+        placement[8 + i] += leanZ * placement[4 + i];
+    }
+    placement[3] -= leanX * base;
+    placement[11] -= leanZ * base;
+
+    return placement;
+}
 }

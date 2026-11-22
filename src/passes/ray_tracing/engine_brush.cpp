@@ -46,6 +46,7 @@ constexpr std::uint32_t MaxPlugins = 256;
 // The plugins that draw a model (ObjectBrushPluginClone, TppObjectBrushPluginBush,
 // TppObjectBrushPluginFlutteringGrass): its resource at +0x90, its scale range at +0xA8 and +0xAC.
 constexpr std::uintptr_t PluginVtables[]{0x2166630, 0x21A63F0, 0x21AD270};
+constexpr std::size_t GrassPlugin = 2; // TppObjectBrushPluginFlutteringGrass: the game sways it on screen
 constexpr std::size_t PluginModel = 0x90, PluginScale = 0xA8;
 // A block: its brush's name at +0xA0, its placements at +0x98, its id at +0xB8 (the low 16 bits: row x
 // 64 + column of the brush's grid). The placements start with their groups' range (begin, end), the
@@ -78,6 +79,7 @@ struct Plugin
 {
     std::uintptr_t resource{};
     float scaleMin{}, scaleRange{};
+    bool grass{};
 };
 
 // A block's placements as read when first seen, a group a plugin. By block, on the snapshot's thread.
@@ -85,6 +87,7 @@ struct Group
 {
     std::uintptr_t resource{};
     std::vector<scene_description::Transform> transforms;
+    bool grass{};
 };
 std::unordered_map<std::uintptr_t, std::vector<Group>> readBlocks;
 
@@ -150,7 +153,7 @@ std::vector<Plugin> pluginsOf(std::uintptr_t brush)
 
         const auto resource = read<std::uintptr_t>(*plugin + PluginModel);
         const auto scale = read<std::array<float, 2>>(*plugin + PluginScale);
-        if (resource && scale) plugins[i] = {*resource, (*scale)[0], (*scale)[1] - (*scale)[0]};
+        if (resource && scale) plugins[i] = {*resource, (*scale)[0], (*scale)[1] - (*scale)[0], isA(*plugin, imageBase + PluginVtables[GrassPlugin])};
     }
 
     return plugins;
@@ -213,6 +216,7 @@ std::vector<Group> readBlock(std::uintptr_t block, const NamedPlugins& named)
             const auto& plugin = plugins[pluginIndex];
             const float scale = plugin.scaleMin + plugin.scaleRange * (static_cast<float>(scaleByte) / 255.0f);
             made.resource = plugin.resource;
+            made.grass = plugin.grass;
             made.transforms.push_back(transformOf(centreX + x16 / UnitsPerMetre, y, centreZ + z16 / UnitsPerMetre, rotation, scale));
         }
 
@@ -242,7 +246,7 @@ std::string hook(std::uintptr_t base) noexcept
     return " The object brush's constructors are hooked: the scene takes its vegetation.";
 }
 
-void collect(const std::function<void(std::uintptr_t resource, std::span<const scene_description::Transform> transforms)>& place)
+void collect(const std::function<void(std::uintptr_t resource, std::span<const scene_description::Transform> transforms, bool grass)>& place)
 {
     std::vector<std::uintptr_t> liveBrushes, liveBlocks;
     {
@@ -279,7 +283,7 @@ void collect(const std::function<void(std::uintptr_t resource, std::span<const s
 
         for (const auto& group : found->second)
         {
-            place(group.resource, group.transforms);
+            place(group.resource, group.transforms, group.grass);
             placements += static_cast<std::uint32_t>(group.transforms.size());
         }
     }
