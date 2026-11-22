@@ -4,9 +4,8 @@
 it and carries its own copy. There is no shared DLL, no ABI, no version handshake and no load-order coupling. An add-on
 that was not built against the core cannot use it, and two add-ons never share state through it.
 
-PhantomFX and the blood add-on (`https://github.com/ZioPao/mgsv-phantom-blood`, branch `standalone`) are the two
-consumers. The blood add-on is the worked example this guide is written from: its `addons/blood.cpp`, its
-`settings_store` and its `CMakeLists.txt` are small enough to copy.
+PhantomFX is the first consumer. The examples below are the smallest shape an add-on needs: a CMake target, an entry
+point, a few events and a settings file.
 
 The core gives you the game access and the frame vocabulary, not an add-on framework. A new add-on still owns its
 exports, its ReShade events, its log, its ini and its draw order. That is deliberate; see the end of this file.
@@ -53,8 +52,7 @@ keep add-ons on the static runtime). Its tests are built when it is the top-leve
 
 ## 2. The entry point
 
-ReShade loads `MyAddon.addon64` and calls the four exports itself. The core does none of it. A minimal entry point,
-copied from `addons/blood.cpp`:
+ReShade loads `MyAddon.addon64` and calls the four exports itself. The core does none of it. A minimal entry point:
 
 ```cpp
 #include "core/game/device_check.hpp"
@@ -158,7 +156,7 @@ Register only what the feature reads. The core's helpers and the event that feed
 | Event | What to call |
 | --- | --- |
 | `init_command_queue`, `destroy_command_queue` | Your `attach(device, context)` and `detach()`; the immediate context is the one to keep |
-| `init_pipeline` | `game_shaders::pixelShaderCreated`, `vertexShaderCreated`, `inputLayoutCreated`; the blood also reads its own pool shaders here |
+| `init_pipeline` | `game_shaders::pixelShaderCreated`, `vertexShaderCreated`, `inputLayoutCreated`; an add-on that reads other shaders' bytecode does it here too |
 | `draw`, `draw_indexed` | `game_shaders::DrawnShader shader(context)`, then your `draw` (see the next section) |
 | `bind_pipeline` | `game_shaders::vertexShaderOf(reinterpret_cast<IUnknown*>(pipeline.handle))` for vertex-shader-based dispatch |
 | `map_buffer_region`, `unmap_buffer_region` | `constant_capture::bufferMapped(buffer, data)` / `bufferUnmapped(buffer)` |
@@ -234,8 +232,8 @@ so trailing junk is refused. A value the file does not hold leaves the setting a
 For settings the render thread reads, hold them in `fxcore::FrameLatch<Settings>`: `set` from the thread that changes
 them, `present()` at the present event, `frame()` from the draw code. The frame being recorded never mixes two sets.
 
-PhantomFX's `SettingVisitor` is PhantomFX's: it describes PhantomFX's effects and is not part of the core. The blood
-add-on carries a small visitor of its own in `settings_store.cpp`; either pattern is fine for a new add-on.
+PhantomFX's `SettingVisitor` is PhantomFX's: it describes PhantomFX's effects and is not part of the core. A new
+add-on can write its own loader as above, or its own visitor; either is fine.
 
 ## 6. Tests
 
@@ -280,11 +278,11 @@ or the game's memory belongs in an in-game case.
 The moved files kept their names, so `#include "game_shaders.hpp"` or `#include "log.hpp"` resolves in either add-on.
 New core code is included by path: `#include "core/order.hpp"`, `#include "core/settings/ini.hpp"`.
 
-## Coexisting with PhantomFX
+## Coexisting with other add-ons
 
 ReShade delivers every event to every add-on, in load order, with no priorities between DLLs. Two add-ons must replace
-different things: the blood add-on claims character draws, PhantomFX claims passes. A draw both would claim is a
-double draw, not a merge.
+different things: one claiming character draws and another claiming lighting passes is fine. A draw both would claim is
+a double draw, not a merge.
 
 What each add-on pays for separately, by design:
 
@@ -299,9 +297,9 @@ Ordering inside one add-on is the schedule above. Ordering between the two does 
 
 - ReShade event dispatch, an add-on base class or a registration list.
 - The overlay and its pages; each add-on draws its own, or has no UI.
-- The texture registry (`GameTexture`, `gameTextureOf`, `currentLevelOf`). The blood add-on keeps its own copy in
-  `src/features/blood/texture_registry`; a new add-on that needs the game's textures copies that file or lifts it
-  into the core.
+- A texture registry: finding the game's texture by its manager handle, and following it as mips stream in. The
+  logic is about 135 lines walking the game's texture manager; an add-on that needs it writes it, or lifts it into the
+  core.
 - A settings UI, a version check between DLLs, or ordering between add-ons.
 
 Each waits for a second consumer to need it. `docs/addon-plan.md` says what was deferred and why.

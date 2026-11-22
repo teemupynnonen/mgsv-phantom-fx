@@ -6,8 +6,8 @@ Goal: a reusable rendering core, extracted from PhantomFX, that every later add-
 not an injected DLL: an add-on that wants it must be built against it. No ABI, no version handshake, no load-order
 coupling. `docs/addon-core.md` is the integration guide a new add-on follows.
 
-The first consumer after PhantomFX is the body-blood add-on. It is **deferred**: nothing in this plan may depend on
-it landing. Build the core so it can, then stop.
+A second add-on is expected but not part of this plan: nothing here may depend on it landing. Build the core so it
+can, then stop.
 
 Done so far: step 1 (`phantom_fx_core`, `core/order`, `core_order_tests`), step 2 (game access and utilities moved
 under `src/core/`; their headers keep their names, so the add-on's includes did not change; the suites link the
@@ -33,8 +33,8 @@ One CMake target, `phantom_fx_core` (namespace `fxcore`, so it does not collide 
 `phantom_fx::core`), built by its own CMake project at `src/core/CMakeLists.txt` and linked by PhantomFX, its tests and
 any other add-on. `dev/` (automation, DevKit) stays PhantomFX-only.
 
-Deferred to the blood add-on: the overlay/pages framework, the texture registry and `engine_scene::GameTexture`,
-the blood feature itself, and the core build-hash check between DLLs. Revisit each when the second add-on exists.
+Deferred until a second add-on exists: the overlay/pages framework, the texture registry (`engine_scene::GameTexture`),
+and a core build-hash check between DLLs.
 
 ## What moves into core
 
@@ -60,12 +60,10 @@ Four orderings, made explicit instead of implicit.
 
 Rules that must survive the port:
 
-1. The pool draws **inside** the game's decal draw, before lighting. A core that only exposes present-time hooks
-   breaks it.
+1. A feature that draws inside a game pass keeps doing so. A core that only exposes present-time hooks breaks it.
 2. Ray-traced lights claim light draws **before** the local light pass (`addon.cpp:301`).
 3. The upscaler and HDR stay at output size and in their present slot (`addon.cpp:588-591`).
-4. `blood::draw` stays ahead of every ray-tracing feature in the draw chain.
-5. Present order stays `core` → `upscaler` → `features` → `performance`.
+4. Present order stays `core` → `upscaler` → `features` → `performance`.
 
 ## Settings split
 
@@ -121,16 +119,12 @@ suite.
    exists for this.
 2. **Duplicated hot paths.** Constant capture runs once per loaded add-on. Acceptable for one; measure the frame cost
    when the second arrives.
-3. **Draw-chain reordering** changes the pool's decal behaviour. Keep ordering rule 1 and rerun one shot, one pool, one
-   body after the port.
-4. **Blood is deferred, not cancelled.** The texture registry is still an unresolved unknown; price it when that work
-   restarts, not now.
+3. **Draw-chain reordering** changes which feature draws a pass. Keep the ordering rules above and rerun the in-game
+   cases after the port.
 
 ## Definition of done
 
 1. PhantomFX loads and runs from the core, with the same features, settings and screenshots as before the split.
-2. One shot, one wound, one pool, one body: the same log lines and the same picture as before the split.
-3. The pool draws in the decal pass, not at present.
-4. Ray-traced lights still claim their draws before the local light pass.
-5. `ctest` runs `core_order_tests` and `core_settings_tests` through `phantom_fx_core`.
-6. Settings apply, and the ini still round-trips every key.
+2. Ray-traced lights still claim their draws before the local light pass.
+3. `ctest` runs `core_order_tests` and `core_settings_tests` through `phantom_fx_core`.
+4. Settings apply, and the ini still round-trips every key.

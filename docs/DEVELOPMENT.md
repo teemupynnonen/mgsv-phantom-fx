@@ -156,9 +156,9 @@ they had in `src/`, so the add-on includes `"log.hpp"` or `"game_shaders.hpp"` u
 `phantom_fx` namespace, while the core's own code is `fxcore`.
 
 `docs/addon-core.md` is the guide for a new add-on: the target and what the core publishes, a working entry point and
-its events, the draw schedule, settings with their own file, tests, and what the core does not provide yet. The blood
-add-on is its worked example. The core is a CMake project of its own (`src/core/CMakeLists.txt`), so another add-on adds
-it with `add_subdirectory` and links `phantom_fx_core`; it fetches MinHook itself and builds alone.
+its events, the draw schedule, settings with their own file, tests, and what the core does not provide yet. The core is a
+CMake project of its own (`src/core/CMakeLists.txt`), so another add-on adds it with `add_subdirectory` and links
+`phantom_fx_core`; it fetches MinHook itself and builds alone.
 
 ### The add-on
 
