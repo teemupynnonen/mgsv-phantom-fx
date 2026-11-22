@@ -26,6 +26,23 @@ std::string hook() noexcept;
 // Snapshots are taken only while on.
 void setActive(bool active) noexcept;
 
+// The wind the game draws its vegetation with, from its wave vertex shaders' material constants: the
+// direction on the ground, the wave's phase and the lean at a clump's top, and a base lean.
+struct VegetationWind
+{
+    float directionX{}, directionZ{};
+    float base{};
+    float phase{};
+    float amplitude{};
+    bool seen{};
+};
+
+// On the game's threads: one of its vegetation draws' material constants (gi_inputs.cpp); the last
+// animated draw's wind is the one the scene sways with.
+void noteVegetationWind(const game_constants::VegetationMaterialConstants& material) noexcept;
+// The latest such wind; `seen` false until the game drew animated vegetation.
+VegetationWind vegetationWind() noexcept;
+
 struct Snapshot
 {
     bool instancesUpdated{}; // A newer list came: `instances` and `characters` replace the last, even when empty
