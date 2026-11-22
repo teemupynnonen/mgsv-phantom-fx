@@ -114,11 +114,12 @@ constexpr std::uint64_t MaxGroupInstances = 4096, MaxFileBytes = 64ull << 20;
 constexpr std::uint32_t UnreadableRetries = 600;
 // New model files read a take at most; the rest wait for the next takes.
 constexpr std::uint64_t ParseBytesPerTake = 8ull << 20;
-// The wind the object brush's fluttering grass leans with in the ray-traced scene: `GrassLean` is the
-// tangent of the lean at its top (about 7 degrees), a gust's crest comes every 2 pi / GrassWave metres
-// along (GrassWindX, GrassWindZ), which is a unit direction, and its phase turns GrassSway radians a
-// second, so a crest travels 2 pi / GrassSway metres a second.
-constexpr float GrassLean = 0.12f, GrassWave = 0.15f, GrassSway = 1.4f, GrassWindX = 0.8f, GrassWindZ = 0.6f;
+// The wind the object brush's vegetation leans with in the ray-traced scene (the bush and fluttering grass
+// plugins; the clone plugin's props stand): `GrassLean` is the tangent of the lean at its top (about 9
+// degrees), a gust's crest comes every 2 pi / GrassWave metres along (GrassWindX, GrassWindZ), which is a
+// unit direction, and its phase turns GrassSway radians a second, so a crest travels 2 pi / GrassSway
+// metres a second.
+constexpr float GrassLean = 0.16f, GrassWave = 0.18f, GrassSway = 1.6f, GrassWindX = 0.8f, GrassWindZ = 0.6f;
 
 using VisibilityTest = void (*)(std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t,
     std::uintptr_t, std::uintptr_t, std::uintptr_t);
@@ -691,15 +692,15 @@ void snapshot()
             ++others;
     }
 
-    // The object brush's vegetation, a plugin's placements in a block at a time; the fluttering grass leans
-    // in a gust wave travelling over the ground, its feet held at the placement's base. The clock is the
-    // system's: the game's time is not read here.
+    // The object brush's vegetation, a plugin's placements in a block at a time; the bush's and the
+    // fluttering grass's lean in a gust wave travelling over the ground, their feet held at the placement's
+    // base, while the clone's props stand. The clock is the system's: the game's time is not read here.
     const auto seconds = static_cast<double>(GetTickCount64()) * 0.001;
-    engine_brush::collect([&](std::uintptr_t resource, std::span<const scene_description::Transform> transforms, bool grass) {
+    engine_brush::collect([&](std::uintptr_t resource, std::span<const scene_description::Transform> transforms, std::uint8_t plugin) {
         if (const auto hash = modelResource(resource, ModelFile::Rigid, Source::ObjectBrush))
             for (const auto& transform : transforms)
             {
-                if (!grass)
+                if (!plugin)
                 {
                     instances.push_back({*hash, transform, 0});
                     continue;
