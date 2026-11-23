@@ -65,7 +65,7 @@ ComPtr<ID3D11PixelShader> waterShaders[2][2][2]; // [isLayeredRiver][hasTwoChann
 ComPtr<ID3D11BlendState> surfaceBlend, colorOnly;
 ComPtr<ID3D11DepthStencilState> behindGameDepth;
 ComPtr<ID3D11Buffer> compositeParameters;
-ComPtr<ID3D11ShaderResourceView> lit;      // 1x1, so the map's comparison always passes: no map shadow
+ComPtr<ID3D11ShaderResourceView> lit;      // 1x1, read with a comparison that never passes: no map shadow
 ComPtr<ID3D11SamplerState> litSampler;     // comparison ALWAYS
 Target depthTarget, normalTarget, weightTarget;
 ComputeTexture reflection, forwardShadow;
@@ -140,7 +140,9 @@ bool ensurePipeline()
         D3D11_SAMPLER_DESC always{};
         always.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR;
         always.AddressU = always.AddressV = always.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-        always.ComparisonFunc = D3D11_COMPARISON_ALWAYS;
+        // The glass shader reads a comparison of 1 as occluded (its lit is (1 - comparison)^2, fox3dfw_glass_ps): NEVER
+        // gives 0, lit, where ALWAYS left every pane in the map's shade and took the sun's glow off its inner face.
+        always.ComparisonFunc = D3D11_COMPARISON_NEVER;
         always.MaxLOD = D3D11_FLOAT32_MAX;
         check(device->CreateSamplerState(&always, litSampler.ReleaseAndGetAddressOf()), "Creating the surfaces' lit sampler");
 
