@@ -64,6 +64,8 @@ struct Textures
     // R16G16B16A16_FLOAT), and the sky from every side (sky_capture.hpp), null until captured.
     ID3D11Texture2D* materialSpecular{};
     ID3D11Texture2D* skyCube{};
+    // The clouds' shadow on the ground (clouds::shadowTexture, R8_UNORM), for the sun's rays; null while the clouds are off.
+    ID3D11Texture2D* cloudShadow{};
     // And glass and mirrors (forward_surfaces.hpp), which traceSurfaces traces: the nearest one's depth (R32_FLOAT) and normal with its
     // roughness (R16G16B16A16_FLOAT) at each pixel, what it reflects (R16G16B16A16_FLOAT); null while off.
     ID3D11Texture2D* surfaceDepth{};

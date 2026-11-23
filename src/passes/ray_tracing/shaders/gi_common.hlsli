@@ -47,6 +47,7 @@ Texture2D<float4> g_ObjectVelocity : register(t17);
 // in the same units as the sky's light.
 Texture2D<float4> g_MaterialSpecular : register(t23);
 TextureCube<float4> g_SkyCube : register(t24);
+Texture2D<float> g_CloudShadow : register(t28); // The sun's transmittance through the clouds, over a square of the world (g_Frame.cloudShadow)
 
 SamplerState g_PointSampler : register(s0);
 SamplerState g_LinearSampler : register(s1);
@@ -1270,6 +1271,19 @@ float3 MirrorAboveSurface(float3 direction, float3 surfaceNormal)
     return alongNormal < 0.0f ? direction - 2.0f * alongNormal * surfaceNormal : direction;
 }
 
+// How much of the sun the clouds let through to a point of the world: 1 with no map, outside it or above the layer's base.
+// The map is indexed by where the point's ray to the sun crosses that height (cloud_density.hlsli, CloudShadowUV).
+float CloudShadowAt(float3 world)
+{
+    float3 toSun = g_Frame.sunDirection.xyz;
+    if (g_Frame.cloudShadow.z <= 0.0f || toSun.y <= 0.05f || world.y >= g_Frame.cloudShadow.w) return 1.0f;
+
+    float3 entry = world + toSun * ((g_Frame.cloudShadow.w - world.y) / toSun.y);
+    float2 uv = (entry.xz - g_Frame.cloudShadow.xy) / g_Frame.cloudShadow.z + 0.5f;
+    if (any(uv < 0.0f) || any(uv > 1.0f)) return 1.0f;
+
+    return g_CloudShadow.SampleLevel(g_LinearSampler, uv, 0.0f);
+}
 // The sun's direction, spread over its disc: a uniform point on a disc of the angular radius's tangent
 // (the Sun size setting) around it.
 float3 SunSample(float2 samples)

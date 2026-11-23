@@ -15,6 +15,7 @@
 #include "dev/dev.hpp"
 #include "dev_tools.hpp"
 #include "device_check.hpp"
+#include "features/clouds/clouds.hpp"
 #include "features/frame_generation/fsr_frame_generation.hpp"
 #include "features/frame_generation/presenter.hpp"
 #include "features/frame_rate/frame_rate.hpp"
@@ -106,6 +107,7 @@ void registerDrawOwners()
     drawIndexedOwners.add(30, "sea", sea::draw);
     drawIndexedOwners.add(40, "forward water pass", forward_water_pass::draw);
     drawIndexedOwners.add(50, "glass", glass::draw);
+    drawIndexedOwners.add(55, "clouds", clouds::draw);
     drawIndexedOwners.add(60, "upscaler", upscaler::draw);
 }
 

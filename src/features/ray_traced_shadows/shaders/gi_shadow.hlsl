@@ -69,6 +69,8 @@ void TraceSunShadows(uint2 gtid : SV_GroupThreadID, uint2 gid : SV_GroupID, uint
             float blocker, transmittance;
             bool blocked = SurfaceRayBlocked(origin, facing, tolerance, toSun, g_Frame.shadowParams.z, PixelCone(position, 0.0f), true, blocking, ShadowRayTowards(RayTowardsSun),
                 random, blocker, transmittance);
+            // The clouds above shade the sun as well, softly: what they let through is a chance of light, as hair and glass are.
+            transmittance *= CloudShadowAt(position);
             // The denoiser takes a pixel as lit or not: past hair and glass, lit with the chance its light gets through.
             light = blocked ? 0.0f : transmittance;
             lit = !blocked && random.rand() < transmittance;

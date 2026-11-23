@@ -270,7 +270,7 @@ add_custom_target(gi_kernels DEPENDS ${GI_SHADER_HEADERS} ${GI_GENERATED_HEADERS
 set(PHANTOM_FX_FEATURES src/features/upscaling/settings.cpp src/features/frame_generation/settings.cpp src/features/sun/settings.cpp src/features/ray_traced_shadows/settings.cpp src/features/soft_shadows/settings.cpp
     src/features/ray_traced_lights/settings.cpp
     src/features/contact_shadows/settings.cpp src/features/global_illumination/settings.cpp src/features/ambient_occlusion/settings.cpp
-    src/features/indirect_light/settings.cpp src/features/path_tracing/settings.cpp src/features/volumetric_fog/settings.cpp src/features/sea/settings.cpp src/features/water_caustics/settings.cpp src/features/photo_mode/settings.cpp src/features/hdr/settings.cpp src/features/frame_rate/settings.cpp
+    src/features/indirect_light/settings.cpp src/features/path_tracing/settings.cpp src/features/volumetric_fog/settings.cpp src/features/clouds/settings.cpp src/features/sea/settings.cpp src/features/water_caustics/settings.cpp src/features/photo_mode/settings.cpp src/features/hdr/settings.cpp src/features/frame_rate/settings.cpp
     src/features/motion_blur/settings.cpp src/features/depth_of_field/settings.cpp)
 
 # The parts every add-on links: its own CMake project, so a second add-on builds it too.
@@ -284,11 +284,17 @@ add_library(phantom_fx SHARED src/addon.cpp src/core.cpp src/modules.cpp src/fea
     src/game_dither.cpp src/game_light_volumes.cpp src/features/frame_generation/presenter.cpp src/features/frame_generation/frame_generation.cpp src/game_loop.cpp src/passes/contact_shadow_trace.cpp src/passes/sun_light_pass.cpp src/features/sun_contact_shadows/sun_contact_shadows.cpp
     src/passes/local_light_pass.cpp src/features/lamp_contact_shadows/lamp_contact_shadows.cpp src/features/lamp_soft_shadows/lamp_soft_shadows.cpp
     src/features/depth_of_field/depth_of_field.cpp src/passes/indirect_light_pass.cpp src/passes/visibility_bitmask.cpp src/features/ambient_occlusion/gtvbao.cpp
-    src/features/indirect_light/ssgi.cpp src/features/global_illumination/light_combine.cpp src/features/global_illumination/river_light.cpp src/features/photo_mode/photo_mode.cpp src/features/photo_mode/focus.cpp src/features/hdr/hdr.cpp src/weather.cpp src/character.cpp src/features/volumetric_fog/atmosphere.cpp src/features/sea/sea.cpp src/features/water_caustics/water_caustics.cpp src/features/water_caustics/caustics_map.cpp src/passes/forward_water_pass.cpp src/sun_movement.cpp
+    src/features/indirect_light/ssgi.cpp src/features/global_illumination/light_combine.cpp src/features/global_illumination/river_light.cpp src/features/photo_mode/photo_mode.cpp src/features/photo_mode/focus.cpp src/features/hdr/hdr.cpp src/weather.cpp src/character.cpp src/features/volumetric_fog/atmosphere.cpp src/features/clouds/clouds.cpp src/features/sea/sea.cpp src/features/water_caustics/water_caustics.cpp src/features/water_caustics/caustics_map.cpp src/passes/forward_water_pass.cpp src/sun_movement.cpp
     src/fidelityfx.cpp src/features/upscaling/d3d12_host.cpp src/features/upscaling/fsr_upscaler.cpp src/features/upscaling/ray_reconstruction.cpp src/features/path_tracing/path_tracing.cpp src/features/path_tracing/forward_surfaces.cpp src/features/path_tracing/glass.cpp src/features/path_tracing/water.cpp src/features/path_tracing/path_tracing_rays.cpp src/features/path_tracing/sky_capture.cpp src/features/frame_generation/fsr_frame_generation.cpp src/performance.cpp src/performance_menu.cpp
     src/passes/ray_tracing/ray_tracing.cpp src/passes/ray_tracing/kick_traces.cpp src/passes/ray_tracing/trace.cpp src/passes/ray_tracing/shared_textures.cpp src/passes/ray_tracing/engine_scene.cpp src/passes/ray_tracing/scene_description.cpp src/passes/ray_tracing/engine_brush.cpp src/passes/ray_tracing/gi_inputs.cpp src/features/ray_traced_lights/local_lights.cpp src/features/ray_traced_lights/light_choice.cpp src/features/ray_traced_lights/lamp_shadow_rays.cpp src/passes/ray_tracing/gi_renderer.cpp src/passes/ray_tracing/light_bins.cpp src/passes/ray_tracing/gi_scene.cpp src/passes/ray_tracing/scene_contents.cpp src/passes/ray_tracing/gi_textures.cpp src/features/global_illumination/gi_light.cpp src/features/global_illumination/gi_denoiser.cpp src/features/global_illumination/gi_lighting.cpp src/features/ray_traced_shadows/gi_shadow.cpp
     ${PHANTOM_FX_DEV_SOURCES} "${CMAKE_BINARY_DIR}/version.rc")
 add_dependencies(phantom_fx gi_kernels)
+
+# Shaders in their own .hlsl files are compiled by fxc at build time into a header; a dev build also watches the file
+# (src/hot_shader.hpp) and swaps in the recompiled shader when it is saved.
+phantom_precompile_shader(phantom_fx SOURCE src/features/clouds/clouds.hlsl PROFILE ps_5_0 VARIABLE g_cloudsPixelShader INCLUDES src/features/clouds/cloud_density.hlsli)
+phantom_precompile_shader(phantom_fx SOURCE src/features/clouds/cloud_shadow.hlsl PROFILE ps_5_0 VARIABLE g_cloudShadowPixelShader INCLUDES src/features/clouds/cloud_density.hlsli)
+phantom_precompile_shader(phantom_fx SOURCE src/features/clouds/clouds_vs.hlsl PROFILE vs_5_0 VARIABLE g_cloudsVertexShader)
 if(PHANTOM_FX_DEV_TOOLS)
     target_link_libraries(phantom_fx PRIVATE devkit)
 endif()
