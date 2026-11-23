@@ -49,18 +49,16 @@ bool ensurePipeline()
 
     try
     {
-        const D3D_SHADER_MACRO occlusionPass[]{{"LIGHT", "0"}, {"FINAL", "0"}, {}}, lastOcclusionPass[]{{"LIGHT", "0"}, {"FINAL", "1"}, {}};
-        const D3D_SHADER_MACRO lightPass[]{{"LIGHT", "1"}, {"FINAL", "0"}, {}}, lastLightPass[]{{"LIGHT", "1"}, {"FINAL", "1"}, {}};
         prefilterShader = computeShader(device.Get(), shaders::PrefilterDepths, "depth-prefilter");
-        denoiseShader = computeShader(device.Get(), shaders::Denoise, "gtvbao-denoise", occlusionPass);
-        finalDenoiseShader = computeShader(device.Get(), shaders::Denoise, "gtvbao-denoise-final", lastOcclusionPass);
-        lightShader = computeShader(device.Get(), shaders::March, "ssilvb", lightPass);
-        lightDenoiseShader = computeShader(device.Get(), shaders::Denoise, "ssilvb-denoise", lightPass);
-        finalLightDenoiseShader = computeShader(device.Get(), shaders::Denoise, "ssilvb-denoise-final", lastLightPass);
+        denoiseShader = computeShader(device.Get(), shaders::Denoise[0][0], "gtvbao-denoise");
+        finalDenoiseShader = computeShader(device.Get(), shaders::Denoise[0][1], "gtvbao-denoise-final");
+        lightShader = computeShader(device.Get(), shaders::March[1], "ssilvb");
+        lightDenoiseShader = computeShader(device.Get(), shaders::Denoise[1][0], "ssilvb-denoise");
+        finalLightDenoiseShader = computeShader(device.Get(), shaders::Denoise[1][1], "ssilvb-denoise-final");
         parameterBuffer = makeConstantBuffer(device.Get(), sizeof(Parameters), "Creating the march constants");
 
         // Last, so it marks a complete pipeline.
-        occlusionShader = computeShader(device.Get(), shaders::March, "gtvbao", occlusionPass);
+        occlusionShader = computeShader(device.Get(), shaders::March[0], "gtvbao");
         log("Visibility bitmask march ready.");
 
         return true;

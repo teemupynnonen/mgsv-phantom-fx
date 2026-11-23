@@ -310,7 +310,7 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
     if (depth <= 0.0f) return;
 
     float4 normalRoughness = g_SurfaceNormal.Load(int3(did, 0));
-    // A river or a liquid (WaterSurface, surface_shaders.hpp) marks itself with a negative w.
+    // A river or a liquid (water_surface.ps.hlsl) marks itself with a negative w.
     const bool isWater = normalRoughness.w < 0.0f;
     if (isWater) normalRoughness.w = WaterRoughness;
     float3 normal = normalize(normalRoughness.xyz);

@@ -201,13 +201,12 @@ void attach(ID3D11Device* gameDevice) noexcept
     device = gameDevice;
     try
     {
-        const D3D_SHADER_MACRO wideFill[]{{"RING_WIDTH", "0.105"}, {}}, fineFill[]{{"RING_WIDTH", "0.05"}, {}};
         coverageShader = pixelShader(device.Get(), shaders::Coverage, "depth-of-field-coverage");
         compositeShader = pixelShader(device.Get(), shaders::Composite, "depth-of-field-composite");
         prefilterShader = pixelShader(device.Get(), shaders::FarPrefilter, "depth-of-field-prefilter");
         gatherShader = pixelShader(device.Get(), shaders::FarGather, "depth-of-field-gather");
-        wideFillShader = pixelShader(device.Get(), shaders::FarFill, "depth-of-field-wide-fill", wideFill);
-        fineFillShader = pixelShader(device.Get(), shaders::FarFill, "depth-of-field-fine-fill", fineFill);
+        wideFillShader = pixelShader(device.Get(), shaders::FarFillWide, "depth-of-field-wide-fill");
+        fineFillShader = pixelShader(device.Get(), shaders::FarFillFine, "depth-of-field-fine-fill");
         // Last, so it marks a complete pipeline.
         lensCompositeShader = pixelShader(device.Get(), shaders::LensComposite, "depth-of-field-lens-composite");
     }

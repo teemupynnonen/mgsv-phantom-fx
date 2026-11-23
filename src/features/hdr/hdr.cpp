@@ -130,8 +130,7 @@ void createPipeline()
     captureShader = computeShader(device.Get(), shaders::Capture, "hdr-capture");
     encodeShader = computeShader(device.Get(), shaders::Encode, "hdr-encode");
     decodeShader = computeShader(device.Get(), shaders::Decode, "hdr-decode");
-    const D3D_SHADER_MACRO grade[]{{"UPGRADE_TONEMAP", active() ? "1" : "0"}, {}};
-    gradeShader = pixelShader(device.Get(), shaders::Grade, "hdr-grade", grade);
+    gradeShader = pixelShader(device.Get(), active() ? shaders::GradeUpgrade : shaders::Grade, "hdr-grade");
     reduceShader = pixelShader(device.Get(), shaders::Reduce, "hdr-reduce");
     outputShader = pixelShader(device.Get(), shaders::Output, "hdr-output");
     outputBuffer = makeConstantBuffer(device.Get(), sizeof(OutputParameters), "Creating the HDR output constants");

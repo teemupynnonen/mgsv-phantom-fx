@@ -207,12 +207,8 @@ bool ensurePipeline()
         skyViewShader = computeShader(device.Get(), shaders::SkyView, "sky-view");
         ambientShader = computeShader(device.Get(), shaders::SkyAmbient, "sky-ambient");
         // The float scene takes TppTonemap out of the scene for the session.
-        const char* floatScene = hdr::isSceneFloat() ? "1" : "0";
-        const char* hdrOutput = hdr::active() ? "1" : "0";
-        const D3D_SHADER_MACRO withoutSprite[]{{"MOON", "0"}, {"FLOAT_SCENE", floatScene}, {"HDR_OUTPUT", hdrOutput}, {}};
-        const D3D_SHADER_MACRO withSprite[]{{"MOON", "1"}, {"FLOAT_SCENE", floatScene}, {"HDR_OUTPUT", hdrOutput}, {}};
-        skyShaders[0] = pixelShader(device.Get(), shaders::SkyDraw, "sky", withoutSprite);
-        skyShaders[1] = pixelShader(device.Get(), shaders::SkyDraw, "sky-sprite", withSprite);
+        skyShaders[0] = pixelShader(device.Get(), shaders::SkyDraw(false, hdr::isSceneFloat(), hdr::active()), "sky");
+        skyShaders[1] = pixelShader(device.Get(), shaders::SkyDraw(true, hdr::isSceneFloat(), hdr::active()), "sky-sprite");
 
         constantBuffer = makeConstantBuffer(device.Get(), sizeof(Constants), "Creating the fog constants");
         copies = {constantCopy(SystemSize), constantCopy(SceneSize), constantCopy(MaterialSize), constantCopy(ObjectSize), constantCopy(SceneSize),

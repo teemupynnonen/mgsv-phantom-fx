@@ -7,7 +7,6 @@
 #include "frame_latch.hpp"
 #include "hresult.hpp"
 #include "log.hpp"
-#include "passes/forward_scene.hpp"
 #include "passes/ray_tracing/ray_tracing.hpp"
 #include "performance.hpp"
 
@@ -134,7 +133,7 @@ void ensurePipeline()
         check(device->CreateDepthStencilState(&depth, depthTest.ReleaseAndGetAddressOf()), "Creating the caustics' depth test");
 
         // Last, so it marks a complete pipeline.
-        shader = pixelShader(device.Get(), (std::string(forward_scene::Common) + shaders::Caustics).c_str(), "water-caustics");
+        shader = pixelShader(device.Get(), shaders::Caustics, "water-caustics");
     }
     catch (const std::exception& error)
     {

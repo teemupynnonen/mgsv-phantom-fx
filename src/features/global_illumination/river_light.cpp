@@ -23,7 +23,7 @@ using Microsoft::WRL::ComPtr;
 
 // The river shaders' cPSLight, whose first two rows are the hemisphere ambient's factors (GetHemisphereAmbientLightFactor0 and 1).
 constexpr UINT LightSlot = 3, AmbientBytes = 32;
-// Slots none of the river shaders binds (forward_scene.hpp), put back after.
+// Slots none of the river shaders binds (src/shaders/forward_scene_common.hlsli), put back after.
 constexpr UINT ParametersSlot = 6, FirstViewSlot = 7, ViewCount = 4;
 constexpr UINT MaxConstantBytes = D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16;
 

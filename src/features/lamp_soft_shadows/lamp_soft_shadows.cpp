@@ -26,7 +26,7 @@ struct ReplacedLight
 {
     game_lights::Twin kind;
     const char* name;
-    const char* source;
+    Shader source;
 };
 constexpr ReplacedLight ReplacedLights[]{
     {game_lights::Twin::Point2, "SSLighting2_Point", shaders::PointLight},

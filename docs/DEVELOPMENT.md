@@ -59,13 +59,36 @@ run what they are told, which security software rightly flags.
 player documentation and licenses for distribution. The DLLs are at the install root;
 documentation and licenses are in `PhantomFX/`.
 
+## Shaders
+
+The Direct3D 11 shaders are dedicated `.hlsl` files under each feature's `shaders/` directory, with the
+parts they share in `src/shaders/*.hlsli`. CMake precompiles each one with the Windows SDK's fxc at
+build time (`phantom_precompile_shader` in `cmake/phantom_shaders.cmake`) into
+`build/<preset>/phantom_shaders/<name>.hpp`; a release build ships only that bytecode and cannot
+compile HLSL at run time. The generated `g_<name>` array is wrapped by a `Shader` in the feature's
+`*_shaders.hpp`, and the Direct3D helpers make it (`pixelShader`, `computeShader`, `vertexShader`).
+
+A shader with compile-time variants has one small `.hlsl` per variant that defines them and includes
+the body (for example `water_surface_0_0_1.ps.hlsl`); the CMake list in `CMakeLists.txt` names every
+file and profile. A change to a shader or any file it includes rebuilds its header and the add-on's
+C++.
+
+The `dev` preset sets `PHANTOM_DEV_SHADERS`: then the helpers compile the `.hlsl` from the checkout at
+run time instead, so a shader edit needs no C++ rebuild (restart the game). A release build is checked
+after linking (`phantom_forbid_runtime_compile`) and fails if it can compile HLSL at run time.
+
+The Direct3D 12 kernels (ray tracing, global illumination, the rays' shadows and lights, path tracing's
+reflections) are separate `.hlsl` files compiled by DXC into DXIL headers, as before (`add_gi_kernels` in
+`CMakeLists.txt`).
+
 ## Test
 
 ```
 ctest --test-dir build/release
 ```
 
-This runs fourteen tests that need neither the game nor a GPU. `tests/upscaler_tests.cpp`: settings
+This runs fourteen tests that need neither the game nor a GPU (the dev preset adds the tools' tests and,
+with `PHANTOM_DEV_SHADERS`, the shader-source compile). `tests/upscaler_tests.cpp`: settings
 (defaults, round trip, clamping, invalid files and values), the mode maths (render scales, texture LOD
 bias), the render size plan (DLSS's own size or the nominal one, rounded up to even and never above the
 output size, Custom's DLSS quality, the settings that make a new plan), the frames (when one starts,
@@ -200,7 +223,7 @@ what draws it, when that is the feature's own.
 | `src/passes/local_light_pass.*` | The game's point and spot light draws, with the lamps' contact shadows and soft shadows composed in: the marking and lighting draws |
 | `src/passes/contact_shadow_trace.*` | Bend Studio's screen-space shadow trace, for the sun's and the lamps' contact shadows. `contact_shadow_trace_shaders.hpp`: Bend's trace ported to FXC |
 | `third_party/bend_sss/bend_sss_cpu.h` | Bend Studio's dispatch layout, unchanged (Apache License 2.0) |
-| `src/passes/forward_water_pass.*` | The game's rivers and liquids, with what the rays replace in their draw and the caustics composed in. `forward_scene.hpp`: the HLSL the shaders over the game's forward draws share: the scene's constants, the fog, the scene's depth |
+| `src/passes/forward_water_pass.*` | The game's rivers and liquids, with what the rays replace in their draw and the caustics composed in. `src/shaders/forward_scene_common.hlsli`: the HLSL the shaders over the game's forward draws share: the scene's constants, the fog, the scene's depth |
 | `src/passes/indirect_light_pass.*` | The game's sky light, upscale and resolve: the G-buffer notes, the resolve's white occlusion and diffuse light, the diagnostics views, the ray-traced scene's notes. `indirect_light_pass_shaders.hpp`: the diagnostics views |
 | `src/passes/visibility_bitmask.*` | The visibility bitmask march GTVBAO and SSILVB share: the depth prefilter, the march, the denoiser. `visibility_bitmask_shaders.hpp`: the march (GTVBAO from three-gtvbao, SSILVB's light as SSRT3 gathers it), XeGTAO's noise and denoiser |
 | `src/passes/ray_tracing/ray_tracing.*` | The ray-traced scene's frame on Direct3D 11: the kick, the waits, the shared textures the global illumination and the ray-traced shadows hand back |
@@ -264,7 +287,8 @@ what draws it, when that is the feature's own.
 | `src/frame_latch.hpp` | A module's settings as configure sets them and as the frame being recorded uses them, latched at present |
 | `src/command_list_notes.hpp` | A module's notes by deferred context, then by command list, until the immediate context runs it; their merge in the order they run, and their expiry (see "What the add-on changes", "Command lists") |
 | `src/hresult.hpp` | `check`: a failed Direct3D or Windows call as an exception naming the step |
-| `src/d3d11_helpers.hpp` | Direct3D 11 helpers for the effects: shader compiles, dynamic constant buffers, compute textures, texture sizes |
+| `src/d3d11_helpers.hpp` | Direct3D 11 helpers for the effects: shaders from bytecode (or, in development builds, from source), dynamic constant buffers, compute textures, texture sizes |
+| `src/shader_source.cpp` | Development builds only: compiles a shader's `.hlsl` from the checkout at run time, `#include`s and all |
 | `src/d3d12_helpers.hpp` | Direct3D 12 helpers for the ray tracing, FSR and the presenter: barriers, the device on Direct3D 11's GPU behind ReShade's proxy, shared textures and fences opened in Direct3D 12 |
 | `src/version.rc.in` | Version resource template: name, author and version from `CMakeLists.txt` |
 
@@ -3842,7 +3866,7 @@ Three modules share the second trace: `forward_surfaces` owns the targets, the s
 composite; `glass` and `water` own what their draws leave out. The rivers' draw is a game pass two features change, so
 it belongs to `forward_water_pass` (`src/passes/`), which composes them: the river without what the rays replaced
 (`water::drawRiver`), its caustics (`water_caustics::draw`), then the surface (`forward_surfaces::record`). What the
-shaders over those draws read of the game's is in `src/passes/forward_scene.hpp`.
+shaders over those draws read of the game's is in `src/shaders/forward_scene_common.hlsli`.
 
 All twelve river shaders are rows of the table (`Prim_TppPrimRiver*`, `Prim_TppRiverModel*`). From their disassembly:
 the cube map at `t2`, the scene's copy at `t3`, the ripples at `t6` (`t4` in `Prim_TppRiverModelSh*Rpl`), the fog at `t12`, the depth at `t13`, the shadow map

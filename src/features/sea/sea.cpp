@@ -229,11 +229,6 @@ Maps makeMaps(DXGI_FORMAT format, const char* what)
     return made;
 }
 
-ComPtr<ID3D11ComputeShader> kernel(const char* source, const char* name, const D3D_SHADER_MACRO* defines = nullptr)
-{
-    return computeShader(device.Get(), (std::string(shaders::Common) + source).c_str(), name, defines);
-}
-
 // Two triangles a cell, the vertices row by row; the vertex shader places them from their index.
 ComPtr<ID3D11Buffer> makeIndices()
 {
@@ -287,17 +282,12 @@ bool ensurePipeline()
         check(device->CreateBuffer(&readback, nullptr, pixelReadback.GetAddressOf()), "Creating the sea foam's readback");
         readback.ByteWidth = Cascades * 4;
         check(device->CreateBuffer(&readback, nullptr, deepestReadback.GetAddressOf()), "Creating the sea troughs' readback");
-        spectrumShader = kernel(shaders::Spectrum, "sea-spectrum");
-        const D3D_SHADER_MACRO rows[]{{"COLUMNS", "0"}, {}}, columns[]{{"COLUMNS", "1"}, {}};
-        rowShader = kernel(shaders::Fft, "sea-fft-rows", rows);
-        columnShader = kernel(shaders::Fft, "sea-fft-columns", columns);
-        mapShader = kernel(shaders::Maps, "sea-maps");
+        spectrumShader = computeShader(device.Get(), shaders::Spectrum, "sea-spectrum");
+        rowShader = computeShader(device.Get(), shaders::Fft, "sea-fft-rows");
+        columnShader = computeShader(device.Get(), shaders::FftColumns, "sea-fft-columns");
+        mapShader = computeShader(device.Get(), shaders::Maps, "sea-maps");
 
-        const auto surface = std::string(shaders::Common) + shaders::Surface;
-        const D3D_SHADER_MACRO vertex[]{{"VERTEX", "1"}, {}};
-        const auto vertexCode = compile(surface.c_str(), "sea-surface-vertex", "vs_5_0", vertex);
-        check(device->CreateVertexShader(vertexCode->GetBufferPointer(), vertexCode->GetBufferSize(), nullptr, surfaceVertex.GetAddressOf()),
-            "Creating the sea's vertex shader");
+        surfaceVertex = vertexShader(device.Get(), shaders::SurfaceVertex, "sea-surface-vertex");
 
         spectrum = makeWorkBuffer(Cascades * 2 * Texels * Texels, 16, "Creating the sea's spectrum");
         foam = makeWorkBuffer(Cascades * Texels * Texels, 4, "Creating the sea's foam");
@@ -331,9 +321,7 @@ bool ensurePipeline()
         check(device->CreateSamplerState(&sampler, anisotropicSampler.GetAddressOf()), "Creating the sea's anisotropic sampler");
 
         // Last, so it marks a complete pipeline.
-        const auto pixelCode = compile(surface.c_str(), "sea-surface-pixel", "ps_5_0");
-        check(device->CreatePixelShader(pixelCode->GetBufferPointer(), pixelCode->GetBufferSize(), nullptr, surfacePixel.GetAddressOf()),
-            "Creating the sea's pixel shader");
+        surfacePixel = pixelShader(device.Get(), shaders::SurfacePixel, "sea-surface-pixel");
         return true;
     }
     catch (const std::exception& error)

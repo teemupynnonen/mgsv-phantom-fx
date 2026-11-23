@@ -86,9 +86,8 @@ bool ensurePipeline()
 
     try
     {
-        const D3D_SHADER_MACRO occlusionView[]{{"LIGHT", "0"}, {}}, lightView[]{{"LIGHT", "1"}, {}};
-        showOcclusionShader = pixelShader(device.Get(), shaders::Show, "gtvbao-show", occlusionView);
-        showLightShader = pixelShader(device.Get(), shaders::Show, "ssilvb-show", lightView);
+        showOcclusionShader = pixelShader(device.Get(), shaders::Show, "gtvbao-show");
+        showLightShader = pixelShader(device.Get(), shaders::ShowLight, "ssilvb-show");
         showSceneShader = pixelShader(device.Get(), shaders::ShowScene, "traced-scene-show");
 
         D3D11_TEXTURE2D_DESC white{};

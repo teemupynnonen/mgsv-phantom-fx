@@ -796,9 +796,7 @@ std::shared_ptr<const StretchShaders> ensureStretch()
     if (stretchShaders || !device) return stretchShaders;
 
     auto made = std::make_shared<StretchShaders>();
-    const auto code = compile(shaders::StretchVertex, "stretch-vertex", "vs_5_0");
-    check(device->CreateVertexShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, made->vertex.GetAddressOf()),
-        "Creating the stretch vertex shader");
+    made->vertex = vertexShader(device.Get(), shaders::StretchVertex, "stretch-vertex");
     made->pixel = pixelShader(device.Get(), shaders::Stretch, "stretch");
     made->blurSource = pixelShader(device.Get(), shaders::BlurSource, "blur-source");
     D3D11_SAMPLER_DESC sampler{};

@@ -1,16 +1,10 @@
 #pragma once
 
-// HLSL for GTVBAO (gtvbao.hpp), compiled at runtime with d3dcompiler_47.
+#include "d3d11_helpers.hpp"
+#include "phantom_shaders/gtvbao_apply.hpp"
+
+// HLSL for GTVBAO (gtvbao.hpp), precompiled at build time (shaders/gtvbao_apply.ps.hlsl).
 namespace phantom_fx::gtvbao::shaders
 {
-// Drawn with the game's upscale vertex shader right after it, with a multiplying blend into the
-// diffuse light: the input signature is that vertex shader's output.
-inline constexpr char Apply[] = R"(
-Texture2D<float> Visibility : register(t0);
-
-float4 main(float4 texcoord0 : TEXCOORD0, float4 texcoord1 : TEXCOORD1, float4 position : SV_Position) : SV_Target
-{
-    return Visibility[uint2(position.xy)];
-}
-)";
+inline constexpr Shader Apply{g_gtvbao_apply, sizeof(g_gtvbao_apply), "features/ambient_occlusion/shaders/gtvbao_apply.ps.hlsl", "ps_5_0"};
 }

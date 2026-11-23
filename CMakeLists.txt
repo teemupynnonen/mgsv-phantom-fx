@@ -5,6 +5,11 @@ if(NOT WIN32 OR NOT MSVC)
     message(FATAL_ERROR "Phantom FX requires Windows and MSVC.")
 endif()
 
+# Every target that includes a shader header reads the bytecode from the build directory.
+include_directories("${CMAKE_BINARY_DIR}")
+# A shipped shader is bytecode; a development build compiles the .hlsl from the checkout instead.
+add_compile_definitions(PHANTOM_DEV_SHADERS=$<BOOL:${PHANTOM_DEV_SHADERS}> PHANTOM_FX_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "Phantom FX must be built for 64-bit Windows.")
 endif()
@@ -14,6 +19,11 @@ endif()
 option(PHANTOM_FX_DIAGNOSTIC_LOG "Log the periodic statistics used in development" OFF)
 # The overlay's Developer page, tools for testing in the game that players never get (the dev preset).
 option(PHANTOM_FX_DEV_TOOLS "Add the Developer page to the overlay" OFF)
+# Compile HLSL at run time, from the checkout, so a shader edit needs no rebuild. Off, the add-on ships
+# only the bytecode fxc made at build time and cannot compile a shader at run time.
+option(PHANTOM_DEV_SHADERS "Compile HLSL at run time (development only)" OFF)
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/phantom_shaders.cmake")
 
 include(FetchContent)
 FetchContent_Declare(minhook
@@ -250,6 +260,9 @@ add_library(phantom_fx SHARED src/addon.cpp src/core.cpp src/modules.cpp src/fea
     src/fidelityfx.cpp src/features/upscaling/d3d12_host.cpp src/features/upscaling/fsr_upscaler.cpp src/features/upscaling/ray_reconstruction.cpp src/features/path_tracing/path_tracing.cpp src/features/path_tracing/forward_surfaces.cpp src/features/path_tracing/glass.cpp src/features/path_tracing/water.cpp src/features/path_tracing/path_tracing_rays.cpp src/features/path_tracing/sky_capture.cpp src/features/frame_generation/fsr_frame_generation.cpp src/performance.cpp src/performance_menu.cpp
     src/passes/ray_tracing/ray_tracing.cpp src/passes/ray_tracing/kick_traces.cpp src/passes/ray_tracing/trace.cpp src/passes/ray_tracing/shared_textures.cpp src/passes/ray_tracing/engine_scene.cpp src/passes/ray_tracing/scene_description.cpp src/passes/ray_tracing/engine_brush.cpp src/passes/ray_tracing/gi_inputs.cpp src/features/ray_traced_lights/local_lights.cpp src/features/ray_traced_lights/light_choice.cpp src/features/ray_traced_lights/lamp_shadow_rays.cpp src/passes/ray_tracing/gi_renderer.cpp src/passes/ray_tracing/light_bins.cpp src/passes/ray_tracing/gi_scene.cpp src/passes/ray_tracing/scene_contents.cpp src/passes/ray_tracing/gi_textures.cpp src/features/global_illumination/gi_light.cpp src/features/global_illumination/gi_denoiser.cpp src/features/global_illumination/gi_lighting.cpp src/features/ray_traced_shadows/gi_shadow.cpp
     ${PHANTOM_FX_DEV_SOURCES} "${CMAKE_BINARY_DIR}/version.rc")
+if(PHANTOM_DEV_SHADERS)
+    target_sources(phantom_fx PRIVATE src/shader_source.cpp)
+endif()
 add_dependencies(phantom_fx gi_kernels)
 target_include_directories(phantom_fx PRIVATE src "${GI_SHADER_DIR}")
 target_include_directories(phantom_fx SYSTEM PRIVATE "${RESHADE_DIR}/include" "${RESHADE_DIR}/imgui" "${STREAMLINE_DIR}/include" third_party
@@ -266,6 +279,118 @@ set_target_properties(phantom_fx PROPERTIES
     SUFFIX .addon64
     CXX_EXTENSIONS OFF
 )
+
+# Every shader the add-on ships, precompiled at build time. name|source|profile[|flags]
+set(PHANTOM_FX_SHADERS
+    hdr_capture|src/features/hdr/shaders/capture.cs.hlsl|cs_5_0
+    hdr_encode|src/features/hdr/shaders/encode.cs.hlsl|cs_5_0
+    hdr_decode|src/features/hdr/shaders/decode.cs.hlsl|cs_5_0
+    hdr_reduce|src/features/hdr/shaders/reduce.ps.hlsl|ps_5_0
+    hdr_grade|src/features/hdr/shaders/grade.ps.hlsl|ps_5_0
+    hdr_grade_upgrade|src/features/hdr/shaders/grade_upgrade.ps.hlsl|ps_5_0
+    hdr_output|src/features/hdr/shaders/output.ps.hlsl|ps_5_0
+    dof_coverage|src/features/depth_of_field/shaders/coverage.ps.hlsl|ps_5_0
+    dof_far_prefilter|src/features/depth_of_field/shaders/far_prefilter.ps.hlsl|ps_5_0
+    dof_far_gather|src/features/depth_of_field/shaders/far_gather.ps.hlsl|ps_5_0
+    dof_far_fill_wide|src/features/depth_of_field/shaders/far_fill_wide.ps.hlsl|ps_5_0
+    dof_far_fill_fine|src/features/depth_of_field/shaders/far_fill_fine.ps.hlsl|ps_5_0
+    dof_composite|src/features/depth_of_field/shaders/composite.ps.hlsl|ps_5_0
+    dof_lens_composite|src/features/depth_of_field/shaders/lens_composite.ps.hlsl|ps_5_0
+    gi_light_combine|src/features/global_illumination/shaders/light_combine.cs.hlsl|cs_5_0
+    gi_river_light|src/features/global_illumination/shaders/river_light.ps.hlsl|ps_5_0
+    ssilvb_upsample|src/features/indirect_light/shaders/ssilvb_upsample.cs.hlsl|cs_5_0
+    water_caustics|src/features/water_caustics/shaders/caustics.ps.hlsl|ps_5_0
+    lamp_contact_shadow|src/features/lamp_contact_shadows/shaders/light_shadow.ps.hlsl|ps_5_0
+    lamp_point_light|src/features/lamp_soft_shadows/shaders/point_light.ps.hlsl|ps_5_0
+    lamp_spot_light|src/features/lamp_soft_shadows/shaders/spot_light.ps.hlsl|ps_5_0
+    pt_add_reflections|src/features/path_tracing/shaders/add_reflections.cs.hlsl|cs_5_0
+    pt_full_screen|src/features/path_tracing/shaders/full_screen.vs.hlsl|vs_5_0
+    pt_add_lamp_light|src/features/path_tracing/shaders/add_lamp_light.ps.hlsl|ps_5_0
+    pt_mask_copy|src/features/path_tracing/shaders/mask_copy.cs.hlsl|cs_5_0
+    pt_reflection_blend|src/features/path_tracing/shaders/reflection_blend.ps.hlsl|ps_5_0
+    surfaces_guides|src/features/path_tracing/shaders/reconstruction_guides.cs.hlsl|cs_5_0
+    surfaces_glass|src/features/path_tracing/shaders/glass_surface.ps.hlsl|ps_5_0
+    surfaces_glass_color|src/features/path_tracing/shaders/glass_surface_color.ps.hlsl|ps_5_0
+    surfaces_mirror|src/features/path_tracing/shaders/mirror_surface.ps.hlsl|ps_5_0
+    surfaces_composite|src/features/path_tracing/shaders/surfaces_composite.ps.hlsl|ps_5_0
+    sea_spectrum|src/features/sea/shaders/spectrum.cs.hlsl|cs_5_0
+    sea_fft|src/features/sea/shaders/fft.cs.hlsl|cs_5_0
+    sea_fft_columns|src/features/sea/shaders/fft_columns.cs.hlsl|cs_5_0
+    sea_maps|src/features/sea/shaders/maps.cs.hlsl|cs_5_0
+    sea_surface_vs|src/features/sea/shaders/surface_vs.hlsl|vs_5_0
+    sea_surface_ps|src/features/sea/shaders/surface_ps.hlsl|ps_5_0
+    upscaler_inputs|src/features/upscaling/shaders/inputs.cs.hlsl|cs_5_0
+    upscaler_composite|src/features/upscaling/shaders/composite.ps.hlsl|ps_5_0
+    upscaler_stretch_vs|src/features/upscaling/shaders/stretch.vs.hlsl|vs_5_0
+    upscaler_stretch|src/features/upscaling/shaders/stretch.ps.hlsl|ps_5_0
+    upscaler_blur_source|src/features/upscaling/shaders/blur_source.ps.hlsl|ps_5_0
+    fog_transmittance|src/features/volumetric_fog/shaders/transmittance.cs.hlsl|cs_5_0
+    fog_multiple_scattering|src/features/volumetric_fog/shaders/multiple_scattering.cs.hlsl|cs_5_0
+    fog_sky_parameters|src/features/volumetric_fog/shaders/sky_parameters.cs.hlsl|cs_5_0
+    fog_sky_view|src/features/volumetric_fog/shaders/sky_view.cs.hlsl|cs_5_0
+    fog_sky_ambient|src/features/volumetric_fog/shaders/sky_ambient.cs.hlsl|cs_5_0
+    fog_visibility|src/features/volumetric_fog/shaders/fog_visibility.cs.hlsl|cs_5_0
+    fog_media|src/features/volumetric_fog/shaders/fog_media.cs.hlsl|cs_5_0
+    fog_integrate|src/features/volumetric_fog/shaders/fog_integrate.cs.hlsl|cs_5_0
+    contact_shadow_trace|src/passes/shaders/contact_shadow_trace.cs.hlsl|cs_5_0
+    indirect_show|src/passes/shaders/indirect_light_show.ps.hlsl|ps_5_0
+    indirect_show_light|src/passes/shaders/indirect_light_show_light.ps.hlsl|ps_5_0
+    indirect_show_scene|src/passes/shaders/indirect_light_show_scene.ps.hlsl|ps_5_0
+    sun_light_shadow_sky|src/passes/shaders/sun_light_shadow_sky.ps.hlsl|ps_5_0
+    sun_light_shadow|src/passes/shaders/sun_light_shadow.ps.hlsl|ps_5_0
+    sun_light_no_shadow_sky|src/passes/shaders/sun_light_no_shadow_sky.ps.hlsl|ps_5_0
+    sun_light_no_shadow|src/passes/shaders/sun_light_no_shadow.ps.hlsl|ps_5_0
+    sun_light_path_traced_cloud|src/passes/shaders/sun_light_path_traced_cloud.ps.hlsl|ps_5_0
+    sun_light_path_traced|src/passes/shaders/sun_light_path_traced.ps.hlsl|ps_5_0
+    visibility_prefilter|src/passes/shaders/visibility_prefilter.cs.hlsl|cs_5_0
+    visibility_march_occlusion|src/passes/shaders/visibility_march_occlusion.cs.hlsl|cs_5_0
+    visibility_march_light|src/passes/shaders/visibility_march_light.cs.hlsl|cs_5_0
+    visibility_denoise_occlusion|src/passes/shaders/visibility_denoise_occlusion.cs.hlsl|cs_5_0
+    visibility_denoise_occlusion_final|src/passes/shaders/visibility_denoise_occlusion_final.cs.hlsl|cs_5_0
+    visibility_denoise_light|src/passes/shaders/visibility_denoise_light.cs.hlsl|cs_5_0
+    visibility_denoise_light_final|src/passes/shaders/visibility_denoise_light_final.cs.hlsl|cs_5_0
+    light_full_screen|src/features/ray_traced_lights/shaders/light_full_screen.vs.hlsl|vs_5_0
+    light_volume|src/features/ray_traced_lights/shaders/light_volume.vs.hlsl|vs_5_0
+    light_shadow|src/features/ray_traced_lights/shaders/light_shadow.ps.hlsl|ps_5_0
+    light_before_volume|src/features/ray_traced_lights/shaders/light_before_volume.ps.hlsl|ps_5_0
+    light_bounds|src/features/ray_traced_lights/shaders/light_bounds.cs.hlsl|cs_5_0
+    sky_to_ray_units|src/features/path_tracing/shaders/sky_to_ray_units.cs.hlsl|cs_5_0
+    rt_pack|src/passes/ray_tracing/shaders/pack.cs.hlsl|cs_5_0
+    rt_guides|src/passes/ray_tracing/shaders/guides.cs.hlsl|cs_5_0
+    gtvbao_apply|src/features/ambient_occlusion/shaders/gtvbao_apply.ps.hlsl|ps_5_0
+    water_surface_0_0_0|src/features/path_tracing/shaders/water_surface_0_0_0.ps.hlsl|ps_5_0
+    water_surface_0_0_1|src/features/path_tracing/shaders/water_surface_0_0_1.ps.hlsl|ps_5_0
+    water_surface_0_1_0|src/features/path_tracing/shaders/water_surface_0_1_0.ps.hlsl|ps_5_0
+    water_surface_0_1_1|src/features/path_tracing/shaders/water_surface_0_1_1.ps.hlsl|ps_5_0
+    water_surface_1_0_0|src/features/path_tracing/shaders/water_surface_1_0_0.ps.hlsl|ps_5_0
+    water_surface_1_0_1|src/features/path_tracing/shaders/water_surface_1_0_1.ps.hlsl|ps_5_0
+    water_surface_1_1_0|src/features/path_tracing/shaders/water_surface_1_1_0.ps.hlsl|ps_5_0
+    water_surface_1_1_1|src/features/path_tracing/shaders/water_surface_1_1_1.ps.hlsl|ps_5_0
+    sky_draw_0_0_0|src/features/volumetric_fog/shaders/sky_draw_0_0_0.ps.hlsl|ps_5_0
+    sky_draw_0_0_1|src/features/volumetric_fog/shaders/sky_draw_0_0_1.ps.hlsl|ps_5_0
+    sky_draw_0_1_0|src/features/volumetric_fog/shaders/sky_draw_0_1_0.ps.hlsl|ps_5_0
+    sky_draw_0_1_1|src/features/volumetric_fog/shaders/sky_draw_0_1_1.ps.hlsl|ps_5_0
+    sky_draw_1_0_0|src/features/volumetric_fog/shaders/sky_draw_1_0_0.ps.hlsl|ps_5_0
+    sky_draw_1_0_1|src/features/volumetric_fog/shaders/sky_draw_1_0_1.ps.hlsl|ps_5_0
+    sky_draw_1_1_0|src/features/volumetric_fog/shaders/sky_draw_1_1_0.ps.hlsl|ps_5_0
+    sky_draw_1_1_1|src/features/volumetric_fog/shaders/sky_draw_1_1_1.ps.hlsl|ps_5_0
+)
+foreach(shader IN LISTS PHANTOM_FX_SHADERS)
+    string(REPLACE "|" ";" fields "${shader}")
+    list(GET fields 0 name)
+    list(GET fields 1 source)
+    list(GET fields 2 profile)
+    phantom_precompile_shader(phantom_fx SOURCE "${source}" PROFILE "${profile}" VARIABLE "g_${name}" NAME "${name}")
+endforeach()
+if(PHANTOM_FX_DEV_TOOLS)
+    phantom_precompile_shader(phantom_fx
+        SOURCE src/dev/shaders/sun_light_game_shadow.ps.hlsl PROFILE ps_5_0
+        VARIABLE g_sun_light_game_shadow NAME sun_light_game_shadow)
+endif()
+get_property(PHANTOM_SHADER_HEADERS GLOBAL PROPERTY PHANTOM_SHADER_HEADERS)
+add_custom_target(phantom_shaders DEPENDS ${PHANTOM_SHADER_HEADERS})
+add_dependencies(phantom_fx phantom_shaders)
+phantom_forbid_runtime_compile(phantom_fx)
 # NGX loads the model DLLs, and the add-on Streamline and the FSR runtime, from the add-on's directory.
 add_custom_command(TARGET phantom_fx POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -390,6 +515,28 @@ if(BUILD_TESTING)
     target_compile_features(command_list_notes_tests PRIVATE cxx_std_20)
     target_compile_options(command_list_notes_tests PRIVATE /W4 /WX /permissive- /utf-8)
     add_test(NAME command_list_notes COMMAND command_list_notes_tests)
+
+    if(PHANTOM_DEV_SHADERS)
+        add_executable(shader_source_tests tests/shader_source_tests.cpp src/shader_source.cpp src/log.cpp)
+        target_include_directories(shader_source_tests PRIVATE src)
+        target_link_libraries(shader_source_tests PRIVATE d3d11 d3dcompiler)
+        target_compile_features(shader_source_tests PRIVATE cxx_std_20)
+        target_compile_definitions(shader_source_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        target_compile_options(shader_source_tests PRIVATE /W4 /WX /permissive- /utf-8)
+        add_dependencies(shader_source_tests phantom_shaders)
+        add_test(NAME shader_source COMMAND shader_source_tests)
+    endif()
+endif()
+
+# A test that includes a shader header needs the bytecode headers made first.
+if(BUILD_TESTING)
+    foreach(test IN ITEMS upscaler_tests scene_description_tests scene_contents_tests kick_traces_tests shared_textures_tests
+            kernel_table_tests light_choice_tests light_bins_tests game_shaders_tests water_tests shader_bytecode_tests
+            d3d12_host_tests command_list_notes_tests)
+        if(TARGET ${test})
+            add_dependencies(${test} phantom_shaders)
+        endif()
+    endforeach()
 endif()
 
 include(src/remaster/remaster.cmake)

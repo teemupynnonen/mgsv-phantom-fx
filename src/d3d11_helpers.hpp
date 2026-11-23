@@ -6,6 +6,7 @@
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -37,38 +38,67 @@ struct ComputeTexture
     UINT width{}, height{};
 };
 
-// Compiles `source`'s main for `profile`; throws with the compiler's errors.
-inline Microsoft::WRL::ComPtr<ID3DBlob> compile(const char* source, const char* name, const char* profile, const D3D_SHADER_MACRO* defines = nullptr)
+// A shipped shader is bytecode fxc compiled at build time (phantom_precompile_shader in
+// cmake/phantom_shaders.cmake). A development build (PHANTOM_DEV_SHADERS) compiles `source` instead,
+// so the HLSL can be edited without rebuilding the add-on: `source` is relative to src/.
+struct Shader
 {
-    Microsoft::WRL::ComPtr<ID3DBlob> code, errors;
-    const auto result = D3DCompile(source, std::strlen(source), name, defines, nullptr, "main", profile, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
-        code.GetAddressOf(), errors.GetAddressOf());
-    if (FAILED(result))
-        throw std::runtime_error(std::string("Shader ") + name + " did not compile: "
-            + (errors ? std::string(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize())
-                      : hex(static_cast<std::uint32_t>(result))));
+    const void* code;
+    std::size_t size;
+    const char* source;
+    const char* profile;
+};
 
-    return code;
+#if PHANTOM_DEV_SHADERS
+// `source`'s main for its profile, its #includes read next to it and from src/; throws with the compiler's errors.
+Microsoft::WRL::ComPtr<ID3DBlob> compileShaderFile(const Shader& shader);
+#endif
+inline Microsoft::WRL::ComPtr<ID3D11ComputeShader> computeShader(ID3D11Device* device, const Shader& shader, const char* name)
+{
+#if PHANTOM_DEV_SHADERS
+    const auto code = compileShaderFile(shader);
+    const auto* bytes = code->GetBufferPointer();
+    const auto size = code->GetBufferSize();
+#else
+    const auto* bytes = shader.code;
+    const auto size = shader.size;
+#endif
+    Microsoft::WRL::ComPtr<ID3D11ComputeShader> made;
+    check(device->CreateComputeShader(bytes, size, nullptr, made.GetAddressOf()), name);
+
+    return made;
 }
 
-inline Microsoft::WRL::ComPtr<ID3D11ComputeShader> computeShader(ID3D11Device* device, const char* source, const char* name,
-    const D3D_SHADER_MACRO* defines = nullptr)
+inline Microsoft::WRL::ComPtr<ID3D11PixelShader> pixelShader(ID3D11Device* device, const Shader& shader, const char* name)
 {
-    const auto code = compile(source, name, "cs_5_0", defines);
-    Microsoft::WRL::ComPtr<ID3D11ComputeShader> shader;
-    check(device->CreateComputeShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, shader.GetAddressOf()), name);
+#if PHANTOM_DEV_SHADERS
+    const auto code = compileShaderFile(shader);
+    const auto* bytes = code->GetBufferPointer();
+    const auto size = code->GetBufferSize();
+#else
+    const auto* bytes = shader.code;
+    const auto size = shader.size;
+#endif
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> made;
+    check(device->CreatePixelShader(bytes, size, nullptr, made.GetAddressOf()), name);
 
-    return shader;
+    return made;
 }
 
-inline Microsoft::WRL::ComPtr<ID3D11PixelShader> pixelShader(ID3D11Device* device, const char* source, const char* name,
-    const D3D_SHADER_MACRO* defines = nullptr)
+inline Microsoft::WRL::ComPtr<ID3D11VertexShader> vertexShader(ID3D11Device* device, const Shader& shader, const char* name)
 {
-    const auto code = compile(source, name, "ps_5_0", defines);
-    Microsoft::WRL::ComPtr<ID3D11PixelShader> shader;
-    check(device->CreatePixelShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, shader.GetAddressOf()), name);
+#if PHANTOM_DEV_SHADERS
+    const auto code = compileShaderFile(shader);
+    const auto* bytes = code->GetBufferPointer();
+    const auto size = code->GetBufferSize();
+#else
+    const auto* bytes = shader.code;
+    const auto size = shader.size;
+#endif
+    Microsoft::WRL::ComPtr<ID3D11VertexShader> made;
+    check(device->CreateVertexShader(bytes, size, nullptr, made.GetAddressOf()), name);
 
-    return shader;
+    return made;
 }
 
 // A constant buffer the CPU rewrites before each use, through write().
