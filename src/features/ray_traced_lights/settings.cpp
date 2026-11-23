@@ -6,7 +6,7 @@ namespace
 {
 constexpr RayTracedLights Defaults{};
 constexpr SettingChoice Qualities[]{{1, "Low 1"}, {2, "Medium 2"}, {4, "High 4"}, {8, "Ultra 8"}};
-// Ray traced: Ultra (path tracing) lights the flashlights too.
+// PT (path tracing) lights the flashlights too.
 constexpr Effect FlashlightsShownIn[]{Effect::RayTracedLights, Effect::PathTracing};
 }
 

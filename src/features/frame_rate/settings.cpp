@@ -7,7 +7,7 @@ void describe(FrameRate& frameRate, SettingVisitor& visit)
     visit.feature(frameRate.unlocked,
         {.menuId = "unlockFrameRate",
             .iniKey = "unlock_fps",
-            .section = Section::Image,
+            .section = Section::Display,
             .name = "Unlock frame rate",
             .tip = "Lifts the game's 60 fps cap, like framerate_control \"Variable\" in its settings file. Off keeps the game's setting.",
             .summary = "Removes the game's 60 fps cap.",

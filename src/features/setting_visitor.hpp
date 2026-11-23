@@ -12,9 +12,9 @@
 // menu each walk those descriptions as a SettingVisitor.
 namespace phantom_fx
 {
-// The menu's sections, in its order: the first four share the Graphics tab. Only the dev build has
-// Developer (dev_tools.hpp).
-enum class Section : std::uint8_t { Lighting, Image, World, Camera, Sandbox, Budget, Diagnostics, Developer };
+// The menu's sections, in its order. Those without a tab of their own share one (menu_budget.cpp): the
+// lighting and the world ones are groups under it. Only the dev build has Developer (dev_tools.hpp).
+enum class Section : std::uint8_t { Overview, Display, Lighting, World, Camera, Sandbox, Diagnostics, Developer };
 
 struct FeatureInfo
 {

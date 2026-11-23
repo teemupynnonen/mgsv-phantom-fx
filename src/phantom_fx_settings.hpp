@@ -107,14 +107,14 @@ const FeatureInfo& featureOf(Effect effect);
 bool& switchOf(Settings& settings, Effect effect);
 
 // How the game is lit, each step replacing the one before: the game's own light, the screen-space
-// effects, the ray-traced ones, and Ultra's traced reflections and light (path tracing).
+// effects, the ray-traced ones, and PT's traced reflections and light (path tracing).
 enum class LightingStep : std::uint8_t { Game, ScreenSpace, RayTraced, Ultra, Count };
 
 // The lighting effects a step switches on, beside those of the steps before it.
 std::span<const Effect> effectsAddedBy(LightingStep step);
-// Switches the step's lighting effects on and the others off. Ray traced keeps the screen-space effects
-// on beneath it, so each ray-traced effect switched off leaves its screen-space one; Ultra keeps both and
-// asks for DLSS Ray Reconstruction, which it needs, and leaving Ultra gives that back. The effects' own
+// Switches the step's lighting effects on and the others off. RT keeps the screen-space effects on
+// beneath it, so each ray-traced effect switched off leaves its screen-space one; PT keeps both and
+// asks for DLSS Ray Reconstruction, which it needs, and leaving PT gives that back. The effects' own
 // settings (radius, strength, ray quality) stay as they are.
 void applyLightingStep(Settings& settings, LightingStep step);
 // The furthest step with an effect on.

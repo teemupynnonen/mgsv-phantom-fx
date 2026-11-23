@@ -73,7 +73,7 @@ template<class E> std::string_view labelIn(std::span<const SettingChoice> choice
 void describe(Upscaling& upscaling, SettingVisitor& visit)
 {
     visit.feature({.menuId = "upscaler",
-        .section = Section::Image,
+        .section = Section::Display,
         .name = "Upscaler",
         .tip = "NVIDIA DLSS needs an NVIDIA RTX GPU. AMD FSR runs on any GPU: FSR 4 on Radeon RX 7000 and 9000, FSR 3.1 on the rest.",
         .summary = "Replaces the game's FXAA anti-aliasing.",
@@ -112,7 +112,7 @@ void describe(Upscaling& upscaling, SettingVisitor& visit)
         {.iniKey = "ray_reconstruction",
             .label = "Ray Reconstruction",
             .tip = "DLSS Ray Reconstruction in place of DLSS: one NVIDIA model that cleans up the ray-traced light and upscales. It runs while a "
-                   "ray-traced effect is on (bounce light, shadows or lights) and needs an NVIDIA RTX GPU. Ray traced: Ultra needs it.",
+                   "ray-traced effect is on (bounce light, shadows or lights) and needs an NVIDIA RTX GPU. PT needs it.",
             .visible = upscaling.upscaler == Upscaler::Dlss,
             .enabled = on,
             .isRaySetting = true});

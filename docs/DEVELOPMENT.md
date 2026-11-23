@@ -160,7 +160,7 @@ The code is laid out by what it does for the player:
 | `src/menu_budget.cpp`, `src/menu_budget.hpp` | The window's sections, and each effect as a budget line: its state, its switch and its timed passes |
 | `src/fxui/` | fxui, the reusable frame budget settings window for ReShade add-ons (see its README.md) |
 | `src/performance.cpp`, `src/performance.hpp` | The passes' GPU costs: timestamp queries, the averages, the real cost measurement, `PhantomFX-performance.txt` (see "Costs") |
-| `src/performance_menu.cpp` | The Budget tab, the costs over the game, and the costs as text |
+| `src/performance_menu.cpp` | The Overview tab, the costs over the game, and the costs as text |
 
 ### Features
 

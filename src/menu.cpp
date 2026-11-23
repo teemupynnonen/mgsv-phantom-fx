@@ -1,5 +1,5 @@
 // The Phantom FX settings window in ReShade's overlay: fxui's frame budget window with Phantom FX's
-// sections and settings. The costs and states come from menu_budget.cpp, the Budget tab from
+// sections and settings. The costs and states come from menu_budget.cpp, the Overview tab from
 // performance_menu.cpp.
 #include "character.hpp"
 #include "core.hpp"
@@ -489,20 +489,12 @@ struct StepText
 
 constexpr std::array<StepText, static_cast<std::size_t>(LightingStep::Count)> StepTexts{{
     {"Off", "Any GPU", "The game's own shadows and light."},
-    {"Screen-space", "Any GPU", "Softer shadows and bounce light, from what is on screen."},
-    {"Ray traced", "A GPU that ray traces: NVIDIA RTX, AMD Radeon RX 6000 and newer, Intel Arc", "Shadows and bounce light traced through the whole scene."},
-    {"Ray traced: Ultra", "NVIDIA RTX, with DLSS", "Ray traced, plus traced reflections, sunlight and lamplight."},
+    {"Raster Only Enhancements", "Any GPU", "Softer shadows and bounce light, from what is on screen."},
+    {"RT", "A GPU that ray traces: NVIDIA RTX, AMD Radeon RX 6000 and newer, Intel Arc", "Shadows and bounce light traced through the whole scene."},
+    {"PT", "NVIDIA RTX, with DLSS", "Ray traced, plus traced reflections, sunlight and lamplight."},
 }};
 
-constexpr const char* UltraNeedsDlss = "Needs DLSS Ray Reconstruction. Under Image > Upscaler, pick DLSS and a mode other than Off.";
-
-// A step shows the items of the effects it adds. Ultra also shows bounce light's: path tracing needs
-// it, and replaces the other ray-traced effects.
-bool isShownInStep(Effect effect, LightingStep step)
-{
-    const auto added = effectsAddedBy(step);
-    return std::ranges::find(added, effect) != added.end() || (step == LightingStep::Ultra && effect == Effect::GlobalIllumination);
-}
+constexpr const char* UltraNeedsDlss = "Needs DLSS Ray Reconstruction. Under Display > Upscaler, pick DLSS and a mode other than Off.";
 
 // What is switched off that `step` switches on, by the items' names: "Contact shadows and Bounce light (SSILVB)".
 std::string offInStep(const Settings& wanted, LightingStep step)
@@ -528,13 +520,10 @@ std::string offInStep(const Settings& wanted, LightingStep step)
     return off;
 }
 
-// The lighting step, as the first line's value, then the items of the effects it runs. During a
-// search, every lighting item.
-void drawLighting(Settings& wanted, const fxui::Budget& budget, const MenuFrame& frame)
+// The lighting presets: each sets the effects its step turns on, then the player may mix them by hand.
+// Drawn on the Overview's page, above the performance overview.
+void drawPreset(Settings& wanted, const fxui::Budget& budget, const MenuFrame& frame)
 {
-    const fxui::Page page(Section::Lighting);
-    if (!page) return;
-
     if (frame.resetting == ModeId) applyLightingStep(wanted, lightingStepOf(wanted));
 
     const auto step = lightingStepOf(wanted);
@@ -544,9 +533,9 @@ void drawLighting(Settings& wanted, const fxui::Budget& budget, const MenuFrame&
     const bool isUltraStopped = step == LightingStep::Ultra && !canRunUltra;
     {
         const fxui::Item item({.id = ModeId.data(),
-            .name = "Mode",
+            .name = "Preset",
             .summary = text.description,
-            .keywords = "lighting step off screen-space ray traced ultra path tracing",
+            .keywords = "preset raster only enhancements RT PT ray traced path traced lighting step",
             .isChanged = isMixed,
             .state = isUltraStopped ? std::optional(State::NotRunning) : step == LightingStep::Game ? std::optional(State::Off) : std::nullopt,
             .message = isUltraStopped ? UltraNeedsDlss : "",
@@ -568,31 +557,37 @@ void drawLighting(Settings& wanted, const fxui::Budget& budget, const MenuFrame&
             if (isMixed)
             {
                 fxui::note(fxui::Tone::Warn, std::format("Your own mix: {} off.", offInStep(wanted, step)));
-                drawResetAll(ModeId, "Every lighting effect back as this mode sets it.");
+                drawResetAll(ModeId, "Every lighting effect back as this preset sets it.");
             }
         }
     }
+}
 
-    // Also an effect a step beneath adds that nothing replaces, on or off: such as SSILVB with bounce
-    // light off, which runs in its place.
-    const auto plan = planEffects(wanted, {});
-    const auto isShown = [&](Effect effect) {
-        if (isShownInStep(effect, step)) return true;
+// The Raster and Ray Tracing groups, each with the items of the effects it runs. During a search, every
+// lighting item.
+void drawLighting(Settings& wanted, const MenuFrame& frame)
+{
+    const fxui::Page page(Section::Lighting);
+    if (!page) return;
 
-        for (int below = 1; below < static_cast<int>(step); ++below)
-        {
-            const auto added = effectsAddedBy(static_cast<LightingStep>(below));
-            if (std::ranges::find(added, effect) != added.end()) return !plan.replacers[effect];
-        }
+    const auto step = lightingStepOf(wanted);
 
-        return false;
+    // The sketch's two groups, always whole: an effect its step leaves to another still shows, with
+    // what replaces it.
+    constexpr std::array Raster{Effect::SoftShadows, Effect::LampSoftShadows, Effect::SunContactShadows, Effect::LampContactShadows,
+        Effect::AmbientOcclusion, Effect::IndirectLight};
+    constexpr std::array RayTraced{Effect::PathTracing, Effect::RayTracedShadows, Effect::RayTracedLights, Effect::GlobalIllumination};
+
+    const auto shows = [](const FeatureInfo& feature, std::span<const Effect> group) {
+        return feature.effect && std::ranges::find(group, *feature.effect) != group.end();
     };
-    // Features that share a switch show with either effect, under the first one's name (FeatureInfo::menuId).
-    drawFeatures(Section::Lighting, wanted, frame, [&](const FeatureInfo& feature) {
-        if (fxui::isSearching()) return true;
+    const auto drawGroup = [&](const char* name, std::span<const Effect> group) {
+        fxui::subheading(name);
+        drawFeatures(Section::Lighting, wanted, frame, [&](const FeatureInfo& feature) { return shows(feature, group); });
+    };
 
-        return std::ranges::any_of(AllEffects, [&](Effect effect) { return std::string_view(featureOf(effect).menuId) == feature.menuId && isShown(effect); });
-    });
+    drawGroup("Raster", Raster);
+    drawGroup("Ray Tracing", RayTraced);
     if (fxui::isSearching() || step == LightingStep::RayTraced || step == LightingStep::Ultra) drawRays(wanted, frame);
 }
 
@@ -811,11 +806,16 @@ void draw()
                 .masterTip = "Soft shadows, contact shadows, GTVBAO, SSILVB, the volumetric fog and the ray tracing together, as set in their sections. "
                              "Off shows the game's own lighting for comparison; F1 toggles it at any time. Not saved: each start begins with them on.",
                 .masterOff = "Off: the game's own lighting."});
-        drawLighting(wanted, budget, frame);
-        drawSection(Section::Image, wanted, frame);
+        drawLighting(wanted, frame);
+        drawSection(Section::Display, wanted, frame);
         drawSection(Section::World, wanted, frame);
         drawSection(Section::Camera, wanted, frame);
         drawSandbox();
+        if (const fxui::Page overview(Section::Overview); overview)
+        {
+            drawPreset(wanted, budget, frame);
+            fxui::gap(12);
+        }
         performance::drawBudget();
         drawDiagnostics(state);
         if constexpr (DevTools) dev::drawPage();

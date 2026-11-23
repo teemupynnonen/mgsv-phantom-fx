@@ -12,7 +12,7 @@ void describe(Hdr& hdr, SettingVisitor& visit)
     visit.feature(hdr.on,
         {.menuId = "hdr",
             .iniKey = "hdr",
-            .section = Section::Image,
+            .section = Section::Display,
             .name = "HDR output",
             .tech = "HDR10",
             .tip = "The game in HDR10 on an HDR display: the sun, lamps, fire and reflections shine brighter than the game's white. It needs HDR "

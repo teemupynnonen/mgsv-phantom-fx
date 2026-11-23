@@ -28,7 +28,7 @@ constexpr SettingChoice Modes[]{
 void describe(FrameGeneration& generation, SettingVisitor& visit)
 {
     visit.feature({.menuId = "frameGeneration",
-        .section = Section::Image,
+        .section = Section::Display,
         .name = "Frame generation",
         .tip = "Frames generated between the ones the game renders, with either upscaler. DLSS Frame Generation: 2x needs an RTX 40, 3x to "
                "6x and Dynamic an RTX 50. Dynamic reaches the display's refresh rate. It turns on NVIDIA Reflex. FSR frame generation: 2x on "

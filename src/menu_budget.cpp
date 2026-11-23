@@ -36,12 +36,12 @@ using fxui::State;
 using performance::Pass;
 
 constexpr std::array<fxui::Section, 8> all{{
-    {"Lighting", fxui::hue::Blue, false, "Graphics"},
-    {"Image", fxui::hue::Teal, false, "Graphics"},
-    {"World", fxui::hue::Violet, false, "Graphics"},
-    {"Camera", fxui::hue::Pink, false, "Graphics"},
-    {"Sandbox"},
-    {"Budget", 0, true},
+    {"Overview", 0, false},
+    {"Display", fxui::hue::Teal, false},
+    {"Lighting", fxui::hue::Blue, false},
+    {"World", fxui::hue::Violet, false, "Misc"},
+    {"Camera", fxui::hue::Pink, false, "Misc"},
+    {"Sandbox", 0, false, "Misc"},
     {"Diagnostics"},
     {"Developer"},
 }};

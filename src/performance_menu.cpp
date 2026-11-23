@@ -1,4 +1,4 @@
-// The costs in the settings window's Budget tab, over the game, and as text for PhantomFX-performance.txt.
+// The costs in the settings window's Overview tab, over the game, and as text for PhantomFX-performance.txt.
 #include "performance.hpp"
 
 #include "core.hpp"
@@ -37,8 +37,8 @@ void drawRealCost(const Measurement& m, bool explained)
 
 void drawBudget()
 {
-    const fxui::Page page(Section::Budget);
-    if (!page) return;
+    const fxui::Page page(Section::Overview);
+    if (!page || fxui::isSearching()) return;
 
     const auto state = status();
     if (fxui::button("Measure the real cost",

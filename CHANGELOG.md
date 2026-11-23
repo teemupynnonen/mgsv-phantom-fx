@@ -8,6 +8,13 @@
   the free camera's near clip plane from 7 cm to 1 mm, so what the camera nearly touches no longer vanishes. Off by
   default; the game's own camera is untouched.
 
+### Changed
+
+- **New menu layout.** The tabs are now **Overview**, **Display**, **Lighting** and **Misc**.
+  The lighting effects sit under **Raster** and **Ray Tracing**, and the world, camera and sandbox pages share
+  **Misc**. **Preset** on **Overview** sets Raster Only Enhancements, RT or PT; the Lighting page keeps every
+  effect visible, with what a preset replaces marked **Replaced**.
+
 ### Fixed
 
 - Ray-traced light where things touch the ground: no pale glow under Snake's arm when he lies prone, and no black

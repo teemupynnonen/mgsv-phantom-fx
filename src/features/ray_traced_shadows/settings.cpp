@@ -13,7 +13,7 @@ void describe(RayTracedShadows& shadows, SettingVisitor& visit)
             .tag = "Experimental",
             .tip = "The sun's shadows from rays traced through the game's own scene: as soft as the sun's disc makes them, exact where objects "
                    "meet the ground, and as far as you can see, where the game's shadows end at about 90 m. It replaces the game's shadows, soft "
-                   "shadows and contact shadows while on; Ray traced: Ultra traces its own. Needs a GPU that traces rays (DXR 1.1). Off keeps the "
+                   "shadows and contact shadows while on; PT traces its own. Needs a GPU that traces rays (DXR 1.1). Off keeps the "
                    "game's shadow map.",
             .summary = "Accurate sun shadows, as far as you can see.",
             .keywords = "RT DXR ray-traced shadows sun size vanilla",
