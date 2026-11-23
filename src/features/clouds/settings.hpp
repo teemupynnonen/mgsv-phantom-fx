@@ -18,6 +18,7 @@ struct Clouds
     float size{1.5f}; // Larger is wider clouds, with the same sky filled by bigger shapes
     float shadow{1};   // How dark the clouds' shadow on the ground is; 0 leaves the ground alone
     float wind{1};     // How fast they drift, 1 being the game's real wind
+    bool fog{true};    // The game's fog over the clouds, as the terrain gets it: off keeps a distant cloud at its own colour
 
     bool operator==(const Clouds&) const = default;
 };

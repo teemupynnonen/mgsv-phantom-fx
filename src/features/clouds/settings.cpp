@@ -75,5 +75,11 @@ void describe(Clouds& clouds, SettingVisitor& visit)
             .readoutScale = 100,
             .tip = "How fast the clouds travel. 100% is the game's own wind speed for these clouds, 0% holds them still.",
             .visible = clouds.on});
+    visit.toggle(clouds.fog,
+        {.iniKey = "clouds_fog",
+            .label = "Fog on clouds",
+            .tip = "The game's fog and haze over the clouds, as the terrain behind them gets it, so the deck melts into the horizon. Off "
+                   "keeps every cloud at its own colour, crisper at a distance but with a visible edge where it meets the hazy hills.",
+            .visible = clouds.on});
 }
 }

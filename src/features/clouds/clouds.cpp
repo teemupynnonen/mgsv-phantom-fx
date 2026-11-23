@@ -64,10 +64,11 @@ struct ShaderSettings
     float steps, coverage, size, wind, shadow;
     // The clouds' own travelled distance in metres (the wind setting's, integrated here): a slider that changes the speed
     // must not move the clouds, only their pace.
-    float offsetX, offsetZ, padding;
+    float offsetX, offsetZ;
+    float fog; // 1 the game's fog over the clouds, 0 none
 };
 static_assert(sizeof(ShaderSettings) % 16 == 0);
-std::atomic<float> steps{192}, coverage{1}, size{1}, wind{1}, shadow{1};
+std::atomic<float> steps{192}, coverage{1}, size{1}, wind{1}, shadow{1}, fog{1};
 // The clouds' drift (cloud_wind below): the game's own cloud offset, which moves only with game time and its weather's wind,
 // taken a change at a time and scaled by the Wind setting, so a paused game holds them and the slider changes their pace without
 // moving them. A structured buffer of two float4s: [0].xy the distance travelled in metres, [0].zw the game's last offset in
@@ -356,6 +357,7 @@ void configure(const Configuration& configuration) noexcept
     size.store(settings.size, std::memory_order_relaxed);
     wind.store(settings.wind, std::memory_order_relaxed);
     shadow.store(settings.shadow, std::memory_order_relaxed);
+    fog.store(settings.fog ? 1.0f : 0.0f, std::memory_order_relaxed);
     if (!on) return;
 
     std::lock_guard lock(resourceMutex);
@@ -430,7 +432,7 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
     {
         const ShaderSettings values{steps.load(std::memory_order_relaxed), coverage.load(std::memory_order_relaxed),
             size.load(std::memory_order_relaxed), wind.load(std::memory_order_relaxed), shadow.load(std::memory_order_relaxed),
-            0, 0, 0};
+            0, 0, fog.load(std::memory_order_relaxed)};
         std::lock_guard lock(resourceMutex);
         if (settingsBuffer && !FAILED(write(context, settingsBuffer.Get(), values)))
         {

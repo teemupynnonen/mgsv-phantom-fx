@@ -28,7 +28,7 @@ cbuffer cPSObject : register(b5)
 cbuffer cCloudSettings : register(b7)
 {
     float g_cloudSteps, g_cloudCoverage, g_cloudSize, g_cloudWind, g_cloudShadow;
-    float g_cloudOffsetX, g_cloudOffsetZ, g_cloudPadding;
+    float g_cloudOffsetX, g_cloudOffsetZ, g_cloudFog; // g_cloudFog: 1 the game's fog over the clouds, 0 none
 };
 
 SamplerState LinearWrap : register(s10);

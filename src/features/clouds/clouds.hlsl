@@ -13,6 +13,8 @@ Texture2D<float> CloudShadow : register(t16);
 
 static const float Pi = 3.14159265;
 static const int Steps = 128;
+// How far a ray may march: the layer's chord at the horizon is hundreds of kilometres, and stopping short shows as a hard band.
+static const float FarReach = 150000;
 
 float HG(float mu, float g)
 {
@@ -68,7 +70,7 @@ float4 main(float4 color : COLOR0, float4 uv : TEXCOORD0, float4 world : TEXCOOR
     if (abs(ray.y) < 1e-4)
     {
         tEnter = 0;
-        tExit = (eye.y > LayerBase && eye.y < LayerTop) ? 12000 : -1;
+        tExit = (eye.y > LayerBase && eye.y < LayerTop) ? FarReach : -1;
     }
     else
     {
@@ -76,9 +78,11 @@ float4 main(float4 color : COLOR0, float4 uv : TEXCOORD0, float4 world : TEXCOOR
         tEnter = max(min(t0, t1), 0);
         tExit = max(t0, t1);
     }
-    tExit = min(min(tExit, tEnter + 12000), sceneDistance);
+    // To the layer's own exit, not a fixed 12 km: at a grazing angle the chord through the layer is hundreds of kilometres, and cutting
+    // it at 12 left the bottom of the deck unmarched, a hard-edged band of bare sky above the horizon.
+    tExit = min(min(tExit, tEnter + FarReach), sceneDistance);
     float span = tExit - tEnter;
-    float farFade = 1 - smoothstep(15000, 40000, tEnter);
+    float farFade = 1 - smoothstep(60000, 150000, tEnter);
 
     float2 windXZ = CloudWindXZ();
     float3 wind = CloudWind();
@@ -97,7 +101,7 @@ float4 main(float4 color : COLOR0, float4 uv : TEXCOORD0, float4 world : TEXCOOR
     // the layer a few hundred metres out.
     float farWeight = 0;
     float sunSeen = 0, peak = 0;
-    if (span > 1 && tEnter < 40000)
+    if (span > 1 && tEnter < 150000)
     {
         const int steps = max(16, (int)g_cloudSteps);
         float stepLength = span / steps;
@@ -164,18 +168,25 @@ float4 main(float4 color : COLOR0, float4 uv : TEXCOORD0, float4 world : TEXCOOR
     if (DebugView == 2) return float4(alpha.xxx, 1);
     if (DebugView == 3) return float4(peak, saturate(peak * 10), 0, 1);
 
-    // The far air's fog, a share of it that grows with distance: a distant cloud sinks into the horizon instead of
-    // staying bright white. Only a share: the game's far fog is the air at the far plane, and taken whole it replaced
-    // the cloud with flat grey.
-    float2 pixel = position.xy - 0.5;
-    float2 clip = pixel / m_renderInfo.xy * float2(2, -2) + float2(-1, 1);
-    float4 fog = GameFog.SampleLevel(LinearClamp, clip * float2(0.014648, 0.123047) + float2(0.015625, 0.125) + float2(0.96875, 0.75), 0);
-    // Aerial perspective, both ways: the colour goes towards the air and the cloud thins out, so a distant cloud melts into
-    // the horizon instead of sitting on top of it as a cut-out.
-    float cloudDistance = (1 - transmittance) > 1e-4 ? farWeight / (1 - transmittance) : 0;
-    float distanceFade = smoothstep(9000, 32000, cloudDistance);
-    outColor = lerp(outColor, fog.rgb * m_scene[25].y, distanceFade * 0.6);
-    alpha *= 1 - distanceFade * 0.85;
+    // The game's fog, as the terrain behind gets it: its froxel volume (t12, 128 slices by log2 of the view's z in a 32 x 4
+    // atlas, rgb the light scattered in, a what gets through) read at the cloud's own depth. Without it a cloud 20 km out
+    // stayed dark while a mountain 10 km out was nearly all fog, and the deck ended in a hard edge on the mountains.
+    if (world.w < -0.5 && g_cloudFog > 0.5)
+    {
+        float cloudDistance = (1 - transmittance) > 1e-4 ? farWeight / (1 - transmittance) : 0;
+        float2 ndc = float2(position.x / m_renderInfo.x * 2 - 1, 1 - position.y / m_renderInfo.y * 2);
+        float3 viewRay = m_scene[8].xyz * (ndc.x / m_scene[4].x) + m_scene[9].xyz * (ndc.y / m_scene[5].y) + m_scene[10].xyz;
+        float viewZ = max(cloudDistance / length(viewRay), 1);
+        float layer = saturate(log2(viewZ) * m_scene[25].x) * 127;
+        float2 clip = (position.xy - 0.5) / m_renderInfo.xy * float2(2, -2) + float2(-1, 1);
+        float2 uv = clip * float2(0.014648, 0.123047) + float2(0.015625, 0.125);
+        float2 slices = float2(floor(layer), min(floor(layer) + 1, 127)) / 32;
+        float2 column = frac(slices), row = floor(slices) * 0.25;
+        float4 nearFog = GameFog.SampleLevel(LinearClamp, uv + float2(column.x, row.x), 0);
+        float4 farFog = GameFog.SampleLevel(LinearClamp, uv + float2(column.y, row.y), 0);
+        float4 fog = lerp(nearFog, farFog, frac(layer));
+        outColor = fog.rgb * m_scene[25].y + outColor * fog.a;
+    }
 
     float3 encoded = Encode(max(outColor, 0));
     return float4(encoded * alpha, alpha);
