@@ -137,10 +137,12 @@ float4 main(float4 color : COLOR0, float4 uv : TEXCOORD0, float4 world : TEXCOOR
             }
             opticalDepth *= Extinction;
             // Multiple scattering, approximated: deep inside, light still arrives, softer and weaker.
-            float sunT = max(exp(-opticalDepth), 0.35 * exp(-opticalDepth * 0.12));
+            // Cloud is optically thick: light still reaches deep inside, scattered many times, and that is what keeps a shaded side
+            // from going black. A floor too low reads as a storm cloud on a clear day.
+            float sunT = max(exp(-opticalDepth), 0.7 * exp(-opticalDepth * 0.08));
 
             float height = saturate((where.y - LayerBase) / (LayerTop - LayerBase));
-            float3 scatter = sunLight * phase * sunT * SunScale + ambient * lerp(0.2, 1.0, height) * AmbientScale;
+            float3 scatter = sunLight * phase * sunT * SunScale + ambient * lerp(0.75, 1.0, height) * AmbientScale;
 
             // Energy-conserving step: the light this slab scatters, dimmed by what is in front of it.
             float stepT = exp(-density * Extinction * dt);
@@ -153,8 +155,11 @@ float4 main(float4 color : COLOR0, float4 uv : TEXCOORD0, float4 world : TEXCOOR
         }
     }
 
-    float alpha = saturate((1 - transmittance) * domeAlpha);
+    // `light` is the radiance scattered along the ray, integrated through the march: the sun's part where it reaches, the sky's
+    // where it does not. Multiplying it by the sun again, as this did, clipped every cloud to white or left only the ambient.
     float3 outColor = light / max(1 - transmittance, 1e-4);
+
+    float alpha = saturate((1 - transmittance) * domeAlpha);
     if (DebugView == 1) outColor = (sunSeen / max(1 - transmittance, 1e-4)).xxx;
     if (DebugView == 2) return float4(alpha.xxx, 1);
     if (DebugView == 3) return float4(peak, saturate(peak * 10), 0, 1);
