@@ -23,6 +23,7 @@
 
 namespace phantom_fx::path_tracing
 {
+using fxcore::FrameLatch;
 namespace
 {
 using Microsoft::WRL::ComPtr;

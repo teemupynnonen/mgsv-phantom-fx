@@ -25,6 +25,7 @@
 
 namespace phantom_fx::atmosphere
 {
+using fxcore::FrameLatch;
 namespace
 {
 using Microsoft::WRL::ComPtr;

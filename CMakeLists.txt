@@ -9,6 +9,8 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "Phantom FX must be built for 64-bit Windows.")
 endif()
 
+include(CTest)
+
 # The statistics logged every few seconds, and the measurements behind them, are for development
 # (the dev preset); a release logs only what happens once: startup, sizes, failures.
 option(PHANTOM_FX_DIAGNOSTIC_LOG "Log the periodic statistics used in development" OFF)
@@ -240,10 +242,14 @@ set(PHANTOM_FX_FEATURES src/features/upscaling/settings.cpp src/features/frame_g
     src/features/indirect_light/settings.cpp src/features/path_tracing/settings.cpp src/features/volumetric_fog/settings.cpp src/features/sea/settings.cpp src/features/water_caustics/settings.cpp src/features/photo_mode/settings.cpp src/features/hdr/settings.cpp src/features/frame_rate/settings.cpp
     src/features/motion_blur/settings.cpp src/features/depth_of_field/settings.cpp)
 
+# The parts every add-on links: its own CMake project, so a second add-on builds it too.
+set(PHANTOM_FX_CORE_TESTS ON)
+add_subdirectory(src/core)
+
 # The add-on uses ReShade's ImGui through the overlay function table, so none is linked.
-add_library(phantom_fx SHARED src/addon.cpp src/core.cpp src/modules.cpp src/features/upscaling/upscaler.cpp src/features/upscaling/render_size_plan.cpp src/features/upscaling/frames.cpp src/menu.cpp src/menu_budget.cpp src/fxui/fxui.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES} src/camera.cpp src/constant_capture.cpp
-    src/device_check.cpp src/features/motion_blur/motion_blur.cpp src/features/upscaling/fxaa.cpp src/features/frame_rate/frame_rate.cpp src/render_scale.cpp src/ui_redirect.cpp src/frame_log.cpp src/resource_dump.cpp
-    src/log.cpp src/shader_bytecode.cpp src/game_shaders.cpp src/game_dither.cpp src/game_light_volumes.cpp src/features/frame_generation/presenter.cpp src/features/frame_generation/frame_generation.cpp src/game_loop.cpp src/passes/contact_shadow_trace.cpp src/passes/sun_light_pass.cpp src/features/sun_contact_shadows/sun_contact_shadows.cpp
+add_library(phantom_fx SHARED src/addon.cpp src/core.cpp src/modules.cpp src/features/upscaling/upscaler.cpp src/features/upscaling/render_size_plan.cpp src/features/upscaling/frames.cpp src/menu.cpp src/menu_budget.cpp src/fxui/fxui.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES}
+    src/features/motion_blur/motion_blur.cpp src/features/upscaling/fxaa.cpp src/features/frame_rate/frame_rate.cpp src/render_scale.cpp src/ui_redirect.cpp src/frame_log.cpp src/resource_dump.cpp
+    src/game_dither.cpp src/game_light_volumes.cpp src/features/frame_generation/presenter.cpp src/features/frame_generation/frame_generation.cpp src/game_loop.cpp src/passes/contact_shadow_trace.cpp src/passes/sun_light_pass.cpp src/features/sun_contact_shadows/sun_contact_shadows.cpp
     src/passes/local_light_pass.cpp src/features/lamp_contact_shadows/lamp_contact_shadows.cpp src/features/lamp_soft_shadows/lamp_soft_shadows.cpp
     src/features/depth_of_field/depth_of_field.cpp src/passes/indirect_light_pass.cpp src/passes/visibility_bitmask.cpp src/features/ambient_occlusion/gtvbao.cpp
     src/features/indirect_light/ssilvb.cpp src/features/global_illumination/light_combine.cpp src/features/global_illumination/river_light.cpp src/features/photo_mode/photo_mode.cpp src/features/photo_mode/focus.cpp src/features/hdr/hdr.cpp src/weather.cpp src/character.cpp src/features/volumetric_fog/atmosphere.cpp src/features/sea/sea.cpp src/features/water_caustics/water_caustics.cpp src/features/water_caustics/caustics_map.cpp src/passes/forward_water_pass.cpp src/sun_movement.cpp
@@ -254,7 +260,7 @@ add_dependencies(phantom_fx gi_kernels)
 target_include_directories(phantom_fx PRIVATE src "${GI_SHADER_DIR}")
 target_include_directories(phantom_fx SYSTEM PRIVATE "${RESHADE_DIR}/include" "${RESHADE_DIR}/imgui" "${STREAMLINE_DIR}/include" third_party
     "${FIDELITYFX_DIR}")
-target_link_libraries(phantom_fx PRIVATE minhook ngx NRD d3d11 d3d12 dxgi d3dcompiler)
+target_link_libraries(phantom_fx PRIVATE phantom_fx_core minhook ngx NRD d3d11 d3d12 dxgi d3dcompiler)
 target_compile_features(phantom_fx PRIVATE cxx_std_20)
 target_compile_definitions(phantom_fx PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX ImTextureID=ImU64 PHANTOM_FX_VERSION="${PROJECT_VERSION}"
     PHANTOM_FX_DIAGNOSTIC_LOG=$<BOOL:${PHANTOM_FX_DIAGNOSTIC_LOG}> PHANTOM_FX_DEV_TOOLS=$<BOOL:${PHANTOM_FX_DEV_TOOLS}>)
@@ -292,12 +298,19 @@ install(FILES licenses/AMD-FidelityFX-LICENSE.txt licenses/Bend-Studio-SSS-LICEN
     licenses/XeGTAO-LICENSE.txt licenses/SSRT3-LICENSE.txt licenses/RenoDX-LICENSE.txt
     licenses/UnrealEngineSkyAtmosphere-LICENSE.txt licenses/Capsaicin-LICENSE.txt DESTINATION PhantomFX COMPONENT addon)
 
-include(CTest)
 if(BUILD_TESTING)
-    add_executable(upscaler_tests tests/upscaler_tests.cpp src/features/upscaling/render_size_plan.cpp src/features/upscaling/frames.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES} src/camera.cpp src/constant_capture.cpp
-        src/log.cpp src/shader_bytecode.cpp src/features/global_illumination/gi_lighting.cpp)
+    add_executable(settings_tests tests/settings_tests.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES})
+    target_include_directories(settings_tests PRIVATE src)
+    target_link_libraries(settings_tests PRIVATE phantom_fx_core)
+    target_compile_features(settings_tests PRIVATE cxx_std_20)
+    target_compile_definitions(settings_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(settings_tests PRIVATE /W4 /WX /permissive- /utf-8)
+    add_test(NAME settings COMMAND settings_tests)
+
+    add_executable(upscaler_tests tests/upscaler_tests.cpp src/features/upscaling/render_size_plan.cpp src/features/upscaling/frames.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES}
+        src/features/global_illumination/gi_lighting.cpp)
     target_include_directories(upscaler_tests PRIVATE src)
-    target_link_libraries(upscaler_tests PRIVATE d3d11 d3dcompiler)
+    target_link_libraries(upscaler_tests PRIVATE phantom_fx_core d3d11 d3dcompiler)
     target_compile_features(upscaler_tests PRIVATE cxx_std_20)
     target_compile_definitions(upscaler_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(upscaler_tests PRIVATE /W4 /WX /permissive- /utf-8)
@@ -316,17 +329,18 @@ if(BUILD_TESTING)
     target_compile_options(scene_contents_tests PRIVATE /W4 /WX /permissive- /utf-8)
     add_test(NAME scene_contents COMMAND scene_contents_tests)
 
-    add_executable(kick_traces_tests tests/kick_traces_tests.cpp src/passes/ray_tracing/kick_traces.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES} src/log.cpp)
+    add_executable(kick_traces_tests tests/kick_traces_tests.cpp src/passes/ray_tracing/kick_traces.cpp src/phantom_fx_settings.cpp ${PHANTOM_FX_FEATURES})
     target_include_directories(kick_traces_tests PRIVATE src)
+    target_link_libraries(kick_traces_tests PRIVATE phantom_fx_core)
     target_compile_features(kick_traces_tests PRIVATE cxx_std_20)
     target_compile_definitions(kick_traces_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(kick_traces_tests PRIVATE /W4 /WX /permissive- /utf-8)
     add_test(NAME kick_traces COMMAND kick_traces_tests)
 
-    add_executable(shared_textures_tests tests/shared_textures_tests.cpp src/passes/ray_tracing/shared_textures.cpp src/log.cpp)
+    add_executable(shared_textures_tests tests/shared_textures_tests.cpp src/passes/ray_tracing/shared_textures.cpp)
     add_dependencies(shared_textures_tests gi_kernels)
     target_include_directories(shared_textures_tests PRIVATE src "${GI_SHADER_DIR}")
-    target_link_libraries(shared_textures_tests PRIVATE d3d11)
+    target_link_libraries(shared_textures_tests PRIVATE phantom_fx_core d3d11)
     target_compile_features(shared_textures_tests PRIVATE cxx_std_20)
     target_compile_definitions(shared_textures_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(shared_textures_tests PRIVATE /W4 /WX /permissive- /utf-8)
@@ -341,6 +355,7 @@ if(BUILD_TESTING)
 
     add_executable(light_choice_tests tests/light_choice_tests.cpp src/features/ray_traced_lights/light_choice.cpp)
     target_include_directories(light_choice_tests PRIVATE src)
+    target_link_libraries(light_choice_tests PRIVATE phantom_fx_core)
     target_compile_features(light_choice_tests PRIVATE cxx_std_20)
     target_compile_definitions(light_choice_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(light_choice_tests PRIVATE /W4 /WX /permissive- /utf-8)
@@ -353,9 +368,9 @@ if(BUILD_TESTING)
     target_compile_options(light_bins_tests PRIVATE /W4 /WX /permissive- /utf-8)
     add_test(NAME light_bins COMMAND light_bins_tests)
 
-    add_executable(game_shaders_tests tests/game_shaders_tests.cpp src/game_shaders.cpp src/log.cpp src/shader_bytecode.cpp)
+    add_executable(game_shaders_tests tests/game_shaders_tests.cpp)
     target_include_directories(game_shaders_tests PRIVATE src)
-    target_link_libraries(game_shaders_tests PRIVATE d3d11 d3dcompiler)
+    target_link_libraries(game_shaders_tests PRIVATE phantom_fx_core d3d11 d3dcompiler)
     target_compile_features(game_shaders_tests PRIVATE cxx_std_20)
     target_compile_definitions(game_shaders_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(game_shaders_tests PRIVATE /W4 /WX /permissive- /utf-8)
@@ -369,17 +384,17 @@ if(BUILD_TESTING)
     target_compile_options(water_tests PRIVATE /W4 /WX /permissive- /utf-8)
     add_test(NAME water COMMAND water_tests)
 
-    add_executable(shader_bytecode_tests tests/shader_bytecode_tests.cpp src/shader_bytecode.cpp)
+    add_executable(shader_bytecode_tests tests/shader_bytecode_tests.cpp)
     target_include_directories(shader_bytecode_tests PRIVATE src)
-    target_link_libraries(shader_bytecode_tests PRIVATE d3d11 d3dcompiler)
+    target_link_libraries(shader_bytecode_tests PRIVATE phantom_fx_core d3d11 d3dcompiler)
     target_compile_features(shader_bytecode_tests PRIVATE cxx_std_20)
     target_compile_definitions(shader_bytecode_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(shader_bytecode_tests PRIVATE /W4 /WX /permissive- /utf-8)
     add_test(NAME shader_bytecode COMMAND shader_bytecode_tests)
 
-    add_executable(d3d12_host_tests tests/d3d12_host_tests.cpp src/features/upscaling/d3d12_host.cpp src/log.cpp)
+    add_executable(d3d12_host_tests tests/d3d12_host_tests.cpp src/features/upscaling/d3d12_host.cpp)
     target_include_directories(d3d12_host_tests PRIVATE src)
-    target_link_libraries(d3d12_host_tests PRIVATE d3d11 d3d12 dxgi d3dcompiler)
+    target_link_libraries(d3d12_host_tests PRIVATE phantom_fx_core d3d11 d3d12 dxgi d3dcompiler)
     target_compile_features(d3d12_host_tests PRIVATE cxx_std_20)
     target_compile_definitions(d3d12_host_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(d3d12_host_tests PRIVATE /W4 /WX /permissive- /utf-8)

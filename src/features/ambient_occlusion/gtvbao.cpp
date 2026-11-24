@@ -17,6 +17,7 @@
 
 namespace phantom_fx::gtvbao
 {
+using fxcore::FrameLatch;
 namespace
 {
 using Microsoft::WRL::ComPtr;

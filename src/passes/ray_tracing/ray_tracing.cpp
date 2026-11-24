@@ -50,6 +50,7 @@
 
 namespace phantom_fx::ray_tracing
 {
+using fxcore::FrameLatch;
 namespace
 {
 using Microsoft::WRL::ComPtr;

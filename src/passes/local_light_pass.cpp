@@ -18,6 +18,8 @@
 
 namespace phantom_fx::local_light_pass
 {
+using fxcore::FrameLatch;
+
 namespace
 {
 using Microsoft::WRL::ComPtr;

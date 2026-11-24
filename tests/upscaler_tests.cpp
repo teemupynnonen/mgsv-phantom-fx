@@ -35,6 +35,7 @@ namespace
 {
 namespace fs = std::filesystem;
 using namespace phantom_fx;
+using fxcore::FrameLatch;
 using namespace phantom_fx::upscaler;
 
 void expect(bool condition, const char* message)
