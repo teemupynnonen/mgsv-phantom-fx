@@ -106,23 +106,29 @@ constexpr float CutOutThreshold = 0.5f;
 // - Glass and mirrors are taken for their material, whatever their bytes, for the reflections: every other ray passes them.
 // - Any other mesh drawn forward that the main view alone shows is dropped: the game never casts it.
 // - A character is taken as the main view shows it: its stand-ins dropped, its see-through meshes cut
-//   out by their alpha, and those the game never casts with, its hair, let light through in part.
-// - A rigid model is taken as the game casts: see-through meshes are dropped, and cut-out ones and
-//   decals the main view alone shows. Every other decal is taken as cut out, until the game's own
-//   per-mesh pass mask is read. A solid mesh the main view alone shows (a room's inner walls) stops
-//   every ray but those towards lights.
+//   out by their alpha, and those the game never casts with, its hair, let light through in part. A
+//   swaying tree is a character, and its canopy card (a stand-in with the decal alpha bit) is kept as a
+//   rigid tree's is: without it the sun reached a jungle floor the game shades (2026-11-09).
+// - A rigid model is taken as the game casts: see-through meshes are dropped. Every decal is taken as
+//   cut out, until the game's own per-mesh pass mask is read. A solid mesh the main view alone shows (a
+//   room's inner walls) stops every ray but those towards lights, and so do cut-out meshes and decals the
+//   main view alone shows, by their alpha: a tree fern's fronds, which the game casts through a canopy
+//   card. Without them the camera's and global illumination's rays saw open sky under the jungle's
+//   canopy, and the shade under it was as flat as the game's (2026-11-07).
 // - A rigid model's solid stand-in is kept for the sun's rays alone: the game draws it into every sun
 //   cascade, and the main-view-only meshes it stands in for pass them. A lamp's rays pass it: an offset,
 //   simpler copy of the main view's meshes, it kept a lamp off a wall where nothing was drawn. Where the
 //   main view's cut-out meshes are dropped, it is all the rays have of them: it is kept for every ray
 //   towards a light. One the main view draws too is dropped (no ray would meet it). A cut-out stand-in
-//   stays in (a pylon's lattice casts through one). Should the sun-only rule mislead too, the game's
-//   per-draw pass masks say which shadow maps each mesh is drawn into (docs/DEVELOPMENT.md, "Ray-traced
-//   shadows").
+//   stays in for every ray towards a light (a pylon's lattice casts through one), and other rays pass it:
+//   a tree's canopy card, a flat 22 m sheet the camera never sees, sealed the forest floor from the sky.
+//   Should the sun-only rule mislead too, the game's per-draw pass masks say which shadow maps each mesh
+//   is drawn into (docs/DEVELOPMENT.md, "Ray-traced shadows").
 // - The object brush's bushes and grass cast no shadow in the game: their meshes are taken as leaves
 //   all the same, for the rays' shadows; the brush's props are solid.
 // - A self-lit mesh is taken for its light, whatever else it is, but for an additive glow card, which is no surface.
-std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isCharacter, bool isVegetation, bool areMainViewCutOutsDropped, bool isSelfLit,
+std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isCharacter, bool isVegetation, bool areMainViewCutOutsDropped,
+    bool hasSolidStandIn, bool isSelfLit,
     std::optional<MeshRole> materialRole)
 {
     if (isSelfLit && !(alpha & AdditiveAlpha)) return MeshRole::Emissive;
@@ -136,14 +142,17 @@ std::optional<MeshRole> roleOf(std::uint8_t alpha, std::uint8_t shadow, bool isC
 
     if (isCharacter)
     {
-        if (isStandIn) return std::nullopt;
+        // A swaying tree is a character too, and casts its canopy through a card (decal alpha bit, shadow 0x42) as a
+        // rigid tree does: the card stays in for rays towards lights. Its other stand-ins are an outfit's copies.
+        if (isStandIn) return (alpha & DecalAlpha) ? std::optional(MeshRole::CutOutStandIn) : std::nullopt;
         if (!isCutOut && !isSeeThrough) return MeshRole::Solid;
 
         return (isMainViewOnly || isSeeThrough) ? MeshRole::Hair : isVegetation ? MeshRole::Leaf : MeshRole::CutOut;
     }
 
-    if (isSeeThrough || (isCutOut && isMainViewOnly)) return std::nullopt;
-    if (isCutOut) return isVegetation ? MeshRole::Leaf : MeshRole::CutOut;
+    if (isSeeThrough) return std::nullopt;
+    if (isCutOut && isMainViewOnly) return hasSolidStandIn ? std::optional(MeshRole::MainViewCutOut) : std::nullopt;
+    if (isCutOut) return isVegetation ? MeshRole::Leaf : isStandIn ? MeshRole::CutOutStandIn : MeshRole::CutOut;
     if (isStandIn)
     {
         if (isMainViewOnly) return std::nullopt;
@@ -161,6 +170,7 @@ std::optional<LayerTechnique> layerTechniqueOf(std::uint64_t technique)
     return found != std::ranges::end(LayerTechniques) ? std::optional{*found} : std::nullopt;
 }
 
+// What a role tells the rays: GI_GEOMETRY_* (shaders/gi_shared.h), the cut-out ones testing the mesh's alpha.
 std::uint32_t flagsOf(MeshRole role)
 {
     switch (role)
@@ -183,6 +193,10 @@ std::uint32_t flagsOf(MeshRole role)
         return GI_GEOMETRY_SHADOW_ONLY;
     case MeshRole::SunShadowOnly:
         return GI_GEOMETRY_SHADOW_ONLY | GI_GEOMETRY_SUN_ONLY;
+    case MeshRole::CutOutStandIn:
+        return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_SHADOW_ONLY;
+    case MeshRole::MainViewCutOut:
+        return GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_NO_SHADOW;
     case MeshRole::Solid:
         break;
     }
@@ -504,12 +518,15 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
 
     // Whether the main view shows cut-out meshes the scene drops: the solid stand-ins are then kept (roleOf).
     const bool isVegetation = source == Source::ObjectBrush;
-    bool areMainViewCutOutsDropped{};
+    bool areMainViewCutOutsDropped{}, hasSolidStandIn{};
     for (std::uint32_t mesh = 0; mesh < b[Meshes].count && !isVegetation; ++mesh)
     {
         std::uint8_t alpha{}, shadow{};
         if (file.at(b[Meshes].offset + 48ull * mesh, alpha) && file.at(b[Meshes].offset + 48ull * mesh + 1, shadow))
+        {
             areMainViewCutOutsDropped |= (shadow & CastsNoShadow) && (alpha & (CutOutAlpha | DecalAlpha));
+            hasSolidStandIn |= (shadow & ShadowMapsOnly) && !(shadow & CastsNoShadow) && !(alpha & (CutOutAlpha | DecalAlpha | TranslucentAlpha));
+        }
     }
 
     for (std::uint32_t mesh = 0; mesh < b[Meshes].count; ++mesh)
@@ -529,7 +546,7 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
         if (technique == MirrorTechnique) materialRole = MeshRole::Mirror;
         else if (vectorOf(file, *layout, materialInstance, GlassColorParameter)) materialRole = MeshRole::Glass;
 
-        auto role = roleOf(alpha, shadow, model->bones != 0, isVegetation, areMainViewCutOutsDropped, isSelfLit, materialRole);
+        auto role = roleOf(alpha, shadow, model->bones != 0, isVegetation, areMainViewCutOutsDropped, hasSolidStandIn, isSelfLit, materialRole);
         const bool isDropped = !role;
         if (isDropped)
         {
@@ -647,9 +664,11 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
     return model;
 }
 
+// Whether the rays test the mesh's alpha (CutOutBlocks): every role it cuts holes in that is in the scene.
 bool isCutOut(MeshRole role)
 {
-    return role == MeshRole::CutOut || role == MeshRole::Leaf || role == MeshRole::Hair;
+    return role == MeshRole::CutOut || role == MeshRole::Leaf || role == MeshRole::Hair || role == MeshRole::CutOutStandIn
+        || role == MeshRole::MainViewCutOut;
 }
 
 std::array<std::uint64_t, 5> texturePathsOf(const ModelPart& part)

@@ -123,6 +123,14 @@ std::map<ThreadBuffer, const void*> mappedConstants;
 // Who maps constant buffers for writing, by buffer size and call stack, with a count: shows where
 // the engine fills, for example, the camera constants.
 std::map<std::string, unsigned> constantWriters;
+// From trigger.txt: a shader hash. F10 then records frame after frame, each over the last, until a
+// frame runs a call with that shader; that frame is kept, and the one before it as `-before.txt`.
+std::string trigger;
+bool triggered{};
+// Whether this capture's frame before the trigger is in frame-previous.txt, from restartRecording.
+bool hasPrevious{};
+// The frame whose record is in frame-previous.txt, whose dump folder lasts while it may still be needed.
+std::string previousName;
 
 // The caller's stack as "module+offset" frames, outermost last.
 std::string callStack()
@@ -505,6 +513,20 @@ void saveQueued()
     queuedVertices.clear();
 }
 
+// Called with recordMutex held, for each line written to the record.
+void noteTrigger(const std::string& text)
+{
+    if (!trigger.empty() && text.find(trigger) != std::string::npos) triggered = true;
+}
+
+// Writes one line of the record, call number and all, which is what a trigger copied from a record
+// line is matched against. Called with recordMutex held.
+void writeRecord(std::string text)
+{
+    record << text << '\n';
+    noteTrigger(text);
+}
+
 // Writes a line in execution order: the immediate context's as they come, a command list's when
 // the immediate context executes it. A call on the immediate context saves its textures at once,
 // as they are before it runs.
@@ -523,7 +545,7 @@ void emit(command_list* list, Line line)
         return;
     }
 
-    record << '#' << ++calls << ' ' << line.text << '\n';
+    writeRecord("#" + std::to_string(++calls) + " " + line.text);
     for (const auto& texture : line.textures)
         save(calls, texture);
 
@@ -790,13 +812,85 @@ void onDestroyPipeline(device*, pipeline pipeline)
     shaderHashes.erase(pipeline.handle);
 }
 
+// trigger.txt's line without its ends' spaces, or nothing without the file. Any text of a record line
+// will do, spaces and all ("depth greater_equal"), so the whole line is read, not its first word.
+std::string readTrigger()
+{
+    std::ifstream file(outputDirectory / "trigger.txt");
+    std::string text;
+    std::getline(file, text);
+
+    const auto first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    const auto last = text.find_last_not_of(" \t\r\n");
+
+    return text.substr(first, last - first + 1);
+}
+
+std::filesystem::path previousRecord()
+{
+    return outputDirectory / "frame-previous.txt";
+}
+
+// A frame's dump folder, thrown away with the frame it belonged to: the lights and the scene dump into
+// it without asking dump.txt, so a wait of many frames would otherwise leave one folder a frame.
+void removeDumpDirectory(const std::string& name)
+{
+    if (name.empty()) return;
+
+    std::error_code error;
+    std::filesystem::remove_all(outputDirectory / name, error);
+}
+
+// While waiting for the trigger: the frame just recorded becomes the previous one, and the next starts.
+void restartRecording()
+{
+    std::lock_guard lock(recordMutex);
+    saveQueued();
+    record.close();
+    const auto recorded = outputDirectory / (recordName + ".txt");
+    std::error_code error;
+    // The frame before, which frame-previous.txt holds, is replaced by this one: its folder goes with it.
+    removeDumpDirectory(previousName);
+    previousName = recordName;
+    // The frame before the trigger is the one right before it, so the copy kept is replaced each time.
+    std::filesystem::remove(previousRecord(), error);
+    std::filesystem::rename(recorded, previousRecord(), error);
+    hasPrevious = !error;
+    if (error) std::filesystem::remove(recorded, error);
+    recordName = "frame-" + std::to_string(presents);
+    record = std::ofstream(outputDirectory / (recordName + ".txt"), std::ios::trunc);
+    dumpDirectory = outputDirectory / recordName;
+    calls = 0;
+    constantWriters.clear();
+}
+
 void finishRecording()
 {
     std::lock_guard lock(recordMutex);
     saveQueued();
-    record << '#' << ++calls << " present " << describe(backBuffer, DXGI_FORMAT_UNKNOWN) << '\n';
     record.close();
-    log("Recorded " + std::to_string(calls) + " calls.");
+    log("Recorded " + std::to_string(calls) + " calls" + (trigger.empty() || !triggered ? "." : ", the first frame to run " + trigger + "."));
+    if (!trigger.empty())
+    {
+        // Only a frame this capture recorded, so an interrupted capture's file never stands in.
+        const auto before = outputDirectory / (recordName + "-before.txt");
+        std::error_code error;
+        if (hasPrevious)
+        {
+            std::filesystem::rename(previousRecord(), before, error);
+            if (error) log("Could not keep the frame before " + recordName + ": " + error.message());
+        }
+        // The frame's number can come round again after the game restarts, and an earlier run's file
+        // beside this capture would pass for its predecessor.
+        else
+            std::filesystem::remove(before, error);
+
+        trigger.clear();
+        hasPrevious = false;
+        previousName.clear();
+    }
+
     record.open(outputDirectory / (recordName + "-writers.txt"), std::ios::trunc);
     for (const auto& [writer, count] : constantWriters)
         record << count << "x " << writer << '\n';
@@ -825,11 +919,25 @@ void onPresent(command_queue* queue, swapchain* chain, const rect*, const rect*,
 
     if (capture == Capture::Recording)
     {
-        bool dumping{};
+        bool dumping{}, waiting{};
         {
             std::lock_guard lock(recordMutex);
+            // The frame's last line, written before the wait decides: a frame a wait turns over keeps
+            // it too, and a trigger on this line finds the frame it was written for.
+            writeRecord("#" + std::to_string(++calls) + " present " + describe(backBuffer, DXGI_FORMAT_UNKNOWN));
             dumping = !dumpsLeft.empty();
+            waiting = !trigger.empty() && !triggered;
         }
+
+        // F10 again stops waiting and keeps the frame; pressed as the trigger matches, it stops the
+        // capture rather than starting another one.
+        const bool stop = requested.exchange(false);
+        if (waiting && !stop)
+        {
+            restartRecording();
+            return;
+        }
+
 
         // The frame's final image, since the passes after FXAA write the back buffer.
         if (dumping) saveTexture(native(immediate), backBuffer, DXGI_FORMAT_UNKNOWN, dumpDirectory / "present.dds");
@@ -849,6 +957,14 @@ void onPresent(command_queue* queue, swapchain* chain, const rect*, const rect*,
     {
         std::lock_guard lock(recordMutex);
         dumpsLeft = readDumpList();
+        trigger = readTrigger();
+        triggered = false;
+        hasPrevious = false;
+        previousName.clear();
+        // A capture that was cut short leaves its frame before the trigger behind; it is not this one's.
+        std::error_code error;
+        std::filesystem::remove(previousRecord(), error);
+        if (!trigger.empty()) fxui::toast(fxui::Tone::Ok, "Recording until a frame runs", trigger);
         capture = Capture::WarmingUp;
     }
 }
@@ -1055,12 +1171,12 @@ void onExecuteSecondary(command_list* list, command_list* secondary)
     }
 
     saveQueued();
-    record << '#' << ++calls << " execute_command_list " << pointer(secondary) << (lines.empty() ? " (recorded before the capture)" : "")
-           << '\n';
+    writeRecord("#" + std::to_string(++calls) + " execute_command_list " + pointer(secondary)
+        + (lines.empty() ? " (recorded before the capture)" : ""));
 
     for (auto& line : lines)
     {
-        record << '#' << ++calls << "   " << line.text << '\n';
+        writeRecord("#" + std::to_string(++calls) + "   " + line.text);
         for (auto& texture : line.textures)
             queuedTextures.emplace_back(calls, std::move(texture));
 
