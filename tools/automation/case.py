@@ -312,10 +312,15 @@ def same_view(first, second):
         return None
 
     a, b = Record(Path(first) / "scene"), Record(Path(second) / "scene")
+    near, far = a.pixels["game_distance"], np.asarray(b.pixels["game_distance"])
+    # Another render size: the copy runs windowed at whatever the desktop allows, a case in the player's game
+    # at their resolution. The second reads nearest at the first's pixels.
     if a.pixels.shape != b.pixels.shape:
-        return None
+        height, width = near.shape
+        rows = np.minimum((np.arange(height) + 0.5) * b.pixels.shape[0] / height, b.pixels.shape[0] - 1).astype(int)
+        columns = np.minimum((np.arange(width) + 0.5) * b.pixels.shape[1] / width, b.pixels.shape[1] - 1).astype(int)
+        far = far[np.ix_(rows, columns)]
 
-    near, far = a.pixels["game_distance"], b.pixels["game_distance"]
     shown = (near > 0) | (far > 0)
     same = np.abs(near - far) <= SAME_VIEW_SHARE * np.maximum(near, far)
 

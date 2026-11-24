@@ -71,17 +71,24 @@ std::optional<D3D11_RECT> reachOf(const DrawnLight& light);
 struct Choice
 {
     std::vector<std::size_t> taken; // Indices into `lights`, best first
+    // The places of the lights taken, to give a place the rays had last time its small advantage (choose's
+    // `placesTaken`). A place is a lamp's, to the centimetre: its two spots come and go together.
+    std::vector<std::uint64_t> places;
     // Left for another frame's camera, and left past the light cap.
     std::size_t otherFrame{}, overCap{};
 };
 
 // The chosen lights among `lights` for the frame `camera` draws: those drawn from its eye (within a
-// millimetre) that reach any pixel, most pixels first, then the nearest, then by key (keyOf), up to the
-// light cap (GI_MAX_LOCAL_LIGHTS). Past it, those reaching the fewest go without, the same ones frame
-// after frame, whatever order the game drew them in.
-Choice choose(std::span<const DrawnLight* const> lights, const game_constants::SceneConstants& camera);
+// millimetre) that reach any pixel without the upscaler's jitter, most pixels first, then the nearest, then
+// by key (keyOf), up to the light cap (GI_MAX_LOCAL_LIGHTS). Lights at one place are chosen together, all or
+// none, and a place in `placesTaken` (the last call's Choice::places) ranks a fifth higher, so a place at the
+// cap does not change hands for a pixel. Past the cap, those reaching the fewest go without, the same ones
+// frame after frame, whatever order the game drew them in and wherever the jitter put them.
+Choice choose(std::span<const DrawnLight* const> lights, const game_constants::SceneConstants& camera,
+    std::span<const std::uint64_t> placesTaken = {});
 
-// A light the same from frame to frame: its kind, where it is in the world to the centimetre, and its colour.
+// A light the same from frame to frame: its kind, where it is in the world to the centimetre, the way a spot
+// points (two spots at one lamp point apart), and its colour.
 std::uint64_t keyOf(const DrawnLight& light);
 
 // The light as the rays take it, stopped at `volume` when its bounds are known.
