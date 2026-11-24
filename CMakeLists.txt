@@ -44,7 +44,7 @@ set(NRD_STATIC_LIBRARY ON)
 set(NRD_EMBEDS_DXIL_SHADERS ON)
 set(NRD_EMBEDS_DXBC_SHADERS OFF)
 set(NRD_EMBEDS_SPIRV_SHADERS OFF)
-set(NRD_NORMAL_ENCODING 2) # R10G10B10A2_UNORM, as shaders/gi_light.hlsl packs it
+set(NRD_NORMAL_ENCODING 2) # R10G10B10A2_UNORM, as gi_light.hlsl packs it
 set(NRD_ROUGHNESS_ENCODING 1) # Linear
 FetchContent_MakeAvailable(nrd)
 
@@ -220,13 +220,13 @@ function(add_gi_kernels source)
 endfunction()
 file(MAKE_DIRECTORY "${GI_SHADER_DIR}")
 add_gi_kernels(passes/ray_tracing/shaders/gi_scene.hlsl ClearNewGeometries DebugScene TerrainGrid TerrainPatches Skin BakeMicromaps)
-add_gi_kernels(features/global_illumination/gi_light.hlsl ClearCounters GenerateDispatch PrepareGuides TraceLight LearnAlbedo PurgeTiles PopulateMultibounceCells PopulateCells
+add_gi_kernels(features/global_illumination/shaders/gi_light.hlsl ClearCounters GenerateDispatch PrepareGuides TraceLight LearnAlbedo PurgeTiles PopulateMultibounceCells PopulateCells
     UpdateTiles UpdateMultibounceCells ResolveLight UpdateFoliageMemory CompositeLight)
-add_gi_kernels(features/ray_traced_shadows/gi_shadow.hlsl TraceSunShadows ClassifyShadowTiles DebugShadows ProbeShadows)
-add_gi_kernels(features/ray_traced_shadows/gi_shadow_filter.hlsl FilterShadows)
-add_gi_kernels(features/ray_traced_lights/light_shadows.hlsl TraceLocalLightShadows FilterLocalLightShadows ProbeLocalLights)
-add_gi_kernels(features/path_tracing/reflections.hlsl TraceReflections TraceSurfaceReflections)
-add_gi_kernels(features/path_tracing/direct_light.hlsl TraceLampLight)
+add_gi_kernels(features/ray_traced_shadows/shaders/gi_shadow.hlsl TraceSunShadows ClassifyShadowTiles DebugShadows ProbeShadows)
+add_gi_kernels(features/ray_traced_shadows/shaders/gi_shadow_filter.hlsl FilterShadows)
+add_gi_kernels(features/ray_traced_lights/shaders/light_shadows.hlsl TraceLocalLightShadows FilterLocalLightShadows ProbeLocalLights)
+add_gi_kernels(features/path_tracing/shaders/reflections.hlsl TraceReflections TraceSurfaceReflections)
+add_gi_kernels(features/path_tracing/shaders/direct_light.hlsl TraceLampLight)
 if(PHANTOM_FX_DEV_TOOLS)
     include(src/dev/dev.cmake)
 endif()

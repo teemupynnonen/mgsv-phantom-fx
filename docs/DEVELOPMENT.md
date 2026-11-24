@@ -200,10 +200,10 @@ what draws it, when that is the feature's own.
 | `lamp_contact_shadows/` | `lamp_contact_shadows.*`: a shadow-mapped point or spot light's screen-space shadow, drawn into the light targets' alpha between its two draws. `lamp_contact_shadows_shaders.hpp`: that draw |
 | `lamp_soft_shadows/` | `lamp_soft_shadows.*`: the replacement shaders a point or spot light with a shadow map lights with, and their options. `lamp_soft_shadows_shaders.hpp`: the game's `SSLighting2_Point` and `SSLighting2_Spot` rebuilt, with the light's shadow map filtered by contact-hardening soft shadows |
 | `contact_shadows/` | Settings only: one switch for the sun's and the lamps' contact shadows, and the contrast, reach, thickness and fade of their trace (`passes/contact_shadow_trace.*`) |
-| `ray_traced_shadows/` | `gi_shadow.*`: the sun's shadow rays and the FidelityFX Shadow Denoiser on Direct3D 12. `gi_shadow.hlsl`, `gi_shadow_filter.hlsl`: the rays, the denoiser's temporal pass and filters |
-| `ray_traced_lights/` | `local_lights.*`: the game's point and spot light draws kept for their stencil, their light drawn again at the sun pass's list with specular and the rays' shadow (see "Ray-traced lights"). `light_choice.*`: which lights a kick gives the rays (each light's reach, the light cap) and each light as the rays take it. `lamp_shadow_rays.*`, `light_shadows.hlsl`: the lamps' shadow rays and filter, a trace (see "What a kick traces") |
-| `global_illumination/` | `gi_light.*`, `gi_light.hlsl`: the light on Direct3D 12, its rays, the denoiser's inputs and the render size (see "Global illumination"); their hits' light and the hash grid cache in `passes/ray_tracing/shaders/gi_hit_light.hlsli`. `gi_denoiser.*`: NVIDIA NRD's RELAX denoiser without NRI. `gi_lighting.*`: the game's sky and sun in the light's terms. `light_combine.*`: the traced light in place of the game's probe light at the resolve |
-| `path_tracing/` | `path_tracing.*`: path tracing on Direct3D 11: the traced reflections added at the resolve and blended as the game blends its own, the lamps' light added at the draw point, the masks' atlas (see "Path tracing"). `path_tracing_shaders.hpp`: those draws. `forward_surfaces.*`, `glass.*`, `water.*`, `surface_shaders.hpp`: the forward surfaces, their surfaces drawn beside the game's and what they reflect added over the scene (see "Forward surfaces: rivers, liquids and glass"). `sky_capture.*`: the game's sky drawn again for the rays. `path_tracing_rays.*`: its passes on Direct3D 12. `reflections.hlsl`, `direct_light.hlsl`: the reflections and the point and spot lights |
+| `ray_traced_shadows/` | `gi_shadow.*`: the sun's shadow rays and the FidelityFX Shadow Denoiser on Direct3D 12. `shaders/gi_shadow.hlsl`, `shaders/gi_shadow_filter.hlsl`: the rays, the denoiser's temporal pass and filters |
+| `ray_traced_lights/` | `local_lights.*`: the game's point and spot light draws kept for their stencil, their light drawn again at the sun pass's list with specular and the rays' shadow (see "Ray-traced lights"). `light_choice.*`: which lights a kick gives the rays (each light's reach, the light cap) and each light as the rays take it. `lamp_shadow_rays.*`, `shaders/light_shadows.hlsl`: the lamps' shadow rays and filter, a trace (see "What a kick traces") |
+| `global_illumination/` | `gi_light.*`, `shaders/gi_light.hlsl`: the light on Direct3D 12, its rays, the denoiser's inputs and the render size (see "Global illumination"); their hits' light and the hash grid cache in `passes/ray_tracing/shaders/gi_hit_light.hlsli`. `gi_denoiser.*`: NVIDIA NRD's RELAX denoiser without NRI. `gi_lighting.*`: the game's sky and sun in the light's terms. `light_combine.*`: the traced light in place of the game's probe light at the resolve |
+| `path_tracing/` | `path_tracing.*`: path tracing on Direct3D 11: the traced reflections added at the resolve and blended as the game blends its own, the lamps' light added at the draw point, the masks' atlas (see "Path tracing"). `path_tracing_shaders.hpp`: those draws. `forward_surfaces.*`, `glass.*`, `water.*`, `surface_shaders.hpp`: the forward surfaces, their surfaces drawn beside the game's and what they reflect added over the scene (see "Forward surfaces: rivers, liquids and glass"). `sky_capture.*`: the game's sky drawn again for the rays. `path_tracing_rays.*`: its passes on Direct3D 12. `shaders/reflections.hlsl`, `shaders/direct_light.hlsl`: the reflections and the point and spot lights |
 | `ambient_occlusion/` | `gtvbao.*`: GTVBAO's occlusion multiplied into the indirect light at the upscale. `gtvbao_shaders.hpp`: that multiply |
 | `indirect_light/` | `ssilvb.*`: SSILVB's light, brought to the render size and added to the diffuse light the resolve reads. `ssilvb_shaders.hpp`: the upsample |
 | `volumetric_fog/` | `atmosphere.*`: the larger fog texture, the game's fog pass over all of it, the shadowed fill before the resolve. `atmosphere_shaders.hpp`: the game's fog formula per froxel with the sun shadowed; Hillaire's atmosphere tables, the physical fog and sky (Epic Games' reference, MIT) |
@@ -274,7 +274,7 @@ what draws it, when that is the feature's own.
 | `src/dev/remaster/` | The remastering tool that writes them: a dev build's marks, and the panel that tunes them |
 | `src/frame_log.cpp`, `src/frame_log.hpp` | Development diagnostics, off by default: shader log, F10 frame record, constant and texture dumps |
 | `src/dev/automation.cpp`, `src/dev/automation.hpp` | Dev builds: commands from files into the running game, F9's debug cases (see "Debug cases") |
-| `src/dev/inspect_trace.cpp`, `src/dev/inspect_trace.hpp`, `src/dev/inspect.hlsl`, `src/dev/inspect_shared.h` | A debug case's record of every pixel, a trace of its own |
+| `src/dev/inspect_trace.cpp`, `src/dev/inspect_trace.hpp`, `src/dev/shaders/inspect.hlsl`, `src/dev/inspect_shared.h` | A debug case's record of every pixel, a trace of its own |
 | `src/dev/game_shadow.cpp`, `src/dev/game_shadow.hpp` | A debug case's reference: the game's shadow per pixel, drawn at the sun pass |
 | `src/dev/held_camera.cpp`, `src/dev/held_camera.hpp` | A debug case's camera, which photo mode's camera update takes |
 | `src/dev/perf_record.cpp`, `src/dev/perf_record.hpp` | What frames cost, on file, a row a second and captures for comparing frames (see "Costs on file") |
@@ -461,7 +461,7 @@ more can be asked of the same frame. Aim the screen's centre at the fault first 
   alone says of each pixel (`game-shadow.dds`, 1 lit, 0 blocked, -1 no answer: `SHADOW_MAP` with `GAME_SHADOW` in
   `sun_light_pass_shaders.hpp`, drawn after the sun pass with its inputs as bound); what the scene is at
   (`state.txt`), the settings; what the frozen frame costs (`perf.json`, "Costs on file"); and two records of every pixel.
-- **A record** (`scene.bin`, `revealed.bin`: `GIInspectPixel`, `InspectPixels` in `src/dev/inspect.hlsl`) has what the
+- **A record** (`scene.bin`, `revealed.bin`: `GIInspectPixel`, `InspectPixels` in `src/dev/shaders/inspect.hlsl`) has what the
   camera's ray meets first, what the scene has within a tolerance of the game's surface, what blocks the ray to the
   sun, and the game's distance. The `.tsv` beside it names every hit as the probes do.
 - **The revealed scene** answers what the scene lacks. The record is taken again with everything the scene leaves
@@ -1920,7 +1920,7 @@ shaders, with the ray-traced shadows and lights where they are on. Where Ray Rec
 cannot start, path tracing waits and the effects it replaces stay off; what it would take (the sun's rays,
 the game's lights) is left alone until it runs.
 
-- **Reflections** (`TraceReflections`, `src/features/path_tracing/reflections.hlsl`): a ray a render pixel
+- **Reflections** (`TraceReflections`, `src/features/path_tracing/shaders/reflections.hlsl`): a ray a render pixel
   along a reflection the surface's roughness spreads (GGX's visible normals, Heitz 2018, roughness squared,
   from Ray Reconstruction's normal guide). On a surface of roughness 0.5 and up (`RoughSurface`), most of what
   the game draws, a reflection is a faint blur: the ray's hit takes the light cache's light for its place (`CachedLight`),
@@ -2971,7 +2971,7 @@ light passes run only with `runsLight`. Lamp contact shadows stay as they are: l
 traced here (see "Ray-traced lights"). With DLSS Ray Reconstruction denoising, the rays go out without the
 denoiser (see "Ray Reconstruction").
 
-- **Rays** (`TraceSunShadows` in `src/features/ray_traced_shadows/gi_shadow.hlsl`). One ray a pixel at the render
+- **Rays** (`TraceSunShadows` in `src/features/ray_traced_shadows/shaders/gi_shadow.hlsl`). One ray a pixel at the render
   size, from the depth's world position towards a point on the sun's disc (uniform over the disc of
   the sun size's angular radius, a new point each frame), up to 5 km. The sun's direction is the sun
   pass's (`cPSLight` `c0`), noted the frame before, as the scene is traced before that frame's sun
@@ -3290,7 +3290,7 @@ With DLSS Ray Reconstruction denoising, the rays go out without the filter (see 
   alone, not on the order the game drew them in (since 2026-10-28; `light_choice.cpp`). (On 2026-10-23, with a bit a light, they were taken in the order of a hash map of
   command lists, which changes every frame: in a base at night with about 100 lights and 64 bits, a
   different 45 went without each frame and a spotlight flickered between its shadow and none.)
-- **Soft shadows** (`TraceLocalLightShadows` in `src/features/ray_traced_lights/light_shadows.hlsl`, 2026-10-24). One value a
+- **Soft shadows** (`TraceLocalLightShadows` in `src/features/ray_traced_lights/shaders/light_shadows.hlsl`, 2026-10-24). One value a
   pixel for all the lights together, the share of their light that reaches it: the ratio estimator of
   Heitz, Hill and McGuire ("Combining Analytic Direct Illumination and Stochastic Shadows", I3D 2018).
   Each light's diffuse light there without shadows (`LocalLightAt`, the game's own formula, with the

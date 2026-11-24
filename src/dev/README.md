@@ -10,7 +10,7 @@ debug cases. `docs/DEVELOPMENT.md` describes what each does ("Debug cases", "Tra
 | `automation.*` | Commands from files, and F9's debug cases |
 | `save_redirect.*` | Keeps the automation copy off the player's files |
 | `game_lua.*`, `travel.*`, `cutscenes.*`, `cutscene_list.hpp` | Lua in the game, and the tools that run on it |
-| `inspect_trace.*`, `inspect.hlsl`, `inspect_shared.h` | A debug case's record of every pixel, a trace like any other |
+| `inspect_trace.*`, `shaders/inspect.hlsl`, `inspect_shared.h` | A debug case's record of every pixel, a trace like any other |
 | `game_shadow.*` | A debug case's reference: the game's shadow per pixel, drawn at the sun pass |
 | `held_camera.*` | A debug case's camera, which photo mode's camera update takes |
 | `perf_record.*` | What frames cost, on file: a row a second, and captures for comparing frames |
