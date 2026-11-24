@@ -10,8 +10,8 @@
   reflections meet the ground where it really is.
 - Ray-traced bounce light and reflections no longer leak in from outside: no orange glow or pale lines along pipes,
   frames and furniture standing close to a room's wall.
-- Ray-traced shadows: a surface facing away from the sun no longer gets sunlight through its own back, so shaded walls
-  and other surfaces no longer show bright specular dots.
+- Ray-traced shadows: opaque surfaces facing away from the sun no longer get sunlight through their own back, so shaded
+  walls and other opaque surfaces no longer show bright specular dots.
 
 ## 2.0.0
 
