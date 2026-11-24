@@ -146,11 +146,25 @@ float FFX_DNSR_Shadows_ReadHistory(float2 uv)
 }
 
 // ---- Where a pixel's shadow rays leave its surface ----
+// Whether a surface lets a light through from its far side: cut-out geometry (leaves, nets, a pylon's
+// lattice), glass and hair, which the game lights from behind; and the terrain, whose heightmap's bumps
+// face the sun past a slope's own triangle. An opaque model's face does not: it shades itself.
+bool LetsLightThrough(SceneHit hit)
+{
+    if (!hit.hit || !(InstanceKind(g_Instances[hit.instance]) & GI_INSTANCE_MODEL)) return true;
+
+    const uint flags = g_Geometries[FirstGeometry(g_Instances[hit.instance]) + hit.geometry].flags;
+    return (flags & (GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_LEAF | GI_GEOMETRY_HAIR | GI_GEOMETRY_GLASS)) != 0;
+}
+
 // A shadow ray's start towards `toLight`: from the surface's side facing the light, as leaves lit from
-// behind take light through them.
+// behind take light through them. An opaque surface whose own face turns away from the light leaves from
+// the eye's side instead, where its triangle stops the ray. From the far side it crossed the wall's sunlit
+// face and lit the bumps of a wall in the shadow of its own slope (2026-11-20).
 void ShadowRayStart(PixelSurface surface, float3 toLight, out float3 origin, out float3 facing, out float tolerance)
 {
-    facing = dot(surface.normal, toLight) >= 0.0f ? surface.normal : -surface.normal;
+    facing = surface.normal;
+    if (dot(surface.normal, toLight) < 0.0f && LetsLightThrough(surface.hit)) facing = -surface.normal;
     PixelRayStart(surface, facing, origin, tolerance);
 }
 
