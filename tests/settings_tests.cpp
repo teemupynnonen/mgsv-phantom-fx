@@ -1,26 +1,34 @@
 #include "phantom_fx_settings.hpp"
 
+#include <Windows.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 
-// PhantomFX.ini against the settings it describes: every key saved and read back, unknown keys ignored,
-// a missing file a first launch, and invalid settings never written. A setting that a feature forgets
-// to describe fails the first check.
+// PhantomFX.ini against the settings it describes: every key describe() visits saved and read back,
+// unknown keys ignored, a missing file a first launch, and invalid settings never written. A setting
+// describe() omits is outside these tests.
 namespace
 {
 using namespace phantom_fx;
+namespace fs = std::filesystem;
 
 void expect(bool condition, const char* message)
 {
     if (!condition) throw std::runtime_error(message);
 }
 
-std::filesystem::path settingsPath()
+// One directory per process, so two test runs at once do not share a fixture.
+fs::path settingsRoot()
 {
-    return std::filesystem::temp_directory_path() / "PhantomFX-settings-tests.ini";
+    return fs::temp_directory_path() / (L"phantom-fx-settings-test-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
+}
+
+fs::path settingsPath(const fs::path& root)
+{
+    return root / L"PhantomFX.ini";
 }
 
 // Every setting moved off its default, so a key that is not saved, or not read back, shows in the
@@ -41,23 +49,22 @@ public:
     }
 };
 
-void everySettingSurvivesASaveAndLoad()
+void everySettingSurvivesASaveAndLoad(const fs::path& root)
 {
     Settings saved = firstLaunchSettings();
     Extremes extremes;
     describe(saved, extremes);
 
-    const auto path = settingsPath();
+    const auto path = settingsPath(root);
     saveSettings(path, saved);
     const Settings loaded = loadSettings(path);
-    std::filesystem::remove(path);
 
     expect(loaded == saved, "Every setting comes back as it was saved.");
 }
 
-void unknownKeysAreIgnored()
+void unknownKeysAreIgnored(const fs::path& root)
 {
-    const auto path = settingsPath();
+    const auto path = settingsPath(root);
     const Settings settings = firstLaunchSettings();
     saveSettings(path, settings);
     {
@@ -66,21 +73,16 @@ void unknownKeysAreIgnored()
     }
 
     const Settings loaded = loadSettings(path);
-    std::filesystem::remove(path);
 
     expect(loaded == settings, "A key no feature describes changes nothing.");
 }
 
-void aMissingFileIsAFirstLaunch()
+void aMissingFileIsAFirstLaunch(const fs::path& root)
 {
-    const auto path = std::filesystem::temp_directory_path() / "PhantomFX-settings-tests-missing.ini";
-    std::error_code ignored;
-    std::filesystem::remove(path, ignored);
-
-    expect(loadSettings(path) == firstLaunchSettings(), "Without a file, the first launch's settings.");
+    expect(loadSettings(root / L"missing.ini") == firstLaunchSettings(), "Without a file, the first launch's settings.");
 }
 
-void invalidSettingsAreNotSaved()
+void invalidSettingsAreNotSaved(const fs::path& root)
 {
     class Outside final : public SettingVisitor
     {
@@ -104,7 +106,7 @@ void invalidSettingsAreNotSaved()
     bool refused{};
     try
     {
-        saveSettings(settingsPath(), settings);
+        saveSettings(settingsPath(root), settings);
     }
     catch (const std::exception&)
     {
@@ -117,12 +119,15 @@ void invalidSettingsAreNotSaved()
 
 int main()
 {
+    const auto root = settingsRoot();
     try
     {
-        everySettingSurvivesASaveAndLoad();
-        unknownKeysAreIgnored();
-        aMissingFileIsAFirstLaunch();
-        invalidSettingsAreNotSaved();
+        fs::create_directories(root);
+        everySettingSurvivesASaveAndLoad(root);
+        unknownKeysAreIgnored(root);
+        aMissingFileIsAFirstLaunch(root);
+        invalidSettingsAreNotSaved(root);
+        fs::remove_all(root);
         std::cout << "Settings tests passed.\n";
 
         return 0;
@@ -130,6 +135,7 @@ int main()
     catch (const std::exception& error)
     {
         std::cerr << error.what() << '\n';
+        fs::remove_all(root);
 
         return 1;
     }
