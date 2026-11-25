@@ -27,6 +27,7 @@ struct SurfaceTextures
     ID3D11Texture2D* depth{};      // R32_FLOAT, as the game's depth; 0 without a surface
     ID3D11Texture2D* normal{};     // R16G16B16A16_FLOAT: world space, the roughness in w; water's w is minus its share of what it reflects
     ID3D11Texture2D* reflection{}; // R16G16B16A16_FLOAT: what it reflects, in the scene's units; a: the ray's hit distance
+    ID3D11Texture2D* forwardShadow{}; // R16_FLOAT: the sun's visibility at the surface, 1 where lit; the composite's shade
 };
 
 void attach(ID3D11Device* device) noexcept;
@@ -49,6 +50,11 @@ void forget(std::uint64_t contextOrList) noexcept;
 // The surfaces' weights so far at the render size, R16G16B16A16_FLOAT, for the game's reflection blend to leave them be
 // (path_tracing::draw); null while off.
 Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> surfaceWeights(UINT width, UINT height) noexcept;
+
+// The sun's shadow at a surface the game's own shadow map cannot give: a 1x1 white map and the sampler that always
+// compares, for the surface's shadow slot and s15. The composite dims it by the rays' shadow instead (reflections.hlsl,
+// g_ForwardShadow). False when unavailable.
+bool tracedShadow(ID3D11ShaderResourceView** whiteMap, ID3D11SamplerState** alwaysPass) noexcept;
 
 // ---- The immediate context ----
 // At the kick (ray_tracing.cpp): the surface targets, empty for this frame's, at the render size; all null when unavailable.
