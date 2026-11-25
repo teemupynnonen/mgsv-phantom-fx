@@ -35,12 +35,6 @@
 - **Wall lamps no longer swap their light between frames while you move.** A spot's direction is now part of its
   identity, and the traced lights no longer change with the upscaler's jitter.
 
-- **A swaying jungle tree shades the floor under it.** Its canopy card is kept as a cut-out stand-in for the sun and the
-  lamps, so the sun no longer reaches 12.5% of the frame through it, and the jungle's rock is no longer flat and bright.
-
-- **The jungle floor keeps its shade under the trees.** A tree fern's shadow card is in the scene for the sun and the
-  lamps, so the floor is as dark as the game's. The fronds stay out: tracing them cost 4.5 ms of a 6.7 ms frame.
-
 - Ray-traced light where things touch the ground: no pale glow under Snake's arm when he lies prone, and no black
   patches by a boot or a knee on a slope.
 - The ray-traced ground is the game's own terrain as it draws it, near and far, so shadows, bounce light and
