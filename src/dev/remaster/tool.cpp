@@ -262,16 +262,6 @@ std::uint64_t flashingParameter(const Material& material)
     return parameterOfLowHalf(material.packed.parameters.front());
 }
 
-// Waits for the game to play, wherever it is, and warps once it does.
-std::string warpScript(const Mark& mark)
-{
-    return std::format(R"(local sequence = TppSequence.GetCurrentSequenceName()
-if vars.locationCode ~= {} or sequence == nil or sequence == "" or sequence == "Seq_Mission_Prepare" then return "waiting" end
-TppPlayer.Warp{{pos = {{{}, {}, {}}}, rotY = {}}}
-return "arrived")",
-        mark.location, mark.position[0], mark.position[1], mark.position[2], mark.rotation);
-}
-
 std::uint64_t lampKey(const std::array<float, 3>& at)
 {
     std::uint64_t key = 0xCBF29CE484222325;
@@ -343,15 +333,6 @@ std::string givenLabel(std::string label)
 auto lampRuleOf(std::vector<LampRule>& lamps, const LampRow& lamp)
 {
     return std::ranges::find_if(lamps, [&](const LampRule& each) { return each.location == lamp.location && isLampAt(each.at, lamp.at); });
-}
-
-std::optional<devkit::travel::Map> mapOf(std::uint16_t location)
-{
-    if (location == 10) return devkit::travel::Map::Afghanistan;
-    if (location == 20) return devkit::travel::Map::Africa;
-    if (location == 50) return devkit::travel::Map::MotherBase;
-
-    return std::nullopt;
 }
 
 bool isSameLampRule(const LampRule& a, const LampRule& b)
@@ -519,7 +500,7 @@ std::size_t countOf(const Mark& mark, MaterialKind kind)
 
 bool canGoTo(const Mark& mark)
 {
-    return devkit::game_lua::isSupported() && mapOf(mark.location).has_value();
+    return devkit::game_lua::isSupported() && devkit::travel::mapOf(mark.location).has_value();
 }
 
 bool isGoing() noexcept
@@ -531,7 +512,7 @@ void goTo(const Mark& mark)
 {
     const auto vars = varsBlock();
     const auto location = vars ? game_memory::read<std::uint16_t>(vars + VarLocation) : std::nullopt;
-    const auto map = mapOf(mark.location);
+    const auto map = devkit::travel::mapOf(mark.location);
     if (!map) return;
 
     if (location != mark.location) devkit::travel::go(*map);
@@ -560,7 +541,13 @@ void followTravel()
         return;
     }
 
-    devkit::game_lua::submit(warpScript(travelling->mark));
+    if (!devkit::travel::warpTo(travelling->mark.location, travelling->mark.position, travelling->mark.rotation))
+    {
+        fxui::toast(Tone::Bad, "Could not go there", "The game's scripts are not running yet.");
+        travelling.reset();
+        return;
+    }
+
     travelling->isChecking = true;
 }
 

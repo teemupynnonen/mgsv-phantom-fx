@@ -92,6 +92,28 @@ const char* name(Map map) noexcept
     return map < Map::Count ? Destinations[static_cast<std::size_t>(map)].name : "Unknown";
 }
 
+std::optional<Map> mapOf(std::uint16_t location) noexcept
+{
+    if (location == 10) return Map::Afghanistan;
+    if (location == 20) return Map::Africa;
+    if (location == 50) return Map::MotherBase;
+
+    return std::nullopt;
+}
+
+bool warpTo(std::uint16_t location, std::array<float, 3> place, float rotation) noexcept
+{
+    if (!game_lua::isSupported()) return false;
+
+    game_lua::submit(std::format(R"(local sequence = TppSequence.GetCurrentSequenceName()
+if vars.locationCode ~= {} or sequence == nil or sequence == "" or sequence == "Seq_Mission_Prepare" then return "waiting" end
+TppPlayer.Warp{{pos = {{{}, {}, {}}}, rotY = {}}}
+return "arrived")",
+        location, place[0], place[1], place[2], rotation));
+
+    return true;
+}
+
 void go(Map map, std::optional<std::array<float, 3>> place) noexcept
 {
     if (map >= Map::Count) return;
