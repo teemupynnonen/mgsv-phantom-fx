@@ -3374,7 +3374,13 @@ With DLSS Ray Reconstruction denoising, the rays go out without the filter (see 
   the clip position and then works out the sampling position as the game's does: `m_renderInfo` times
   `m_renderBuffer.zwzw` from `cVSSystem` for the viewport within the targets. At the villa lamps after
   it, `0.000%` with the effects on or off. The lights drawn again add it to their copies of the volumes,
-  and their bounds come from the volume through the unjittered `m_projectionView`.
+  and their bounds come from the volume through the unjittered `m_projectionView`. The shift is in NDC
+  times `w`, so it holds for any projection: a perspective pass scales it with depth, and an orthographic
+  one (`w` 1) moves by the jitter itself. It is read from the scene constants the draw binds, not from a
+  camera of the add-on's: a light's draws bind the main camera's, which is why the jitter reaches them; a
+  pass whose `c28` is zero gets no shift, so the shader is a no-op there rather than a wrong shift — the
+  game without the upscaler, or a view the add-on did not jitter, such as the intro mirror's smaller one
+  when the frames it starts on are not the main camera's.
 - **Drawn with.** Each kind of light (point or spot, mask or not, `SSLighting2` or `NA`) is drawn again
   with the game's own shader for it with specular and without a shadow map, which reads `c8.x` and the
   specular tables at `t8` and `t9`; a light whose own shader has no specular gets a scale of 1, as the
