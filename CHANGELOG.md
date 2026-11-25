@@ -2,88 +2,47 @@
 
 ## Unreleased
 
-- **The bushes and grass the object brush places move with the wind.** In the ray-traced scene they stood still, so
-  their traced shadows, bounce light and reflections did not move either. They now lean with the same wave the game's
-  own vegetation shaders bend them with: the direction, phase and amplitude come from the vegetation draws' material
-  constants, and each clump adds the phase the game gives it in its placement. The clone plugin's rocks and props stay
-  put, as the game keeps them. The per-vertex height weight is a linear shear, since a traced instance's transform is
-  affine, so a tall clump's top leans more than its base.
+### New
 
-- **DevKit: a developer toolkit of its own, for any MGSV add-on.** `DevKit.addon64` loads beside Phantom FX or any
-  other add-on, with its own **DevKit** page in the ReShade overlay, the command runner the automation folder drives, F9,
-  the saves redirect and the logo skip. Another add-on plugs its own lines, state, status, waits and render-thread jobs in
-  through the exported `DevKitGetApi`; DevKit knows nothing of it, and Phantom FX keeps only its own lines.
+- **Bushes and grass move with the wind in the ray-traced scene.** Their traced shadows, bounce light and reflections
+  move with them. The clone plugin's rocks and props stay put.
 
-- **Shader lookup and a frame recorder.** Every shader the game creates is kept, searched by stage, hash or source name,
-  disassembled, and saved as `.dxbc` and `.asm`. F10, or the `frame` line, records a frame's draws, dispatches, copies and
-  clears with their shaders, targets and states to `DevKit/frame-log/`: it waits thirty warm-up presents first, so the
-  scene's own command lists are in it. A failed write is reported instead of counted.
+- **DevKit: a developer toolkit of its own, for any MGSV add-on.** It runs beside Phantom FX with shader lookup, a frame
+  recorder, keyboard-free automation of a game copy, and an MCP server; `--preset tools` builds it without Phantom FX's
+  changes to the frame.
 
-- **Automation without the keyboard.** The `DevKit` folder beside the add-ons holds command files, cases and saves; the
-  tools start and close an automation copy of the game on their own, boot it, travel, freeze the frame and take cases.
-  Presses reach the game as gamepad buttons through DevKit's XInput hook, so no window is brought forward and the player's
-  focus is never taken, also while a loading screen holds the game's loop stopped.
+- **Photo mode: no near clip plane.** The **No near clip plane** switch under Photo mode moves the free camera's near
+  clip plane from 7 cm to 1 mm, so what the camera nearly touches no longer vanishes. Off by default.
 
-- **An MCP server over the automation copy** (`tools/automation/mcp_server.py`): session start, boot, travel, freeze,
-  recover, show and hide; run, case, capture and verify; settings, weather and time of day; long work hands back a job with
-  progress and cancel. A copy it starts is closed when the work is done, and the player's game is never stopped.
+### Performance
 
-- **A tools build** (`--preset tools`): the hooks and the tools with none of Phantom FX's changes to the frame, for
-  capturing or measuring the game as it draws itself.
+- **Ray-traced lights measure their volume once, not every frame.** At Mother Base at night with 128 lights traced, that
+  was 128 dispatches a frame, about 3.3 ms: roughly 16% of a 1080p frame and 6-8% at 4K. A light undrawn for 60 frames
+  is measured again, so a new map keeps none of the old one's boxes.
 
-- **Photo mode: no near clip plane.** A new **No near clip plane** switch under Photo mode on the Camera page moves
-  the free camera's near clip plane from 7 cm to 1 mm, so what the camera nearly touches no longer vanishes. Off by
-  default; the game's own camera is untouched.
+### Fixed
 
-- **The Mother Base emblem shows again in Sortie Prep, and stands where it should.** It was a black square in front of
-  Snake, the horse and the helicopter. The game builds the emblem in a corner of its screen buffer as a save loads, which
-  the upscaler's full-resolution UI had taken over, so the game kept an empty emblem; and the emblem, the one UI image the
-  game hides behind the characters, was tested against no depth at all. Both are as the game draws them now, with the
-  upscaler's jitter taken back out of the depth, so its edge along a character no longer flickers; and where a character's
-  edge covers part of a pixel, the emblem is blended in under it, so no band of backdrop shows between the two.
+- **The Mother Base emblem shows again in Sortie Prep.** It was a black square in front of Snake, the horse and the
+  helicopter; it now keeps its texture and place, with a steady edge along a character.
 
-- **Wall lamps no longer flicker with the upscaler, however still the camera.** The game works its light volumes out on
-  the CPU, already in screen space, so the upscaler's jitter reached the depth they test against but not them: a lamp
-  whose volume lies on the wall passed or failed the depth test by that frame's jitter, up to 1.5 render pixels at Ultra
-  Performance. The game's 24 light vertex shaders are now made from one that adds the jitter, and the ray-traced lights'
-  redraw adds it too. At Africa's villa lamps, camera still, DLSS Ultra Performance, 40 frames: `0.24%` of the pixels
-  flickered before, `0.000%` after.
+- **Wall lamps no longer flicker with the upscaler, however still the camera.** The upscaler's jitter no longer reaches
+  the depth their volumes test against. At Africa's villa lamps, 0.24% of the pixels flickered; now 0.000%.
 
-- **A lamp drawn as two spots no longer makes its wall flicker.** Africa's villa lamps are two spots at one place, one up
-  and one down. Each could win a place among the traced lights while the other lost it, so the wall was lit by the rays
-  one frame and by the game's unshadowed draw the next. Lights at one place are now chosen together, and the places of
-  the last frame keep a small advantage, so a place at the light cap does not change hands. At the villa's lamps with
-  DLSS Ultra Performance and the camera still, the wall's brightness went `0.23 -> 0.79` in single frames; it now stays
-  within `0.25 -> 0.28`.
-  
-- **Wall lamps no longer swap their light between frames while you move.** A lamp in Africa's villa is two spots at one
-  place, one up and one down, and the game draws the downward one without a shadow map from a distance. Alike in kind,
-  place and colour, the two shared one identity and one volume box, so each was cut to the other's box: the wall lit
-  above the lamp one frame and below it the next. A spot's direction is now part of its identity. The lights a frame
-  traces also no longer change with the upscaler's jitter, which could move a distant lamp's edges across a pixel.
+- **A lamp drawn as two spots no longer makes its wall flicker.** Lights at one place are chosen together, so the wall
+  no longer jumps between the rays and the game's unshadowed draw. At the villa's lamps its brightness swung
+  `0.23 -> 0.79`; it now stays within `0.25 -> 0.28`.
 
-- **A swaying jungle tree shades the floor under it.** The tree is skinned, so the scene took it for a character and
-  dropped all its stand-ins, its canopy card among them: the sun then reached 12.5% of the frame where the game's shadow
-  map blocked it, and the jungle's rock came out flat and bright. A character's stand-in with the decal alpha bit is now
-  kept as a rigid model's cut-out stand-in, which only rays towards lights meet and whose alpha lets them through: at the
-  case's rock the sun's shadow now disagrees on 4.3% of the frame. A character's other stand-ins, copies of an outfit, stay
-  dropped.
-
-- **The jungle floor keeps its shade under the trees.** A tree fern's fronds are drawn in the main view alone, and the
-  game casts their shadow through a flat card hung in the crown. The rays saw neither, so the canopy hid nothing and the
-  floor under it went flat and bright. The card is now in the scene for the sun and the lamps alone, as the game's shadow
-  map has it, and it casts through its alpha: at the case's ground pixel the floor is as dark as the game's. The fronds
-  stay out of the scene: in, every global illumination and reflection ray paid to test them, 4.5 of a 6.7 ms frame at the
-  case, and the card already casts that shade for 2 ms.
+- **Wall lamps no longer swap their light between frames while you move.** A spot's direction is now part of its
+  identity, and the traced lights no longer change with the upscaler's jitter.
 
 - Ray-traced light where things touch the ground: no pale glow under Snake's arm when he lies prone, and no black
-  patches on the ground by a boot or a knee resting on a slope.
-- The ray-traced ground is now the game's own terrain as it draws it, near and far, so shadows, bounce light and
+  patches by a boot or a knee on a slope.
+- The ray-traced ground is the game's own terrain as it draws it, near and far, so shadows, bounce light and
   reflections meet the ground where it really is.
 - Ray-traced bounce light and reflections no longer leak in from outside: no orange glow or pale lines along pipes,
   frames and furniture standing close to a room's wall.
 - Ray-traced shadows: opaque surfaces facing away from the sun no longer get sunlight through their own back, so shaded
-  walls and other opaque surfaces no longer show bright specular dots.
+  walls no longer show bright specular dots.
 
 ## 2.0.0
 
