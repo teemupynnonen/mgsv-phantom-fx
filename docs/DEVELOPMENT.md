@@ -22,6 +22,16 @@ It builds with `/W4 /WX`. The version comes from `project()` in `CMakeLists.txt`
 add-on's version resource (`src/version.rc.in`), which ReShade shows and logs, and the first line
 of `PhantomFX.log`.
 
+### The tools build
+
+The `tools` preset (`cmake --preset tools`, into `build/tools`) is for debugging **another mod's** rendering:
+the hooks and the Developer page without PhantomFX's own changes to the frame. It sets `PHANTOM_FX_TOOLS_ONLY`
+(`ToolsOnly` in `src/dev_tools.hpp`), which turns the enhancements off whatever the settings or F1 say, forces
+upscaling and frame generation off, and leaves the game's shaders unpatched (no dither out, no HDR in,
+`onCreatePipeline`). What it keeps: every hook, the frame recorder, the shader list, DevKit's page and the
+automation lines. What it loses: the tools that read PhantomFX's own passes answer that the scene is not
+running. Its Developer page says so, and `PhantomFX.log` says it when something asks for the enhancements.
+
 ### The diagnostic log
 
 The `release` preset is what players get: `PhantomFX.log` holds only what happens once (startup,
@@ -44,16 +54,27 @@ only feeds them (`DiagnosticLog` in `src/log.hpp`, tested with `if constexpr`):
 - the shadow probe's findings, while its debug view shows;
 - Developer, **Log global illumination often**.
 
-Its log's first line says "with the diagnostic log". Builds for in-game checks use this preset.
-It also sets `PHANTOM_FX_DEV_TOOLS` (`DevTools` in `src/dev_tools.hpp`), which adds the overlay's
-**Developer** page, below Diagnostics: **Travel** (see "Travel"), **Cutscenes** (see "Cutscenes"),
-the **Lua console** (see "Game Lua"), a line on the remastering tool (**F6** marks, **F7** opens its panel:
-`src/remaster/README.md`) and the log switch above, and the debug cases (see "Debug cases"). All of it lives in `src/dev/`, whose README says how the core reaches it and how to detach it.
+Its log's first line says "with the diagnostic log". Builds for in-game checks use this preset. It also writes
+`build/dev/DevKit.addon64`, the separate developer add-on with travel, cutscenes and the Lua console, which runs
+beside PhantomFX on its frame start (`src/devaddon/README.md`). The preset also sets `PHANTOM_FX_DEV_TOOLS` (`DevTools` in `src/dev_tools.hpp`),
+which adds the overlay's **Developer** page, below Diagnostics: **Costs on file**, a line on the remastering tool
+(**F6** marks, **F7**
+opens its panel: `src/remaster/README.md`) and the log switch above, and the debug cases (see "Debug cases").
+Travel, cutscenes and the Lua console are the separate `DevKit.addon64`'s page (`src/devaddon/`), which the dev
+preset also builds; most of PhantomFX's own tools live in `src/dev/`, and what another MGSV add-on can use in
+`src/devkit/`; both READMEs say how the core reaches them and how to detach them.
 It is left out of a release build altogether, not just switched off: CMake drops the folder's files
 and the `InspectPixels` kernel, and the little the core keeps for it stands behind `DevTools` or
 `#if PHANTOM_FX_DEV_TOOLS`. Those files hook the system's file calls, patch Steam's interfaces and
 run what they are told, which security software rightly flags.
 `tools/automation/check_release.py` looks through a built add-on for the tools' known markers.
+
+A dev build also reloads the ray tracing's Direct3D 12 kernels as their sources are saved (`src/dev/hot_kernels.hpp`):
+a thread watches each kernel's `.hlsl` and the shared includes, compiles what changed with the build's DXC, and the
+renderer swaps in the new pipelines at the start of a frame. An edit shows in about a second (saving a shared include
+recompiles every kernel, about 2 s); what was saved after the add-on was built compiles when the game starts, and a
+renderer that starts again (ray effects switched off and on) gets every edit so far. A failed compile is logged in `PhantomFX.log` and the kernel in use stays. Only a
+kernel's body reloads: a new or moved register or binding still needs a rebuild.
 
 `cmake --install build/release --component addon --prefix <dir>` collects the add-on, its DLLs,
 player documentation and licenses for distribution. The DLLs are at the install root;
@@ -261,19 +282,22 @@ what draws it, when that is the feature's own.
 | `src/game_light_volumes.cpp`, `src/game_light_volumes.hpp` | The game's light volumes moved by the upscaler's jitter, in its 24 light vertex shaders as they are made (see "Ray-traced lights", "The jitter on the game's light volumes") |
 | `src/dev_tools.hpp` | Whether the build has the Developer page (the dev preset) |
 | `src/dev/` | The development tools, in a dev build alone; its README says how to detach them. `dev.*`: the core's one door to them, and the Developer page |
-| `src/dev/game_lua.cpp`, `src/dev/game_lua.hpp` | Lua in the game's script state, and the Developer page's console (see "Game Lua") |
-| `src/dev/travel.cpp`, `src/dev/travel.hpp` | The Developer page's travel: free roam in another map, and the way the page's tools leave a mission (see "Travel") |
-| `src/dev/cutscenes.cpp`, `src/dev/cutscenes.hpp`, `src/dev/cutscene_list.hpp` | The Developer page's cutscene player and its list (see "Cutscenes") |
+| `src/devkit/` | What another MGSV add-on can build on, in a dev build alone (its `README.md`): the saves redirection, Lua in the game, travel, cutscenes, and its own Developer page in plain ImGui. Built as the separate `DevKit.addon64` (`src/devaddon/`) |
+| `src/devkit/game_lua.cpp`, `src/devkit/game_lua.hpp` | Lua in the game's script state, and the DevKit add-on's console (see "Game Lua") |
+| `src/devkit/travel.cpp`, `src/devkit/travel.hpp` | The DevKit add-on's travel: free roam in another map, and the way the page's tools leave a mission (see "Travel") |
+| `src/devkit/cutscenes.cpp`, `src/devkit/cutscenes.hpp`, `src/devkit/cutscene_list.hpp` | The DevKit add-on's cutscene player and its list (see "Cutscenes") |
 | `src/remaster/` | The remastering rules: they change the game's materials as they are made, saved in `materials.json` and built into the add-on (see its `README.md`, and "Materials") |
 | `src/dev/remaster/` | The remastering tool that writes them: a dev build's marks, and the panel that tunes them |
-| `src/frame_log.cpp`, `src/frame_log.hpp` | Development diagnostics, off by default: shader log, F10 frame record, constant and texture dumps |
-| `src/dev/automation.cpp`, `src/dev/automation.hpp` | Dev builds: commands from files into the running game, F9's debug cases (see "Debug cases") |
+| `src/devkit/frame_log.cpp`, `src/devkit/frame_log.hpp` | DevKit's render diagnostics: the shaders the game creates (search, assembly), F10 frame record (off unless `DevKit/frame-log` exists), constant and texture dumps |
+| `src/devkit/automation.cpp`, `src/devkit/automation.hpp` | DevKit: the runner over `src/devkit/commands.*`, the lines that stand on the game alone, the waits and F9, and the registry add-ons plug into (see "Debug cases") |
+| `src/devkit/extension.hpp` | DevKit's C API for another add-on: its lines, state, status, F9, waits and render-thread jobs |
+| `src/dev/devkit_link.cpp` | PhantomFX's lines in DevKit's command files: the held camera, records, costs, probes, scene, settings, sky and the debug case |
 | `src/dev/inspect_trace.cpp`, `src/dev/inspect_trace.hpp`, `src/dev/inspect.hlsl`, `src/dev/inspect_shared.h` | A debug case's record of every pixel, a trace of its own |
 | `src/dev/game_shadow.cpp`, `src/dev/game_shadow.hpp` | A debug case's reference: the game's shadow per pixel, drawn at the sun pass |
 | `src/dev/held_camera.cpp`, `src/dev/held_camera.hpp` | A debug case's camera, which photo mode's camera update takes |
 | `src/dev/perf_record.cpp`, `src/dev/perf_record.hpp` | What frames cost, on file, a row a second and captures for comparing frames (see "Costs on file") |
-| `src/dev/save_redirect.cpp`, `src/dev/save_redirect.hpp` | The automation copy of the game: its saves, backups and display settings kept apart from the player's |
-| `tools/automation/` | Dev builds: `fx.py` talks to the running game, `case.py` reports a debug case, `perf.py` reads and compares the costs on file, `scout.py` scouts showcase shots (a pose, time and weather, Phantom FX on and off, kept in a shot list), `install.ps1` and `launch.ps1` run the automation copy; `check_release.py` fails if any of it reached a release build |
+| `src/devkit/save_redirect.cpp`, `src/devkit/save_redirect.hpp` | The automation copy of the game: its saves, backups and display settings kept apart from the player's |
+| `tools/automation/` | Dev builds: `fx.py` talks to the running game, `case.py` reports a debug case, `perf.py` reads and compares the costs on file, `scout.py` scouts showcase shots (a pose, time and weather, Phantom FX on and off, kept in a shot list), `mcp_server.py` gives the same tools to an MCP client with `test_mcp.py` checking it without the game, `install.ps1` and `launch.ps1` run the automation copy; `check_release.py` fails if any of it reached a release build |
 | `src/resource_dump.cpp`, `src/resource_dump.hpp` | Format names, constant rows, DDS saving for the dumps |
 | `src/core/shader_bytecode.cpp`, `src/core/shader_bytecode.hpp` | DXBC checksum (bytes 4 to 20 of the container), the instruction walk, the output saturation patch, the dither patch |
 | `src/core/log.cpp`, `src/core/log.hpp` | `PhantomFX.log` beside the add-on, one per game session |
@@ -407,15 +431,23 @@ the option saved on, the game's first requests at start-up get the `Variable` wa
 
 ## Diagnostics
 
-RenderDoc cannot capture this game (see "Known limitations of the tools"), so the add-on has its
-own recorder, `src/frame_log.cpp`. It is off unless a `PhantomFX-frame-log` folder exists beside the
-add-on when the game starts; without the folder it registers no event and costs nothing. It only
-reads state; the frame renders unchanged. Its files go into that folder:
+RenderDoc cannot capture this game (see "Known limitations of the tools"), so the DevKit add-on
+(`DevKit.addon64`, not PhantomFX: any MGSV mod can use it) has its own recorder, `src/devkit/frame_log.cpp`.
+The frame recording is off unless a `DevKit/frame-log` folder exists beside the add-ons when the game starts;
+without the folder it registers no recording event and costs nothing. It only reads state; the frame renders
+unchanged. Its files go into that folder:
 
-- Every shader is logged once to `PhantomFX.log` (stage, checksum, size). With a `shaders` folder
-  inside, the bytecode is saved there. The game's shaders keep reflection and debug info (cbuffer
+- Every shader the game creates is kept (bytecode and the source name in its debug data) and logged once to
+  `DevKit.log` (stage, checksum, size), whether or not the folder is there. The DevKit overlay page searches them
+  by stage, hash or source name and shows a shader's assembly; the command-file lines `shaders [<text>]` and
+  `shader <hash start|name> [save]` do the same, and `save` writes `<stage>_<hash>.dxbc` and `.asm` into
+  `DevKit/shaders`. With a `shaders` folder inside the frame-log folder, every shader's bytecode is saved there
+  as it is created. The game's shaders keep reflection and debug info (cbuffer
   and variable names, `#line` source paths), so `D3DDisassemble` names every pass.
-- F10 records a frame to `frame-<n>.txt`, after one warm-up frame, in GPU order: command lists
+- F10 (or the `frame` line, which waits for it) records a frame to `frame-<n>.txt`, after thirty warm-up presents
+  (the game records a list many frames before the immediate context executes it, and a list is read only
+  if it was recorded while this runs: with one warm-up frame a free-roam frame held 34 calls, the interface alone,
+  and with thirty 7,000), in GPU order: command lists
   recorded on deferred contexts appear, indented, where the immediate context executes them. Each
   call lists shaders, targets, depth, viewport, blend, depth state, shader resources, UAVs and
   constant buffers. `frame-<n>-writers.txt` lists the call stacks of constant buffer maps by size.
@@ -452,8 +484,12 @@ So lighting faults can be looked into without anyone sending pictures or numbers
 `.agents/skills/mgsv-automation` tells agents how to work with it. Dev builds only:
 **F9** freezes the game where it is and records a case; F9 again lets it go. The game stays frozen in between, so
 more can be asked of the same frame. Aim the screen's centre at the fault first if there is one spot to look at.
+An MCP client gets the same tools from `tools/automation/mcp_server.py` (`opencode.json` registers it): its `start`
+installs, launches, presses the startup notices away and stops in free roam as one job; a long replay or scenario run
+is a job too, and a case comes back with its pictures. It closes a copy it started after ten minutes with no tool
+call, and when the server exits.
 
-- **What a case holds** (`PhantomFX-automation/cases/<time>/`): the frame as traced and as the game draws it, from
+- **What a case holds** (`DevKit/cases/<time>/`): the frame as traced and as the game draws it, from
   the same frozen camera and world (`traced.dds`, `vanilla.dds`); the ray tracing's textures (depth, normals,
   albedo, the light, the sun's and lamps' shadows, reflections, the lamps' light); what the game's shadow map
   alone says of each pixel (`game-shadow.dds`, 1 lit, 0 blocked, -1 no answer: `SHADOW_MAP` with `GAME_SHADOW` in
@@ -474,7 +510,7 @@ more can be asked of the same frame. Aim the screen's centre at the fault first 
   with a pixel to probe and, from the revealed scene, what is there and why it was left out. Run it with
   `uv run --with numpy --with pillow --with scipy python tools/automation/case.py`.
 
-The running game takes commands from files (`src/dev/automation.hpp` lists them, `tools/automation/fx.py` sends them):
+The running game takes commands from files (`src/devkit/automation.hpp` lists them, `tools/automation/fx.py` sends them):
 the probes at any pixel (`probe <x> <y>`), the camera anywhere while frozen, settings and debug views, the Lua
 console, and `reveal <hash>`, which tries the scene with a model in it: a fix for a left-out model can be seen
 working before it is written. `fx.py case` records a case without the key.
@@ -484,7 +520,7 @@ working before it is written. `fx.py case` records a case without the key.
 `fx.py --copy acc` goes on into the helicopter's cabin (`TppMission.ReserveMissionClear` for mission 40050). The title
 screen shows the same cabin but moves on by itself: a freeze there lands in a loading screen, which stalls under the pause
 and renders nothing. It reads
-and writes its own saves (`PhantomFX-automation/saves`, `src/dev/save_redirect.hpp`), and `launch.ps1` checks the player's
+and writes its own saves (`DevKit/saves`, `src/devkit/save_redirect.hpp`), and `launch.ps1` checks the player's
 files are unchanged afterwards. Never run it beside the player's game: `launch.ps1` would put back saves the
 player's game wrote meanwhile.
 
@@ -551,7 +587,7 @@ file ("Costs on file"); otherwise no query is made.
 ### Costs on file
 
 So a play session needs no one watching it. With **Record the costs** on the Developer page ticked, a dev build keeps the
-costs running and writes what each second cost to `PhantomFX-automation/perf/<time>.jsonl` (`src/dev/perf_record.cpp`): the
+costs running and writes what each second cost to `DevKit/perf/<time>.jsonl` (`src/dev/perf_record.cpp`): the
 frames' times with their spread, the GPU frame, each pass, each traced phase, the lights, the scene as the second's last
 kick had it with what the second built, and the rays' counters, with the map, the game's clock, the camera and whether the
 game is frozen. A line with the settings in force, as PhantomFX.ini's lines, comes first and whenever they change. It is
@@ -598,10 +634,10 @@ the state back there for the overlay. Nothing is saved.
 
 ### Game Lua
 
-`src/dev/game_lua.cpp` runs Lua in the game's own script state, on the game thread at the main loop's
-frame start, the way the game's own calls into it run. The dev build's Developer page has a **Lua
-console** on it: Ctrl+Enter or Run runs the box's code at the next frame start, and the output box
-shows what it printed and returned, or its error with the stack.
+`src/devkit/game_lua.cpp` runs Lua in the game's own script state, on the game thread at the main loop's
+frame start, the way the game's own calls into it run. The DevKit add-on's Developer page has a **Lua
+console** on it: Run runs the box's code at the next frame start, and the output box shows what it
+printed and returned, or its error with the stack.
 
 - **Lua.** Lua 5.1.5 is linked into the exe (its copyright string at `0x24B47A0`). The base
   library's table at `0x24B6A70` gives `loadstring` (`0x1A2E2E0`), which calls `luaL_loadbuffer`
@@ -629,7 +665,7 @@ shows what it printed and returned, or its error with the stack.
 
 ### Travel
 
-The dev build's Developer page has **Travel** (`src/dev/travel.cpp`): Afghanistan, Africa or Mother
+The DevKit add-on's Developer page has **Travel** (`src/devkit/travel.cpp`): Afghanistan, Africa or Mother
 Base free roam from any free roam, after one loading screen, without the helicopter and the sortie
 screens. It runs a chunk through Game Lua, and a toast says whether the game left or why not.
 
@@ -650,16 +686,16 @@ screens. It runs a chunk through Game Lua, and a toast says whether the game lef
   Base (9.12, 8.75, -42.43), the Command platform's first helipad (landing point
   `cl00pl0_mb_fndt_plnt_heli_30050` in `mbdvc_map_mbstage_parameter.lua`, the same in every
   layout).
-- **Shared.** The leaving and the arrival on foot are Lua helpers in `src/dev/travel.cpp`, which
+- **Shared.** The leaving and the arrival on foot are Lua helpers in `src/devkit/travel.cpp`, which
   `travel::depart` puts ahead of a chunk. The cutscene player leaves the same way.
 
 ### Cutscenes
 
-The dev build's Developer page has **Cutscenes** (`src/dev/cutscenes.cpp`): a searchable list of the
+The DevKit add-on's Developer page has **Cutscenes** (`src/devkit/cutscenes.cpp`): a searchable list of the
 game's cutscenes and a Play button, for free roam and the ACC. The game calls a cutscene a demo.
 Search takes the mission's code or title, the name in its script or the demo id.
 
-- **List.** `src/dev/cutscene_list.hpp` holds 198 cutscenes: each mission's `demoList` (157, without the
+- **List.** `src/devkit/cutscene_list.hpp` holds 198 cutscenes: each mission's `demoList` (157, without the
   names that repeat a demo id and the placeholders that are not cutscenes) and 41 of the 47 in
   `TppDefine.MB_FREEPLAY_DEMO_PRIORITY_LIST`. Only the running mission's list is in memory, so the
   file is written out from the game's `s*_demo.lua` scripts.
@@ -4177,7 +4213,7 @@ F2 does nothing.
   position, facing the camera's yaw. The game's warp needs game time, so the request is taken at the
   next selector update (which also clears the pause), and a held camera, as a debug case leaves behind,
   is let go so the pause really clears; the warp then runs at the next frame start through the game's
-  Lua, from `dev::onFrameStart` (`src/dev/game_lua.hpp`): `GameObject.SendCommand` with
+  Lua, from `dev::onFrameStart` (`src/devkit/game_lua.hpp`): `GameObject.SendCommand` with
   `WarpAndWaitBlock` for the player (object 0), or `SetPosition` for the vehicle or walker gear they are
   in; missions and free roam only. It is the call Infinite Heaven's `InfTppUtil.Warp` makes.
 - **Near clip plane.** With **No near clip plane** on, the swapped-in camera's near plane (`+0x48`,

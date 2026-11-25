@@ -2,9 +2,10 @@
 # builds never replace the add-on in the Steam folder. Run with the game closed.
 param(
     [string]$Build = (Join-Path $PSScriptRoot '..\..\build\dev'),
-    [string]$Game = (Join-Path $env:USERPROFILE 'Documents\Development\mgsv-automation\game'),
+    [string]$Game = $(if ($env:PHANTOM_FX_AUTOMATION_GAME) { $env:PHANTOM_FX_AUTOMATION_GAME } else { Join-Path $env:USERPROFILE 'Documents\Development\mgsv-automation\game' }),
+    # The player's game the copy is made from: PHANTOM_FX_GAME, else Steam's usual folder.
     [string]$Steam = $(if ($env:PHANTOM_FX_GAME) { $env:PHANTOM_FX_GAME } else { 'C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP' }),
-    # The saves every run starts from; the game reads and writes a copy (src/dev/save_redirect.hpp).
+    # The saves every run starts from; the game reads and writes a copy (src/devkit/save_redirect.hpp).
     [string]$SeedSaves = (Join-Path $env:USERPROFILE 'Documents\Development\mgsv-automation\seed-saves'),
     # 0 keeps the player's own output size, so a case recorded in their game has the render size the copy
     # reproduces (a smaller window renders smaller still under an upscaler).
@@ -17,6 +18,7 @@ param(
     [string]$Ini
 )
 $ErrorActionPreference = 'Stop'
+if (-not $PSBoundParameters.ContainsKey('Build') -and $env:PHANTOM_FX_DEV_BUILD) { $Build = $env:PHANTOM_FX_DEV_BUILD }
 
 if (Get-Process mgsvtpp -ErrorAction SilentlyContinue) { throw 'The game is running; close it first.' }
 
@@ -53,7 +55,7 @@ if (Test-Path $Runtime) {
 }
 # Ray Reconstruction's library, which the player's folder has and a build does not.
 Copy-Item (Join-Path $Steam 'nvngx_dlssd.dll') $Game -Force
-$saves = Join-Path $Game 'PhantomFX-automation\saves'
+$saves = Join-Path $Game 'DevKit\saves'
 # The game keeps its graphics, audio and language settings in TPP_CONFIG_DATA among the saves, and the copy's own game
 # writes the one set in its menu there. Seeding the saves replaced it with the seed's, so a copy set to the maximum came back
 # below Extra High, where the path tracing fails (2026-11-07). It is kept over the seed when the copy has one.
@@ -64,9 +66,11 @@ if (Test-Path $saves) { Remove-Item $saves -Recurse -Force }
 New-Item -ItemType Directory -Force $saves | Out-Null
 Copy-Item (Join-Path $SeedSaves '*') $saves
 if ($keepConfig) { Copy-Item $ownConfig (Join-Path $saves 'TPP_CONFIG_DATA') -Force }
+# The copy drops the game's startup logos, which cost eighteen seconds of every run (src/devkit/automation.cpp).
+New-Item -ItemType File -Force (Join-Path $Game 'DevKit\skip-logos') | Out-Null
 
 # The game's user data folder for the run, with the player's display and quality settings.
-$userData = Join-Path $Game 'PhantomFX-automation\local'
+$userData = Join-Path $Game 'DevKit\local'
 New-Item -ItemType Directory -Force $userData | Out-Null
 $config = Get-ChildItem (Join-Path $Steam '..\..\..\userdata\*\287700\local\TPP_GRAPHICS_CONFIG') | Select-Object -First 1
 if (-not $config) { throw "No TPP_GRAPHICS_CONFIG in Steam's userdata: run the game once from Steam first." }

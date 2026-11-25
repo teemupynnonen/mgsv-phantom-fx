@@ -1,10 +1,10 @@
-#include "dev/cutscenes.hpp"
+#include "devkit/cutscenes.hpp"
 
-#include "dev/cutscene_list.hpp"
-#include "fxui/fxui.hpp"
-#include "dev/game_lua.hpp"
-#include "log.hpp"
-#include "dev/travel.hpp"
+#include "devkit/cutscene_list.hpp"
+#include "devkit/game_lua.hpp"
+#include "devkit/host.hpp"
+#include "devkit/log.hpp"
+#include "devkit/travel.hpp"
 
 #include <algorithm>
 #include <array>
@@ -12,7 +12,7 @@
 #include <format>
 #include <string>
 
-namespace phantom_fx::cutscenes
+namespace devkit::cutscenes
 {
 namespace
 {
@@ -193,7 +193,7 @@ void start(const Cutscene& cutscene)
 {
     if (isPlaying)
     {
-        fxui::toast(fxui::Tone::Warn, "Cutscene", "Not now: one is playing.");
+        toast(Tone::Warn, "Cutscene", "Not now: one is playing.");
         return;
     }
 
@@ -204,7 +204,7 @@ void start(const Cutscene& cutscene)
     if (!travel::depart(setup + std::string(LeaveChecks) + std::string(route), "Cutscene", label)) return;
 
     log("Cutscene: going to " + label + ".");
-    fxui::toast(fxui::Tone::Ok, "Going to the cutscene", label);
+    toast(Tone::Ok, "Going to the cutscene", label);
     current = &cutscene;
     framesToRead = FramesPerRead;
 }
@@ -214,14 +214,14 @@ void readStatus()
     if (--framesToRead > 0) return;
 
     framesToRead = FramesPerRead;
-    const auto outcome = game_lua::run(ReadStatus, "=PhantomFX cutscene status");
+    const auto outcome = game_lua::run(ReadStatus, std::format("={} cutscene status", name()));
     if (!outcome || !outcome->ran || outcome->text.empty()) return;
 
     log(std::format("Cutscene {}: {}", labelOf(*current), outcome->text));
     isPlaying = outcome->text == "playing";
     if (isPlaying) return;
 
-    if (outcome->text != "done") fxui::toast(fxui::Tone::Warn, "Cutscene", outcome->text);
+    if (outcome->text != "done") toast(Tone::Warn, "Cutscene", outcome->text);
     current = nullptr;
 }
 }

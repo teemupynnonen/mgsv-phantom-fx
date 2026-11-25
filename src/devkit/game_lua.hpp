@@ -6,7 +6,7 @@
 
 // Lua in the game's own script state (Lua 5.1.5), run the way the game's own calls into it run: for
 // the Developer page's tools and its console. docs/DEVELOPMENT.md, "Game Lua".
-namespace phantom_fx::game_lua
+namespace devkit::game_lua
 {
 // What the game is at, as name=value lines: for a case to be found again (tools/automation/fx.py replay), and
 // for the costs on file. Each value alone, as any may fail in a loading screen, which makes it "?". A story

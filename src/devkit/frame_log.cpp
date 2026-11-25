@@ -1,15 +1,19 @@
-#include "frame_log.hpp"
+#include "devkit/frame_log.hpp"
 
-#include "fxui/fxui.hpp"
-#include "log.hpp"
+#include "devkit/host.hpp"
+#include "devkit/log.hpp"
 #include "resource_dump.hpp"
 #include "shader_bytecode.hpp"
 
 #include <Windows.h>
 #include <d3d11.h>
+#include <d3dcompiler.h>
 #include <reshade.hpp>
 #include <wrl/client.h>
 #include <algorithm>
+#include <cctype>
+#include <optional>
+#include <string_view>
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -25,10 +29,16 @@
 #include <utility>
 #include <vector>
 
-namespace phantom_fx::frame_log
+namespace devkit::frame_log
 {
 namespace
 {
+using phantom_fx::constantRows;
+using phantom_fx::dxbcHashOf;
+using phantom_fx::formatName;
+using phantom_fx::saveTexture;
+using phantom_fx::sourceName;
+using phantom_fx::toHex;
 using namespace reshade::api;
 
 constexpr UINT ResourceSlots = D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT;
@@ -38,11 +48,11 @@ constexpr UINT TargetSlots = D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT;
 // WKPDID_D3DDebugObjectName, defined here so dxguid.lib is not needed.
 constexpr GUID DebugObjectName{0x429b8c22, 0x9188, 0x4b0c, {0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00}};
 
-// A frame is recorded after one warm-up frame: the game records command lists on deferred
-// contexts ahead of executing them, and the warm-up catches lists executed early in the next frame.
+// A frame is recorded after thirty warm-up presents: the game records command lists on deferred contexts many
+// frames ahead of executing them, and a single warm-up frame misses the scene's own lists.
 enum class Capture { Off, WarmingUp, Recording };
 
-// The PhantomFX-frame-log folder, which turns the frame log on and receives its files.
+// The DevKit/frame-log folder, which turns the frame recording on and receives its files.
 std::filesystem::path outputDirectory;
 bool active{}, saveShaders{};
 
@@ -50,8 +60,27 @@ std::mutex shaderMutex;
 std::unordered_map<std::uint64_t, std::string> shaderHashes;
 std::unordered_set<std::string> loggedShaders;
 
+// Every shader the game created, once each, in creation order, with its bytecode: what the DevKit page and the `shaders`
+// and `shader` lines search and take apart. Guarded by shaderMutex.
+struct Shader
+{
+    std::string stage, hash, name;
+    std::vector<std::uint8_t> code;
+};
+std::vector<Shader> createdShaders;
+std::filesystem::path shadersDirectory;
+bool tracking{};
+std::atomic<std::uint64_t> recorded{};
+
 std::atomic<Capture> capture{Capture::Off};
-std::atomic<bool> requested{};
+std::atomic<std::uint64_t> requested{};
+std::atomic<std::uint64_t> requestsMade{};
+std::uint64_t captureRequest{};
+std::atomic<std::uint64_t> completedRequestId{};
+// Presents recorded before the frame that is kept: the game records a list a frame or more before the immediate context
+// executes it, and only the lists recorded under way are read. The one frame this used to wait missed the scene's own.
+constexpr int WarmupFrames = 30;
+int warmupLeft{};
 
 // A texture a dumped call had bound, with a reference held until it is saved.
 struct Texture
@@ -102,7 +131,7 @@ enum class Dump { None, Constants, Everything };
 std::mutex recordMutex;
 std::ofstream record;
 std::filesystem::path dumpDirectory;
-std::string recordName;
+std::string recordName, completedRecording;
 std::uint64_t presents{}, calls{};
 command_list* immediate{};
 ID3D11Resource* backBuffer{};
@@ -802,6 +831,9 @@ void onInitPipeline(device*, pipeline_layout, uint32_t count, const pipeline_sub
         if (!loggedShaders.insert(std::string(stage) + hash).second) continue;
 
         log(std::string("Shader ") + stage + " " + hash + ", " + std::to_string(shader->code_size) + " bytes.");
+        const auto* const bytes = static_cast<const std::uint8_t*>(shader->code);
+        const std::string_view source(static_cast<const char*>(shader->code), shader->code_size);
+        createdShaders.push_back({stage, hash, std::string(sourceName(source, ".hlsl")), std::vector<std::uint8_t>(bytes, bytes + shader->code_size)});
         if (saveShaders && checksum) saveBytecode(stage, hash, *shader);
     }
 }
@@ -848,16 +880,16 @@ void restartRecording()
     std::lock_guard lock(recordMutex);
     saveQueued();
     record.close();
-    const auto recorded = outputDirectory / (recordName + ".txt");
+    const auto recordedFile = outputDirectory / (recordName + ".txt");
     std::error_code error;
     // The frame before, which frame-previous.txt holds, is replaced by this one: its folder goes with it.
     removeDumpDirectory(previousName);
     previousName = recordName;
     // The frame before the trigger is the one right before it, so the copy kept is replaced each time.
     std::filesystem::remove(previousRecord(), error);
-    std::filesystem::rename(recorded, previousRecord(), error);
+    std::filesystem::rename(recordedFile, previousRecord(), error);
     hasPrevious = !error;
-    if (error) std::filesystem::remove(recorded, error);
+    if (error) std::filesystem::remove(recordedFile, error);
     recordName = "frame-" + std::to_string(presents);
     record = std::ofstream(outputDirectory / (recordName + ".txt"), std::ios::trunc);
     dumpDirectory = outputDirectory / recordName;
@@ -870,7 +902,8 @@ void finishRecording()
     std::lock_guard lock(recordMutex);
     saveQueued();
     record.close();
-    log("Recorded " + std::to_string(calls) + " calls" + (trigger.empty() || !triggered ? "." : ", the first frame to run " + trigger + "."));
+    const bool failed = record.fail();
+    log(failed ? "The frame record could not be written." : "Recorded " + std::to_string(calls) + " calls" + (trigger.empty() || !triggered ? "." : ", the first frame to run " + trigger + "."));
     if (!trigger.empty())
     {
         // Only a frame this capture recorded, so an interrupted capture's file never stands in.
@@ -896,7 +929,9 @@ void finishRecording()
         record << count << "x " << writer << '\n';
 
     record.close();
-    fxui::toast(fxui::Tone::Ok, "Frame captured", recordName + ".txt");
+    const bool writersFailed = record.fail();
+    const bool saved = !failed && !writersFailed;
+    devkit::toast(saved ? Tone::Ok : Tone::Bad, saved ? "Frame captured" : "Frame not saved", recordName + ".txt");
     constantWriters.clear();
     for (auto& [list, lines] : pending)
         for (auto& line : lines)
@@ -906,6 +941,10 @@ void finishRecording()
     constantContents.clear();
     mappedConstants.clear();
     capture = Capture::Off;
+    // A record whose files did not close is neither named nor counted: the waiting `frame` line reports the error.
+    completedRecording = saved ? recordName : std::string{};
+    completedRequestId = captureRequest;
+    if (saved) ++recorded;
 }
 
 void onPresent(command_queue* queue, swapchain* chain, const rect*, const rect*, uint32_t, const rect*)
@@ -945,6 +984,8 @@ void onPresent(command_queue* queue, swapchain* chain, const rect*, const rect*,
     }
     else if (capture == Capture::WarmingUp)
     {
+        if (--warmupLeft > 0) return;
+
         std::lock_guard lock(recordMutex);
         recordName = "frame-" + std::to_string(presents);
         record = std::ofstream(outputDirectory / (recordName + ".txt"), std::ios::trunc);
@@ -953,8 +994,9 @@ void onPresent(command_queue* queue, swapchain* chain, const rect*, const rect*,
         capture = Capture::Recording;
         log("Recording " + recordName + ".txt" + (dumpsLeft.empty() ? "." : ", with dumps in " + recordName + "/."));
     }
-    else if (requested.exchange(false))
+    else if (const auto request = requested.exchange(0))
     {
+        captureRequest = request;
         std::lock_guard lock(recordMutex);
         dumpsLeft = readDumpList();
         trigger = readTrigger();
@@ -964,14 +1006,15 @@ void onPresent(command_queue* queue, swapchain* chain, const rect*, const rect*,
         // A capture that was cut short leaves its frame before the trigger behind; it is not this one's.
         std::error_code error;
         std::filesystem::remove(previousRecord(), error);
-        if (!trigger.empty()) fxui::toast(fxui::Tone::Ok, "Recording until a frame runs", trigger);
+        if (!trigger.empty()) devkit::toast(Tone::Ok, "Recording until a frame runs", trigger);
+        warmupLeft = WarmupFrames;
         capture = Capture::WarmingUp;
     }
 }
 
 void onReshadePresent(effect_runtime* runtime)
 {
-    if (runtime->is_key_pressed(VK_F10)) requested = true;
+    if (runtime->is_key_pressed(VK_F10)) request();
 }
 
 bool onDraw(command_list* list, uint32_t vertices, uint32_t instances, uint32_t first, uint32_t firstInstance)
@@ -1203,10 +1246,14 @@ template<reshade::addon_event Event> void subscribe(bool on, typename reshade::a
 }
 
 // One list for both, so what install registers is what uninstall removes.
-void subscribe(bool on)
+void subscribeShaders(bool on)
 {
     subscribe<reshade::addon_event::init_pipeline>(on, onInitPipeline);
     subscribe<reshade::addon_event::destroy_pipeline>(on, onDestroyPipeline);
+}
+
+void subscribe(bool on)
+{
     subscribe<reshade::addon_event::present>(on, onPresent);
     subscribe<reshade::addon_event::reshade_present>(on, onReshadePresent);
     subscribe<reshade::addon_event::draw>(on, onDraw);
@@ -1233,13 +1280,20 @@ void subscribe(bool on)
 
 void install(const std::filesystem::path& addonDirectory)
 {
-    outputDirectory = addonDirectory / "PhantomFX-frame-log";
+    const auto root = addonDirectory / "DevKit";
+    outputDirectory = root / "frame-log";
+    shadersDirectory = root / "shaders";
+
+    // The shaders the game creates are kept whatever else is on: a search needs them from the first.
+    tracking = true;
+    subscribeShaders(true);
+
     std::error_code error;
     if (!std::filesystem::is_directory(outputDirectory, error)) return;
 
     active = true;
     saveShaders = std::filesystem::is_directory(outputDirectory / "shaders", error);
-    log("Frame log on: F10 records a frame into PhantomFX-frame-log.");
+    log("Frame log on: F10 records a frame into DevKit/frame-log.");
 
     subscribe(true);
 }
@@ -1247,6 +1301,36 @@ void install(const std::filesystem::path& addonDirectory)
 bool installed()
 {
     return active;
+}
+
+std::uint64_t request()
+{
+    if (!active) return 0;
+
+    // A request already waiting for its present is not replaced: the caller is told it is busy. F10 and a scripting
+    // thread can ask at once, so the free slot is claimed atomically and the loser leaves the first request alone.
+    const auto id = ++requestsMade;
+    std::uint64_t free{};
+    if (!requested.compare_exchange_strong(free, id)) return 0;
+
+    return id;
+}
+
+std::uint64_t completedRequest()
+{
+    return completedRequestId.load();
+}
+
+std::uint64_t recordings()
+{
+    return recorded.load();
+}
+
+std::string lastRecording()
+{
+    std::lock_guard lock(recordMutex);
+
+    return completedRecording;
 }
 
 std::filesystem::path recordingDirectory()
@@ -1260,8 +1344,107 @@ std::filesystem::path recordingDirectory()
     return dumpDirectory;
 }
 
+namespace
+{
+bool containsIgnoringCase(std::string_view text, std::string_view filter)
+{
+    const auto same = [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b)); };
+
+    return std::search(text.begin(), text.end(), filter.begin(), filter.end(), same) != text.end();
+}
+
+ShaderInfo infoOf(const Shader& shader)
+{
+    return {shader.stage, shader.hash, shader.name, shader.code.size()};
+}
+
+// The one shader a hash prefix names (or a source name's part, if no hash does): the first, with how many matched.
+const Shader* find(std::string_view text, std::size_t& matches)
+{
+    matches = 0;
+    const Shader* first = nullptr;
+    for (const auto& shader : createdShaders)
+        if (shader.hash.starts_with(text))
+        {
+            if (!first) first = &shader;
+            ++matches;
+        }
+
+    if (first) return first;
+
+    for (const auto& shader : createdShaders)
+        if (!text.empty() && containsIgnoringCase(shader.name, text))
+        {
+            if (!first) first = &shader;
+            ++matches;
+        }
+
+    return first;
+}
+
+std::string assemblyOf(const Shader& shader)
+{
+    Microsoft::WRL::ComPtr<ID3DBlob> text;
+    if (FAILED(D3DDisassemble(shader.code.data(), shader.code.size(), 0, nullptr, text.GetAddressOf())) || !text) return "(the bytecode cannot be disassembled)\n";
+
+    return std::string(static_cast<const char*>(text->GetBufferPointer()), text->GetBufferSize());
+}
+}
+
+std::vector<ShaderInfo> shaders(std::string_view filter)
+{
+    std::vector<ShaderInfo> found;
+    std::lock_guard lock(shaderMutex);
+    for (const auto& shader : createdShaders)
+        if (filter.empty() || containsIgnoringCase(shader.stage + " " + shader.hash + " " + shader.name, filter)) found.push_back(infoOf(shader));
+
+    return found;
+}
+
+std::size_t shaderCount()
+{
+    std::lock_guard lock(shaderMutex);
+
+    return createdShaders.size();
+}
+
+std::optional<std::string> disassemble(std::string_view hashOrName)
+{
+    std::lock_guard lock(shaderMutex);
+    std::size_t matches{};
+    const auto* const shader = find(hashOrName, matches);
+    if (!shader) return std::nullopt;
+
+    return shader->stage + " " + shader->hash + " " + shader->name + ", " + std::to_string(shader->code.size()) + " bytes"
+        + (matches > 1 ? ", the first of " + std::to_string(matches) + " that match" : std::string()) + "\n" + assemblyOf(*shader);
+}
+
+std::optional<std::filesystem::path> saveShader(std::string_view hashOrName)
+{
+    std::lock_guard lock(shaderMutex);
+    std::size_t matches{};
+    const auto* const shader = find(hashOrName, matches);
+    if (!shader) return std::nullopt;
+
+    std::error_code error;
+    std::filesystem::create_directories(shadersDirectory, error);
+    const auto stem = shader->stage + "_" + shader->hash;
+    std::ofstream(shadersDirectory / (stem + ".dxbc"), std::ios::binary).write(reinterpret_cast<const char*>(shader->code.data()), static_cast<std::streamsize>(shader->code.size()));
+    std::ofstream assembly(shadersDirectory / (stem + ".asm"), std::ios::binary);
+    assembly << assemblyOf(*shader);
+    assembly.close();
+
+    return assembly.fail() ? std::nullopt : std::optional(shadersDirectory / (stem + ".dxbc"));
+}
+
 void uninstall()
 {
+    if (tracking)
+    {
+        tracking = false;
+        subscribeShaders(false);
+    }
+
     if (!active) return;
 
     active = false;

@@ -28,6 +28,14 @@
         "PHANTOM_FX_DIAGNOSTIC_LOG": true,
         "PHANTOM_FX_DEV_TOOLS": true
       }
+    },
+    {
+      "name": "tools",
+      "displayName": "Windows x64 Release with the development tools, leaving the game's frame as it is",
+      "inherits": "dev",
+      "cacheVariables": {
+        "PHANTOM_FX_TOOLS_ONLY": true
+      }
     }
   ],
   "buildPresets": [
@@ -38,6 +46,10 @@
     {
       "name": "dev",
       "configurePreset": "dev"
+    },
+    {
+      "name": "tools",
+      "configurePreset": "tools"
     }
   ]
 }

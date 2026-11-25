@@ -29,7 +29,7 @@ what the player does. The game streams its detail around the player, not the cam
 player near the shot first, on the same map; keep the player out of the frame. A warp below the ground drops the
 player through the world, so warp to where a soldier stands (`spots`).
 
-Pictures go to PhantomFX-automation/scout in the copy: <name>-on.png, <name>-off.png, <name>-split.png and
+Pictures go to DevKit/scout in the copy: <name>-on.png, <name>-off.png, <name>-split.png and
 <name>-ab.png (vanilla left, Phantom FX right). The list is shots.json beside them.
 """
 import json

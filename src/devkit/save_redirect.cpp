@@ -1,6 +1,6 @@
-#include "dev/save_redirect.hpp"
+#include "devkit/save_redirect.hpp"
 
-#include "log.hpp"
+#include "devkit/log.hpp"
 
 #include <Windows.h>
 #include <MinHook.h>
@@ -14,7 +14,7 @@
 #include <string>
 #include <utility>
 
-namespace phantom_fx::save_redirect
+namespace devkit::save_redirect
 {
 namespace
 {

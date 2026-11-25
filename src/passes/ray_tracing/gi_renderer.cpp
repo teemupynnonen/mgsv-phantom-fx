@@ -4,11 +4,14 @@
 #include "camera.hpp"
 #include "clock.hpp"
 #include "dev/perf_record.hpp"
+#if PHANTOM_FX_DEV_TOOLS
+#include "dev/hot_kernels.hpp"
+#endif
 #include "dev_tools.hpp"
 #include "features/global_illumination/gi_light.hpp"
 #include "features/path_tracing/path_tracing_rays.hpp"
 #include "features/ray_traced_shadows/gi_shadow.hpp"
-#include "frame_log.hpp"
+#include "dev/dev.hpp"
 #include "log.hpp"
 #include "passes/ray_tracing/gi_d3d12.hpp"
 #include "passes/ray_tracing/gi_scene.hpp"
@@ -177,6 +180,9 @@ struct State
 
     ComPtr<ID3D12RootSignature> rootSignature;
     Pipelines pipelines;
+#if PHANTOM_FX_DEV_TOOLS
+    bool hotReplayed{}; // Whether the hot-reloaded kernels so far have been applied to this state (dev/hot_kernels.hpp).
+#endif
     ComPtr<ID3D12CommandSignature> dispatchSignature;
     ComPtr<ID3D12DescriptorHeap> heap;
     UINT descriptorSize{};
@@ -952,6 +958,31 @@ Result render(Frame& frame)
         lapStarted = now;
     };
 
+#if PHANTOM_FX_DEV_TOOLS
+    {
+        hot_kernels::start();
+        // A renderer that has just started (the effects were off, or switched off and on) has the build's DXIL: it gets every edit so far.
+        const auto reloaded = std::exchange(s.hotReplayed, true) ? hot_kernels::take() : hot_kernels::replay();
+        // The frames in flight may still run the pipelines about to be replaced: let them finish, once for the lot.
+        if (!reloaded.empty()) waitFor(s, *std::max_element(s.submitted.begin(), s.submitted.end()));
+        for (const auto& fresh : reloaded)
+        {
+            D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline{};
+            pipeline.pRootSignature = s.rootSignature.Get();
+            pipeline.CS = {fresh.code.data(), fresh.code.size()};
+            if (s.hasMicromapSupport) pipeline.Flags = RayQueryAllowsMicromaps;
+            ComPtr<ID3D12PipelineState> made;
+            if (FAILED(s.device->CreateComputePipelineState(&pipeline, IID_PPV_ARGS(&made))))
+            {
+                log(std::format("Hot kernels: kernel {} compiled but its pipeline was refused; the one in use stays.", fresh.kernel));
+                continue;
+            }
+            s.pipelines[fresh.kernel] = made;
+            log(std::format("Hot kernels: kernel {} swapped in.", fresh.kernel));
+        }
+    }
+#endif
+
     Result result;
     const auto& traces = frame.traces;
     s.surfaceTrace.reset();
@@ -973,10 +1004,10 @@ Result render(Frame& frame)
     const trace::TraceFrame traceFrame{frame, s.device.Get(), waitForAll, *s.contents, s.instancedModels[slot], slot};
     for (auto* each : trace::inOrder()) each->prepare(traceFrame);
     lap(ProbeStep);
-    if constexpr (DiagnosticLog)
+    if constexpr (DevTools)
     {
         static std::filesystem::path dumped;
-        if (const auto folder = frame_log::recordingDirectory(); !folder.empty() && folder != dumped)
+        if (const auto folder = dev::recordingDirectory(); !folder.empty() && folder != dumped)
         {
             dumped = folder;
             s.contents->dumpModels(folder);
