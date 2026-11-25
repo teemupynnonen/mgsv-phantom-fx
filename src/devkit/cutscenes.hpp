@@ -9,7 +9,7 @@
 // state (game_lua.hpp). A story cutscene's mission starts in a sequence of ours that plays it, and the
 // game leaves for the ACC without a mission clear; a Mother Base one goes through the game's queue and
 // ends in free roam there. docs/DEVELOPMENT.md, "Cutscenes".
-namespace phantom_fx::cutscenes
+namespace devkit::cutscenes
 {
 // One label for each cutscene; play takes the index of one.
 std::span<const std::string_view> labels() noexcept;

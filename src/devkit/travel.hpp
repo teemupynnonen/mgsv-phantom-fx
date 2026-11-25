@@ -9,7 +9,7 @@
 // screen, without the helicopter and the sortie screens. At the main loop's frame start it runs Lua in
 // the game's script state (game_lua.hpp): the mission clear the game's scripts reserve when free roam
 // ends, with the player's arrival moved to a fixed spot on foot. docs/DEVELOPMENT.md, "Travel".
-namespace phantom_fx::travel
+namespace devkit::travel
 {
 enum class Map : std::uint8_t { Afghanistan, Africa, MotherBase, Count };
 

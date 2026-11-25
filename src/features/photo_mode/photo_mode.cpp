@@ -1,7 +1,7 @@
 #include "features/photo_mode/photo_mode.hpp"
 
 #include "clock.hpp"
-#include "dev/game_lua.hpp"
+#include "devkit/game_lua.hpp"
 #include "dev/held_camera.hpp"
 #include "dev_tools.hpp"
 #include "device_check.hpp"
@@ -497,7 +497,7 @@ end
 )",
             warp.yaw, warp.position[0], warp.position[1], warp.position[2]);
 
-        const auto outcome = game_lua::run(script, "=PhantomFX photo mode teleport");
+        const auto outcome = devkit::game_lua::run(script, "=PhantomFX photo mode teleport");
         if (!outcome)
         {
             fxui::toast(fxui::Tone::Warn, "Teleport", "The game's scripts are not running yet.");

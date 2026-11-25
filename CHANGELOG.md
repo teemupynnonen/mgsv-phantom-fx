@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- **DevKit: a developer toolkit of its own, for any MGSV add-on.** `DevKit.addon64` loads beside Phantom FX or any
+  other add-on, with its own **DevKit** page in the ReShade overlay, the command runner the automation folder drives, F9,
+  the saves redirect and the logo skip. Another add-on plugs its own lines, state, status, waits and render-thread jobs in
+  through the exported `DevKitGetApi`; DevKit knows nothing of it, and Phantom FX keeps only its own lines.
+
+- **Shader lookup and a frame recorder.** Every shader the game creates is kept, searched by stage, hash or source name,
+  disassembled, and saved as `.dxbc` and `.asm`. F10, or the `frame` line, records a frame's draws, dispatches, copies and
+  clears with their shaders, targets and states to `DevKit/frame-log/`: it waits thirty warm-up presents first, so the
+  scene's own command lists are in it. A failed write is reported instead of counted.
+
+- **Automation without the keyboard.** The `DevKit` folder beside the add-ons holds command files, cases and saves; the
+  tools start and close an automation copy of the game on their own, boot it, travel, freeze the frame and take cases.
+  Presses reach the game as gamepad buttons through DevKit's XInput hook, so no window is brought forward and the player's
+  focus is never taken, also while a loading screen holds the game's loop stopped.
+
+- **An MCP server over the automation copy** (`tools/automation/mcp_server.py`): session start, boot, travel, freeze,
+  recover, show and hide; run, case, capture and verify; settings, weather and time of day; long work hands back a job with
+  progress and cancel. A copy it starts is closed when the work is done, and the player's game is never stopped.
+
+- **A tools build** (`--preset tools`): the hooks and the tools with none of Phantom FX's changes to the frame, for
+  capturing or measuring the game as it draws itself.
+
 - **The Mother Base emblem shows again in Sortie Prep, and stands where it should.** It was a black square in front of
   Snake, the horse and the helicopter. The game builds the emblem in a corner of its screen buffer as a save loads, which
   the upscaler's full-resolution UI had taken over, so the game kept an empty emblem; and the emblem, the one UI image the

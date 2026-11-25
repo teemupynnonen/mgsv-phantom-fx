@@ -10,7 +10,6 @@
 #include "features/frame_generation/presenter.hpp"
 #include "features/hdr/hdr.hpp"
 #include "features/upscaling/upscaler.hpp"
-#include "frame_log.hpp"
 #include "fxui/fxui.hpp"
 #include "log.hpp"
 #include "menu.hpp"
@@ -785,7 +784,6 @@ void drawDiagnostics(const upscaler::Status& state)
         fxui::fact("Texture LOD bias", std::format("{:+.2f}", state.mipBias));
         fxui::fact("Jitter", std::format("{:.3f}, {:.3f} px", state.jitter[0], state.jitter[1]));
         if (!state.lastFallback.empty()) fxui::fact("Last fallback", state.lastFallback);
-        if (frame_log::installed()) fxui::note(Tone::Dim, "F10 records the next frame into the PhantomFX-frame-log folder.");
     }
 }
 }

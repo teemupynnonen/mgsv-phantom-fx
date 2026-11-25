@@ -4,13 +4,13 @@
 #include "fxui/fxui.hpp"
 #include "game_code.hpp"
 #include "game_loop.hpp"
-#include "dev/game_lua.hpp"
+#include "devkit/game_lua.hpp"
 #include "game_memory.hpp"
 #include "log.hpp"
 #include "remaster/in_force.hpp"
 #include "remaster/remaster.hpp"
 #include "remaster/rule_file.hpp"
-#include "dev/travel.hpp"
+#include "devkit/travel.hpp"
 #include "weather.hpp"
 
 #include <Windows.h>
@@ -345,11 +345,11 @@ auto lampRuleOf(std::vector<LampRule>& lamps, const LampRow& lamp)
     return std::ranges::find_if(lamps, [&](const LampRule& each) { return each.location == lamp.location && isLampAt(each.at, lamp.at); });
 }
 
-std::optional<travel::Map> mapOf(std::uint16_t location)
+std::optional<devkit::travel::Map> mapOf(std::uint16_t location)
 {
-    if (location == 10) return travel::Map::Afghanistan;
-    if (location == 20) return travel::Map::Africa;
-    if (location == 50) return travel::Map::MotherBase;
+    if (location == 10) return devkit::travel::Map::Afghanistan;
+    if (location == 20) return devkit::travel::Map::Africa;
+    if (location == 50) return devkit::travel::Map::MotherBase;
 
     return std::nullopt;
 }
@@ -519,7 +519,7 @@ std::size_t countOf(const Mark& mark, MaterialKind kind)
 
 bool canGoTo(const Mark& mark)
 {
-    return game_lua::isSupported() && mapOf(mark.location).has_value();
+    return devkit::game_lua::isSupported() && mapOf(mark.location).has_value();
 }
 
 bool isGoing() noexcept
@@ -534,7 +534,7 @@ void goTo(const Mark& mark)
     const auto map = mapOf(mark.location);
     if (!map) return;
 
-    if (location != mark.location) travel::go(*map);
+    if (location != mark.location) devkit::travel::go(*map);
 
     travelling = Travel{.mark = mark};
 }
@@ -543,7 +543,7 @@ void followTravel()
 {
     if (!travelling || ++presents % PresentsBetweenTravelChecks) return;
 
-    const auto console = game_lua::console();
+    const auto console = devkit::game_lua::console();
     if (console.waiting) return;
 
     if (travelling->isChecking && console.last && console.last->text == "arrived")
@@ -560,7 +560,7 @@ void followTravel()
         return;
     }
 
-    game_lua::submit(warpScript(travelling->mark));
+    devkit::game_lua::submit(warpScript(travelling->mark));
     travelling->isChecking = true;
 }
 

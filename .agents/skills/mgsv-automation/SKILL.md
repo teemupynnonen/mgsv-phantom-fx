@@ -7,14 +7,19 @@ description: Debug and verify Phantom FX lighting in the running game with the a
 
 The user steers to a broken spot once and presses **F9**. Everything after that is yours: read what the game recorded, ask it questions while it is frozen, try fixes on the same frame, and verify them yourself. Do not ask the user for screenshots, probe readings or numbers; get them from the game.
 
-The tools exist in **dev builds only** (`build/dev`). Reference: `docs/DEVELOPMENT.md`, "Debug cases". Every command line the game takes: `src/dev/automation.hpp`.
+The tools exist in **dev builds only** (`build/dev`). Reference: `docs/DEVELOPMENT.md`, "Debug cases". Every command line the game takes: `src/devkit/automation.hpp`.
+
+**Prefer the MCP tools** when the client has `phantom-fx-automation` (`session`, `run`, `case`, `capture`, `verify`, `setting`, `job`): a case comes back with its pictures and long work is a job. The commands below are the same surface for clients without it, and the rules and reading advice below apply to both.
 
 ## Rules that protect the user
 
 - **Never run the automation copy beside the player's game.** `launch.ps1` restores the player's save files when the copy exits, so it could overwrite newer saves. `fx.py replay` and `fx.py scenarios` refuse to start then. Check before launching anything by hand: `(Get-Process mgsvtpp).Path`.
 - **Never stop the player's game.** If it is in the way, ask the user to close it, or wait for it to close. To stop the copy, stop only a process whose path is under `mgsv-automation`.
+- **Close the copy when the work is done.** `session` with action `stop` closes only the copy; do not leave it running after a test. The MCP closes a copy it started after ten minutes with no tool call, and when the server exits.
 - **`--copy` decides which game you talk to.** Without it, `fx.py` commands reach the player's running game. `setting` writes to their `PhantomFX.ini`, so restore what you change.
 - **Tell the user when their game is left frozen.** F9 again, or `fx.py run release`, lets it go.
+- **The tools press buttons, not the keyboard, and take no focus.** A synthetic gamepad A goes to the game through DevKit's XInput hook, so `session start`, `boot`, `travel` and `recover` do not bring the off-screen copy forward and do not touch what the user is typing. The only keyboard press is Space when the copy's window already has the foreground.
+- **A loading screen that waits for Space is not stuck, and never restart the game over one.** `boot`, `travel` and `recover` press a gamepad A (or Space, if the game already has the foreground) themselves every few seconds, from outside the game: a loading screen stops the game's own loop, so a command file cannot press it. When the loop is alive, `fx.py run "key space"` or `"pad a"` presses too. Call `session action='recover'` for a copy that sits on such a screen; do not improvise a keypress or a reboot.
 - **Keep game images out of the repository.** Scenario baselines stay in `mgsv-automation/baselines`; only numbers go in `scenarios.json`.
 - **Commit, push and install into the player's game only when the user has asked.** Install with a backup of the current add-on and with their game closed.
 
@@ -28,10 +33,10 @@ uv run -q --with numpy --with pillow --with scipy python case.py [--copy] [<case
 uv run -q --with numpy --with pillow python perf.py [--copy] <command>
 ```
 
-Cases are in `PhantomFX-automation/cases` beside each game:
+Cases are in `DevKit/cases` beside each game:
 
-- Player: `C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP`
-- Copy: `%USERPROFILE%\Documents\Development\mgsv-automation\game`
+- Player: `C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP`, or `PHANTOM_FX_GAME`
+- Copy: `%USERPROFILE%\Documents\Development\mgsv-automation\game`, or `PHANTOM_FX_AUTOMATION_GAME`
 
 ## The loop
 
@@ -51,14 +56,20 @@ Cases are in `PhantomFX-automation/cases` beside each game:
 | Command | What it does |
 |---|---|
 | `fx.py [--copy] status` | Frame, camera, frozen or running, what the scene holds |
+| `fx.py [--copy] weather [<type> [<fog>]|off]`, `fx.py [--copy] clock [<seconds> [run]]` | The sky and the time of day, read or set |
+| MCP `session action='recover'` | A copy stuck on a screen that waits for a key: presses space at its window, no restart |
+| `fx.py [--copy] run "shaders <text>"`, `"shader <hash start or name> [save]"` | DevKit's shader list (stage, hash, source name, size), and one shader's assembly, saved with `save` into `DevKit/shaders` |
+| `fx.py [--copy] run "frame"` | DevKit's frame recorder: every draw with its shaders, targets and states into `DevKit/frame-log/frame-<n>.txt`; needs that folder |
 | `fx.py [--copy] probe <x> <y> [...]` | Shadow and lamp probes at render pixels. Needs ray-traced shadows or path tracing running |
 | `fx.py [--copy] case [<name>]` | Records a case as F9 does, then reports it |
-| `fx.py [--copy] run "<line>" ...` | Any lines of `src/dev/automation.hpp`, as one command file |
+| `fx.py [--copy] run "<line>" ...` | Any lines of `src/devkit/automation.hpp`, as one command file |
 | `fx.py replay [<case>]` | Fresh copy, back at the spot, recorded and compared. Latest case of either game by default |
 | `fx.py scenario <name> "<why>" [<case>]` | Keeps a case as a scenario, its numbers as what to expect |
 | `fx.py scenarios [--accept] [<name> ...]` | Runs them, with the player's settings |
 | `fx.py [--copy] boot` | Copy from launch into free roam, 30 to 45 s |
-| `fx.py [--copy] travel <map>` | `afghanistan`, `africa` or `motherbase` free roam |
+| `fx.py [--copy] travel <map>` | `afghanistan`, `africa` or `motherbase` free roam; a loading screen that waits for Space is pressed through |
+| MCP `session action='show'` / `'hide'`, `fx.py [--copy] show` / `hide` | The copy's window on screen, to watch or let the user play it, or off screen again |
+| `fx.py [--copy] run "key space"` | Space at the game's window, for a loading screen that waits for it while the game's loop runs |
 | `fx.py [--copy] acc` | From free roam into the helicopter's cabin (the ACC) |
 | `fx.py png <file.dds>`, `fx.py diff <a.dds> <b.dds>` | A texture as a picture; how two captures differ |
 | `check_release.py` | Fails if the tools reached a release build |
@@ -66,11 +77,11 @@ Cases are in `PhantomFX-automation/cases` beside each game:
 | `perf.py [--copy] log [<file>]` | A play session's costs by place, then its worst seconds |
 | `perf.py [--copy] ab <test> ...` | What each change costs on the frame as it stands, with the drift to judge it by. `--images` also says how far the frame moved |
 
-To drive the copy by hand: run `install.ps1` (`-Settings @()` for the player's exact settings), start `launch.ps1` in the background, then `fx.py --copy boot`. `replay` and `scenarios` do all of this themselves.
+To drive the copy by hand: run `install.ps1` (`-Settings @()` for the player's exact settings), start `launch.ps1` in the background, then `fx.py --copy boot`. `replay` and `scenarios` do all of this themselves. With the MCP, `session` with action `start` does install, launch, the startup notices and logos, and free roam as one job; the steps above are the manual equivalent.
 
 ## Costs
 
-With **Record the costs** on the Developer page ticked, or after `fx.py run "record_costs 1"`, a dev build writes what each second cost to `PhantomFX-automation/perf/`. The user plays, you read `perf.py log`. It stays as set across starts. A case always takes `perf.json` on its frozen frame. Judge a change by `perf.py ab` on a frozen frame, and never by a difference smaller than the drift it reports.
+With **Record the costs** on the Developer page ticked, or after `fx.py run "record_costs 1"`, a dev build writes what each second cost to `DevKit/perf/`. The user plays, you read `perf.py log`. It stays as set across starts. A case always takes `perf.json` on its frozen frame. Judge a change by `perf.py ab` on a frozen frame, and never by a difference smaller than the drift it reports.
 
 ## Reading a report
 
@@ -113,7 +124,8 @@ Everything here is left out of a release build altogether, because hooking syste
 |---|---|
 | "no record came" | Nothing rendered: a freeze during loading stalls the game, or the scene is off |
 | "no capture came" | The GPU's frames were not timed: nothing rendered, as above |
-| `fx.py` times out | No dev build running there, or the copy failed to start: read `PhantomFX-automation/launch.log` |
+| `fx.py` times out | No dev build running there, or the copy failed to start: read `DevKit/launch.log` |
+| Stuck on a loading screen after travel or boot | It waits for Space, and the game's loop is stopped with it: `session action='recover'` presses it from outside, no restart. `fx.py --copy travel <map>` presses it too |
 | Report says "No record of the frame" | The case's `log.txt` has the error |
 | Title screen shows the cabin but a case fails | The title moves on by itself into a load. Use `fx.py --copy acc` |
 | A scenario says "did not reach the view" with the eye at 0 m | Compare `before-after.png`, then the numbers, before trusting it |

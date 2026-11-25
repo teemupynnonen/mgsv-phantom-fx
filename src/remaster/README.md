@@ -126,7 +126,7 @@ To take out both, delete this folder, `src/dev/remaster/` and `tests/remaster_te
 | `src/addon.cpp` | `log(remaster::hook());` and the include |
 | `src/features/ray_traced_lights/local_lights.cpp` | The `else` block that calls `remaster::lampBrightness`, and the include |
 | `src/passes/ray_tracing/ray_tracing.cpp` | `frame.selfLight` and `frame.selfLightVersion`, and the include |
-| `src/dev/automation.cpp` | The `remaster` line and the include |
+| `src/dev/devkit_link.cpp` | The `remaster` line and the call into the tool |
 | `src/modules.cpp` | The `remaster::configure` row and the include |
 | `src/dev/dev.cpp` | The `remaster::drawTool()` line and the include |
 | `src/dev/dev.cmake` | The `src/dev/remaster/` sources and `PHANTOM_FX_MATERIALS_FILE` |

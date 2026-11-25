@@ -1,14 +1,15 @@
-#include "dev/game_lua.hpp"
+#include "devkit/game_lua.hpp"
 
-#include "device_check.hpp"
-#include "game_code.hpp"
-#include "log.hpp"
+#include "devkit/game.hpp"
+#include "devkit/host.hpp"
+#include "devkit/log.hpp"
 
 #include <Windows.h>
+#include <format>
 #include <mutex>
 #include <utility>
 
-namespace phantom_fx::game_lua
+namespace devkit::game_lua
 {
 namespace
 {
@@ -68,7 +69,7 @@ constexpr unsigned char PushStringCode[]{0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x8
 constexpr unsigned char PushBooleanCode[]{0x4C, 0x8B, 0x41, 0x10, 0x33, 0xC0, 0x85, 0xD2, 0x0F, 0x95, 0xC0, 0x41, 0xC7, 0x40, 0x08, 0x01,
     0x00, 0x00, 0x00, 0x41, 0x89, 0x00, 0x48, 0x83};
 
-const game_code::Expected Checked[]{{BeginScopeRva, BeginScopeCode}, {EndScopeRva, EndScopeCode}, {LoadBufferRva, LoadBufferCode}, {CallRva, CallCode},
+const game::Expected Checked[]{{BeginScopeRva, BeginScopeCode}, {EndScopeRva, EndScopeCode}, {LoadBufferRva, LoadBufferCode}, {CallRva, CallCode},
     {ToStringRva, ToStringCode}, {PushStringRva, PushStringCode}, {PushBooleanRva, PushBooleanCode}};
 
 // Called with the code, its chunk name and whether to try it as an expression first. While the code
@@ -116,16 +117,16 @@ Console published;
 bool isSupported() noexcept
 {
     static const bool expected = [] {
-        if (!isSupportedGameBuild()) return false;
+        if (!game::isSupportedBuild()) return false;
 
         for (const auto& one : Checked)
         {
-            if (game_code::matchesPastHooks({&one, 1})) continue;
+            if (game::matchesPastHooks({&one, 1})) continue;
 
-            log("Game Lua: unexpected code at " + hex(one.rva) + ", so the Lua tools are unavailable.");
+            devkit::log(std::format("Game Lua: unexpected code at 0x{:X}, so the Lua tools are unavailable.", one.rva));
             return false;
         }
-        if (!game_code::matches(Checked)) log("Game Lua: another mod hooks the game's Lua; the Lua tools call through its hooks.");
+        if (!game::matches(Checked)) devkit::log("Game Lua: another mod hooks the game's Lua; the Lua tools call through its hooks.");
 
         return true;
     }();
@@ -137,7 +138,7 @@ std::optional<Outcome> run(std::string_view code, std::string_view name, bool ex
 {
     if (!isSupported()) return std::nullopt;
 
-    auto* const engine = game_code::image();
+    auto* const engine = game::image();
     auto* const system = *reinterpret_cast<std::uint8_t**>(engine + ScriptSystemRva);
     if (!system || !*reinterpret_cast<void**>(system + 8)) return std::nullopt;
 
@@ -147,7 +148,8 @@ std::optional<Outcome> run(std::string_view code, std::string_view name, bool ex
     // 0x2B31D2, beside the script system, 2026-11-07). The game runs its own queue at the next frame.
     reinterpret_cast<BeginScope>(engine + BeginScopeRva)(&scope, true, false);
     void* const lua = *reinterpret_cast<void**>(scope.system + 8);
-    int status = reinterpret_cast<LoadBuffer>(engine + LoadBufferRva)(lua, Harness.data(), Harness.size(), "=PhantomFX harness");
+    const auto chunkName = std::format("={} harness", devkit::name());
+    int status = reinterpret_cast<LoadBuffer>(engine + LoadBufferRva)(lua, Harness.data(), Harness.size(), chunkName.c_str());
     if (status == 0) status = reinterpret_cast<Call>(engine + CallRva)(lua, 0, 1, 0);
     if (status == 0)
     {

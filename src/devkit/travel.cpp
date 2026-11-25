@@ -1,15 +1,15 @@
-#include "dev/travel.hpp"
+#include "devkit/travel.hpp"
 
-#include "fxui/fxui.hpp"
-#include "dev/game_lua.hpp"
-#include "log.hpp"
+#include "devkit/game_lua.hpp"
+#include "devkit/host.hpp"
+#include "devkit/log.hpp"
 
 #include <format>
 #include <mutex>
 #include <string>
 #include <utility>
 
-namespace phantom_fx::travel
+namespace devkit::travel
 {
 namespace
 {
@@ -102,23 +102,23 @@ void go(Map map, std::optional<std::array<float, 3>> place) noexcept
 
 bool depart(std::string_view code, std::string_view tool, std::string_view target)
 {
-    const auto outcome = game_lua::run(std::string(DepartureHelpers).append(code), std::format("=PhantomFX {}", tool));
+    const auto outcome = game_lua::run(std::string(DepartureHelpers).append(code), std::format("={} {}", devkit::name(), tool));
     if (!outcome)
     {
-        fxui::toast(fxui::Tone::Warn, tool, "The game's scripts are not running yet.");
+        toast(Tone::Warn, tool, "The game's scripts are not running yet.");
         return false;
     }
 
     if (!outcome->ran)
     {
         log(std::format("{}, {}, failed: {}", tool, target, outcome->text));
-        fxui::toast(fxui::Tone::Bad, std::format("{} failed", tool), "See PhantomFX.log.");
+        toast(Tone::Bad, std::format("{} failed", tool), "See PhantomFX.log.");
         return false;
     }
 
     if (!outcome->text.empty())
     {
-        fxui::toast(fxui::Tone::Warn, tool, outcome->text);
+        toast(Tone::Warn, tool, outcome->text);
         return false;
     }
 
@@ -141,6 +141,6 @@ void onFrameStart() noexcept
     if (!depart(setup + std::string(Script), "Travel", destination.name)) return;
 
     log("Travelling to " + std::string(destination.name) + ".");
-    fxui::toast(fxui::Tone::Ok, std::format("Travelling to {}", destination.name));
+    toast(Tone::Ok, std::format("Travelling to {}", destination.name));
 }
 }

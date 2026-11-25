@@ -6,7 +6,7 @@
 // without the names that repeat a demo, then the Mother Base cutscenes in the game's queue
 // (TppDefine.MB_FREEPLAY_DEMO_PRIORITY_LIST), but for the six docs/DEVELOPMENT.md leaves out under
 // "Known limits". The Developer page's picker shows "code title: name (demo id)".
-namespace phantom_fx::cutscenes
+namespace devkit::cutscenes
 {
 // Lua the stages and places below call, ahead of the chunk that reads them. Cluster 7 has no name in
 // TppDefine.CLUSTER_DEFINE.
