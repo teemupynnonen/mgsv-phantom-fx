@@ -661,6 +661,11 @@ std::shared_ptr<const Model> describeModel(std::uint64_t hash, std::span<const s
         if (part.indices.empty()) model->parts.pop_back();
     }
 
+    // A model with a sun stand-in (a building, a hut): its main-view-only meshes are what the stand-in stands in for, roughly
+    // (GI_GEOMETRY_STOOD_IN), as the rays' sun shadow leaves the opening's trim to the stand-in alone otherwise.
+    if (std::ranges::any_of(model->parts, [](const ModelPart& part) { return part.role == MeshRole::SunShadowOnly; }))
+        for (auto& part : model->parts) part.isStoodIn = part.role == MeshRole::MainViewOnly;
+
     return model;
 }
 
@@ -704,7 +709,8 @@ float uvPerMetreOf(const ModelPart& part)
 
 Material materialOf(const ModelPart& part, const MaterialTextures& textures, SelfLightFilter selfLight)
 {
-    Material material{.flags = flagsOf(part.role) | (part.uvs.empty() ? 0u : GI_GEOMETRY_UV), .materialIndex = part.materialIndex, .emission = part.emission};
+    Material material{.flags = flagsOf(part.role) | (part.uvs.empty() ? 0u : GI_GEOMETRY_UV) | (part.isStoodIn ? GI_GEOMETRY_STOOD_IN : 0u),
+        .materialIndex = part.materialIndex, .emission = part.emission};
     if (part.selfLight && selfLight)
     {
         auto [name, color, intensity] = *part.selfLight;

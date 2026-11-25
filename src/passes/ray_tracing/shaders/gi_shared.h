@@ -48,6 +48,7 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_GEOMETRY_LAYER_BLEND   4096u // Its layer takes the base texture's place where it lies, not multiplying it (LayeredAlbedo)
 #define GI_GEOMETRY_LAYER_LINEAR  8192u // With GI_GEOMETRY_LAYER_BLEND: in linear light, not on the encoded values
 #define GI_GEOMETRY_LAYER_MASK_BLUE 16384u // Its layer's mask is in the texture's blue channel, not the red
+#define GI_GEOMETRY_STOOD_IN      32768u // A main-view-only mesh of a model with a sun stand-in (a hut's window trim, which the stand-in leaves open): with lightDiagnostics.w the sun's rays meet it (StopsShadowRay)
 
 // The game's textures the scene holds at most (g_SceneTextures, gi_textures.hpp).
 #define GI_MAX_TEXTURES 4096u
@@ -208,7 +209,7 @@ struct GIFrameConstants
     float4 shadowParams; // x: tangent of the sun's angular radius (SunSample); y: how much sun an alpha-tested mesh blocks; z: ray length; w: 1 on a fresh start
     uint4 objectMotion;  // x: 1 when g_ObjectVelocity (gi_common.hlsli) holds this frame's velocity of the game's moving meshes
     uint4 shadowDiagnostics; // x: 1 for every surface casting from both sides (ShadowRayTowards); y: 1 for the debug view of where the shadow rays leave (ShadowStartColor); zw: the pixel the probes read
-    uint4 lightDiagnostics;  // z: the light's debug view into g_LightDebug (CompositeLight), GI_LIGHT_DEBUG_*
+    uint4 lightDiagnostics;  // z: the light's debug view into g_LightDebug (CompositeLight), GI_LIGHT_DEBUG_*; w: 1 for GI_GEOMETRY_STOOD_IN meshes blocking the sun
     // x: 1 while DLSS Ray Reconstruction denoises (ray_reconstruction.hpp): the light takes a sample a render
     // pixel and goes out without its denoiser (gi_light.hlsl, PerRenderPixel), the sun's and the lights' shadows
     // as their rays found them. y: 1 while path tracing: the hits have their materials (HitMaterialOf in
