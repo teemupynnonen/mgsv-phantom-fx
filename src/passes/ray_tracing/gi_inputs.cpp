@@ -189,7 +189,7 @@ void vertexShaderBound(ID3D11DeviceContext* context, VertexShader kind) noexcept
 
 void drawIndexed(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call) noexcept
 {
-    const bool isModelOrTerrain = boundKind == VertexShader::Model || boundKind == VertexShader::Terrain;
+    const bool isModelOrTerrain = boundKind == VertexShader::Model || boundKind == VertexShader::Vegetation || boundKind == VertexShader::Terrain;
     if (!active.load(std::memory_order_relaxed) || boundContext != context || !isModelOrTerrain || !call.count) return;
 
     const HookTimer timer;
@@ -221,6 +221,14 @@ void drawIndexed(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call
 
         // A skinned mesh (useWeightCount set): its bones as drawn, for the scene's characters.
         if (boundKind == VertexShader::Model && object->useWeightCount[0] != 0) noteBones(context, *scene, *object, call);
+
+        // The object brush's vegetation: the wave its vertex shader bends it with, so the scene's own
+        // vegetation sways as the game's does.
+        if (boundKind == VertexShader::Vegetation)
+        {
+            const auto* material = constant_capture::writtenTo<VegetationMaterialConstants>(constants[2].Get());
+            if (material) engine_scene::noteVegetationWind(*material);
+        }
 #if PHANTOM_FX_DEV_TOOLS
         if (boundKind == VertexShader::Model && object->useWeightCount[0] == 0 && recordingRigid.load(std::memory_order_relaxed))
         {

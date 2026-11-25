@@ -16,6 +16,11 @@ namespace phantom_fx::scene_description
 using Transform = std::array<float, 12>; // Object to world: three rows applied as dot(row, (v, 1))
 using Vertex = std::array<float, 3>;
 
+// A placement leaned by the wind: each point moves by `lean` along the ground for every metre it stands
+// above the placement's origin, so a grass clump's feet stay put and its tops swing. `lean` is the wind's
+// direction times its strength, the tangent of the lean.
+Transform leanedByWind(Transform placement, float leanX, float leanZ);
+
 // The most bones a model is posed with (Model::bones).
 constexpr std::uint32_t MaxBones = 1024;
 
