@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **The bushes and grass the object brush places move with the wind.** In the ray-traced scene they stood still, so
+  their traced shadows, bounce light and reflections did not move either. They now lean with the same wave the game's
+  own vegetation shaders bend them with: the direction, phase and amplitude come from the vegetation draws' material
+  constants, and each clump adds the phase the game gives it in its placement. The clone plugin's rocks and props stay
+  put, as the game keeps them. The per-vertex height weight is a linear shear, since a traced instance's transform is
+  affine, so a tall clump's top leans more than its base.
+
 - **DevKit: a developer toolkit of its own, for any MGSV add-on.** `DevKit.addon64` loads beside Phantom FX or any
   other add-on, with its own **DevKit** page in the ReShade overlay, the command runner the automation folder drives, F9,
   the saves redirect and the logo skip. Another add-on plugs its own lines, state, status, waits and render-thread jobs in
