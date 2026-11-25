@@ -76,4 +76,11 @@ void Shadows::record(gi_d3d12::Recorder& r, bool forReconstruction)
 
     fresh = false;
 }
+
+void Shadows::dispatchRaysForReconstruction(gi_d3d12::Recorder& r)
+{
+    r.dispatch(Kernel::TraceSunShadows, groups(renderWidth, MaskTileWidth), groups(renderHeight, MaskTileHeight));
+    // The rays wrote the output; the denoiser's history stops here, and starts over after.
+    fresh = true;
+}
 }

@@ -68,6 +68,9 @@ constexpr float AlphaTestedBlocking = 0.5f, ShadowRayLength = 5000;
 // How far global illumination's diffuse rays look for a hit with Short rays, metres (LightRayReach in gi_hit_light.hlsli):
 // what lies further out lights little, and the long rays cost the most to trace.
 constexpr std::uint32_t LightRayReach = 100;
+// From how far a light ray's first hit takes its light from the light cache instead of tracing its own rays, metres
+// (TraceLight); 0 never. Further hits sit in cells of many pixels, and a cell's light lags a moving light by a few frames.
+constexpr std::uint32_t LightCacheReach = 10;
 // Diagnostics: the most phases a frame's list times.
 constexpr std::uint32_t MaxMarks = 32;
 
@@ -1199,7 +1202,7 @@ Result render(Frame& frame)
 
         // A ray a render pixel for Ray Reconstruction, whatever the ray quality: as many rays as High's four a
         // 2 x 2, the most a sample can take apart.
-        constants.lightRays = {traces.isForReconstruction ? 1u : frame.lightRays, frame.usesShortLightRays ? LightRayReach : 0u, 0, 0};
+        constants.lightRays = {traces.isForReconstruction ? 1u : frame.lightRays, frame.usesShortLightRays ? LightRayReach : 0u, LightCacheReach, 0};
 
         // ---- Descriptors ----
         descriptors.texture(binding::Depth, depth, DXGI_FORMAT_R32_FLOAT);
@@ -1308,8 +1311,19 @@ Result render(Frame& frame)
         for (auto* each : trace::inOrder())
             if (each->runsIn(traces)) each->record(traceFrame, recorder);
 
-        if (traces.tracesLampLight) path_tracing_rays::recordLamps(recorder, frame.width, frame.height);
-        if (traces.tracesSun) s.shadows->record(recorder, traces.isForReconstruction);
+        // For Ray Reconstruction the lamps' light and the sun's rays read nothing the light's passes write, nor the
+        // light theirs: they run alongside its rays, between one pair of barriers (docs/DEVELOPMENT.md, "Overlapping
+        // traces"). The debug views read the sun's rays straight after them, and the scene view has no light passes.
+        const bool isAlongsideLight = traces.tracesLight && traces.isForReconstruction && !frame.showScene && !frame.debugShadows;
+        const auto alongsideLight = [&] {
+            if (traces.tracesLampLight) path_tracing_rays::dispatchLamps(recorder, frame.width, frame.height);
+            if (traces.tracesSun) s.shadows->dispatchRaysForReconstruction(recorder);
+        };
+        if (!isAlongsideLight)
+        {
+            if (traces.tracesLampLight) path_tracing_rays::recordLamps(recorder, frame.width, frame.height);
+            if (traces.tracesSun) s.shadows->record(recorder, traces.isForReconstruction);
+        }
         if (frame.debugShadows)
         {
             recorder.mark("debug view and probe");
@@ -1327,7 +1341,9 @@ Result render(Frame& frame)
             recorder.mark("scene view");
             recorder.dispatch(Kernel::DebugScene, groups(frame.width, 8), groups(frame.height, 8));
         }
-        else if (traces.tracesLight) s.light->record(recorder, parity, denoiserCamera(frame), slot, lightDebug && frame.lightDebugView == LightDebugView::Validation);
+        else if (traces.tracesLight)
+            s.light->record(recorder, parity, denoiserCamera(frame), slot, lightDebug && frame.lightDebugView == LightDebugView::Validation,
+                isAlongsideLight ? std::function<void()>{alongsideLight} : std::function<void()>{});
 
         if (traces.tracesReflections) path_tracing_rays::recordReflections(recorder, frame.width, frame.height);
 

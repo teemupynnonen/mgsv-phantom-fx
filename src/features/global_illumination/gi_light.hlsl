@@ -290,8 +290,36 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
         }
         else
         {
-            // The hit's own light, from the sun and a light.
             HashGridCache_Visibility visibility = VisibilityOf(hit, direction);
+            // A distant hit takes the light leaving its cell, which holds what its own rays would find (the sun, the sky, the lights, and its
+            // bounce): about four rays fewer. The cell keeps itself lit by the hits queued here, a few a frame. Not a self-lit mesh (its light
+            // is its own), and not a cell without samples yet: those trace as before.
+            if (g_Frame.lightRays.z > 0u && hit.distance >= float(g_Frame.lightRays.z) && !(HitFlags(visibility) & GI_GEOMETRY_EMISSIVE))
+            {
+                uint hitTile;
+                bool isNewHitTile;
+                uint hitCell = HashGridCache_InsertCell(origin + hit.distance * direction, direction, hit.distance, hitTile, isNewHitTile);
+                if (hitCell != kGI1_InvalidId)
+                {
+                    HashGridCache_TouchCell(hitTile, isNewHitTile);
+                    HashGridCache_KeepForLight(visibility, hitCell, 2u * g_Frame.lightLayout.z, g_Frame.lightLayout.z);
+                    float4 direct = HashGridCache_FilteredRadiance(g_HashGridCache_ValueBuffer, hitCell, HASH_MAX_SAMPLE_COUNT);
+                    if (direct.w >= 1.0f)
+                    {
+                        light = direct.rgb / direct.w + HashGridCache_FilteredIndirect(hitCell);
+                        CountDiagnostic(GI_COUNTER_CACHED_HITS, true);
+                        MaxDiagnostic(GI_COUNTER_MAX_DIRECT, light);
+                        totalDistance += hit.distance;
+                        total += light;
+                        float cachedLuminance = luminance(light);
+                        weightedDirection += cachedLuminance * direction;
+                        totalLuminance += cachedLuminance;
+                        continue;
+                    }
+                }
+            }
+
+            // The hit's own light, from the sun and a light.
             HitMaterial material = HitMaterialOf(visibility, 0.0f, true);
             float3 hitWorld = material.world, hitNormal = material.geometric, albedo = material.albedo;
             bool leaf = material.isLeaf;
