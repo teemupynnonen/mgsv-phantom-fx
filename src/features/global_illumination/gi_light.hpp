@@ -33,9 +33,10 @@ public:
     void describe(gi_d3d12::Descriptors& descriptors, std::uint32_t parity) const;
     // The passes, from the rays to the light in the output (u0), on the frame slot's room (`frameSlot`), with
     // NRD's validation layer when `isValidationShown`. The denoiser binds its own root signature and descriptor
-    // heap; the recorder's rebind restores the frame's.
+    // heap; the recorder's rebind restores the frame's. `alongsideRays` records dispatches that neither read nor
+    // write what the light's rays do, between the rays and the barrier after them, so the GPU runs them together.
     void record(gi_d3d12::Recorder& recorder, std::uint32_t parity, const gi_denoiser::Camera& camera, std::uint32_t frameSlot,
-        bool isValidationShown);
+        bool isValidationShown, const std::function<void()>& alongsideRays = {});
 
 private:
     UINT renderWidth, renderHeight, lightWidth, lightHeight;
