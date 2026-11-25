@@ -31,6 +31,10 @@
 - **A tools build** (`--preset tools`): the hooks and the tools with none of Phantom FX's changes to the frame, for
   capturing or measuring the game as it draws itself.
 
+- **Photo mode: no near clip plane.** A new **No near clip plane** switch under Photo mode on the Camera page moves
+  the free camera's near clip plane from 7 cm to 1 mm, so what the camera nearly touches no longer vanishes. Off by
+  default; the game's own camera is untouched.
+
 - **The Mother Base emblem shows again in Sortie Prep, and stands where it should.** It was a black square in front of
   Snake, the horse and the helicopter. The game builds the emblem in a corner of its screen buffer as a save loads, which
   the upscaler's full-resolution UI had taken over, so the game kept an empty emblem; and the emblem, the one UI image the
@@ -71,16 +75,6 @@
   map has it, and it casts through its alpha: at the case's ground pixel the floor is as dark as the game's. The fronds
   stay out of the scene: in, every global illumination and reflection ray paid to test them, 4.5 of a 6.7 ms frame at the
   case, and the card already casts that shade for 2 ms.
-
-## 2.0.1
-
-### New
-
-- **Photo mode: no near clip plane.** A new **No near clip plane** switch under Photo mode on the Camera page moves
-  the free camera's near clip plane from 7 cm to 1 mm, so what the camera nearly touches no longer vanishes. Off by
-  default; the game's own camera is untouched.
-
-### Fixed
 
 - Ray-traced light where things touch the ground: no pale glow under Snake's arm when he lies prone, and no black
   patches on the ground by a boot or a knee resting on a slope.
