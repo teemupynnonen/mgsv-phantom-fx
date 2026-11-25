@@ -232,6 +232,56 @@ void aPlaceTakenLastTimeKeepsItsPlace()
     expect(keptAgain.taken.front() == 0, "A place the rays had last time keeps its place against a rival a tenth larger.");
 }
 
+// A distant lamp's reach is a few render pixels: the upscaler's jitter, under a pixel, moves its edges across
+// pixel boundaries, so the lamps at the cap swapped from frame to frame with the camera still, each drawn
+// path traced one frame and by the game, unshadowed, the next (2026-11-07, Africa at night, 20,000 lights
+// past the cap in ten seconds).
+void jitterLeavesChoiceAlone()
+{
+    std::vector<DrawnLight> lights;
+    for (std::size_t i = 0; i <= GI_MAX_LOCAL_LIGHTS; ++i)
+        lights.push_back(lightAt(QuarticPoint, {0.37f * static_cast<float>(i % 7) - 1.1f, 0.21f * static_cast<float>(i % 5) - 0.4f,
+                                                30.0f + 0.013f * static_cast<float>(i)}, 0.5f + 0.0007f * static_cast<float>(i)));
+
+    const auto keysTaken = [&](float x, float y) {
+        auto jittered = lights;
+        for (auto& light : jittered)
+        {
+            light.scene.cameraCenterOffset[0] = x;
+            light.scene.cameraCenterOffset[1] = y;
+        }
+        std::vector<std::uint64_t> keys;
+        for (const auto index : chooseFrom(jittered).taken) keys.push_back(keyOf(jittered[index]));
+        std::ranges::sort(keys);
+
+        return keys;
+    };
+    const auto still = keysTaken(0, 0);
+    // A Halton sequence's first offsets, in NDC of a 100 x 100 viewport: half a pixel at most.
+    for (const auto [x, y] : {std::pair{0.0f, 0.0033f}, {-0.005f, -0.0033f}, {0.0025f, 0.0078f}, {-0.0075f, -0.0011f}})
+        expect(keysTaken(x, y) == still, "The upscaler's jitter does not change which lights the rays take.");
+}
+
+// Africa's villa wall lamps are two spots at one place, one up and one down (2026-11-08). Traced separately, one could
+// fit the cap while the other did not, and the wall they light blinked between the two draws.
+void aPlacesLightsComeAndGoTogether()
+{
+    // At the cap: one more light would not fit, and it shares its place with another.
+    std::vector<DrawnLight> lights = growingLights(GI_MAX_LOCAL_LIGHTS - 2);
+    auto up = lightAt(QuarticPoint, {0, 1, 40}, 6);
+    auto down = up;
+    down.light.axis[1] = -1;
+    down.game = &QuarticSpot;
+    lights.push_back(up);
+    lights.push_back(down);
+    lights.push_back(aroundCamera(150, 150)); // The biggest: always taken
+
+    const auto choice = chooseFrom(lights);
+    const auto takenUp = std::ranges::find(choice.taken, lights.size() - 3) != choice.taken.end();
+    const auto takenDown = std::ranges::find(choice.taken, lights.size() - 2) != choice.taken.end();
+    expect(takenUp == takenDown, "Two spots at one place are both taken or both left out.");
+}
+
 void otherEyeLeftAndCounted()
 {
     auto lights = std::vector{aroundCamera(100, 100), aroundCamera(100, 100)};
