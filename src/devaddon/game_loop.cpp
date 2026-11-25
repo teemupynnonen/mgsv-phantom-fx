@@ -6,6 +6,7 @@
 #include "devkit/game_lua.hpp"
 #include "devkit/travel.hpp"
 #include "game_code.hpp"
+#include "game_loop_code.hpp"
 #include "log.hpp"
 
 #include <Windows.h>
@@ -18,9 +19,8 @@ namespace devaddon
 namespace
 {
 // The main loop's frame start, on the loop object (rcx). PhantomFX's game_loop.hpp has the loop's end too.
-constexpr std::uintptr_t FrameStartRva = 0x7F840;
-// push rbx; push rsi; push rdi; sub rsp, 0x60; mov qword ptr [rsp + 0x20], -2
-constexpr unsigned char FrameStartCode[]{0x40, 0x53, 0x56, 0x57, 0x48, 0x83, 0xEC, 0x60, 0x48, 0xC7, 0x44, 0x24, 0x20, 0xFE, 0xFF, 0xFF, 0xFF};
+using phantom_fx::game_loop_code::FrameStartCode;
+using phantom_fx::game_loop_code::FrameStartRva;
 
 using FrameStart = void (*)(std::uint8_t* loop, void* argument);
 using RegisterFrameStart = bool (*)(void (*)());
@@ -65,13 +65,20 @@ std::string hook() noexcept
     if (!devkit::game::isSupportedBuild()) return "Unknown game build; the game loop is not hooked.";
 
     auto* base = phantom_fx::game_code::image();
-    if (std::memcmp(base + FrameStartRva, FrameStartCode, sizeof(FrameStartCode)))
+    auto* start = base + FrameStartRva;
+    const devkit::game::Expected expected{FrameStartRva, FrameStartCode};
+    if (!devkit::game::matchesPastHooks({&expected, 1}))
         return "The game loop has unexpected code; the tools that run at the frame start are unavailable.";
 
-    const auto status = phantom_fx::game_code::hookAt(base + FrameStartRva, &frameStart, original);
+    // An add-on loaded before this, an older PhantomFX among them, may already hook the frame start. Its
+    // jump is all that is left of the first bytes; hooking on top calls through it.
+    const bool onAnotherHook = devkit::game::hookJumpLength(start) != 0;
+    const auto status = phantom_fx::game_code::hookAt(start, &frameStart, original);
     if (status != MH_OK) return std::string("Hooking the game loop failed (") + MH_StatusToString(status) + ").";
 
-    return "The game loop is hooked.";
+    if (!onAnotherHook) return "The game loop is hooked.";
+    return phantomFx() ? "The game loop is hooked on top of this PhantomFX's own; it predates the devkit's frame start."
+                       : "The game loop is hooked on top of another add-on's.";
 }
 
 void defer() noexcept

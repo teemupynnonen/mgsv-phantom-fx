@@ -1,6 +1,7 @@
 #include "game_loop.hpp"
 
 #include "character.hpp"
+#include "game_loop_code.hpp"
 #include "dev/dev.hpp"
 #include "dev_tools.hpp"
 #include "device_check.hpp"
@@ -22,10 +23,10 @@ namespace
 {
 // The main loop's frame start and end, both on the loop object (rcx). The start increments the frame
 // count at loop + FrameCountOffset and copies it to a global.
-constexpr std::uintptr_t FrameStartRva = 0x7F840, FrameEndRva = 0x7FDB0;
+using game_loop_code::FrameStartCode;
+using game_loop_code::FrameStartRva;
+constexpr std::uintptr_t FrameEndRva = 0x7FDB0;
 constexpr std::size_t FrameCountOffset = 0x150;
-// push rbx; push rsi; push rdi; sub rsp, 0x60; mov qword ptr [rsp + 0x20], -2
-constexpr unsigned char FrameStartCode[]{0x40, 0x53, 0x56, 0x57, 0x48, 0x83, 0xEC, 0x60, 0x48, 0xC7, 0x44, 0x24, 0x20, 0xFE, 0xFF, 0xFF, 0xFF};
 // sub rsp, 0x28; mov dword ptr [rcx + 0xA8], 0
 constexpr unsigned char FrameEndCode[]{0x48, 0x83, 0xEC, 0x28, 0xC7, 0x81, 0xA8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
