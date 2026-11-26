@@ -2848,12 +2848,12 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   - **The setting.** **Opacity micromaps** under Global illumination (`opacity_micromaps`, on by default) is read when the
     renderer starts, as it picks the runtime. Off, the Agility SDK runtime never loads. It is a setting because no query tells
     hardware from emulation: Microsoft's Agility SDK 1.619 table has RTX 40 and newer in hardware and older RTX cards emulating,
-    and both report the same raytracing tier. A test build on an RTX 3090 only lost time, so an older RTX card should turn it
-    off; the menu's tip says so. Since 2026-11-26 it is on by default, for its gain on RTX 40 and newer. Re-measured that
-    day on a 3090 at 1080p, DLAA, the leafy spot the case `micromaps-spot` records at (Africa, 22:00, 109 meshes with
-    micromaps): 59.2 and 63.0 ms of GPU frame with them on against 61.3 ms off, so the loss did not show here and the
-    spread between two runs of the same setting was wider than the difference. Anything smaller needs `perf.py ab` on a
-    frozen frame.
+    and both report the same raytracing tier. An earlier test build on an RTX 3090 was taken to only lose time, so older
+    cards were left to opt in. Since 2026-11-26 it is on by default, for its gain on RTX 40 and newer; re-measured that day
+    on a 3090 at 1080p, DLAA, at the leafy spot the case `micromaps-spot` records (Africa, 22:00, 109 meshes with
+    micromaps): 59.2 and 63.0 ms of GPU frame with them on against 61.3 ms off. One run cannot resolve a 2 ms loss:
+    the spread between two runs of the same setting (3.8 ms) was wider than the difference. Judge a smaller one by
+    `perf.py ab` on a frozen frame, and repeat runs, not one.
   - **One a mesh.** `Scene::micromaps` holds one for all that show a mesh, static or moving: a pose does not change how a texture
     lies on a triangle. The key is its index buffer's address and its texture's slot. Moving meshes matter most: the jungle's 258
     plants are characters. Refits read the indices, so they stay in the geometry pool, copied out of the frame's bake buffer.
