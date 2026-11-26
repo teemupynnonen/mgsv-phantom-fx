@@ -8,7 +8,7 @@
 #include <span>
 
 // The game's own layer, as the add-on that uses the devkit has it: the build it knows, and checks on
-// the code it expects to find. PhantomFX answers isSupportedBuild from src/device_check.cpp.
+// the code it expects to find. PhantomFX answers isSupportedBuild in src/dev/dev.cpp.
 namespace devkit::game
 {
 // Whether mgsvtpp.exe is the build the add-on knows. Its addresses are the build's alone.

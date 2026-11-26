@@ -1,4 +1,4 @@
-"""Talks to the add-on's automation (src/devkit/automation.hpp) in a running dev build.
+"""Talks to DevKit's automation (src/devkit/automation.hpp; PhantomFX's lines: src/dev/devkit_link.cpp) in a dev build.
 
   fx.py [--copy] run <line> [<line> ...]   runs the lines as one command file and prints the result
   fx.py [--copy] status                    what the game is doing
@@ -436,7 +436,7 @@ def wait_for_scripts(timeout=120.0, least_seconds=45.0):
 
 def boot(timeout=180.0):
     """Steps the game from wherever it is into free roam; returns the seconds it took. A loading screen that waits
-    for a key gets space every few seconds."""
+    for a key gets a gamepad A every few seconds."""
     start = time.monotonic()
     wait_for_scripts()
     last = None

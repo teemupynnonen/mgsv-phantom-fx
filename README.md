@@ -65,6 +65,7 @@ Needs DXR 1.1.
 - **Indirect lighting** (SSILVB)
 - **Volumetric fog** with light shafts and a physical sky
 - **Sea:** ocean waves around Mother Base, lit and reflected like the rest of the world
+- **Water caustics:** rippling sunlight on riverbeds
 
 ### Output and tools
 

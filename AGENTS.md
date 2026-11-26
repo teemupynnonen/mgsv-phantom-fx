@@ -5,6 +5,7 @@ part you are about to change.
 
 ## Build and test
 
+- Fetch the core first in a fresh clone or worktree: `git submodule update --init --recursive`.
 - Build with the presets: `cmake --preset release`, then `cmake --build --preset release`. Use `dev` for checks in the
   game (diagnostic log, Developer page, DevKit) and `tools` only for another mod's rendering. Never edit `build/`.
 - Run `ctest --test-dir build/release` before saying a change works. The tests need neither the game nor a GPU;

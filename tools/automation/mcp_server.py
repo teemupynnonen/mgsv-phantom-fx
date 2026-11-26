@@ -367,7 +367,7 @@ def session(action: Literal["status", "open", "freeze", "release", "boot", "trav
 @mcp.tool()
 def run(lines: list[str] | str, timeout_s: float = 120.0, target: Literal["player", "copy"] | None = None, confirm: bool = False) -> CallToolResult:
     """Runs automation lines as one command file and returns what each printed. The escape hatch for anything the
-    other tools do not cover; one string per line (src/devkit/automation.hpp lists them). `key space` presses Space at
+    other tools do not cover; one string per line (the `help` line lists them). `key space` presses Space at
     the game's window, but only while the game's loop runs: a stalled loading screen stops it, and `session action='recover'`
     presses from outside. confirm=true allows a setting line to write the player's ini."""
     note_activity()

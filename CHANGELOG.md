@@ -9,7 +9,7 @@
 
 - **DevKit: a developer toolkit of its own, for any MGSV add-on.** It runs beside Phantom FX with shader lookup, a frame
   recorder, keyboard-free automation of a game copy, and an MCP server; `--preset tools` builds it without Phantom FX's
-  changes to the frame.
+  changes to the frame. It is built from source and is not in the download.
 
 - **Photo mode: no near clip plane.** The **No near clip plane** switch under Photo mode moves the free camera's near
   clip plane from 7 cm to 1 mm, so what the camera nearly touches no longer vanishes. Off by default.
@@ -21,6 +21,9 @@
   is measured again, so a new map keeps none of the old one's boxes.
 
 ### Fixed
+
+- **Glass reflections and shadows are right again.** Panes reflect sharply and their inner face keeps the sun's glow;
+  the cheaper glass tracing of 2.0.0 is undone.
 
 - **The Mother Base emblem shows again in Sortie Prep.** It was a black square in front of Snake, the horse and the
   helicopter; it now keeps its texture and place, with a steady edge along a character.

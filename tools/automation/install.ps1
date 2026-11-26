@@ -7,8 +7,7 @@ param(
     [string]$Steam = $(if ($env:PHANTOM_FX_GAME) { $env:PHANTOM_FX_GAME } else { 'C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP' }),
     # The saves every run starts from; the game reads and writes a copy (src/devkit/save_redirect.hpp).
     [string]$SeedSaves = (Join-Path $env:USERPROFILE 'Documents\Development\mgsv-automation\seed-saves'),
-    # 0 keeps the player's own output size, so a case recorded in their game has the render size the copy
-    # reproduces (a smaller window renders smaller still under an upscaler).
+    # No longer applied, only warned about: the copy runs at the player's own output size (see below).
     [int]$Width = 0,
     [int]$Height = 0,
     # PhantomFX.ini lines in place of the player's. Frame generation and HDR are off by default: the
