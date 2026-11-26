@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Opacity micromaps are on by default.** The setting under Global illumination used to be off, as older RTX cards
+  emulate micromaps and were thought to lose time. It is now on for a new install, which is about 4 ms in the jungle at
+  1080p on an RTX 40 or newer. An RTX 3090 measured on one leafy spot at 1080p showed no loss (59.2 and 63.0 ms on
+  against 61.3 off, a spread wider than the difference), so an older card can leave it on and turn it off if it plays
+  worse. An existing `PhantomFX.ini` keeps its own value.
+
 - **The bushes and grass the object brush places move with the wind.** In the ray-traced scene they stood still, so
   their traced shadows, bounce light and reflections did not move either. They now lean with the same wave the game's
   own vegetation shaders bend them with: the direction, phase and amplitude come from the vegetation draws' material
