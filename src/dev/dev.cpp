@@ -91,9 +91,10 @@ void drawLightCache()
     performance::watch();
     auto options = core::currentDiagnostics();
     bool changed = false;
-    changed |= fxui::slider("Hits from the cache past (m)", options.lightCacheReach,
-        {.min = 0.0f, .max = 50.0f, .standard = 10.0f, .format = "%.0f",
-            .tip = "A light ray's first hit this far or further takes its light from the cache, about four rays fewer. 0 turns it off."});
+    changed |= fxui::slider("Hits from the cache past (cells)", options.lightCacheReach,
+        {.min = 0.0f, .max = 32.0f, .standard = 4.0f, .format = "%.0f",
+            .tip = "A light ray's first hit this many of its own cells away or further takes its light from the cache, about four rays "
+                   "fewer. Fewer cells: more hits, more cost saved, more blur and lag. 0 turns it off."});
     changed |= fxui::slider("Cache samples a cell", options.hashMaxSamples,
         {.min = 1.0f, .max = 32.0f, .standard = 16.0f, .format = "%.0f",
             .tip = "Cells average over this many samples: fewer follow a light's change sooner, with more noise."});

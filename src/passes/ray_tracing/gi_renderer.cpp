@@ -705,7 +705,7 @@ void logStats(State& s)
         + " of those traced reached the sky), " + value(GI_COUNTER_LIGHTS) + " cache hits lit, " + value(GI_COUNTER_COPIES)
         + " copies of a surface skipped, " + value(GI_COUNTER_UPDATE_TILES) + " cache tiles updated, " + value(GI_COUNTER_FOLIAGE)
         + " light pixels on foliage (" + value(GI_COUNTER_FOLIAGE_MEMORY_FULL) + " without room in the foliage memory), "
-        + value(GI_COUNTER_CACHED_HITS) + " first hits read from the light cache (from " + std::to_string(sentCacheReach) + " m, "
+        + value(GI_COUNTER_CACHED_HITS) + " first hits read from the light cache (from " + std::to_string(sentCacheReach) + " cells, "
         + std::to_string(sentCacheSamples) + " samples a cell, as last sent to the rays).");
 
     constexpr const char* MaximumNames[GI_COUNTER_MAXIMA]{"a hit's albedo", "a hit's direct light", "a cell's direct light", "a cell's indirect light",

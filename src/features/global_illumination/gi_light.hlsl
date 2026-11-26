@@ -293,12 +293,16 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
             HashGridCache_Visibility visibility = VisibilityOf(hit, direction);
             // A distant hit takes the light leaving its cell, which holds what its own rays would find (the sun, the sky, the lights, and its
             // bounce): about four rays fewer. The cell keeps itself lit by the hits queued here, a few a frame. Not a self-lit mesh (its light
-            // is its own), and not a cell without samples yet: those trace as before.
-            if (g_Frame.lightRays.z > 0u && hit.distance >= float(g_Frame.lightRays.z) && !(HitFlags(visibility) & GI_GEOMETRY_EMISSIVE))
+            // is its own), and not a cell without samples yet: those trace as before. "Distant" is counted in the hit's own cells, not metres:
+            // the cell's average only blurs the light by a cell over the ray's length, so a hit a few cells away loses nothing a ray would
+            // show, near the eye (small cells) as well as far from it, where a fixed distance took too few hits to matter.
+            const float3 hitPosition = origin + hit.distance * direction;
+            if (g_Frame.lightRays.z > 0u && hit.distance >= float(g_Frame.lightRays.z) * HashGridCache_CellSize(hitPosition) &&
+                !(HitFlags(visibility) & GI_GEOMETRY_EMISSIVE))
             {
                 uint hitTile;
                 bool isNewHitTile;
-                uint hitCell = HashGridCache_InsertCell(origin + hit.distance * direction, direction, hit.distance, hitTile, isNewHitTile);
+                uint hitCell = HashGridCache_InsertCell(hitPosition, direction, hit.distance, hitTile, isNewHitTile);
                 if (hitCell != kGI1_InvalidId)
                 {
                     HashGridCache_TouchCell(hitTile, isNewHitTile);

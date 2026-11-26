@@ -67,7 +67,7 @@ struct Options
     float sunSize{0.53f}; // The sun's angular diameter for the shadows and the light's hits, in degrees
     int lightPixelRays{2}; // The light's rays a light pixel (a 2 x 2 of render pixels): 1, 2 or 4
     bool usesShortLightRays{true}; // The light's rays look LightRayReach metres (gi_renderer.cpp), not without end
-    float lightCacheReach{10}; // Diagnostics: from how far a light ray's first hit takes its light from the cache, metres (0: never)
+    float lightCacheReach{4}; // Diagnostics: from how far a light ray's first hit takes its light from the cache, in cells (0: never)
     float hashMaxSamples{16};  // Diagnostics: the cache's samples a cell averages over
     unsigned lightAblation{};  // Diagnostics: what the light's rays leave out, to time the rest (gi_light.hlsl)
     bool debugShadows{}; // Diagnostics: the shadow debug view and probe (shadowDebug, shadowProbe), with the shadows
