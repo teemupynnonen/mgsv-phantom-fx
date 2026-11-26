@@ -1510,7 +1510,7 @@ void updatePlan()
     {
         plan.reset();
         jitterPhases = std::max(camera::jitterPhases(1.0f), leastPhases);
-        targetMipBias = replacing ? mipBias(1.0f, wanted.textureBiasOffset) : 0.0f;
+        targetMipBias = 0.0f;
         render_scale::request({}, {});
         return;
     }
@@ -1533,7 +1533,7 @@ void updatePlan()
 
     const float scale = static_cast<float>(plan->render.width) / static_cast<float>(plan->output.width);
     jitterPhases = std::max(camera::jitterPhases(scale), leastPhases);
-    targetMipBias = mipBias(scale, wanted.textureBiasOffset);
+    targetMipBias = mipBias(scale);
     render_scale::request(plan->render, plan->output);
 }
 
@@ -1566,6 +1566,11 @@ ID3D11SamplerState* biasedCopy(ID3D11SamplerState* sampler, float bias)
         device->CreateSamplerState(&desc, entry.biased.GetAddressOf());
         log("Texture LOD bias " + std::to_string(bias) + " on a material sampler (filter " + hex(desc.Filter) + ", anisotropy "
             + std::to_string(desc.MaxAnisotropy) + ").");
+    }
+    else
+    {
+        log("Texture LOD bias skipped on a sampler (filter " + hex(desc.Filter) + ", address " + std::to_string(desc.AddressU) + "/" + std::to_string(desc.AddressV)
+            + ", LOD " + std::to_string(desc.MinLOD) + "-" + std::to_string(desc.MaxLOD) + ").");
     }
 
     std::unique_lock lock(samplerMutex);

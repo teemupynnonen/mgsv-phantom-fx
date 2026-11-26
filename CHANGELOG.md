@@ -25,6 +25,10 @@
 - **Glass reflections and shadows are right again.** Panes reflect sharply and their inner face keeps the sun's glow;
   the cheaper glass tracing of 2.0.0 is undone.
 
+- **Textures stay sharper in the lower upscaling modes.** Ultra Performance looked muddy even at 4K because the
+  texture bias only matched the render size. It now sharpens one more step, as AMD advises, and applies by itself:
+  the **Texture detail bias** slider is gone.
+
 - **The Mother Base emblem shows again in Sortie Prep.** It was a black square in front of Snake, the horse and the
   helicopter; it now keeps its texture and place, with a steady edge along a character.
 
