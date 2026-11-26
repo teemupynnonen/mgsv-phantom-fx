@@ -2297,6 +2297,19 @@ with `fx.py scenarios`.
    12 and there by 24, about 1.3 s at 55 ms. That is the cache's own average (`AccumulateCell`: a sixteenth a frame
    at most, 16 samples), which the existing cells already had; a first hit's own light did not. A lamp switched
    on, or headlights driving past, lag by that much beyond 10 m; the sun's own drift is far slower.
+6. **The cache by the hit's cells, and one light ray a hit** (2026-11-27). A first hit takes its cell's light when it is
+   at least `lightRays.z` of its own cells away (`HashGridCache_CellSize`, 4 by default; Developer page, "Light cache"),
+   not past a fixed 10 m: the cell blurs the light by about a cell over the ray's length, so a hit a few cells off loses
+   nothing the ray would show, and near the eye, where cells are small, far more hits qualify. A shaded hit
+   (`OwnLightReaching`) picks one of the sun, a lamp and a self-lit mesh by its light there without the shadow and traces
+   that one shadow ray over the chance it was picked, in place of up to three; the cache's hits (`HitDirectLight`) do
+   the same. Africa's spawn at 22:00, frozen, 1440x810 with Ray Reconstruction, 180 frames a run, the rays' phase: about
+   19.5 to 20 ms before, 17.4 with the one ray alone, 16.5 with the cells alone (71% of first hits from the cache, 36%
+   before), about 16.2 with both; the frame about 4 ms less. The two overlap: a hit the cache takes traces no light rays
+   either way. Tried the same day and left out, all measured there: Russian roulette on the bounces after the first (Ray
+   Reconstruction traces one ray a pixel, so none were left to skip; no change without it), and, for NRD only, half the
+   light pixels a frame (NRD's checkerboard, 1.95 to 1.1 ms) and foliage's doubled rays only under 8 frames of history
+   (1.95 to 1.6 ms on a frozen frame).
 
 ## HDR
 
@@ -3549,7 +3562,7 @@ With DLSS Ray Reconstruction denoising, the rays go out without the filter (see 
   casters. Before 2026-10-24 each light took one ray to its centre
   and a bit, and its hard edge showed every pixel's difference.
 - **Bounce.** With the global illumination on, the same lights light the surfaces its rays hit
-  (`SampledLocalLight` in `src/passes/ray_tracing/shaders/gi_hit_light.hlsli`), first and later
+  (`ChooseLocalLight` and `OwnLightReaching` in `src/passes/ray_tracing/shaders/gi_hit_light.hlsli`), first and later
   bounces, besides the sun and the sky: every light's diffuse light there without shadows, as the game's shaders work it out
   (`LocalLightAt`: the falloff, a point's least and added distance, a spot's cap and cone, the colour
   in the sun's units), picks one in proportion (weighted reservoir sampling, a candidate a light), and
@@ -3670,7 +3683,7 @@ Not handled:
 ### Light bins
 
 Path tracing's lamps at every pixel and the rays' hits at every bounce pick among the frame's lights (`TraceLampLight`,
-`SampledLocalLightReaching`). Walking all of them cost more than the rays that followed: at Mother Base at night a frame
+`ChooseLocalLight`). Walking all of them cost more than the rays that followed: at Mother Base at night a frame
 asks 6.5 million places, and of the 128 lights only 3.2 can reach one on average.
 
 `src/passes/ray_tracing/light_bins.cpp` keeps three tables in the frame's constants, one for each world axis: 2 m bins around
