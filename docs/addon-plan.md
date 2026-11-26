@@ -31,7 +31,7 @@ addons/phantomfx.cpp   AddonInit/AddonUninit, fxcore::initialize, registration
 
 One CMake target, `phantom_fx_core` (namespace `fxcore`, so it does not collide with PhantomFX's own
 `phantom_fx::core`), built by its own CMake project at `src/core/CMakeLists.txt` and linked by PhantomFX, its tests and
-any other add-on. `dev/` (automation, DevKit) stays PhantomFX-only.
+any other add-on. `dev/` stays PhantomFX-only; DevKit is its own add-on (`src/devkit/`, `src/devaddon/`).
 
 Deferred until a second add-on exists: the overlay/pages framework, the texture registry (`engine_scene::GameTexture`),
 and a core build-hash check between DLLs.

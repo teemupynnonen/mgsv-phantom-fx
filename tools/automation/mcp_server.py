@@ -198,7 +198,7 @@ def send(lines: list[str], timeout: float) -> CallToolResult:
     except TimeoutError:
         return fail("NO_DEV_BUILD", f"No result in {timeout:.0f} s from {fx.game_folder}.",
             "Start a dev build there, or read DevKit/launch.log, then session status.")
-    except (OSError, PermissionError) as error:
+    except (OSError, PermissionError, fx.GameGone) as error:
         return fail("NO_DEV_BUILD", f"Could not reach {fx.game_folder}: {error}",
             "Start a dev build there, then session status.")
 
@@ -344,7 +344,7 @@ def session(action: Literal["status", "open", "freeze", "release", "boot", "trav
                 "addon": {"path": str(addon), "seconds_old": round(time.time() - addon.stat().st_mtime, 0)} if addon.exists() else None}
             try:
                 payload |= {"responds": True, "game": fx.run(["status"], timeout=5).strip()}
-            except (TimeoutError, OSError, PermissionError) as error:
+            except (TimeoutError, OSError, PermissionError, fx.GameGone) as error:
                 payload |= {"responds": False, "hint": f"No dev build answered in {folder}: {error}"}
             return ok(payload)
 
@@ -367,7 +367,7 @@ def session(action: Literal["status", "open", "freeze", "release", "boot", "trav
 @mcp.tool()
 def run(lines: list[str] | str, timeout_s: float = 120.0, target: Literal["player", "copy"] | None = None, confirm: bool = False) -> CallToolResult:
     """Runs automation lines as one command file and returns what each printed. The escape hatch for anything the
-    other tools do not cover; one string per line (src/devkit/automation.hpp lists them). `key space` presses Space at
+    other tools do not cover; one string per line (the `help` line lists them). `key space` presses Space at
     the game's window, but only while the game's loop runs: a stalled loading screen stops it, and `session action='recover'`
     presses from outside. confirm=true allows a setting line to write the player's ini."""
     note_activity()
@@ -506,7 +506,7 @@ def state_values() -> dict[str, str]:
     """The `state` line's key=value pairs, as the running game reports them."""
     try:
         text = fx.run(["state"], timeout=10)
-    except (TimeoutError, OSError, PermissionError):
+    except (TimeoutError, OSError, PermissionError, fx.GameGone):
         return {}
 
     values = {}

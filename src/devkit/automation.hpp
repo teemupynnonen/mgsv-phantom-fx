@@ -24,8 +24,8 @@ struct DevKitApi;
 //   cutscene <index>              plays the cutscene at that index of the list
 //   key <name> [times]            presses a key at the game's window: the loading screens' space, and the likes.
 //   pad <name> [polls]            presses a gamepad button the game reads, with no focus taken: a, b, x, y, start, back.
-//                                 A stalled loading screen stops this runner too, so the tools press Space from
-//                                 outside the game for that case (`session action='recover'` in the MCP).
+//                                 A stalled loading screen stops this runner too, so the tools press a gamepad A
+//                                 through DevKit/pad for that case (`session action='recover'` in the MCP).
 //   peek <address|game+rva> [bytes]  the game's memory there, 256 bytes without saying, 4096 at most
 //   frame                         records a frame as F10 does, after its thirty warm-up presents (needs
 //                                 DevKit/frame-log): draws, shaders, targets

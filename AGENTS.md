@@ -5,6 +5,7 @@ part you are about to change.
 
 ## Build and test
 
+- Fetch the core first in a fresh clone or worktree: `git submodule update --init --recursive`.
 - Build with the presets: `cmake --preset release`, then `cmake --build --preset release`. Use `dev` for checks in the
   game (diagnostic log, Developer page, DevKit) and `tools` only for another mod's rendering. Never edit `build/`.
 - Run `ctest --test-dir build/release` before saying a change works. The tests need neither the game nor a GPU;
@@ -42,6 +43,7 @@ part you are about to change.
 
 ## Commits and pull requests
 
-- Commit subjects: `type(area): what changed`, in plain words, one line. Types in use: `feat`, `fix`, `docs`, `build`,
-  `perf`, `test`.
+- Commits follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).
+- Commit subjects: `type(area): what changed`, in plain words, one line; leave out `(area)` when no one area fits. Types
+  in use: `feat`, `fix`, `docs`, `build`, `perf`, `test`.
 - A pull request says what changed for the player and what was verified. Keep it to one change.
