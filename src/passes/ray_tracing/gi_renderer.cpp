@@ -68,9 +68,9 @@ constexpr float AlphaTestedBlocking = 0.5f, ShadowRayLength = 5000;
 // How far global illumination's diffuse rays look for a hit with Short rays, metres (LightRayReach in gi_hit_light.hlsli):
 // what lies further out lights little, and the long rays cost the most to trace.
 constexpr std::uint32_t LightRayReach = 100;
-// From how far a light ray's first hit takes its light from the light cache instead of tracing its own rays, metres
-// (TraceLight); 0 never. Further hits sit in cells of many pixels, and a cell's light lags a moving light by a few frames.
-constexpr std::uint32_t LightCacheReach = 10;
+// The light cache's distance and samples last sent to the rays, for the log.
+std::uint32_t sentCacheReach{};
+float sentCacheSamples{};
 // Diagnostics: the most phases a frame's list times.
 constexpr std::uint32_t MaxMarks = 32;
 
@@ -704,7 +704,9 @@ void logStats(State& s)
         + " without room in it), " + value(GI_COUNTER_VISIBILITY1) + " multibounce rays kept (" + value(GI_COUNTER_MULTIBOUNCE_AWAY)
         + " of those traced reached the sky), " + value(GI_COUNTER_LIGHTS) + " cache hits lit, " + value(GI_COUNTER_COPIES)
         + " copies of a surface skipped, " + value(GI_COUNTER_UPDATE_TILES) + " cache tiles updated, " + value(GI_COUNTER_FOLIAGE)
-        + " light pixels on foliage (" + value(GI_COUNTER_FOLIAGE_MEMORY_FULL) + " without room in the foliage memory).");
+        + " light pixels on foliage (" + value(GI_COUNTER_FOLIAGE_MEMORY_FULL) + " without room in the foliage memory), "
+        + value(GI_COUNTER_CACHED_HITS) + " first hits read from the light cache (from " + std::to_string(sentCacheReach) + " m, "
+        + std::to_string(sentCacheSamples) + " samples a cell, as last sent to the rays).");
 
     constexpr const char* MaximumNames[GI_COUNTER_MAXIMA]{"a hit's albedo", "a hit's direct light", "a cell's direct light", "a cell's indirect light",
         "a multibounce", "a ray's light", "a denoised light pixel", "a render pixel"};
@@ -1183,7 +1185,9 @@ Result render(Frame& frame)
 
             constants.terrainPatchMesh = {static_cast<std::uint32_t>(update.patchMeshIndexOffset), static_cast<std::uint32_t>(update.patchMeshVertexOffset), 0, 0};
         }
-        if (traces.tracesLight) s.light->fill(constants, frame.verticalFov, parity);
+        if (traces.tracesLight) s.light->fill(constants, frame.verticalFov, parity, frame.hashMaxSamples);
+        sentCacheReach = static_cast<std::uint32_t>(std::max(frame.lightCacheReach, 0.0f));
+        sentCacheSamples = frame.hashMaxSamples;
         if (traces.tracesSun) s.shadows->fill(constants);
         constants.objectMotion = {velocity ? 1u : 0u, 0, 0, 0};
         const auto probePixel = frame.probePixel.value_or(std::array{frame.width / 2, frame.height / 2});
@@ -1202,7 +1206,8 @@ Result render(Frame& frame)
 
         // A ray a render pixel for Ray Reconstruction, whatever the ray quality: as many rays as High's four a
         // 2 x 2, the most a sample can take apart.
-        constants.lightRays = {traces.isForReconstruction ? 1u : frame.lightRays, frame.usesShortLightRays ? LightRayReach : 0u, LightCacheReach, 0};
+        constants.lightRays = {traces.isForReconstruction ? 1u : frame.lightRays, frame.usesShortLightRays ? LightRayReach : 0u,
+            static_cast<std::uint32_t>(std::max(frame.lightCacheReach, 0.0f)), 0};
 
         // ---- Descriptors ----
         descriptors.texture(binding::Depth, depth, DXGI_FORMAT_R32_FLOAT);

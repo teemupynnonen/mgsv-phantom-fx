@@ -22,7 +22,9 @@
 
 - **Path tracing's distant hits read the light cache.** What a global illumination ray finds 10 metres or more away
   now takes its light from the light cache instead of tracing its own shadow and bounce rays. At DLAA in Africa that
-  saves about 3 ms of a 58 ms frame at night and 2 ms of a 43 ms one at noon. The image holds in the scenes checked.
+  saves about 3 ms of a 58 ms frame at night and 2 ms of a 43 ms one at noon; in a closer scene it saves about 0.3 ms. The image holds in the scenes
+   checked. The Developer page's Light cache has the distance and a button that measures what the cache saves where you
+   stand.
 
 - **Ray-traced lights measure their volume once, not every frame.** At Mother Base at night with 128 lights traced, that
   was 128 dispatches a frame, about 3.3 ms: roughly 16% of a 1080p frame and 6-8% at 4K. A light undrawn for 60 frames
