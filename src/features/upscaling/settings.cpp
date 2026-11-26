@@ -133,17 +133,6 @@ void describe(Upscaling& upscaling, SettingVisitor& visit)
             .readoutScale = 100,
             .tip = "AMD FidelityFX RCAS on the upscaled image. 0% is off.",
             .enabled = on});
-    visit.slider(upscaling.textureBiasOffset,
-        {.iniKey = "mip_bias_offset",
-            .label = "Texture detail bias",
-            .min = Upscaling::MinTextureBiasOffset,
-            .max = Upscaling::MaxTextureBiasOffset,
-            .standard = Defaults.textureBiasOffset,
-            .format = "%+.2f",
-            .onRelease = true,
-            .tip = "Added to the automatic texture LOD bias for the render size. Lower is sharper but can shimmer. Applies when released.",
-            .hint = "Lower is sharper, but can shimmer.",
-            .enabled = on});
 }
 
 namespace upscaler
@@ -188,12 +177,11 @@ float nominalScale(Upscaler upscaler, Mode mode, float customScale)
     }
 }
 
-float mipBias(float scale, float offset)
+float mipBias(float scale)
 {
-    if (!std::isfinite(scale) || scale <= 0) scale = 1;
-    if (!std::isfinite(offset)) offset = 0;
+    if (!std::isfinite(scale) || scale <= 0 || scale >= 1) return 0;
 
-    return std::log2(std::min(scale, 1.0f)) + std::clamp(offset, Upscaling::MinTextureBiasOffset, Upscaling::MaxTextureBiasOffset);
+    return std::log2(scale) - 1;
 }
 }
 }
