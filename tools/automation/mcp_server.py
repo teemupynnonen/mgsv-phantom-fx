@@ -40,6 +40,8 @@ mcp = MCPServer(
 session_target = "player"
 fx.game_folder = GAMES[session_target]
 LOCK = threading.RLock()
+# The pictures a result carries inline: a client's message has a size limit, and base64 adds a third on top.
+ImageBudgetBytes = 12 << 20
 # A copy the tools started closes after this many seconds with no tool call, and when the server exits.
 AUTO_CLOSE_SECONDS = float(os.environ.get("PHANTOM_FX_AUTO_CLOSE_SECONDS", "600"))
 owned_copy = False
@@ -59,7 +61,17 @@ def note_activity() -> None:
 def ok(payload: dict | None = None, text: str | None = None, images: tuple[Path, ...] = ()) -> CallToolResult:
     body = {"ok": True, **(payload or {})}
     content = [TextContent(type="text", text=text or json.dumps(body, indent=2, ensure_ascii=False))]
-    content += [Image(path=str(path)).to_image_content() for path in images if path.exists()]
+    # A client's message has a size limit (16 MiB here), and base64 adds a third: pictures go while they fit, and their
+    # paths are always in the body for the ones that do not.
+    budget = ImageBudgetBytes
+    for path in images:
+        if not path.exists():
+            continue
+        if path.stat().st_size <= budget:
+            budget -= path.stat().st_size
+            content.append(Image(path=str(path)).to_image_content())
+    if images and "pictures" not in body:
+        body["pictures"] = [str(path) for path in images if path.exists()]
     return CallToolResult(content=content, structured_content=body)
 
 
@@ -344,7 +356,7 @@ def session(action: Literal["status", "open", "freeze", "release", "boot", "trav
                 "addon": {"path": str(addon), "seconds_old": round(time.time() - addon.stat().st_mtime, 0)} if addon.exists() else None}
             try:
                 payload |= {"responds": True, "game": fx.run(["status"], timeout=5).strip()}
-            except (TimeoutError, OSError, PermissionError) as error:
+            except (TimeoutError, OSError, PermissionError, fx.GameGone) as error:
                 payload |= {"responds": False, "hint": f"No dev build answered in {folder}: {error}"}
             return ok(payload)
 
