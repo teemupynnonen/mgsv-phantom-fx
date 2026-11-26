@@ -747,92 +747,74 @@ float SunRayChance(float cosine)
     return saturate(luminance(g_Frame.sunColor.rgb) * cosine * g_Frame.nearFar.w / DimSunRayLight);
 }
 
-static const uint OwnLightSun = 0u, OwnLightLamp = 1u, OwnLightEmitter = 2u;
-
-// The light a hit gets from the sun, a point or spot light or a self-lit mesh, through one shadow ray to one of them
-// (three rays a hit cost too much, and at most hits one of them is nearly all the light): each has a weight, the light
-// it gives there without its shadow, cosine included, in the same units (the lamps' and the emitters' are the totals of
-// their own sampling, ChooseLocalLight and ChooseEmitter, which stay as they are). One is chosen by it, its ray traced and
-// its light taken over the chance it was chosen: unbiased, as that is above 0 for every light that reaches the hit.
-// `reaching`: its light before the cosine and the albedo, a self-lit mesh's with its cosines already (kind
-// OwnLightEmitter); `kind` and `direction` for the cosine and the specular light.
-//
-// The sun as a disc of its angular size: a shadow ray to a point on it from the side it lights, a leaf's far side too.
-// A matte hit may leave its ray out (SunRayChance) and count the ones it traces for those: the cosine it is lit by cancels
-// the chance's, so a counted ray stays near DimSunRayLight. The chance goes by the disc's brightest cosine, as a point near
-// its edge lights a grazing hit more than its centre does. It stays, after the choice: the moon alone is chosen every time.
-// A reflection's hit keeps every ray: its specular and its normal map's cosine do not cancel, and what reflections clamp
-// (BrightestHit) would keep less than a counted ray stands for.
-float3 OwnLightReaching(float3 world, float3 normal, float3 origin, float tolerance, bool leaf, bool isMatte, inout Random random, out float3 direction, out uint kind)
+// The sun as a disc of its angular size at a hit: a shadow ray to a point on it from the side it lights,
+// a leaf's far side too. Its light before the cosine and the albedo. A matte hit may leave the ray out (SunRayChance) and count the
+// ones it traces for those: the cosine it is lit by cancels the chance's, so a counted ray stays near DimSunRayLight. The chance goes
+// by the disc's brightest cosine, as a point near its edge lights a grazing hit more than its centre does. A reflection's hit keeps
+// every ray: its specular and its normal map's cosine do not cancel, and what reflections clamp (BrightestHit) would keep less than a
+// counted ray stands for.
+float3 SunReaching(float3 world, float3 normal, float3 origin, float tolerance, bool leaf, bool isMatte, inout Random random, out float3 direction)
 {
-    kind = OwnLightSun;
     direction = g_Frame.sunDirection.xyz;
     float3 towardsSun = g_Frame.sunDirection.xyz;
     bool sunFar = leaf && dot(normal, towardsSun) < 0.0f;
     float3 sunSide = sunFar ? -normal : normal;
-    float sunCosine = dot(sunSide, towardsSun);
-    float sunWeight = sunCosine > 0.0f && dot(g_Frame.sunColor.rgb, 1.0f) > 0.0f ? luminance(g_Frame.sunColor.rgb) * sunCosine * (sunFar ? LeafTransmittance : 1.0f) : 0.0f;
+    float cosine = dot(sunSide, towardsSun);
+    if (!(cosine > 0.0f) || dot(g_Frame.sunColor.rgb, 1.0f) <= 0.0f) return 0.0f;
 
+    float chance = isMatte ? SunRayChance(cosine + g_Frame.shadowParams.x) : 1.0f;
+    if (chance < 1.0f && random.rand() >= chance) return 0.0f;
+
+    direction = SunSample(random.rand2());
+    float3 sunOrigin = sunFar ? LiftOffTriangle(world, sunSide) : origin;
+    float visibility = VisibilityFromSurface(sunOrigin, sunSide, tolerance, direction, 1e4f, ShadowRayTowards(RayTowardsSun));
+    if (visibility <= 0.0f) return 0.0f;
+
+    return g_Frame.sunColor.rgb * (visibility * (sunFar ? LeafTransmittance : 1.0f) / chance);
+}
+
+// With the cosine, its light before the albedo.
+float3 SunLight(float3 world, float3 normal, float3 origin, float tolerance, bool leaf, inout Random random)
+{
+    float3 direction;
+    return SunReaching(world, normal, origin, tolerance, leaf, true, random, direction) * abs(dot(normal, g_Frame.sunDirection.xyz));
+}
+
+static const uint OwnLightLamp = 1u, OwnLightEmitter = 2u;
+
+// The light a hit gets from a point or spot light or a self-lit mesh, through one shadow ray to one of them, not one to
+// each: each has a weight, its light there without its shadow, cosine included, in the same units (the totals of their own
+// sampling, ChooseLocalLight and ChooseEmitter, which stay as they are). One is chosen by it, its ray traced and its light
+// taken over the chance it was chosen: unbiased, as that is above 0 for each that reaches the hit. The sun keeps its own
+// ray (SunReaching): chosen among them by its light without the shadow, a hit in the shade spent its one ray on a sun it
+// could not see as often as the sun outweighed the lamps, and the shade flickered under Ray Reconstruction (2026-11-27).
+// `reaching`: a lamp's light before the cosine and the albedo, a self-lit mesh's with its cosines already (`kind`).
+float3 LocalOwnLightReaching(float3 world, float3 normal, float3 origin, float tolerance, inout Random random, out float3 direction, out uint kind)
+{
+    kind = OwnLightLamp;
+    direction = normal;
     float3 lampLight, towardsLamp;
     float lampLength;
     float lampWeight = ChooseLocalLight(world, normal, random, lampLight, towardsLamp, lampLength);
     uint emitter;
     float emitterChances;
     float emitterWeight = ChooseEmitter(world, normal, random, emitter, emitterChances);
-    float total = sunWeight + lampWeight + emitterWeight;
+    float total = lampWeight + emitterWeight;
     if (!(total > 0.0f)) return 0.0f;
 
-    float pick = random.rand() * total;
-    float weight = emitterWeight;
-    kind = OwnLightEmitter;
-    if (pick < sunWeight)
-    {
-        weight = sunWeight;
-        kind = OwnLightSun;
-    }
-    else if (pick < sunWeight + lampWeight)
-    {
-        weight = lampWeight;
-        kind = OwnLightLamp;
-    }
-
-    if (!(weight > 0.0f)) return 0.0f;
-
-    float3 light;
-    float visibility = 1.0f;
-    if (kind == OwnLightSun)
-    {
-        float chance = isMatte ? SunRayChance(sunCosine + g_Frame.shadowParams.x) : 1.0f;
-        if (chance < 1.0f && random.rand() >= chance) return 0.0f;
-
-        direction = SunSample(random.rand2());
-        float3 sunOrigin = sunFar ? LiftOffTriangle(world, sunSide) : origin;
-        visibility = VisibilityFromSurface(sunOrigin, sunSide, tolerance, direction, 1e4f, ShadowRayTowards(RayTowardsSun));
-        light = g_Frame.sunColor.rgb * ((sunFar ? LeafTransmittance : 1.0f) / chance * (total / sunWeight));
-    }
-    else if (kind == OwnLightLamp)
+    if (random.rand() * total < lampWeight)
     {
         direction = towardsLamp;
-        light = lampLight * (total / lampWeight);
-        if (lampLength > 0.0f) visibility = VisibilityFromSurface(origin, normal, tolerance, direction, lampLength, ShadowRayTowards(RayTowardsLamp));
-    }
-    else
-    {
-        float rayLength;
-        light = EmitterLightTowards(world, normal, emitter, emitterChances, random, direction, rayLength) * (total / emitterWeight);
-        if (!any(light > 0.0f)) return 0.0f;
-
-        visibility = VisibilityFromSurface(origin, normal, tolerance, direction, rayLength, ShadowRayTowards(RayTowardsLamp));
+        float visibility = lampLength > 0.0f ? VisibilityFromSurface(origin, normal, tolerance, direction, lampLength, ShadowRayTowards(RayTowardsLamp)) : 1.0f;
+        return lampLight * (total / lampWeight * visibility);
     }
 
-    return light * visibility;
-}
+    kind = OwnLightEmitter;
+    float rayLength;
+    float3 light = EmitterLightTowards(world, normal, emitter, emitterChances, random, direction, rayLength) * (total / emitterWeight);
+    if (!any(light > 0.0f)) return 0.0f;
 
-// The cosine a light chosen by OwnLightReaching lights a hit with, if its light `reaching` has none yet.
-float OwnLightCosine(uint kind, float3 normal, float3 toLight, bool leaf)
-{
-    float cosine = dot(normal, toLight);
-    return kind == OwnLightSun && leaf ? abs(cosine) : saturate(cosine);
+    return light * VisibilityFromSurface(origin, normal, tolerance, direction, rayLength, ShadowRayTowards(RayTowardsLamp));
 }
 
 // The light a hit sends towards `toEye` from the sun, a point or spot light and a self-lit mesh: their diffuse light
@@ -841,15 +823,18 @@ float OwnLightCosine(uint kind, float3 normal, float3 toLight, bool leaf)
 // `tolerance` as LiftOffTriangle and CopyTolerance give them for its triangle.
 float3 HitOwnLight(HitMaterial material, float3 toEye, float3 origin, float tolerance, inout Random random)
 {
-    float3 toLight;
+    float3 toSun, toLight;
     uint kind;
-    float3 reaching = OwnLightReaching(material.world, material.geometric, origin, tolerance, material.isLeaf, material.isMatte, random, toLight, kind);
-    if (kind == OwnLightEmitter) return material.albedo * reaching;
-
-    float3 light = material.albedo * reaching * OwnLightCosine(kind, material.normal, toLight, material.isLeaf);
+    float3 sun = SunReaching(material.world, material.geometric, origin, tolerance, material.isLeaf, material.isMatte, random, toSun);
+    float3 local = LocalOwnLightReaching(material.world, material.geometric, origin, tolerance, random, toLight, kind);
+    float3 lamp = kind == OwnLightLamp ? local : 0.0f;
+    float sunCosine = dot(material.normal, toSun);
+    float3 light = material.albedo * (sun * (material.isLeaf ? abs(sunCosine) : saturate(sunCosine)) + lamp * saturate(dot(material.normal, toLight)));
+    if (kind == OwnLightEmitter) light += material.albedo * local;
     if (!any(material.specularColor > 0.0f)) return light;
 
-    return light + GgxSpecular(reaching, material.normal, toEye, toLight, material.roughness, material.specularColor);
+    float3 specular = GgxSpecular(sun, material.normal, toEye, toSun, material.roughness, material.specularColor);
+    return light + specular + GgxSpecular(lamp, material.normal, toEye, toLight, material.roughness, material.specularColor);
 }
 
 // The side a hit's cosine-weighted ray leaves from, and what its light counts: a leaf's ray goes to its
@@ -866,10 +851,11 @@ float3 HitDirectLight(float3 world, float3 normal, float3 albedo, bool leaf, ino
 {
     float3 origin = LiftOffTriangle(world, normal);
     float tolerance = CopyTolerance(world);
+    float3 light = SunLight(world, normal, origin, tolerance, leaf, random);
     float3 toLight;
     uint kind;
-    float3 light = OwnLightReaching(world, normal, origin, tolerance, leaf, true, random, toLight, kind);
-    if (kind != OwnLightEmitter) light *= OwnLightCosine(kind, normal, toLight, leaf);
+    float3 local = LocalOwnLightReaching(world, normal, origin, tolerance, random, toLight, kind);
+    light += kind == OwnLightLamp ? local * saturate(dot(normal, toLight)) : local;
 
     // The sky through a cosine-weighted ray: its radiance is irradiance over pi for that sample.
     float skyWeight;
