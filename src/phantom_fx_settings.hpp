@@ -158,6 +158,10 @@ struct Diagnostics
     // from a cell, metres (0: never), and the samples a cell averages over (fewer follow a change sooner, more noise).
     float lightCacheReach{10};
     float hashMaxSamples{16};
+    // What the light's rays leave out, to time what each part costs (Developer page, Light cache). Both change the
+    // picture, so they are for measuring.
+    bool lightBounces{true};  // The hits' bounce ray, the sky's or the cache's light after it
+    bool lightHitLight{true}; // The light a hit's own surface and the game's lights give it
 };
 
 // Effects a cost measurement's step runs without (performance.hpp), while the settings, PhantomFX.ini

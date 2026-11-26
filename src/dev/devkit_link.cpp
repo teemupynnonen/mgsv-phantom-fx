@@ -534,7 +534,7 @@ void diagnostic(DevKitScript* script, std::string_view rest)
         {"no_jitter", &diagnostics.noJitter}, {"main_view_sun", &diagnostics.mainViewCastsSun}};
     if (!(arguments >> name >> value))
     {
-        say(script, "error: diagnostic debug_view|show_scene|two_sided_shadows|no_jitter|cache_reach|cache_samples|river_light <value>\n");
+        say(script, "error: diagnostic debug_view|show_scene|two_sided_shadows|no_jitter|cache_reach|cache_samples|light_bounces|light_hit_light|river_light <value>\n");
         return;
     }
 
@@ -543,6 +543,8 @@ void diagnostic(DevKitScript* script, std::string_view rest)
     else if (name == "debug_view") diagnostics.debugView = static_cast<DebugView>(value);
     else if (name == "cache_reach") diagnostics.lightCacheReach = static_cast<float>(value);
     else if (name == "cache_samples") diagnostics.hashMaxSamples = static_cast<float>(value);
+    else if (name == "light_bounces") diagnostics.lightBounces = value != 0;
+    else if (name == "light_hit_light") diagnostics.lightHitLight = value != 0;
     else if (name == "river_light")
     {
         river_light::setEnabled(value != 0);
@@ -550,7 +552,7 @@ void diagnostic(DevKitScript* script, std::string_view rest)
     }
     else
     {
-        say(script, "error: diagnostic debug_view|show_scene|two_sided_shadows|no_jitter|cache_reach|cache_samples|river_light <value>\n");
+        say(script, "error: diagnostic debug_view|show_scene|two_sided_shadows|no_jitter|cache_reach|cache_samples|light_bounces|light_hit_light|river_light <value>\n");
         return;
     }
 

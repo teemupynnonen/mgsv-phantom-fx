@@ -325,7 +325,8 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
             bool leaf = material.isLeaf;
             float3 hitOrigin = LiftOffTriangle(hitWorld, hitNormal);
             float tolerance = CopyTolerance(hitWorld);
-            light = DiffuseRayEmission(visibility, material.emission) + HitOwnLight(material, -direction, hitOrigin, tolerance, random);
+            light = DiffuseRayEmission(visibility, material.emission);
+            if (!(g_Frame.lightRays.w & 2u)) light += HitOwnLight(material, -direction, hitOrigin, tolerance, random);
             MaxDiagnostic(GI_COUNTER_MAX_ALBEDO, albedo);
             MaxDiagnostic(GI_COUNTER_MAX_DIRECT, light);
 
@@ -333,6 +334,15 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
             // cosine-weighted pdf is the albedo.
             float weight;
             float3 side = BounceSide(hitNormal, leaf, random, weight);
+            if (g_Frame.lightRays.w & 1u)
+            {
+                totalDistance += hit.distance;
+                total += light;
+                float rayLuminance = luminance(light);
+                weightedDirection += rayLuminance * direction;
+                totalLuminance += rayLuminance;
+                continue;
+            }
             float3 bounceDirection = mapToCosineHemisphere(random.rand2(), side);
             float3 bounceOrigin = all(side == hitNormal) ? hitOrigin : LiftOffTriangle(hitWorld, side);
             SceneHit bounce = TraceFromSurface(bounceOrigin, side, tolerance, bounceDirection, LightRayReach());

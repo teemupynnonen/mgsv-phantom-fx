@@ -50,26 +50,42 @@ fxui::Tone toneOf(devkit::Tone tone)
     return fxui::Tone::Dim;
 }
 
-// The light cache's A/B: the cache off and on in turn, each for a few seconds, with the GPU's cost averaged over what is
-// left after the settling. Run from the Light cache item, so it needs the Developer page open.
-struct CacheCompare
+// What the light's rays cost, part by part: each part left out for a few seconds, after a few seconds with everything as
+// it was, and the GPU's cost averaged over what is left after the settling. Run from the Light cache item, so it needs
+// the Developer page open.
+struct LightAblation
 {
-    static constexpr int Phases = 8; // off, on, off, on, ...
-    static constexpr std::uint64_t PhaseMs = 6000, SettleMs = 2000;
+    static constexpr int Variants = 3, Phases = Variants * 2, PhaseMs = 6000, SettleMs = 2000;
+    static constexpr const char* Names[Variants]{"the light cache", "the bounce rays", "the hits' own light"};
     bool running{};
     int phase{};
     std::uint64_t phaseStart{};
-    float savedReach{10};
-    double sumFrame[2]{}, sumRays[2]{}, count[2]{};
+    Diagnostics base;
+    double baseFrame{}, baseRays{}, baseCount{};
+    double frame[Variants]{}, rays[Variants]{}, count[Variants]{};
     std::string result;
 };
 
-CacheCompare compare;
+LightAblation ablation;
+
+// The settings of phase `phase`: the variant that phase tests left out, everything else as it was.
+Diagnostics ablatedSettings(int phase)
+{
+    auto settings = ablation.base;
+    const int variant = phase / 2;
+    if (phase % 2 == 1)
+    {
+        if (variant == 0) settings.lightCacheReach = 0;
+        if (variant == 1) settings.lightBounces = false;
+        if (variant == 2) settings.lightHitLight = false;
+    }
+    return settings;
+}
 
 void drawLightCache()
 {
-    const fxui::Item item({.id = "lightCache", .name = "Light cache", .summary = "How distant a hit reads the light cache, and how fast its cells follow a change.",
-        .keywords = "cache lag light global illumination distance samples compare cost"});
+    const fxui::Item item({.id = "lightCache", .name = "Light cache", .summary = "How distant a hit reads the light cache, how fast its cells follow a change, and what the light's rays cost.",
+        .keywords = "cache lag light global illumination distance samples compare cost bounce"});
     if (!item) return;
 
     performance::watch();
@@ -81,57 +97,70 @@ void drawLightCache()
     changed |= fxui::slider("Cache samples a cell", options.hashMaxSamples,
         {.min = 1.0f, .max = 32.0f, .standard = 16.0f, .format = "%.0f",
             .tip = "Cells average over this many samples: fewer follow a light's change sooner, with more noise."});
-    if (changed && !compare.running) core::applyDiagnostics(options);
+    if (changed && !ablation.running) core::applyDiagnostics(options);
 
     const auto costs = performance::status().costs;
     const auto rays = costs.passes[static_cast<std::size_t>(performance::Pass::GiRays)];
     fxui::note(Tone::Dim, std::format("Now: GPU frame {:.2f} ms, the global illumination's rays {:.2f} ms.", costs.gpuFrame, rays));
 
-    if (!compare.running)
+    if (!ablation.running)
     {
-        if (fxui::button("Compare the cache off and on (48 s)",
-                "Switches the cache off and on four times, six seconds each, and averages what the GPU frame and the rays cost. Stand still, in the light you want to judge."))
+        if (fxui::button("Compare what the rays cost (36 s)",
+                "Times the rays with everything on, then with the light cache off, their bounce rays out, and the hits' own light out, six "
+                "seconds each. Stand still, in the light you want to judge."))
         {
-            compare = {};
-            compare.running = true;
-            compare.savedReach = options.lightCacheReach > 0 ? options.lightCacheReach : 10.0f;
-            compare.phaseStart = GetTickCount64();
-            options.lightCacheReach = 0;
-            core::applyDiagnostics(options);
+            ablation = {};
+            ablation.running = true;
+            ablation.base = options;
+            ablation.phaseStart = GetTickCount64();
+            core::applyDiagnostics(ablatedSettings(0));
         }
     }
     else
     {
         const auto now = GetTickCount64();
-        const int which = compare.phase % 2; // 0 off, 1 on
-        if (now - compare.phaseStart >= CacheCompare::SettleMs)
+        const int variant = ablation.phase / 2;
+        if (now - ablation.phaseStart >= LightAblation::SettleMs)
         {
-            compare.sumFrame[which] += costs.gpuFrame;
-            compare.sumRays[which] += rays;
-            compare.count[which] += 1;
+            if (ablation.phase % 2 == 1)
+            {
+                ablation.frame[variant] += costs.gpuFrame;
+                ablation.rays[variant] += rays;
+                ablation.count[variant] += 1;
+            }
+            else
+            {
+                ablation.baseFrame += costs.gpuFrame;
+                ablation.baseRays += rays;
+                ablation.baseCount += 1;
+            }
         }
-        fxui::note(Tone::Warn, std::format("Comparing: step {} of {}, the cache {}. Stay on this page and keep still.", compare.phase + 1,
-            CacheCompare::Phases, which ? "on" : "off"));
-        if (now - compare.phaseStart >= CacheCompare::PhaseMs)
+        fxui::note(Tone::Warn, std::format("Comparing: step {} of {}, {}{}. Stay on this page and keep still.", ablation.phase + 1,
+            LightAblation::Phases, ablation.phase % 2 ? "without " : "with ", ablation.phase % 2 ? LightAblation::Names[variant] : "everything"));
+        if (now - ablation.phaseStart >= LightAblation::PhaseMs)
         {
-            compare.phase += 1;
-            compare.phaseStart = now;
-            const bool done = compare.phase >= CacheCompare::Phases;
-            options.lightCacheReach = done || compare.phase % 2 == 1 ? compare.savedReach : 0.0f;
-            core::applyDiagnostics(options);
+            ablation.phase += 1;
+            ablation.phaseStart = now;
+            const bool done = ablation.phase >= LightAblation::Phases;
+            core::applyDiagnostics(done ? ablation.base : ablatedSettings(ablation.phase));
             if (done)
             {
-                compare.running = false;
-                const auto mean = [&](const double* sum, int i) { return compare.count[i] > 0 ? sum[i] / compare.count[i] : 0.0; };
-                compare.result = std::format("Cache off: GPU frame {:.2f} ms, rays {:.2f} ms.  On from {:.0f} m: GPU frame {:.2f} ms, rays {:.2f} ms.  "
-                                             "The cache saves {:.2f} ms of the frame, {:.2f} ms of the rays.",
-                    mean(compare.sumFrame, 0), mean(compare.sumRays, 0), compare.savedReach, mean(compare.sumFrame, 1), mean(compare.sumRays, 1),
-                    mean(compare.sumFrame, 0) - mean(compare.sumFrame, 1), mean(compare.sumRays, 0) - mean(compare.sumRays, 1));
-                log(compare.result);
+                ablation.running = false;
+                const auto mean = [](double sum, double count) { return count > 0 ? sum / count : 0.0; };
+                const double baseFrame = mean(ablation.baseFrame, ablation.baseCount), baseRays = mean(ablation.baseRays, ablation.baseCount);
+                std::string text = std::format("Everything on: GPU frame {:.2f} ms, rays {:.2f} ms.", baseFrame, baseRays);
+                for (int i = 0; i < LightAblation::Variants; ++i)
+                {
+                    const double frame = mean(ablation.frame[i], ablation.count[i]), withoutRays = mean(ablation.rays[i], ablation.count[i]);
+                    text += std::format("  Without {}: {:.2f} and {:.2f} ms, so it costs {:.2f} of the frame and {:.2f} of the rays.",
+                        LightAblation::Names[i], frame, withoutRays, baseFrame - frame, baseRays - withoutRays);
+                }
+                ablation.result = text;
+                log(text);
             }
         }
     }
-    if (!compare.result.empty()) fxui::note(Tone::Ok, compare.result);
+    if (!ablation.result.empty()) fxui::note(Tone::Ok, ablation.result);
 }
 // What frames cost, on file.
 void drawCostRecording()

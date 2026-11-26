@@ -69,6 +69,7 @@ struct Options
     bool usesShortLightRays{true}; // The light's rays look LightRayReach metres (gi_renderer.cpp), not without end
     float lightCacheReach{10}; // Diagnostics: from how far a light ray's first hit takes its light from the cache, metres (0: never)
     float hashMaxSamples{16};  // Diagnostics: the cache's samples a cell averages over
+    unsigned lightAblation{};  // Diagnostics: what the light's rays leave out, to time the rest (gi_light.hlsl)
     bool debugShadows{}; // Diagnostics: the shadow debug view and probe (shadowDebug, shadowProbe), with the shadows
     bool shadowStarts{}; // Diagnostics: the debug view shows where the shadow rays leave each pixel
     bool twoSidedShadows{}; // Diagnostics: every surface blocks rays towards lights from both sides, as until 2026-10-26
@@ -1026,6 +1027,7 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     frame.usesShortLightRays = options.usesShortLightRays;
     frame.lightCacheReach = options.lightCacheReach;
     frame.hashMaxSamples = options.hashMaxSamples;
+    frame.lightAblation = options.lightAblation;
     // The lights' colours in the sun's units for the hits (gi_light.hlsl, LocalLightAt).
     for (auto& localLight : localLightsToTrace)
         for (auto& value : localLight.color) value *= LightScale;
@@ -1146,6 +1148,7 @@ void configure(const Configuration& configuration) noexcept
         .usesShortLightRays = settings.globalIllumination.usesShortRays,
         .lightCacheReach = diagnostics.lightCacheReach,
         .hashMaxSamples = diagnostics.hashMaxSamples,
+        .lightAblation = (diagnostics.lightBounces ? 0u : 1u) | (diagnostics.lightHitLight ? 0u : 2u),
         .debugShadows = diagnostics.debugView == DebugView::ShadowRays || diagnostics.debugView == DebugView::ShadowStarts,
         .shadowStarts = diagnostics.debugView == DebugView::ShadowStarts,
         .twoSidedShadows = diagnostics.twoSidedShadows,

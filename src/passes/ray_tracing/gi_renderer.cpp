@@ -1207,7 +1207,7 @@ Result render(Frame& frame)
         // A ray a render pixel for Ray Reconstruction, whatever the ray quality: as many rays as High's four a
         // 2 x 2, the most a sample can take apart.
         constants.lightRays = {traces.isForReconstruction ? 1u : frame.lightRays, frame.usesShortLightRays ? LightRayReach : 0u,
-            static_cast<std::uint32_t>(std::max(frame.lightCacheReach, 0.0f)), 0};
+            static_cast<std::uint32_t>(std::max(frame.lightCacheReach, 0.0f)), frame.lightAblation};
 
         // ---- Descriptors ----
         descriptors.texture(binding::Depth, depth, DXGI_FORMAT_R32_FLOAT);
