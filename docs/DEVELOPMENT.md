@@ -2253,7 +2253,50 @@ the game's lights) is left alone until it runs.
   the diffuse light target, which its exposure measures.
 - **Cost** (2026-10-30, 2228x1254 rendered for 3840x2160): the light's line in the log,
   which holds the reflections and the lights, 4 to 5.7 ms, against about 2.4 ms with Ray Reconstruction
-  alone. The budget has its own line: the reflections, the lights and adding their light.
+  alone. The budget has its own line: the reflections and adding their light. The lamps' rays run alongside the
+  global illumination's and count in its line (see "Overlapping traces").
+
+### Making it cheaper
+
+The plan of 2026-11-25 for the cost of path tracing itself, each without changing what the rays find, in the order
+to try. Measure each with `perf.py ab` on a frozen frame (or the MCP's `capture` with `kind: perf`), and check the look
+with `fx.py scenarios`.
+
+1. **Overlapping traces** (done; see "Overlapping traces"). The traces no longer wait for each other's last waves.
+   A small gain, under the drift between sessions at DLAA and Balanced (0.2 to 0.3 ms of 42 to 58 ms at DLAA). The
+   frame's cost is `TraceLight` (27 ms of 58 at night), so start there: options 5 and 2.
+2. **Tile classification for the reflections.** A wave of `TraceReflections` mixes rough pixels (a ray and a cache
+   lookup) with glossy ones (up to three specular rays, each with the sun's, a lamp's and a self-lit mesh's shadow
+   rays and a bounce), and runs as long as its slowest pixel. A cheap pass would list the glossy pixels, compacted,
+   for an indirect dispatch of their own (`Recorder::indirect`), and the rough ones take a light kernel. The same
+   split fits `TraceLight`, whose foliage pixels take twice the rays.
+3. **Shader Execution Reordering.** The glossy hits' material reads and shading are the frame's most divergent work.
+   Shader model 6.9 reorders threads by a hint (`MaybeReorderThread`, with `HitObject::FromRayQuery` keeping the
+   inline `RayQuery` code), but only in a ray generation shader: the reflections would move from a compute kernel to
+   one. Needs an Agility SDK with shader model 6.9.
+4. **The cache past a ray's footprint.** Only a rough surface's first hit takes the cache's light today
+   (`CachedLight`); a glossy path's second and third hits are shaded afresh. Where a hit's cone
+   (`cone.x + travelled * cone.y`) is at least a cache cell wide (`HashGridCache_CellSize`), the cell's light is as
+   sharp as the ray can show, as NVIDIA's SHaRC ends its paths.
+5. **The cache for distant diffuse hits** (done 2026-11-25; Developer page, "Light cache", 10 m). Each hit of
+   `TraceLight` traced the sun's, a lamp's and a self-lit mesh's shadow rays and a bounce, about four rays a pixel. A
+   first hit 10 m or more away now takes its cell's light (`HashGridCache_FilteredRadiance` and `FilteredIndirect`),
+   and keeps the cell lit by queueing itself as a sample (`HashGridCache_KeepForLight`, at most
+   `HASH_CELL_SAMPLES_PER_FRAME` a cell a frame, into a third region of the hit buffers). A self-lit mesh, and a cell
+   without samples yet, trace as before. About 36% of the first hits take it (`firstHitsFromCache`).
+    The saving depends on the spot. Most places, measured in Africa with the Developer page's Light cache comparison (the
+    cache off and on in turn, in one session), show about 0.3 ms. Africa's heaviest areas show about 3 ms: two builds
+    compared at DLAA in the automation copy gave night 58.4 to 55.1 ms and noon 43.6 to 41.2 ms (not a live toggle).
+    The
+   scenarios `africa-roof` and `acc-cabin` stay fine and `mother-base-helipad` reads as before (1.08x); the other two
+   did not run (map transitions).
+   The light lags a step change, the worst case, which goes against a choice made for it ("Nothing of the hit's own
+   light comes from a history", see "Global illumination"). Africa at night, the clock jumped from 12:00 to 22:00 with
+   the camera held, 14 frames captured a build: the traced build settles in 3 frames, the cached one is still moving
+   at frame 8 (2.5% of the frame's range from its settled image, the far lamp-lit geometry most of it), half way at
+   12 and there by 24, about 1.3 s at 55 ms. That is the cache's own average (`AccumulateCell`: a sixteenth a frame
+   at most, 16 samples), which the existing cells already had; a first hit's own light did not. A lamp switched
+   on, or headlights driving past, lag by that much beyond 10 m; the sun's own drift is far slower.
 
 ## HDR
 
@@ -2706,6 +2749,65 @@ and marks a `SharedOutput` written once the frame is submitted. A `SharedOutput`
 and the threads recording the next frame use it at the same time.
 
 So far the lamps' shadow rays are a trace (`lamp_shadow_rays.*`), and so is a dev build's record of a debug case (`src/dev/inspect_trace.*`); the others are recorded by `gi_renderer` itself.
+
+### Overlapping traces
+
+Every pass on the Direct3D 12 queue ended in a full UAV barrier (`Recorder::barrier`), so the traces ran one after
+the other: the lamps' light, then the sun's rays, then the light's rays, then the reflections. A trace's last waves,
+the slowest incoherent rays, leave most of the GPU idle until they finish, and with a barrier after each trace
+nothing else could fill that time.
+
+With Ray Reconstruction (always, under path tracing), the lamps' light (`TraceLampLight`) and the sun's rays
+(`TraceSunShadows`, which then has no denoiser after it) read nothing the light's passes write, and the light reads
+nothing of theirs. So `gi_renderer` hands them to `gi_light::Light::record` as `alongsideRays`, which dispatches them
+right after `TraceLight` and before the barrier after it: three traces share one wait. Everything else is as it was:
+the albedos the light's hits read are still learned after its rays (`LearnAlbedo`, after the barrier), and each trace
+writes its own outputs. What a ray finds does not change, so the image does not either. The one change outside the
+frame is a diagnostic: the sun's and lamps' rays now run after `ClearCounters`, so the copies they skip count in
+`GI_COUNTER_COPIES` ("copiesSkipped").
+
+They stay apart, each with its own barrier, where something reads their result before the light runs: the shadow
+debug view and probe, the scene view (no light passes) and without Ray Reconstruction (the sun's denoiser follows
+its rays).
+
+Timing follows the work. Timestamps between dispatches that overlap would split their time arbitrarily, so the
+group has one mark, the light's "rays and their hits' light" (`Pass::GiRays`): with Ray Reconstruction the budget's
+global illumination line holds the sun's and lamps' rays, and path tracing's line has no row of its own for the lamps.
+The total, and the hand-over computed from it, are unchanged.
+
+The reflections stay after the light's cache update: they read its cells (`CachedLight`), which `UpdateTiles` writes.
+
+**Measured 2026-11-25: a small gain, under what one frame-time capture can resolve at native resolution.** The three
+grouped traces read 0.25 to 0.9 ms shorter in each of the first two runs, but the whole frame's gain is within the drift
+between sessions (below). A first run at Ultra Performance (640x360) with the copy's
+vsync on read 17.5 ms against 18.5 ms, but the GPU was not running flat out, so it does not count; two more runs under
+the 60 fps cap (the copy took `"vsync": "Enable"` from the player's display config; `unlock_fps` alone does not lift
+it) pinned the frame at 16.67 ms and measured nothing. Measure GPU-bound: DLAA at 1920x1080, `unlock_fps=1`, vsync
+disabled in the copy's `DevKit/local/TPP_GRAPHICS_CONFIG` only.
+
+Africa free roam, clear, frozen at the boot's spot, three captures of 240 frames a session, four fresh sessions
+(without, with, without, with). GPU frame by session:
+
+| | Without | With |
+| --- | --- | --- |
+| 22:00 | 58.98, 57.90 ms | 57.81, 58.40 ms |
+| 12:00 | 42.32, 42.94 ms | 42.40, 42.38 ms |
+
+The means differ by 0.3 ms at night and 0.2 ms at noon (0.6%), less than the spread between two sessions of the same
+build (1.1 ms and 0.6 ms). At this size each trace is long enough that the idle end of one is a small share of it.
+Timestamps next to overlapped work split their time differently, so read the phases there as approximate.
+
+At Balanced (1114x626 rendered for 1920x1080), the same four sessions read, mean of three captures a spot: 22:00 25.8
+and 27.1 ms without, 28.1 and 27.0 with; 12:00 19.8 and 21.0 without, 21.9 and 21.1 with. Two sessions of one build
+differ by up to 1.3 ms there, more than the change accounts for, and the first session was the quickest at both spots.
+
+Where a DLAA frame goes (without it, 22:00 / 12:00): "rays and their hits' light" (`TraceLight`) 27.3 / 15.0 ms,
+the reflections 6.6 / 5.4, the sun's rays 3.7 / 4.2, the cache's hit lighting 3.5 / 2.3, the cache update 1.1 / 1.0,
+and DLSS Ray Reconstruction about 7.7 ms.
+
+The scenarios the same day read alike with and without it: `afghanistan-ruins` 1.19x and 1.21x the game's light,
+`mother-base-helipad` 1.08x both, `africa-roof` fine. Both are over what they expect (1.03x and 0.86x, set on
+2026-11-08), but without it too: that drift came earlier, and is not this.
 
 ### Kernels and their slots
 

@@ -290,6 +290,26 @@ void HashGridCache_QueueLight(uint visibilityIndex, uint cellIndex)
     g_HashGridCache_LightBuffer[index] = visibilityIndex;
 }
 
+// A first hit that takes its light from its cell (TraceLight) keeps the cell lit too: queued as one of its samples
+// while the cell has fewer than HASH_CELL_SAMPLES_PER_FRAME claims this frame, into the room after the multibounce's.
+// A hit past the room is left out; the cell is lit the next frame.
+void HashGridCache_KeepForLight(HashGridCache_Visibility visibility, uint cellIndex, uint first, uint room)
+{
+    uint claimed;
+    InterlockedAdd(g_HashGridCache_UpdateCellValueBuffer[4 * cellIndex + 3], 1, claimed);
+    if (claimed >= HASH_CELL_SAMPLES_PER_FRAME) return;
+
+    uint index;
+    InterlockedAdd(g_Counters[GI_COUNTER_VISIBILITY2], 1, index);
+    if (index >= room) return;
+
+    g_HashGridCache_VisibilityBuffer[first + index] = HashGridCache_PackVisibility(visibility);
+    g_HashGridCache_VisibilityCellBuffer[first + index] = cellIndex;
+    uint lightIndex;
+    InterlockedAdd(g_Counters[GI_COUNTER_LIGHTS], 1, lightIndex);
+    g_HashGridCache_LightBuffer[lightIndex] = first + index;
+}
+
 // A hit the cache keeps, for PopulateCells and the multibounce: `query` is where it came from.
 uint HashGridCache_Keep(uint counter, uint first, HashGridCache_Visibility visibility, uint cellIndex, uint query)
 {
@@ -555,6 +575,12 @@ float3 DiffuseRayEmission(HashGridCache_Visibility visibility, float3 emission)
     if (!any(emission > 0.0f) || IsAimedAt(visibility.instanceIndex, visibility.geometryIndex)) return 0.0f;
 
     return min(emission, g_Frame.emission.y);
+}
+
+// A hit's mesh's flags (GI_GEOMETRY_*).
+uint HitFlags(HashGridCache_Visibility visibility)
+{
+    return g_Geometries[FirstGeometry(g_Instances[visibility.instanceIndex]) + visibility.geometryIndex].flags;
 }
 
 // Leaves (GI_GEOMETRY_LEAF) let light through.

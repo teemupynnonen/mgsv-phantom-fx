@@ -27,10 +27,15 @@ void describe(gi_d3d12::Descriptors& d, const Textures& textures)
     if (textures.forwardShadow) d.outputTexture(binding::ForwardShadow, textures.forwardShadow, DXGI_FORMAT_R16_FLOAT);
 }
 
+void dispatchLamps(gi_d3d12::Recorder& r, std::uint32_t width, std::uint32_t height)
+{
+    r.dispatch(Kernel::TraceLampLight, groups(width, 8), groups(height, 8));
+}
+
 void recordLamps(gi_d3d12::Recorder& r, std::uint32_t width, std::uint32_t height)
 {
     r.mark("path-traced lamps", performance::Pass::LampLight);
-    r.dispatch(Kernel::TraceLampLight, groups(width, 8), groups(height, 8));
+    dispatchLamps(r, width, height);
     r.barrier();
 }
 

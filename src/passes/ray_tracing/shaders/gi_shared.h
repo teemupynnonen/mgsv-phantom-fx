@@ -98,6 +98,8 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_COUNTER_FOLIAGE        11u // Light pixels on the game's foliage (PrepareGuides)
 #define GI_COUNTER_FOLIAGE_MEMORY_FULL 12u // Foliage light pixels the foliage memory had no room for (ResolveLight)
 #define GI_COUNTER_MULTIBOUNCE_AWAY 13u // Multibounce rays that reach the sky (PopulateMultibounceCells)
+#define GI_COUNTER_VISIBILITY2    14u // Distant first hits queued to light their cells (TraceLight); counts past the room they have
+#define GI_COUNTER_CACHED_HITS    15u // The light's first hits that took their light from a cell (TraceLight)
 // The frame's largest value (asuint of a float, its largest channel) at each step of the light
 // (MaxDiagnostic in gi_light.hlsl), to find where light grows past what the sun and sky give.
 #define GI_COUNTER_MAX_ALBEDO     16u // A hit's albedo
@@ -196,7 +198,8 @@ struct GIFrameConstants
     // The light (gi_light.hlsl): its rays, from a grid half the render size each way, and the hash grid
     // cache (AMD Capsaicin's HashGridCacheConstants).
     uint4 lightLayout;        // xy: the light's size; z: its pixels; w: frame parity
-    uint4 lightRays;          // x: rays a light pixel, 1, 2 or 4, twice on foliage (TraceLight); y: how far they look, metres (0: no end)
+    uint4 lightRays;          // x: rays a light pixel, 1, 2 or 4, twice on foliage (TraceLight); y: how far they look, metres (0: no end);
+                              // z: from how far a first hit takes its light from the cache, metres (0: never)
     float4 cellSizes;         // y: hash cell size; z: smallest hash cell; w: hash tile size
     uint4 hashCounts;         // x: buckets; y: tiles; z: cells; w: tiles per bucket
     uint4 hashTileSizes;      // Cells across a tile, mips 0 to 3
