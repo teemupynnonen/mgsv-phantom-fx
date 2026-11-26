@@ -4,6 +4,12 @@
 
 ### New
 
+- **Opacity micromaps are on by default.** The setting under Global illumination used to be off, as older RTX cards
+  emulate micromaps and were thought to lose time. It is now on for a new install, which is about 4 ms in the jungle at
+  1080p on an RTX 40 or newer. On an RTX 3090 at one leafy spot, 1080p, two runs with them on (59.2 and 63.0 ms) and one
+  off (61.3 ms) could not tell a loss from a gain: the spread between two runs of the same setting was wider than
+  the difference. An older card should judge it by how it plays. An existing `PhantomFX.ini` keeps its own value.
+
 - **Bushes and grass move with the wind in the ray-traced scene.** Their traced shadows, bounce light and reflections
   move with them. The clone plugin's rocks and props stay put.
 
