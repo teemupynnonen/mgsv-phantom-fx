@@ -69,6 +69,7 @@ struct Textures
     ID3D11Texture2D* surfaceDepth{};
     ID3D11Texture2D* surfaceNormal{};
     ID3D11Texture2D* surfaceReflection{};
+    ID3D11Texture2D* forwardShadow{};
 };
 
 using Matrix = std::array<float, 16>; // Rows applied as dot(row, v), as the engine's
@@ -139,6 +140,7 @@ struct Frame
     bool debugShadows{};
     bool shadowStarts{};     // The debug view: where the shadow rays leave each pixel (ShadowStartColor)
     bool twoSidedShadows{};  // Diagnostics: rays towards lights blocked by every surface from both sides, as until 2026-10-26
+    bool mainViewCastsSun{}; // Diagnostics: main-view-only meshes with a sun stand-in block the sun (GI_GEOMETRY_STOOD_IN)
     LightDebugView lightDebugView{}; // Diagnostics, with textures.lightDebug
     std::uint32_t lightRays{2}; // The light's rays a light pixel, 1 to 4 (TraceLight)
     bool usesShortLightRays{true}; // They look LightRayReach metres, not without end

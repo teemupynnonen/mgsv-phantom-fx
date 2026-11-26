@@ -531,7 +531,7 @@ void diagnostic(DevKitScript* script, std::string_view rest)
     int value{};
     auto diagnostics = core::currentDiagnostics();
     const std::pair<std::string_view, bool*> flags[]{{"show_scene", &diagnostics.showTracedScene}, {"two_sided_shadows", &diagnostics.twoSidedShadows},
-        {"no_jitter", &diagnostics.noJitter}};
+        {"no_jitter", &diagnostics.noJitter}, {"main_view_sun", &diagnostics.mainViewCastsSun}};
     if (!(arguments >> name >> value))
     {
         say(script, "error: diagnostic debug_view|show_scene|two_sided_shadows|no_jitter|river_light <value>\n");
