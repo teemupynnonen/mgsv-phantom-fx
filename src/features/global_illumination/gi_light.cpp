@@ -14,9 +14,9 @@ using gi_d3d12::Kernel;
 constexpr std::uint32_t HashTiles = HashBuckets * HashTilesPerBucket;
 constexpr std::uint32_t CellsPerTile = HashTileCellRatio * HashTileCellRatio + 16 + 4 + 1; // Mips 0 to 3
 constexpr std::uint32_t HashCells = HashTiles * CellsPerTile;
-// Capsaicin's defaults: cells of 32 pixels on screen, no smaller than 10 cm, 16 samples a cell, and
-// 70% of the multibounce rays left out.
-constexpr float HashCellPixels = 32, HashMinCellSize = 0.1f, MaxSamples = 16, DiscardMultibounce = 0.7f;
+// Capsaicin's defaults: cells of 32 pixels on screen, no smaller than 10 cm, and 70% of the multibounce rays left
+// out. Its 16 samples a cell are Diagnostics' (fill).
+constexpr float HashCellPixels = 32, HashMinCellSize = 0.1f, DiscardMultibounce = 0.7f;
 // Hits a cell takes its light from each frame (gi_light.hlsl, HashGridCache_QueueLight).
 constexpr std::uint32_t CellSamplesPerFrame = 4;
 }
@@ -70,7 +70,7 @@ Light::Light(ID3D12Device* device, UINT width, UINT height, bool isPerRenderPixe
     foliageLight = buffer(std::uint64_t{GI_FOLIAGE_MEMORY_SLOTS} * 8, "Creating the foliage memory's light");
 }
 
-void Light::fill(gi::GIFrameConstants& constants, float verticalFov, std::uint32_t parity) const
+void Light::fill(gi::GIFrameConstants& constants, float verticalFov, std::uint32_t parity, float maxSamples) const
 {
     const float width = static_cast<float>(renderWidth), height = static_cast<float>(renderHeight);
     const float scale = std::max(1.0f / height, height / (width * width));
@@ -82,7 +82,7 @@ void Light::fill(gi::GIFrameConstants& constants, float verticalFov, std::uint32
     constants.hashTileCells = {64, 16, 4, 1};
     constants.hashTileFirstCells = {0, 64, 80, 84};
     constants.hashMisc = {CellsPerTile, parity, CellSamplesPerFrame, 0};
-    constants.hashSamples = {MaxSamples, DiscardMultibounce, MaxSamples, static_cast<float>(HashTileCellRatio)};
+    constants.hashSamples = {maxSamples, DiscardMultibounce, maxSamples, static_cast<float>(HashTileCellRatio)};
 }
 
 void Light::describe(gi_d3d12::Descriptors& d, std::uint32_t parity) const

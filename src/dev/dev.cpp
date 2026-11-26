@@ -14,7 +14,12 @@
 #include "features/photo_mode/photo_mode.hpp"
 #include "fxui/fxui.hpp"
 #include "log.hpp"
+#include "performance.hpp"
 
+#include <Windows.h>
+#include <cstdint>
+#include <format>
+#include <string>
 #include <string_view>
 
 // The devkit's game layer: the build check the add-on makes.
@@ -45,6 +50,89 @@ fxui::Tone toneOf(devkit::Tone tone)
     return fxui::Tone::Dim;
 }
 
+// The light cache's A/B: the cache off and on in turn, each for a few seconds, with the GPU's cost averaged over what is
+// left after the settling. Run from the Light cache item, so it needs the Developer page open.
+struct CacheCompare
+{
+    static constexpr int Phases = 8; // off, on, off, on, ...
+    static constexpr std::uint64_t PhaseMs = 6000, SettleMs = 2000;
+    bool running{};
+    int phase{};
+    std::uint64_t phaseStart{};
+    float savedReach{10};
+    double sumFrame[2]{}, sumRays[2]{}, count[2]{};
+    std::string result;
+};
+
+CacheCompare compare;
+
+void drawLightCache()
+{
+    const fxui::Item item({.id = "lightCache", .name = "Light cache", .summary = "How distant a hit reads the light cache, and how fast its cells follow a change.",
+        .keywords = "cache lag light global illumination distance samples compare cost"});
+    if (!item) return;
+
+    performance::watch();
+    auto options = core::currentDiagnostics();
+    bool changed = false;
+    changed |= fxui::slider("Hits from the cache past (m)", options.lightCacheReach,
+        {.min = 0.0f, .max = 50.0f, .standard = 10.0f, .format = "%.0f",
+            .tip = "A light ray's first hit this far or further takes its light from the cache, about four rays fewer. 0 turns it off."});
+    changed |= fxui::slider("Cache samples a cell", options.hashMaxSamples,
+        {.min = 1.0f, .max = 32.0f, .standard = 16.0f, .format = "%.0f",
+            .tip = "Cells average over this many samples: fewer follow a light's change sooner, with more noise."});
+    if (changed && !compare.running) core::applyDiagnostics(options);
+
+    const auto costs = performance::status().costs;
+    const auto rays = costs.passes[static_cast<std::size_t>(performance::Pass::GiRays)];
+    fxui::note(Tone::Dim, std::format("Now: GPU frame {:.2f} ms, the global illumination's rays {:.2f} ms.", costs.gpuFrame, rays));
+
+    if (!compare.running)
+    {
+        if (fxui::button("Compare the cache off and on (48 s)",
+                "Switches the cache off and on four times, six seconds each, and averages what the GPU frame and the rays cost. Stand still, in the light you want to judge."))
+        {
+            compare = {};
+            compare.running = true;
+            compare.savedReach = options.lightCacheReach > 0 ? options.lightCacheReach : 10.0f;
+            compare.phaseStart = GetTickCount64();
+            options.lightCacheReach = 0;
+            core::applyDiagnostics(options);
+        }
+    }
+    else
+    {
+        const auto now = GetTickCount64();
+        const int which = compare.phase % 2; // 0 off, 1 on
+        if (now - compare.phaseStart >= CacheCompare::SettleMs)
+        {
+            compare.sumFrame[which] += costs.gpuFrame;
+            compare.sumRays[which] += rays;
+            compare.count[which] += 1;
+        }
+        fxui::note(Tone::Warn, std::format("Comparing: step {} of {}, the cache {}. Stay on this page and keep still.", compare.phase + 1,
+            CacheCompare::Phases, which ? "on" : "off"));
+        if (now - compare.phaseStart >= CacheCompare::PhaseMs)
+        {
+            compare.phase += 1;
+            compare.phaseStart = now;
+            const bool done = compare.phase >= CacheCompare::Phases;
+            options.lightCacheReach = done || compare.phase % 2 == 1 ? compare.savedReach : 0.0f;
+            core::applyDiagnostics(options);
+            if (done)
+            {
+                compare.running = false;
+                const auto mean = [&](const double* sum, int i) { return compare.count[i] > 0 ? sum[i] / compare.count[i] : 0.0; };
+                compare.result = std::format("Cache off: GPU frame {:.2f} ms, rays {:.2f} ms.  On from {:.0f} m: GPU frame {:.2f} ms, rays {:.2f} ms.  "
+                                             "The cache saves {:.2f} ms of the frame, {:.2f} ms of the rays.",
+                    mean(compare.sumFrame, 0), mean(compare.sumRays, 0), compare.savedReach, mean(compare.sumFrame, 1), mean(compare.sumRays, 1),
+                    mean(compare.sumFrame, 0) - mean(compare.sumFrame, 1), mean(compare.sumRays, 0) - mean(compare.sumRays, 1));
+                log(compare.result);
+            }
+        }
+    }
+    if (!compare.result.empty()) fxui::note(Tone::Ok, compare.result);
+}
 // What frames cost, on file.
 void drawCostRecording()
 {
@@ -96,6 +184,7 @@ void drawPage()
     {
         drawCostRecording();
         remaster::drawTool();
+        drawLightCache();
     }
     if constexpr (DiagnosticLog && !ToolsOnly)
     {

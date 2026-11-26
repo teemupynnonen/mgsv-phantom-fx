@@ -27,8 +27,9 @@ public:
     UINT height() const { return renderHeight; }
     bool isPerRenderPixel() const { return !denoiser; }
 
-    // The light's and the hash grid's constants; `verticalFov` in radians.
-    void fill(gi::GIFrameConstants& constants, float verticalFov, std::uint32_t parity) const;
+    // The light's and the hash grid's constants; `verticalFov` in radians, `maxSamples` the samples a cell averages
+    // over (Diagnostics).
+    void fill(gi::GIFrameConstants& constants, float verticalFov, std::uint32_t parity, float maxSamples) const;
     // Its views in the frame's tables.
     void describe(gi_d3d12::Descriptors& descriptors, std::uint32_t parity) const;
     // The passes, from the rays to the light in the output (u0), on the frame slot's room (`frameSlot`), with

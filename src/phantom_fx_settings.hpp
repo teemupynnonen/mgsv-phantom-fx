@@ -154,6 +154,10 @@ struct Diagnostics
     bool mainViewCastsSun{};       // The sun's rays blocked by a main-view-only mesh where its model has a sun stand-in (GI_GEOMETRY_STOOD_IN)
     int lightVolumes{};            // 0 the ray-traced lights within the game's volumes, 1 those with a shadow map beyond, 2 every one beyond
     bool logGlobalIlluminationOften{}; // The global illumination's light logged every few frames, not every ten seconds
+    // The light cache's part in the light (docs/DEVELOPMENT.md, "Making it cheaper"): how distant a hit takes its light
+    // from a cell, metres (0: never), and the samples a cell averages over (fewer follow a change sooner, more noise).
+    float lightCacheReach{10};
+    float hashMaxSamples{16};
 };
 
 // Effects a cost measurement's step runs without (performance.hpp), while the settings, PhantomFX.ini

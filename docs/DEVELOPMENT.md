@@ -2258,7 +2258,7 @@ with `fx.py scenarios`.
    (`CachedLight`); a glossy path's second and third hits are shaded afresh. Where a hit's cone
    (`cone.x + travelled * cone.y`) is at least a cache cell wide (`HashGridCache_CellSize`), the cell's light is as
    sharp as the ray can show, as NVIDIA's SHaRC ends its paths.
-5. **The cache for distant diffuse hits** (done 2026-11-25, `LightCacheReach` in `gi_renderer.cpp`, 10 m). Each hit of
+5. **The cache for distant diffuse hits** (done 2026-11-25; Developer page, "Light cache", 10 m). Each hit of
    `TraceLight` traced the sun's, a lamp's and a self-lit mesh's shadow rays and a bounce, about four rays a pixel. A
    first hit 10 m or more away now takes its cell's light (`HashGridCache_FilteredRadiance` and `FilteredIndirect`),
    and keeps the cell lit by queueing itself as a sample (`HashGridCache_KeepForLight`, at most
@@ -2267,8 +2267,14 @@ with `fx.py scenarios`.
    Measured at DLAA with the switch off and on in the same tree (`LightCacheReach` 0 and 10; two sessions each, three
    240-frame captures a spot): Africa at night 58.4 to 55.1 ms, at noon 43.6 to 41.2 ms, about 3.3 and 2.4 ms. The
    scenarios `africa-roof` and `acc-cabin` stay fine and `mother-base-helipad` reads as before (1.08x); the other two
-   did not run (map transitions). Not checked: the light's lag with moving lights, which goes against a choice made
-   for it ("Nothing of the hit's own light comes from a history", see "Global illumination").
+   did not run (map transitions).
+   The light lags a step change, the worst case, which goes against a choice made for it ("Nothing of the hit's own
+   light comes from a history", see "Global illumination"). Africa at night, the clock jumped from 12:00 to 22:00 with
+   the camera held, 14 frames captured a build: the traced build settles in 3 frames, the cached one is still moving
+   at frame 8 (2.5% of the frame's range from its settled image, the far lamp-lit geometry most of it), half way at
+   12 and there by 24, about 1.3 s at 55 ms. That is the cache's own average (`AccumulateCell`: a sixteenth a frame
+   at most, 16 samples), which the existing cells already had; a first hit's own light did not. A lamp switched
+   on, or headlights driving past, lag by that much beyond 10 m; the sun's own drift is far slower.
 
 ## HDR
 
