@@ -108,6 +108,50 @@ def test_status_says_no_game():
             server.fx.run = original
 
 
+def test_a_gone_game_is_a_failure_not_a_crash():
+    with tempfile.TemporaryDirectory() as temp:
+        with_player(temp)
+        original = server.fx.run
+
+        def gone(lines, timeout=600.0):
+            raise server.fx.GameGone("no game runs there")
+
+        server.fx.run = gone
+        try:
+            result = server.session(action="status", target="player")
+            assert not result.is_error and payload(result)["responds"] is False, payload(result)
+
+            result = server.run(lines=["status"], target="player", timeout_s=5)
+            assert result.is_error and payload(result)["code"] == "NO_DEV_BUILD", payload(result)
+
+            result = server.weather(target="player")
+            assert result.is_error and payload(result)["code"] == "NOT_LOADED", payload(result)
+        finally:
+            server.fx.run = original
+
+
+def test_waiting_outlasts_a_game_not_up_yet():
+    """Right after a launch the process is not there at the first look: that is not the game gone."""
+    with tempfile.TemporaryDirectory() as temp:
+        with_player(temp)
+        (Path(temp) / "DevKit").mkdir()
+        original = server.fx.run, server.fx.game_running
+        asked = []
+
+        def late(lines, timeout=600.0):
+            asked.append(lines)
+            if len(asked) == 1:
+                raise server.fx.GameGone("not up yet")
+            return "> status\nframe 500, presented 900, running, camera 0 0 0 0 0 21\n"
+
+        server.fx.run, server.fx.game_running = late, lambda: True
+        try:
+            server.fx.wait_for_scripts(timeout=5, least_seconds=0)
+            assert len(asked) == 2, asked
+        finally:
+            server.fx.run, server.fx.game_running = original
+
+
 def test_start_needs_steam():
     original = server.fx.steam_running
     server.fx.steam_running = lambda: False
@@ -185,7 +229,8 @@ def test_fx_has_what_it_calls():
 
 
 if __name__ == "__main__":
-    for check in (test_run_and_refusals, test_setting_reads_the_ini, test_status_says_no_game, test_start_needs_steam, test_stop_refuses_player, test_job_list_is_empty,
+    for check in (test_run_and_refusals, test_setting_reads_the_ini, test_status_says_no_game, test_a_gone_game_is_a_failure_not_a_crash,
+                  test_waiting_outlasts_a_game_not_up_yet, test_start_needs_steam, test_stop_refuses_player, test_job_list_is_empty,
                   test_unknown_games_refuse_a_copy, test_restart_copy_refuses_an_unreadable_game, test_show_moves_only_the_copy, test_fx_has_what_it_calls):
         check()
         print(f"{check.__name__}: ok")

@@ -397,7 +397,7 @@ def wait_for_scripts(timeout=120.0, least_seconds=45.0):
     # A game already in play answers at once; nothing is pressed into it.
     try:
         line = run(["status"], timeout=5).splitlines()[1]
-    except (TimeoutError, FileNotFoundError, IndexError):
+    except (TimeoutError, FileNotFoundError, IndexError, GameGone):  # Gone may be not up yet: the loop below allows for it
         line = ""
     frame = re.match(r"frame (\d+)", line)
     if frame and int(frame.group(1)) > 200 and " camera " in f" {line} " and "no camera yet" not in line:
