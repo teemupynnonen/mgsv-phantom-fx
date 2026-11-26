@@ -2264,10 +2264,10 @@ with `fx.py scenarios`.
    and keeps the cell lit by queueing itself as a sample (`HashGridCache_KeepForLight`, at most
    `HASH_CELL_SAMPLES_PER_FRAME` a cell a frame, into a third region of the hit buffers). A self-lit mesh, and a cell
    without samples yet, trace as before. About 36% of the first hits take it (`firstHitsFromCache`).
-    The saving is small and depends on the scene: with the Developer page's Light cache comparison (the cache off and
-    on in turn, in one session) the maintainer saw about 0.3 ms in their game. An earlier automated comparison of two
-    builds in the automation copy at DLAA (Africa, night 58.4 to 55.1 ms, noon 43.6 to 41.2 ms) did not reproduce there
-    and should not be relied on; use the comparison. The
+    The saving depends on the scene. In the general open world the Developer page's Light cache comparison (the cache off
+    and on in turn, in one session) shows about 0.3 ms. Africa is a worst case, with far lit geometry, and there two builds
+    compared at DLAA in the automation copy gave night 58.4 to 55.1 ms and noon 43.6 to 41.2 ms (not a live toggle).
+    The
    scenarios `africa-roof` and `acc-cabin` stay fine and `mother-base-helipad` reads as before (1.08x); the other two
    did not run (map transitions).
    The light lags a step change, the worst case, which goes against a choice made for it ("Nothing of the hit's own
