@@ -7,7 +7,8 @@ param(
     [string]$Steam = $(if ($env:PHANTOM_FX_GAME) { $env:PHANTOM_FX_GAME } else { 'C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP' }),
     # The saves every run starts from; the game reads and writes a copy (src/devkit/save_redirect.hpp).
     [string]$SeedSaves = (Join-Path $env:USERPROFILE 'Documents\Development\mgsv-automation\seed-saves'),
-    # No longer applied, only warned about: the copy runs at the player's own output size (see below).
+    # No longer applied, only warned about. The copy takes the player's graphics settings, output size
+    # included, unless its own game has saved different ones (see below).
     [int]$Width = 0,
     [int]$Height = 0,
     # PhantomFX.ini lines in place of the player's. Frame generation and HDR are off by default: the
