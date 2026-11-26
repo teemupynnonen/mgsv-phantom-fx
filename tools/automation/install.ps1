@@ -7,8 +7,8 @@ param(
     [string]$Steam = $(if ($env:PHANTOM_FX_GAME) { $env:PHANTOM_FX_GAME } else { 'C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP' }),
     # The saves every run starts from; the game reads and writes a copy (src/devkit/save_redirect.hpp).
     [string]$SeedSaves = (Join-Path $env:USERPROFILE 'Documents\Development\mgsv-automation\seed-saves'),
-    # No longer applied, only warned about. The copy takes the player's graphics settings, output size
-    # included, unless its own game has saved different ones (see below).
+    # No longer applied, only warned about. The copy has started at the game's defaults even with the player's
+    # graphics config, so set its graphics once in its own menu; what it saves is kept (see below).
     [int]$Width = 0,
     [int]$Height = 0,
     # PhantomFX.ini lines in place of the player's. Frame generation and HDR are off by default: the
@@ -69,14 +69,13 @@ if ($keepConfig) { Copy-Item $ownConfig (Join-Path $saves 'TPP_CONFIG_DATA') -Fo
 # The copy drops the game's startup logos, which cost eighteen seconds of every run (src/devkit/automation.cpp).
 New-Item -ItemType File -Force (Join-Path $Game 'DevKit\skip-logos') | Out-Null
 
-# The game's user data folder for the run, with the player's display and quality settings.
+# The game's user data folder for the run, seeded with the player's graphics config.
 $userData = Join-Path $Game 'DevKit\local'
 New-Item -ItemType Directory -Force $userData | Out-Null
 $config = Get-ChildItem (Join-Path $Steam '..\..\..\userdata\*\287700\local\TPP_GRAPHICS_CONFIG') | Select-Object -First 1
 if (-not $config) { throw "No TPP_GRAPHICS_CONFIG in Steam's userdata: run the game once from Steam first." }
 # Byte for byte: the file carries a checksum ("as") of its settings, and an edited one (windowed, another size) the game
-# throws away for its defaults, Effects below Extra High among them, where the ray tracing fails (2026-11-07). The copy
-# runs in the player's own display mode.
+# throws away for its defaults, Effects below Extra High among them, where the ray tracing fails (2026-11-07).
 # The game reads the player's file in the copy and still starts at its defaults (2026-11-07), so settings the copy's own
 # game saved, set once in its menu, are kept over the player's.
 $own = Join-Path $userData 'TPP_GRAPHICS_CONFIG'
