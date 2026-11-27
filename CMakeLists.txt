@@ -187,9 +187,9 @@ set_target_properties(ngx PROPERTIES
 # ReShade reads the add-on's name, author and version from its version resource.
 configure_file(src/version.rc.in "${CMAKE_BINARY_DIR}/version.rc" @ONLY)
 
-# The global illumination's Direct3D 12 kernels (src/shaders) are compiled at build time by the
-# Windows SDK's DXC into headers of DXIL, one per entry point; Direct3D 11's shaders compile at run
-# time as before.
+# The global illumination's Direct3D 12 kernels (the shaders/ directories of src/features and
+# src/passes/ray_tracing) are compiled at build time by the Windows SDK's DXC into headers of DXIL,
+# one per entry point; Direct3D 11's shaders are precompiled by fxc (PHANTOM_FX_SHADERS, below).
 file(GLOB DXC_SDK_DIRS LIST_DIRECTORIES true "C:/Program Files (x86)/Windows Kits/10/bin/10.*/x64")
 list(SORT DXC_SDK_DIRS COMPARE NATURAL ORDER DESCENDING)
 find_program(DXC_EXECUTABLE dxc HINTS "$ENV{WindowsSdkVerBinPath}x64" ${DXC_SDK_DIRS} REQUIRED)
@@ -280,6 +280,18 @@ set_target_properties(phantom_fx PROPERTIES
     CXX_EXTENSIONS OFF
 )
 
+# fxc cannot include gi_shared.h (it is DXC's), so mask_copy.cs.hlsl repeats the mask atlas's size: fail the
+# configure if the two drift apart.
+file(READ "${CMAKE_SOURCE_DIR}/src/passes/ray_tracing/shaders/gi_shared.h" _gi_shared)
+file(READ "${CMAKE_SOURCE_DIR}/src/features/path_tracing/shaders/mask_copy.cs.hlsl" _mask_copy)
+foreach(_mask_constant GI_LAMP_MASK_TILES GI_LAMP_MASK_SIZE)
+    string(REGEX MATCH "#define ${_mask_constant} +([0-9]+)" _ "${_gi_shared}")
+    set(_shared_value "${CMAKE_MATCH_1}")
+    string(REGEX MATCH "#define ${_mask_constant} +([0-9]+)" _ "${_mask_copy}")
+    if(NOT _shared_value OR NOT _shared_value STREQUAL "${CMAKE_MATCH_1}")
+        message(FATAL_ERROR "mask_copy.cs.hlsl's ${_mask_constant} (${CMAKE_MATCH_1}) differs from gi_shared.h's (${_shared_value}).")
+    endif()
+endforeach()
 # Every shader the add-on ships, precompiled at build time. name|source|profile[|flags]
 set(PHANTOM_FX_SHADERS
     hdr_capture|src/features/hdr/shaders/capture.cs.hlsl|cs_5_0

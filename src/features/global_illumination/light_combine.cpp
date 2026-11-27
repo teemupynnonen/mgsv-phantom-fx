@@ -48,7 +48,7 @@ std::atomic<std::uint64_t> presents{};
 // A combine older than this many presents is not this frame's.
 constexpr std::uint64_t AmbientFrames = 2;
 
-// Compiles the shader once; call with resourceMutex held. Returns false when it is unavailable.
+// Makes the shader once from its precompiled bytecode (compiled from source in a dev build); call with resourceMutex held. Returns false when it is unavailable.
 bool ensurePipeline()
 {
     if (addLightShader) return true;

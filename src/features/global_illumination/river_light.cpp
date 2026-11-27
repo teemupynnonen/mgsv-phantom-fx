@@ -48,7 +48,7 @@ UINT withoutAmbientBytes{};
 DrawTarget lit, unlit;
 bool hasPipelineFailed{};
 
-// Compiles the shader and makes the states once; call with resourceMutex held.
+// Makes the shader from its precompiled bytecode (compiled from source in a dev build) and the states once; call with resourceMutex held.
 bool ensurePipeline()
 {
     if (shader) return true;

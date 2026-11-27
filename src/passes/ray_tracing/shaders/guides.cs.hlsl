@@ -1,7 +1,7 @@
 // DLSS Ray Reconstruction's guides from the G-buffer, as its integration guide asks for them: the
 // world-space normal with the roughness in w, the diffuse albedo, and the specular albedo, the share of
 // light the surface reflects towards the eye. That share is the game's for its sky reflection
-// (SKY_REFLECTION in sun_light_pass_shaders.hpp): its specular colour (the material table's, times the
+// (SKY_REFLECTION in passes/shaders/sun_light.ps.hlsl): its specular colour (the material table's, times the
 // specular target's intensity) through its Fresnel table at the eye's angle, from at least the sun pass's
 // least F0 (cPSLight c2.z), times half the smoothness. The game's materials are tuned to it: with a
 // physical one (NVIDIA's EnvBRDFApprox2), Snake's red arm, an 11% white specular of roughness 0.59,

@@ -1,3 +1,6 @@
+// The occlusion is ported from three-gtvbao (norio, MIT; GT-VBAO by Mirko Salm, CC0 / MIT; SSRT3 by
+// Olivier Therrien, MIT), the light gathering from SSRT3 (CDRIN, MIT), the noise from XeGTAO (Intel,
+// MIT). Their licenses are in licenses/.
 #ifndef LIGHT
 #define LIGHT 0
 #endif

@@ -4,6 +4,7 @@
 #ifndef FINAL
 #define FINAL 0
 #endif
+// Ported from XeGTAO (Intel, MIT; license in licenses/XeGTAO-LICENSE.txt).
 // XeGTAO's edge-aware 3 x 3 denoiser, one pixel per thread at the march's size, on the visibility
 // (LIGHT 0) or the light (LIGHT 1). The passes before the last weigh the centre less (beta / 5), so
 // they blur more, as XeGTAO's do.

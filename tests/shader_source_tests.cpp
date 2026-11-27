@@ -39,6 +39,11 @@ int main()
         expect(isDxbc(code), shader->source);
     }
 
+    // The sun pass indexes PathTraced by whether the draw is inside the shadow range: only [1] has the clouds' shadow.
+    const auto& pathTraced = phantom_fx::sun_light_pass::shaders::PathTraced;
+    expect(std::strstr(pathTraced[1].source, "_cloud") != nullptr, "PathTraced[1] is the cloud-shadow variant");
+    expect(std::strstr(pathTraced[0].source, "_cloud") == nullptr, "PathTraced[0] is the plain variant");
+
     std::puts("shader_source: ok");
     return 0;
 }

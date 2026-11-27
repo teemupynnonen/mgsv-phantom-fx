@@ -74,7 +74,7 @@ struct Options
 };
 static_assert(sizeof(Options) % 16 == 0);
 
-// Compiles the shaders once; call with resourceMutex held. Returns false when they are unavailable.
+// Makes the shaders once from their precompiled bytecode (compiled from source in a dev build); call with resourceMutex held. Returns false when they are unavailable.
 bool ensurePipeline()
 {
     if (lightShadowShader) return true;

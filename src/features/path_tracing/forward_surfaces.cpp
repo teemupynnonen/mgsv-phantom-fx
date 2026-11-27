@@ -74,7 +74,7 @@ bool hasPipelineFailed{};
 bool hasSurfaces{}, areTargetsDrawn{}, hasReflected{};
 ComPtr<ID3D11RenderTargetView> scene;
 
-// Compiles the surfaces' shaders and makes the states once; call with resourceMutex held. Returns false when they are unavailable.
+// Makes the surfaces' shaders from their precompiled bytecode (compiled from source in a dev build) and the states once; call with resourceMutex held. Returns false when they are unavailable.
 bool ensurePipeline()
 {
     if (compositeShader) return true;

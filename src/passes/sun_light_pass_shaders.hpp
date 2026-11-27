@@ -23,8 +23,8 @@ inline constexpr Shader SunLight[2][2]{
 
 // [inside the shadow range]
 inline constexpr Shader PathTraced[2]{
-    Shader{g_sun_light_path_traced_cloud, sizeof(g_sun_light_path_traced_cloud), "passes/shaders/sun_light_path_traced_cloud.ps.hlsl", "ps_5_0"},
-    Shader{g_sun_light_path_traced, sizeof(g_sun_light_path_traced), "passes/shaders/sun_light_path_traced.ps.hlsl", "ps_5_0"}};
+    Shader{g_sun_light_path_traced, sizeof(g_sun_light_path_traced), "passes/shaders/sun_light_path_traced.ps.hlsl", "ps_5_0"},
+    Shader{g_sun_light_path_traced_cloud, sizeof(g_sun_light_path_traced_cloud), "passes/shaders/sun_light_path_traced_cloud.ps.hlsl", "ps_5_0"}};
 
 #if PHANTOM_FX_DEV_TOOLS
 inline constexpr Shader GameShadow{g_sun_light_game_shadow, sizeof(g_sun_light_game_shadow), "dev/shaders/sun_light_game_shadow.ps.hlsl", "ps_5_0"};

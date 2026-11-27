@@ -1097,7 +1097,7 @@ void noteSun(ID3D11DeviceContext* context, bool shadowMapped) noexcept
         noted.skyReflectionFloor = light->skyReflectionFloor;
         notes.note(keyOf(context), [&](Notes& contextNotes) {
             contextNotes.sun = noted;
-            // The range as SunShadow reads it (sun_light_pass_shaders.hpp).
+            // The range as SunShadow reads it (passes/shaders/sun_light.ps.hlsl).
             if (shadowMapped) contextNotes.shadowRange = std::array<float, 4>{light->shadowRangeCentre, light->shadowRangeStart, light->shadowRangeFade, 1};
             // The sun pass reads the shadows, and the point and spot lights are drawn before its list: it waits for them.
             if (shadowing.load(std::memory_order_relaxed) || localShadowing.load(std::memory_order_relaxed)) contextNotes.wait = true;

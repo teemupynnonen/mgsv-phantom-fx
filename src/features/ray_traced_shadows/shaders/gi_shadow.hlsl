@@ -22,7 +22,7 @@
 #pragma dxc diagnostic pop
 
 // How far a point lies beyond the game's shadow map: 0 inside it, 1 past its fade, as
-// SunLight_DL_CS_ES fades its shadow to lit (sun_light_pass_shaders.hpp, SunShadow). In view space the
+// SunLight_DL_CS_ES fades its shadow to lit (passes/shaders/sun_light.ps.hlsl). In view space the
 // fade runs from the point (0, 0, c8.x); its distance from there follows from the distance to the
 // eye and the view depth.
 float BeyondShadowMap(float3 position, float depth)

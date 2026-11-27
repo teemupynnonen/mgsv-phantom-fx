@@ -102,7 +102,7 @@ ComPtr<ID3D11ShaderResourceView> makeMapView()
     return view;
 }
 
-// Compiles the shader and makes the states once; call with resourceMutex held.
+// Makes the shader from its precompiled bytecode (compiled from source in a dev build) and the states once; call with resourceMutex held.
 void ensurePipeline()
 {
     if (shader || !device || hasPipelineFailed) return;

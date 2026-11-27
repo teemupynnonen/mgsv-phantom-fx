@@ -34,7 +34,7 @@ float WaterReflectance(float toEyeN, float roughness)
 }
 
 // A river's or a liquid's, near a mirror as the game's shader samples its cube map: the ripples' normal does the rest.
-// The guides take the same (surface_shaders.hpp, ReconstructionGuides).
+// The guides take the same (reconstruction_guides.cs.hlsl).
 static const float WaterRoughness = 0.05f;
 // FP16's largest, which Ray Reconstruction takes as the sky.
 static const float SkyHitDistance = 65504.0f;

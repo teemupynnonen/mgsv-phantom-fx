@@ -52,7 +52,7 @@ ComPtr<ID3D11Device> device;
 std::array<ComPtr<ID3D11PixelShader>, std::size(ReplacedLights)> replacements;
 ComPtr<ID3D11Buffer> optionsBuffer;
 
-// Compiles the shaders once; call with resourceMutex held. Returns false when they are unavailable.
+// Makes the shaders once from their precompiled bytecode (compiled from source in a dev build); call with resourceMutex held. Returns false when they are unavailable.
 bool ensurePipeline()
 {
     if (optionsBuffer) return true;

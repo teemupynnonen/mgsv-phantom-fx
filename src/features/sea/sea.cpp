@@ -75,7 +75,7 @@ constexpr std::uint64_t ShownForMilliseconds = 60'000, ForgottenAfterMillisecond
 // Read on the CPU through the constant capture they were other draws' constants (levels from -62 m to 2000 m
 // within a second): the game's threads do not write them where it maps them.
 constexpr UINT GameMaterialSlot = 4, GameMaterialSize = 8 * game_constants::RegisterSize;
-// sea_shaders.hpp's cbuffers: Sea at b9 of every stage, the game's sea's material copy at b10, its pixel
+// shaders/sea_common.hlsli's cbuffers: Sea at b9 of every stage, the game's sea's material copy at b10, its pixel
 // material's at b11 (the surface's pixel shader).
 constexpr UINT ConstantSlot = 9, GameSeaSlot = 10, GameSeaPixelSlot = 11;
 // The game's sea's foam textures in its pixel shader (inFoamTexture, inFoamTexture2), and where the surface
@@ -256,7 +256,7 @@ ComPtr<ID3D11Buffer> makeIndices()
     return buffer;
 }
 
-// Compiles and makes everything once; call with resourceMutex held. Returns false when it is unavailable.
+// Makes everything once, its shaders from their precompiled bytecode (compiled from source in a dev build); call with resourceMutex held. Returns false when it is unavailable.
 bool ensurePipeline()
 {
     if (surfacePixel) return true;

@@ -44,7 +44,7 @@ constexpr UINT ShadowSamples = 2;
 constexpr float HistoryWeight = 0.95f;
 // The Halton sequence's period for the froxels' places.
 constexpr std::uint32_t JitterPeriod = 64;
-// Hillaire's lookup tables (atmosphere_shaders.hpp).
+// Hillaire's lookup tables (shaders/atmosphere.hlsli).
 constexpr UINT TransmittanceWidth = 256, TransmittanceHeight = 64, MultipleScatteringSize = 32, SkyViewWidth = 192, SkyViewHeight = 108;
 constexpr UINT SkyParameterTexels = 7;
 // Milliseconds between the sky parameters in the log, while the physical look runs.
@@ -67,10 +67,10 @@ constexpr UINT SystemSize = sizeof(SystemConstants), SceneSize = sizeof(SceneCon
 constexpr UINT RainSlot = 0;   // The fog pass's inInterruptTexture
 constexpr UINT ShadowSlot = 3; // The sun pass's g_ShadowTexture
 constexpr UINT FogSlot = 12;   // g_tex_fog of every pass that reads the fog
-// The sky draw's own textures: SkyParameters and SkyViewLut in atmosphere_shaders.hpp.
+// The sky draw's own textures: SkyParameters and SkyViewLut in shaders/atmosphere.hlsli.
 constexpr UINT SkyParameterSlot = 6, SkyViewSlot = 7;
 
-// Fog in atmosphere_shaders.hpp.
+// Fog in shaders/fog_inputs.hlsli.
 struct Constants
 {
     std::uint32_t tileSize[2], shadowed, shadowSamples;
@@ -190,7 +190,7 @@ Target target3d(DXGI_FORMAT format, const char* what)
     return made;
 }
 
-// Compiles the shaders and makes the fixed resources once; call with resourceMutex held. Returns
+// Makes the shaders from their precompiled bytecode (compiled from source in a dev build) and the fixed resources once; call with resourceMutex held. Returns
 // false when the volumetric fog is unavailable.
 bool ensurePipeline()
 {

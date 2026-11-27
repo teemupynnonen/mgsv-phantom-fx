@@ -1,5 +1,5 @@
 // The colour encodings the scene target holds, and the deferred resolve's tonemap. The encodings are
-// also used by the DLSS passes (upscaler_shaders.hpp).
+// also used by the DLSS passes (features/upscaling/shaders/inputs.cs.hlsl).
 StructuredBuffer<float4> Curve : register(t8);
 
 // Linear colour from the sRGB-encoded scene, and back. Values above 1 keep their meaning.

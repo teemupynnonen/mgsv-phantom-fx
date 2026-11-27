@@ -1,4 +1,5 @@
-// The mask atlas's size, the same as gi_shared.h's GI_LAMP_MASK_TILES and GI_LAMP_MASK_SIZE.
+// The mask atlas's size, the same as gi_shared.h's GI_LAMP_MASK_TILES and GI_LAMP_MASK_SIZE (fxc cannot include
+// that header; the CMake configure fails if they differ).
 #define GI_LAMP_MASK_TILES 8
 #define GI_LAMP_MASK_SIZE 256
 // A masked spot's mask (the game's t4) into its tile of the atlas the lamps' rays sample (direct_light.hlsl),

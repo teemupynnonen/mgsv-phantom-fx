@@ -77,7 +77,7 @@ ComPtr<ID3D11ShaderResourceView> whiteView; // 1x1, the resolve's occlusion whil
 // its place.
 visibility_bitmask::Target diffuseWithLight;
 
-// Compiles the shaders and makes the fixed resources once; call with resourceMutex held. Returns
+// Makes the shaders (from their precompiled bytecode; compiled from source in a dev build) and the fixed resources once; call with resourceMutex held. Returns
 // false when they are unavailable.
 bool ensurePipeline()
 {

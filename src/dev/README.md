@@ -11,7 +11,7 @@ debug cases. `docs/DEVELOPMENT.md` describes what each does ("Debug cases", "Tra
 | `save_redirect.*` | Keeps the automation copy off the player's files |
 | `game_lua.*`, `travel.*`, `cutscenes.*`, `cutscene_list.hpp` | Lua in the game, and the tools that run on it |
 | `inspect_trace.*`, `shaders/inspect.hlsl`, `inspect_shared.h` | A debug case's record of every pixel, a trace like any other |
-| `game_shadow.*` | A debug case's reference: the game's shadow per pixel, drawn at the sun pass |
+| `game_shadow.*`, `shaders/sun_light_game_shadow.ps.hlsl` | A debug case's reference: the game's shadow per pixel, drawn at the sun pass (the sun pass's shader with `GAME_SHADOW` defined) |
 | `held_camera.*` | A debug case's camera, which photo mode's camera update takes |
 | `perf_record.*` | What frames cost, on file: a row a second, and captures for comparing frames |
 | `remaster/` | The tool that writes the rules `src/remaster/` ships: marks, and the panel that tunes them |
@@ -41,7 +41,8 @@ Delete this folder, `tools/automation/` and `.agents/skills/mgsv-automation/`, t
 | `src/remaster/remaster.cpp` | The `tool_hooks.hpp` include and the three calls of it |
 | `src/passes/ray_tracing/trace.cpp` | `inspect_trace` in the list and the include |
 | `src/passes/sun_light_pass.cpp` | The `game_shadow` block, its `detach` and the include |
-| `src/passes/sun_light_pass_shaders.hpp` | The three `GAME_SHADOW` blocks |
+| `src/passes/shaders/sun_light.ps.hlsl` | The three `#if GAME_SHADOW` blocks |
+| `src/passes/sun_light_pass_shaders.hpp`, `CMakeLists.txt` | The `GameShadow` constant, and the `sun_light_game_shadow` entry of `PHANTOM_FX_SHADERS` |
 | `src/performance.cpp`, `src/features/ray_traced_lights/local_lights.cpp` | The `perf_record` call and the include |
 | `src/features/photo_mode/photo_mode.cpp` | The `held_camera` calls, `heldCamera` and the include; the `game_lua` include, `teleportRequested`, the `Warp` state, its capture at `selectorUpdate`'s teleport and the clears `leave` makes, and `onFrameStart`'s teleport warp |
 | `src/features/photo_mode/photo_mode.hpp` | The `teleport()` and `onFrameStart()` declarations |

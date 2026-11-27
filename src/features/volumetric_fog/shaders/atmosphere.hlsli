@@ -1,3 +1,6 @@
+// The physical atmosphere is ported from Sébastien Hillaire's reference for "A Scalable and Production
+// Ready Sky and Atmosphere Rendering Technique" (Epic Games, 2020, MIT; its license is in
+// licenses/UnrealEngineSkyAtmosphere-LICENSE.txt).
 // Earth's atmosphere as Hillaire's reference sets it up, in km, and its lookup tables. The
 // atmosphere's frame has z up with the planet's centre at the origin; the game's world has y up.
 #ifndef LINEAR_CLAMP_SAMPLER

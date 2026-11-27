@@ -1,6 +1,6 @@
 // Where a surface dominates, tells Ray Reconstruction of it, as its guide asks of a window: depth, normal and hit distance
 // from the one surface. The normal and the hit distance go into its guides; `SurfaceDepth` is left with the depth of those
-// pixels alone, for the upscaler's motion (upscaler_shaders.hpp, Inputs). Below this cover what is behind a pane dominates;
+// pixels alone, for the upscaler's motion (features/upscaling/shaders/inputs.cs.hlsl). Below this cover what is behind a pane dominates;
 // water always does, as it hides or colours what is under it.
 Texture2D<float4> SurfaceNormal : register(t0);
 Texture2D<float4> SurfaceWeight : register(t1);
