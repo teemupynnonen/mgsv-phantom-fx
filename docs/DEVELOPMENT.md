@@ -242,6 +242,7 @@ what draws it, when that is the feature's own.
 
 | File | Purpose |
 | --- | --- |
+| `src/passes/velocity_request.hpp` | An effect's request for the engine's velocity passes (SSGI's temporal accumulation); the motion blur hook reads it and sets the engine's flag |
 | `src/passes/sun_light_pass.*` | The game's sun light pass drawn with replacement shaders, with soft shadows, the sun's contact shadows and the ray-traced shadow composed in. `sun_light_pass_shaders.hpp`: the game's sun light shaders rebuilt with them |
 | `src/passes/local_light_pass.*` | The game's point and spot light draws, with the lamps' contact shadows and soft shadows composed in: the marking and lighting draws |
 | `src/passes/contact_shadow_trace.*` | Bend Studio's screen-space shadow trace, for the sun's and the lamps' contact shadows. `contact_shadow_trace_shaders.hpp`: Bend's trace ported to FXC |
@@ -3813,7 +3814,7 @@ used. Off, the add-on only checks a flag on each full-screen draw.
   object motion in `.ba`), which `MotionBlurCameraVelocity` draws right after the G-buffer. The
   indirect light pass notes that draw's render target and makes a view of it; the engine draws the
   velocity passes only with motion blur or an upscaler, so while VB-SSGI runs the add-on forces them on
-  (`motion_blur::wantVelocityPasses`). Without the buffer the history blend collapses to zero and
+  (`velocity_request::want`). Without the buffer the history blend collapses to zero and
   the raw gather shows. Measured in the RenoDX add-on: the TAA jitter cancels inside the buffer (the
   velocity pass runs with the jittered projection), so no jitter term is subtracted.
 - **Gather** (`ssgi_gather.hlsl`), recorded at the resolve's draw on its deferred
@@ -3837,7 +3838,8 @@ used. Off, the add-on only checks a flag on each full-screen draw.
   dark surrounding gives little, which the earlier per-tap mean did not. Alpha is 1 for any pixel a
   slice could weigh; zero light is a result. Into an `R16G16B16A16_FLOAT` bounce target at the
   gather's size (full, half or quarter, rounded up). Before it, `visibility_bitmask::prefilterDistances`
-  fills this add-on's own copy of the distance mips at the render size, which the march reads
+  fills this add-on's own copy of the distance mips at the render size (timed as `SsgiPrefilter`, the
+  "Depth prefilter" row of Indirect light, not GTVBAO's `OcclusionPrefilter`), which the march reads
   (smaller copies the farther the sample, negative on foliage); if the prefilter is unavailable the
   march reads the depth at full size and has no foliage. The slice angle, the step jitter and the dither come from the R2 low-discrepancy sequence in 32-bit
   fixed point (pixel x, y and the frame index as its three terms; `noiseBits` in `ssgi_common.hlsli`),

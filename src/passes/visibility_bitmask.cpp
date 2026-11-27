@@ -235,7 +235,7 @@ void prefilterDistances(ID3D11DeviceContext* context, const Parameters& paramete
 
     ID3D11Buffer* buffers[]{parameterBuffer.Get(), scene};
     context->CSSetConstantBuffers(0, 2, buffers);
-    performance::Timed timed(context, performance::Pass::OcclusionPrefilter);
+    performance::Timed timed(context, performance::Pass::SsgiPrefilter); // Its only caller is VB-SSGI
     prefilterDepths(context, depth, specular, mips);
 }
 }
