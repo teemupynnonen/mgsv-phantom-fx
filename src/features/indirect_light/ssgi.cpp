@@ -2,18 +2,19 @@
 
 #include "constant_capture.hpp"
 #include "d3d11_helpers.hpp"
-#include "features/indirect_light/ssgi_shaders.hpp"
 #include "features/motion_blur/motion_blur.hpp"
 #include "frame_latch.hpp"
 #include "log.hpp"
 #include "passes/indirect_light_pass.hpp"
 #include "performance.hpp"
+#include "ssgi_sources.h" // Generated from ssgi_*.hlsl (CMakeLists.txt)
 
 #include <wrl/client.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -28,7 +29,7 @@ namespace
 using Microsoft::WRL::ComPtr;
 using visibility_bitmask::Target;
 
-// The passes' constant buffer (PHANTOM_FX_SSGI_PARAMETERS in ssgi_shaders.hpp), b0.
+// The passes' constant buffer (the GI cbuffer in ssgi_common.hlsli), b0.
 struct Parameters
 {
     std::uint32_t size[2]; // c0.xy
@@ -83,6 +84,115 @@ bool historyValid{};
 visibility_bitmask::DistanceMips mips;
 visibility_bitmask::Progress progress{"VB-SSGI"};
 
+// A pass: its file beside this source, its text as the build embedded it, and its name in the log.
+struct PassSource
+{
+    const char* file;
+    const char* embedded;
+    const char* name;
+};
+
+constexpr PassSource PassSources[]{
+    {"ssgi_gather.hlsl", shaders::gather, "ssgi-gather"},
+    {"ssgi_accumulate.hlsl", shaders::accumulate, "ssgi-accumulate"},
+    {"ssgi_filter.hlsl", shaders::filter, "ssgi-filter"},
+    {"ssgi_resolve.hlsl", shaders::resolve, "ssgi-resolve"},
+};
+
+// Compiles one pass; call with resourceMutex held. A dev build reads the pass from its file in the
+// source tree, so a saved edit reaches the game without a rebuild (its includes come from there too);
+// a file that is not there, and every other build, takes the embedded text.
+ComPtr<ID3D11ComputeShader> compilePass(const PassSource& pass)
+{
+#if PHANTOM_FX_DEV_TOOLS
+    const auto path = std::filesystem::path(PHANTOM_FX_SSGI_SHADER_DIR) / pass.file;
+    if (std::filesystem::exists(path))
+    {
+        ComPtr<ID3DBlob> code, errors;
+        const auto result = D3DCompileFromFile(path.c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "main", "cs_5_0",
+            D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, code.GetAddressOf(), errors.GetAddressOf());
+        if (FAILED(result))
+            throw std::runtime_error(std::string("Shader ") + pass.file + " did not compile: "
+                + (errors ? std::string(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize())
+                          : hex(static_cast<std::uint32_t>(result))));
+
+        ComPtr<ID3D11ComputeShader> shader;
+        check(device->CreateComputeShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, shader.GetAddressOf()), pass.name);
+
+        return shader;
+    }
+#endif
+
+    return computeShader(device.Get(), pass.embedded, pass.name);
+}
+
+// Compiles the four passes, in PassSources' order; call with resourceMutex held.
+std::array<ComPtr<ID3D11ComputeShader>, std::size(PassSources)> compilePasses()
+{
+    std::array<ComPtr<ID3D11ComputeShader>, std::size(PassSources)> made;
+    for (std::size_t i = 0; i < made.size(); ++i) made[i] = compilePass(PassSources[i]);
+
+    return made;
+}
+
+void usePasses(const std::array<ComPtr<ID3D11ComputeShader>, std::size(PassSources)>& passes)
+{
+    gatherShader = passes[0];
+    accumulateShader = passes[1];
+    filterShader = passes[2];
+    resolveShader = passes[3];
+}
+
+#if PHANTOM_FX_DEV_TOOLS
+// A dev build's hot reload: present notes a pass's file saved, and the next recording compiles them
+// all again. A failed compile is logged and the passes in use stay.
+std::atomic<bool> reloadWanted{};
+std::filesystem::file_time_type sourcesSeen{};
+std::uint64_t sourcesChecked{};
+
+// The newest save among the passes' files and their include.
+std::filesystem::file_time_type newestSource() noexcept
+{
+    std::filesystem::file_time_type newest{};
+    std::error_code ignored;
+    for (const auto* file : {"ssgi_common.hlsli", PassSources[0].file, PassSources[1].file, PassSources[2].file, PassSources[3].file})
+        newest = std::max(newest, std::filesystem::last_write_time(std::filesystem::path(PHANTOM_FX_SSGI_SHADER_DIR) / file, ignored));
+
+    return newest;
+}
+
+// Called each present; looks at the files twice a second or so, which a frame can afford.
+void watchSources() noexcept
+{
+    constexpr std::uint64_t Interval = 30;
+    if (++sourcesChecked % Interval != 1) return;
+
+    const auto newest = newestSource();
+    if (sourcesSeen == std::filesystem::file_time_type{})
+        sourcesSeen = newest;
+    else if (newest != sourcesSeen)
+    {
+        sourcesSeen = newest;
+        reloadWanted = true;
+    }
+}
+
+// Call with resourceMutex held, with the pipeline made.
+void reloadPasses()
+{
+    try
+    {
+        usePasses(compilePasses());
+        historyValid = false; // The old passes' history is not the new ones'
+        log("VB-SSGI shaders reloaded.");
+    }
+    catch (const std::exception& error)
+    {
+        log(std::string("VB-SSGI shader reload failed, the previous shaders stay: ") + error.what());
+    }
+}
+#endif
+
 // Compiles the shaders once; call with resourceMutex held. Returns false when VB-SSGI is unavailable.
 bool ensurePipeline()
 {
@@ -93,10 +203,7 @@ bool ensurePipeline()
 
     try
     {
-        gatherShader = computeShader(device.Get(), shaders::Gather, "ssgi-gather");
-        accumulateShader = computeShader(device.Get(), shaders::Accumulate, "ssgi-accumulate");
-        filterShader = computeShader(device.Get(), shaders::Filter, "ssgi-filter");
-        resolveShader = computeShader(device.Get(), shaders::Resolve, "ssgi-resolve");
+        usePasses(compilePasses());
         fallback = makeComputeTexture(device.Get(), 1, 1, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the VB-SSGI fallback");
         // Last, so it marks a complete pipeline.
         parameterBuffer = makeConstantBuffer(device.Get(), sizeof(Parameters), "Creating the VB-SSGI constants");
@@ -196,6 +303,9 @@ void present() noexcept
 {
     latch.present();
     ++frameCounter;
+#if PHANTOM_FX_DEV_TOOLS
+    watchSources();
+#endif
 }
 
 bool compute(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D11ShaderResourceView* normals, ID3D11ShaderResourceView* diffuse,
@@ -210,6 +320,9 @@ bool compute(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D
     const auto size = sizeOf(depth);
     std::lock_guard lock(resourceMutex);
     if (!ensurePipeline()) return false;
+#if PHANTOM_FX_DEV_TOOLS
+    if (reloadWanted.exchange(false)) reloadPasses();
+#endif
     if (!normals) return progress.wait("no sky light pass has bound the normals yet");
     if (!size.first || sizeOf(normals) != size || sizeOf(diffuse) != size || sizeOf(albedo) != size)
         return progress.wait("the lighting textures differ in size");

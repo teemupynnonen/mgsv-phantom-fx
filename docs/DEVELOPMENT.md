@@ -228,7 +228,7 @@ what draws it, when that is the feature's own.
 | `global_illumination/` | `river_light.*`: a river's own light under the global illumination. `gi_light.*`, `gi_light.hlsl`: the light on Direct3D 12, its rays, the denoiser's inputs and the render size (see "Global illumination"); their hits' light and the hash grid cache in `passes/ray_tracing/shaders/gi_hit_light.hlsli`. `gi_denoiser.*`: NVIDIA NRD's RELAX denoiser without NRI. `gi_lighting.*`: the game's sky and sun in the light's terms. `light_combine.*`: the traced light in place of the game's probe light at the resolve |
 | `path_tracing/` | `path_tracing.*`: path tracing on Direct3D 11: the traced reflections added at the resolve and blended as the game blends its own, the lamps' light added at the draw point, the masks' atlas (see "Path tracing"). `path_tracing_shaders.hpp`: those draws. `forward_surfaces.*`, `glass.*`, `water.*`, `surface_shaders.hpp`: the forward surfaces, their surfaces drawn beside the game's and what they reflect added over the scene (see "Forward surfaces: rivers, liquids and glass"). `sky_capture.*`: the game's sky drawn again for the rays. `path_tracing_rays.*`: its passes on Direct3D 12. `reflections.hlsl`, `direct_light.hlsl`: the reflections and the point and spot lights |
 | `ambient_occlusion/` | `gtvbao.*`: GTVBAO's occlusion multiplied into the indirect light at the upscale. `gtvbao_shaders.hpp`: that multiply |
-| `indirect_light/` | `ssgi.*`: VB-SSGI's bounce, added to the diffuse light the resolve reads. `ssgi_shaders.hpp`: the gather (with its per-tap visibility test), the temporal accumulation, the a-trous denoiser and the resolve |
+| `indirect_light/` | `ssgi.*`: VB-SSGI's bounce, added to the diffuse light the resolve reads. `ssgi_gather.hlsl`, `ssgi_accumulate.hlsl`, `ssgi_filter.hlsl`, `ssgi_resolve.hlsl` (with `ssgi_common.hlsli`): the gather (with its per-tap visibility test), the temporal accumulation, the a-trous denoiser and the resolve. A dev build recompiles them as they are saved, with no restart (see "VB-SSGI") |
 | `volumetric_fog/` | `atmosphere.*`: the larger fog texture, the game's fog pass over all of it, the shadowed fill before the resolve. `atmosphere_shaders.hpp`: the game's fog formula per froxel with the sun shadowed; Hillaire's atmosphere tables, the physical fog and sky (Epic Games' reference, MIT) |
 | `water_caustics/` | `water_caustics.*`: the light a river's waves focus on its bed, drawn over the river's own draw. `caustics_map.*`: the tiling web, made at start-up. `water_caustics_shaders.hpp`: that draw |
 | `sea/` | `sea.*`: the sea's waves and its surface in the G-buffer in place of the game's sea, its level and wind from the game's, its depth for the guides and its level for the ray-traced scene (see "Sea"). `sea_shaders.hpp`: the spectrum, the FFT, the maps, the surface |
@@ -3798,6 +3798,13 @@ between the surfaces on screen. The chain is ported from the RenoDX MGSV add-on'
 (`renodx-mgsv` `src/games/mgsv/il`), which reads better than the visibility-bitmask gather SSILVB
 used. Off, the add-on only checks a flag on each full-screen draw.
 
+- **Shader files.** The passes are `src/features/indirect_light/ssgi_*.hlsl` with `ssgi_common.hlsli`
+  (the constants and helpers). CMake embeds them as text for the runtime compile. A dev build
+  reads them from the source tree instead and checks their save times about twice a second; a
+  saved edit recompiles all four passes on the next recorded frame, resets the history, and logs
+  `VB-SSGI shaders reloaded.` in `PhantomFX.log`. A failed compile logs its errors and the
+  previous shaders stay. A change to the constant buffer's layout (`Parameters` in `ssgi.cpp`) or
+  to a pass's bindings needs a rebuild.
 - **Where.** At the resolve, which already has the frame's finished diffuse light: the probes and
   sky (occluded by GTVBAO when it is on), the sun with its shadows, the local lights and the skin
   filter. The resolve and the sky light pass are in different command lists, so the passes take the
@@ -3809,7 +3816,7 @@ used. Off, the add-on only checks a flag on each full-screen draw.
   (`motion_blur::wantVelocityPasses`). Without the buffer the history blend collapses to zero and
   the raw gather shows. Measured in the RenoDX add-on: the TAA jitter cancels inside the buffer (the
   velocity pass runs with the jittered projection), so no jitter term is subtracted.
-- **Gather** (`ssgi_shaders.hpp` `shaders::Gather`), recorded at the resolve's draw on its deferred
+- **Gather** (`ssgi_gather.hlsl`), recorded at the resolve's draw on its deferred
   context, with the game's compute bindings saved and restored: from the resolve's depth (`t11`),
   diffuse light (`t9`), albedo (`t8`, its sRGB view, so linear), the specular light (`t10`) and
   `cPSScene`. A golden-angle disk of up to 16 jittered taps per pixel, each rejected by plane
@@ -3824,7 +3831,7 @@ used. Off, the add-on only checks a flag on each full-screen draw.
   occluders, which the disk alone would not see. That allowance is 12% of the ray's view depth,
   clamped between 0.02 and the radius, so a surface closer than the ray but within the margin still
   passes. 0 disables the test.
-- **Accumulate** (`shaders::Accumulate`): reprojects with the velocity, fetches the ping-ponged
+- **Accumulate** (`ssgi_accumulate.hlsl`): reprojects with the velocity, fetches the ping-ponged
   history bilinearly, clips it to this frame's 3x3 neighbourhood, and rejects on depth, normal and
   screen bounds (a separate aux target carries the history's depth and normal). The blend is an
   adaptive ramp capped by the History setting, and the history's length rides in alpha. Running
