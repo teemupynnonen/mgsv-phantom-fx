@@ -9,7 +9,7 @@
 cbuffer GI : register(b0)
 {
     uint2 Size;          // The render size
-    float Radius;        // Share of the screen's height the gather reaches
+    float Radius;        // Metres the gather reaches around a pixel
     float Amount;        // The gather's multiplier at the resolve
     float Samples;       // Gather samples per pixel
     float Scale;         // The gather's resolution divisor: 1, 2 or 4

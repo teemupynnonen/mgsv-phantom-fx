@@ -4,6 +4,9 @@
 
 ### New
 
+- **Bounce light's radius is now a distance in metres**: it reaches the same distance around near and far
+  surfaces instead of growing with distance (2.5 m by default, 0.25 to 8 m). An old `indirect_light_radius`
+  value, a share of the screen's height, now reads as that many metres, so check it in the menu.
 - **Indirect lighting (VB-SSGI) tests what blocks each gather tap**: the distance prefilter runs for it
   (apart from GTVBAO's copy), and every tap ray-marches the prefiltered depth, so occluders stop the
   bounced light instead of bleeding through. New **Visibility** setting: ray-march steps per tap

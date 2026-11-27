@@ -3821,8 +3821,11 @@ used. Off, the add-on only checks a flag on each full-screen draw.
   diffuse light (`t9`), albedo (`t8`, its sRGB view, so linear), the specular light (`t10`) and
   `cPSScene`. A golden-angle disk of up to 16 jittered taps per pixel, each rejected by plane
   elevation and source facing, then weighted by inverse-square distance, returns the mean `albedo x
-  diffuse + specular` of the taps that survive; alpha is validity. The radius is a share of the
-  screen's height (50% by default), and the same radius in view units at the pixel's depth. Into an
+  diffuse + specular` of the taps that survive; alpha is validity. The radius is fixed in metres
+  (2.5 m by default, 0.25 to 8; `indirect_light_radius` was a share of the height before, and an
+  old value just reads as metres, clamped). Per pixel it is projected to pixels from the pixel's
+  view depth and the projection scale (`2 z invP11 / height` metres a pixel), clamped to 6 pixels
+  at least and 30% of the height at most; the thickness and falloff use the clamped reach. Into an
   `R16G16B16A16_FLOAT` bounce target at the gather's size (full, half or quarter, rounded up).
   Before it, `visibility_bitmask::prefilterDistances` fills this add-on's own copy of the distance
   mips at the render size, and each tap marches them (the **Visibility** setting's steps, 5 by

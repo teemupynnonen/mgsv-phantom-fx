@@ -30,12 +30,12 @@ void describe(IndirectLight& light, SettingVisitor& visit)
     visit.slider(light.radius,
         {.iniKey = "indirect_light_radius",
             .label = "Radius",
-            .min = 0.05f,
-            .max = 1,
+            .min = 0.25f,
+            .max = 8,
             .standard = Defaults.radius,
-            .format = "%.0f %%",
-            .readoutScale = 100,
-            .tip = "How far around a surface the gather looks for surfaces that light it, as a share of the screen's height."});
+            .format = "%.2f m",
+            .tip = "How far around a surface, in metres, the gather looks for surfaces that light it. The same distance near and far, "
+                   "within limits on screen."});
     visit.slider(light.strength,
         {.iniKey = "indirect_light_strength",
             .label = "Strength",
