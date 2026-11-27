@@ -10,6 +10,9 @@ RWTexture2D<float4> Filtered : register(u0);
 
 #define FILTER_MAX_RADIANCE 1.0e4
 
+// B3-spline a-trous kernel; the weights of a uniform box ring and leak across the step
+static const float KERNEL[5] = { 1.0 / 16.0, 1.0 / 4.0, 3.0 / 8.0, 1.0 / 4.0, 1.0 / 16.0 };
+
 float luminanceOf(float3 colour)
 {
     return dot(colour, float3(0.2126, 0.7152, 0.0722));
@@ -37,15 +40,49 @@ void main(uint3 tid : SV_DispatchThreadID)
     }
 
     const float3 N = decodeNormal(Normals.Load(int3(centre, 0)).xyz);
-    const float invZ = 1.0 / z;
 
-    const float2 centreMoments = Moments.Load(int3(pixel, 0)).xy;
+    // Pre-blur of the variance: one pixel's estimate comes from few frames and is itself noisy, and
+    // a noisy sigma makes the edge-stopping flicker. A 3x3 tent over the sampled neighbours.
+    float varianceSum = 0;
+    float varianceWeight = 0;
+    [unroll]
+    for (int vy = -1; vy <= 1; ++vy)
+    {
+        [unroll]
+        for (int vx = -1; vx <= 1; ++vx)
+        {
+            const int2 q = int2(pixel) + int2(vx, vy);
+            if (any(q < 0) || any(q >= gs)) continue;
+            const float2 m = Moments.Load(int3(q, 0)).xy;
+            if (m.x <= 0.0) continue;
+            const float w = (vx == 0 ? 2.0 : 1.0) * (vy == 0 ? 2.0 : 1.0);
+            varianceSum += max(m.y - m.x * m.x, 0.0) * w;
+            varianceWeight += w;
+        }
+    }
     const float centreLuminance = luminanceOf(centreSample.rgb);
-    const float centreVariance = max(centreMoments.y - centreMoments.x * centreMoments.x, 0.0);
+    const float centreVariance = varianceWeight > 0.0 ? varianceSum / varianceWeight : 0.0;
     // A floor on the noise estimate: on a clean surface the measured variance can be small enough
     // that the weight would reject every neighbour and nothing would be smoothed at all.
     const float sigmaLuminance = sqrt(centreVariance) + 0.02 + 0.1 * abs(centreLuminance);
 
+    // The depth's local gradient, from whichever one-sided difference is flatter so a silhouette
+    // does not inflate it: a tilted surface's neighbours differ in depth by that gradient times
+    // the offset, which is not an edge.
+    float2 depthGradient = 0;
+    {
+        const int2 step = int2(scale, scale);
+        const int2 lo = max(centre - step, int2(0, 0));
+        const int2 hi = min(centre + step, int2(Size) - 1);
+        const float zx0 = distanceOf(Depth.Load(int3(lo.x, centre.y, 0)));
+        const float zx1 = distanceOf(Depth.Load(int3(hi.x, centre.y, 0)));
+        const float zy0 = distanceOf(Depth.Load(int3(centre.x, lo.y, 0)));
+        const float zy1 = distanceOf(Depth.Load(int3(centre.x, hi.y, 0)));
+        const float2 backward = float2(hasGeometry(zx0) ? z - zx0 : 0.0, hasGeometry(zy0) ? z - zy0 : 0.0);
+        const float2 forward = float2(hasGeometry(zx1) ? zx1 - z : 0.0, hasGeometry(zy1) ? zy1 - z : 0.0);
+        depthGradient = float2(abs(backward.x) < abs(forward.x) ? backward.x : forward.x,
+                               abs(backward.y) < abs(forward.y) ? backward.y : forward.y) / (float)scale;
+    }
     const int stride = 1 << (int)clamp(FilterStep, 0.0, 4.0);
     float3 sum = 0;
     float weightSum = 0;
@@ -70,10 +107,13 @@ void main(uint3 tid : SV_DispatchThreadID)
             if (any(!isfinite(neighbour))) continue;
 
             const float normalMatch = saturate(dot(N, decodeNormal(Normals.Load(int3(full, 0)).xyz)));
-            const float depthMatch = 1.0 / (1.0 + 32.0 * abs(qz - z) * invZ);
+            // Tolerance grows with the gradient times the full-resolution offset; the relative floor
+            // keeps flat surfaces strict.
+            const float expected = abs(dot(depthGradient, float2(dx, dy) * (float)(stride * (int)scale)));
+            const float depthMatch = exp(-abs(qz - z) / (expected + 0.01 * z));
             const float luminanceMatch = 1.0 / (1.0 + abs(luminanceOf(neighbour) - centreLuminance) / sigmaLuminance);
 
-            const float weight = normalMatch * normalMatch * normalMatch * normalMatch * depthMatch * luminanceMatch;
+            const float weight = KERNEL[dx + 2] * KERNEL[dy + 2] * normalMatch * normalMatch * normalMatch * normalMatch * depthMatch * luminanceMatch;
             sum += neighbour * weight;
             weightSum += weight;
         }
