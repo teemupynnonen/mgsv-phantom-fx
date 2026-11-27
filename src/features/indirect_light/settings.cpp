@@ -49,7 +49,7 @@ void describe(IndirectLight& light, SettingVisitor& visit)
             .max = 16,
             .standard = Defaults.samples,
             .format = "%.0f",
-            .tip = "Gather samples per pixel. More is less noise, at linear cost."});
+            .tip = "Gather samples per pixel; every four is one slice through the pixel that the march sweeps. More is less noise, at linear cost."});
     visit.choice(light.resolution,
         {.iniKey = "indirect_light_resolution",
             .label = "Resolution",
@@ -74,11 +74,12 @@ void describe(IndirectLight& light, SettingVisitor& visit)
     visit.slider(light.visibility,
         {.iniKey = "indirect_light_visibility",
             .label = "Visibility",
+            .min = 2,
             .max = 8,
             .standard = Defaults.visibility,
             .format = "%.0f",
-            .tip = "Ray-march steps per gather tap over the prefiltered depth, testing what blocks it: occluders stop the light "
-                   "instead of bleeding through. 0 turns the occlusion test off."});
+            .tip = "March steps along each side of a gather slice, over the prefiltered depth. More steps find thinner occluders and "
+                   "more of the light they hide, at linear cost."});
     visit.choice(light.debug,
         {.iniKey = "indirect_light_debug",
             .label = "Debug view",

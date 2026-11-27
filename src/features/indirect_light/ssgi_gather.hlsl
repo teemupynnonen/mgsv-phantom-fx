@@ -1,8 +1,12 @@
-// The gather: up to 16 taps around each pixel at the gather's resolution, each rejected or
-// weighted by plane elevation, source facing and distance, returning the mean radiance
-// (albedo x diffuse light + specular) of the taps that survive. Alpha is validity. It reads the
-// game's diffuse light and writes its own target, so reading neighbours while writing this pixel
-// is no hazard.
+// The gather: visibility-bitmask GI (Therrien et al.). A few slices through each pixel's view
+// vector are marched over the distance mips (or the depth, without them); each slice keeps a
+// 32-sector occlusion bitmask of the hemisphere, every sample covering the sectors its surface
+// spans at the thickness given, and lights only the sectors it uncovers first, with the radiance
+// it reflects (albedo x diffuse light + specular) times its cosine towards the receiver. Equal
+// sectors carry equal cosine weight (GT-VBAO's horizon remap), so the sum is the light the
+// hemisphere receives over pi, in the units of the game's diffuse light. Alpha is validity. It
+// reads the game's diffuse light and writes its own target, so reading neighbours while writing
+// this pixel is no hazard.
 #include "ssgi_common.hlsli"
 Texture2D<float> Depth : register(t0);        // Reversed-Z, 0 on the sky
 Texture2D<float4> Normals : register(t1);     // The G-buffer's view-space normals
@@ -10,23 +14,47 @@ Texture2D<float4> LightSource : register(t2); // The game's diffuse light, as th
 Texture2D<float4> Albedo : register(t3);      // Through the resolve's sRGB view, so linear
 Texture2D<float4> Specular : register(t4);    // The specular light the resolve adds (its inLightSpecular)
 // The prefiltered distances and their smaller copies (visibility_bitmask's prefilter), negative on
-// foliage; the per-tap occlusion test marches them.
+// foliage; the march reads them when UseMips is set.
 Texture2D<float> Distances : register(t5);
 RWTexture2D<float4> Bounce : register(u0);
 
-#define SSGI_MAX_SAMPLES 16
-
+static const float Pi = 3.14159265;
+static const uint Sectors = 32;
+static const uint SliceLimit = 4;
+static const uint StepLimit = 8;
+// XeGTAO's DepthMIPSamplingOffset: a sample 14 pixels or more away reads the first copy, and each
+// doubling of the distance the next.
 static const uint DistanceMipCount = 5;
 static const float DistanceMipOffset = 3.3;
-static const uint VisibilityStepLimit = 8;
 
 // The distance at a sample `offset` pixels from the receiver, from a smaller copy the farther it
-// lies; negative on foliage.
+// lies; negative on foliage. Without the mips, the depth at full size and no foliage.
 float signedDistanceAt(int2 texel, float offset)
 {
-    uint mip = uint(round(clamp(log2(max(offset, 1.0)) - DistanceMipOffset, 0, DistanceMipCount - 1)));
-    uint2 mipSize = max(Size >> mip, 1);
-    return Distances.Load(int3(min(uint2(max(texel, int2(0, 0))) >> mip, mipSize - 1), mip));
+    const uint mip = UseMips < 0.5 ? 0 : uint(round(clamp(log2(max(offset, 1.0)) - DistanceMipOffset, 0, DistanceMipCount - 1)));
+    const uint2 mipSize = max(Size >> mip, 1);
+    const float mipped = Distances.Load(int3(min(uint2(texel) >> mip, mipSize - 1), mip));
+    return UseMips < 0.5 ? distanceOf(Depth.Load(int3(texel, 0))) : mipped;
+}
+
+// acos(x) / pi, the polynomial three-gtvbao and XeGTAO use.
+float2 acosOverPi(float2 x)
+{
+    float2 r = (abs(x) * (-0.156583 / Pi) + 0.5) * sqrt(1 - abs(x));
+    return x >= 0 ? r : 1 - r;
+}
+
+// GT-VBAO's slice-relative CDF of the cosine-weighted measure, for the horizon cosines h of one march
+// direction (d = 1 along the slice direction, -1 against it): equal sectors then carry equal weight.
+float2 remapHorizons(float2 h, float d, float normalAngle, float cosN, float sinN, float invNormalization)
+{
+    float3 n = d > 0 ? float3(1, 1, 0) : float3(3, -1, 4);
+    h = max(h, sinN * d);
+    float2 sinTheta = sqrt(1 - h * h);
+    float2 theta = acosOverPi(h) * Pi;
+    float2 cosTwoPsiPlusN = (2 * h * h - 1) * cosN - 2 * d * h * sinTheta * sinN;
+    float2 t = cosN * n.x + cosTwoPsiPlusN * n.y + (theta * 2 * n.y * d + normalAngle * (n.z + 2 * n.y) - Pi) * sinN;
+    return saturate(t * invNormalization);
 }
 
 [numthreads(8, 8, 1)]
@@ -49,8 +77,10 @@ void main(uint3 tid : SV_DispatchThreadID)
         return;
     }
 
-    const float3 P = viewPosition(float2(centre), z);
+    const float2 centreF = float2(centre) + 0.5;
+    const float3 P = viewPosition(centreF, z);
     const float3 N = decodeNormal(Normals.Load(int3(centre, 0)).xyz);
+    const float3 viewDir = -P * rsqrt(dot(P, P));
 
     // The radius as a share of the screen's height, and the same radius in view units at this
     // depth: a world-space radius needs a known world scale, and the distance is not in metres.
@@ -58,84 +88,127 @@ void main(uint3 tid : SV_DispatchThreadID)
     const float radiusPixels = radiusFraction * Size.y;
     const float radiusWorld = radiusFraction * 2.0 * z * Scene[21].y;
 
-    const uint sampleCount = (uint)clamp(Samples, 1.0, (float)SSGI_MAX_SAMPLES);
-    const uint minSamples = (uint)clamp(MinSamples, 1.0, (float)SSGI_MAX_SAMPLES);
-    const uint frameSalt = (uint)(Random * 65535.0);
-    const float rotation = hash01(pixel, frameSalt) * 6.2831853;
+    // Samples sets the slices, Visibility the steps along each side of one. Each step moves at least
+    // a pixel; the spacing grows quadratically, so the near field is dense.
+    const uint sliceCount = (uint)clamp(round(Samples * 0.25), 1.0, (float)SliceLimit);
+    const uint stepCount = (uint)clamp(Visibility, 2.0, (float)StepLimit);
+    const float marchPixels = max(radiusPixels, (float)stepCount) / (stepCount + 1) * max(1, stepCount - 1);
 
-    float3 sum = 0;
+    // Occluders are taken as this deep behind the depth buffer, more for distant ones, never past the
+    // radius. Foliage is thin: a clump of blades read as a solid block would black out what lies
+    // behind it, and its light with it.
+    const float thickness = clamp(Thickness * z, 0.05, radiusWorld);
+    const float foliageThickness = clamp(Thickness * 0.17 * z, 0.02, radiusWorld);
+
+    const uint frameSalt = (uint)(Random * 65535.0);
+    const float sliceNoise = hash01(pixel, frameSalt);
+    const float stepNoise = hash01(pixel, frameSalt + 1u);
+    const float ditherNoise = hash01(pixel, frameSalt + 2u);
+
+    // GT-VBAO spreads the slices evenly around the view vector, not in the image plane, and projects them.
+    const float a = 1 / (1 + viewDir.z);
+    const float b = -viewDir.x * viewDir.y * a;
+    const float3 frameTangent = float3(1 - viewDir.x * viewDir.x * a, b, -viewDir.x);
+    const float3 frameBitangent = float3(b, 1 - viewDir.y * viewDir.y * a, -viewDir.y);
+
+    float3 light = 0;
     float weightSum = 0;
-    uint validSamples = 0;
 
     [loop]
-    for (uint index = 0; index < sampleCount; ++index)
+    for (uint slice = 0; slice < sliceCount; ++slice)
     {
-        const float radiusJitter = hash01(pixel, index * 977u + frameSalt + 1u);
-        const int2 samplePixel = (int2)round(float2(centre) + diskSample(index, sampleCount, rotation, radiusJitter) * radiusPixels);
-        if (any(samplePixel < 0) || any(samplePixel >= int2(Size))) continue;
+        const float angle = (slice + sliceNoise) * Pi / sliceCount;
+        const float3 frameDirection = frameTangent * cos(angle) + frameBitangent * sin(angle);
+        const float3 sliceDir = float3(normalize(frameDirection.xy * viewDir.z - viewDir.xy * frameDirection.z), 0);
 
-        const float sampleZ = distanceOf(Depth.Load(int3(samplePixel, 0)));
-        if (!hasGeometry(sampleZ)) continue;
+        const float3 planeNormal = normalize(cross(sliceDir, viewDir));
+        const float3 tangent = cross(viewDir, planeNormal);
+        const float3 projectedNormal = N - planeNormal * dot(N, planeNormal);
+        const float projectedLength = length(projectedNormal);
+        const bool degenerate = projectedLength < 1e-4;
+        float cosN = clamp(dot(projectedNormal / max(projectedLength, 1e-4), viewDir), -1, 1);
+        const float normalSign = -sign(dot(projectedNormal, tangent));
+        const float normalAngle = degenerate ? 0 : normalSign * acos(cosN);
+        const float sinN = degenerate ? 0 : normalSign * sqrt(1 - cosN * cosN);
+        cosN = degenerate ? 1 : cosN;
+        const float invNormalization = 0.25 / max(cosN + normalAngle * sinN, 1e-4);
+        // Shifts both edges of every sample's sector range alike, so the covered width stays unbiased.
+        const float dither = frac(ditherNoise + slice * 0.61803399);
 
-        const float3 S = viewPosition(float2(samplePixel), sampleZ);
-        const float3 delta = S - P;
-        const float distanceSq = dot(delta, delta);
-        if (distanceSq < 1e-8) continue;
+        uint occluded = 0;
+        float3 sliceLight = 0;
 
-        const float distance = sqrt(distanceSq);
-        const float3 direction = delta / distance;
-
-        // Visibility: march the tap's ray over the prefiltered distances; a surface nearer than the
-        // ray blocks the sample. The disk alone would not see an occluder and would bleed its light
-        // through.
-        const uint visibilitySteps = (uint)clamp(Visibility, 0.0, (float)VisibilityStepLimit);
-        if (visibilitySteps > 0)
+        [unroll]
+        for (uint side = 0; side < 2; ++side)
         {
-            const float2 rayPixels = float2(samplePixel) - float2(centre);
-            const float pixelLength = length(rayPixels);
-            bool blocked = false;
+            const float d = side == 0 ? 1 : -1;
+            const float2 pixelDirection = sliceDir.xy * float2(1, -1) * d;
             [loop]
-            for (uint k = 0; k < visibilitySteps; ++k)
+            for (uint i = 0; i < stepCount; ++i)
             {
-                const float f = (k + 0.5) / visibilitySteps;
-                const int2 q = int2(round(float2(centre) + rayPixels * f));
-                const float surface = abs(signedDistanceAt(q, f * pixelLength));
-                // The prefiltered distances are view depths, so the ray is compared by its view depth
-                // too: its Euclidean length off the centre runs longer by sqrt(1 + x^2 + y^2), up to a
-                // fifth at the corners, which would read as occluders.
-                const float rayDepth = -(P + direction * (f * distance)).z;
-                const float thickness = clamp(0.12 * rayDepth, 0.02, max(radiusWorld, 0.02));
-                if (surface < rayDepth - thickness)
+                const float t = (i + stepNoise) / max(1, stepCount - 1);
+                const float offset = max(t * t * marchPixels, i + 1);
+                const float2 samplePixel = centreF + pixelDirection * offset;
+                if (any(samplePixel <= 0) || any(samplePixel >= float2(Size))) break;
+
+                const int2 texel = int2(samplePixel);
+                const float signedDistance = signedDistanceAt(texel, offset);
+                const float sampleZ = abs(signedDistance);
+                if (!hasGeometry(sampleZ)) continue;
+
+                const float3 toSample = viewPosition(texel + 0.5, sampleZ) - P;
+                const float lengthSq = dot(toSample, toSample);
+                const float invLength = rsqrt(max(lengthSq, 1e-8));
+                const float sampleDistance = lengthSq * invLength;
+                // Beyond the radius a sample neither occludes nor lights: steps forced to a pixel on
+                // distant surfaces, and foreground objects far in front.
+                if (sampleDistance > radiusWorld) continue;
+
+                const float projected = dot(toSample, viewDir);
+                const float sampleThickness = min(signedDistance < 0 ? foliageThickness : thickness, sampleDistance * 0.8);
+                const float front = projected * invLength;
+                const float back = (projected - sampleThickness)
+                    * rsqrt(max(lengthSq - 2 * sampleThickness * projected + sampleThickness * sampleThickness, 1e-8));
+                const float2 horizons = remapHorizons(clamp(float2(front, back), -1, 1), d, normalAngle, cosN, sinN, invNormalization);
+                const uint start = uint(clamp(floor(min(horizons.x, horizons.y) * Sectors + dither), 0, Sectors));
+                const uint end = uint(clamp(floor(max(horizons.x, horizons.y) * Sectors + dither), 0, Sectors));
+                const uint width = end - start;
+                // A shift by 32 is a shift by 0 in HLSL, hence the test for an empty range.
+                const uint covered = width > 0 ? (0xFFFFFFFFu >> (Sectors - width)) << start : 0;
+
+                // Only the sectors this sample uncovers first take its light: nearer samples hide
+                // what lies behind them. Its surface sends light this way by its cosine towards the
+                // receiver (SSRT3); its back sends none.
+                const uint lit = covered & ~occluded;
+                if (lit != 0)
                 {
-                    blocked = true;
-                    break;
+                    const float facing = saturate(dot(decodeNormal(Normals.Load(int3(texel, 0)).xyz), -toSample * invLength));
+                    if (facing > 0)
+                    {
+                        // A fade over the outer half of the radius, so a source does not pop in
+                        // at its edge as the camera moves; the occlusion above stays hard.
+                        const float fade = saturate(2 - 2 * sampleDistance / radiusWorld);
+                        const float3 radiance = Albedo.Load(int3(texel, 0)).rgb * LightSource.Load(int3(texel, 0)).rgb
+                                              + Specular.Load(int3(texel, 0)).rgb;
+                        sliceLight += countbits(lit) * facing * fade * radiance;
+                    }
                 }
+                occluded |= covered;
+                if (occluded == 0xFFFFFFFFu) break;
             }
-            if (blocked) continue;
         }
 
-        // A sample on the same surface is the pixel's own light: adding it back is what makes a
-        // gather read as a halo rather than as bounce. The soft ramp is the cosine term too.
-        const float planeWeight = smoothstep(0.02, 0.35, dot(N, direction));
-        if (planeWeight <= 0) continue;
-
-        const float sourceFacing = dot(decodeNormal(Normals.Load(int3(samplePixel, 0)).xyz), -direction);
-        if (sourceFacing <= 0) continue;
-
-        // A fixed inverse-square against the radius; the gather returns a normalized mean, so the
-        // kernel's shape cancels wherever the neighbourhood is uniform.
-        const float range = 1.0 + 4.0 * distanceSq / (radiusWorld * radiusWorld);
-        const float weight = planeWeight * sourceFacing / range;
-
-        // Source radiance: albedo times diffuse light turns the gather into colour bleeding, and
-        // the specular is what lets a light fixture contribute more than a dim wall.
-        const float3 radiance = Albedo.Load(int3(samplePixel, 0)).rgb * LightSource.Load(int3(samplePixel, 0)).rgb
-                              + Specular.Load(int3(samplePixel, 0)).rgb;
-        sum += radiance * weight;
-        weightSum += weight;
-        ++validSamples;
+        // The slice's cosine-weighted integral weighs it; a degenerate slice drops out, and so does one
+        // whose normal faces away from the camera, as normal maps make some do on surfaces seen edge
+        // on: its negative weight could cancel the other slice's, and the light divided by the near
+        // zero sum would flare into white specks.
+        const float sliceWeight = max(projectedLength * (cosN + normalAngle * sinN), 0);
+        light += sliceLight / Sectors * sliceWeight;
+        weightSum += sliceWeight;
     }
 
-    const bool valid = validSamples >= minSamples;
-    Bounce[pixel] = float4(valid ? sum / max(weightSum, 1e-6) : 0.0, valid ? 1.0 : 0.0);
+    // Zero light with weight is a real result (open surroundings); only a pixel no slice could weigh
+    // is invalid, which the denoiser fills.
+    const bool valid = weightSum > 1e-4;
+    Bounce[pixel] = float4(valid ? light / weightSum : 0.0, valid ? 1.0 : 0.0);
 }

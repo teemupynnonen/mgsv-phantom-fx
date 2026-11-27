@@ -4,10 +4,13 @@
 
 ### New
 
-- **Indirect lighting (VB-SSGI) tests what blocks each gather tap**: the distance prefilter runs for it
-  (apart from GTVBAO's copy), and every tap ray-marches the prefiltered depth, so occluders stop the
-  bounced light instead of bleeding through. New **Visibility** setting: ray-march steps per tap
-  (0 to 8, 5 by default; 0 disables the test).
+- **Indirect lighting (VB-SSGI) is a visibility-bitmask gather**: a few slices through each pixel are
+  marched over the prefiltered depth (apart from GTVBAO's copy), keeping a 32-sector occlusion bitmask
+  each, and the bounce takes light only from the sectors a surface uncovers first, so occluders stop
+  the light and thin ones hide only what lies behind them, instead of a per-tap guess. **Samples** now
+  sets the slices (one per four) and **Visibility** the march steps along each side of one (2 to 8,
+  5 by default); the bounce reads as light the hemisphere receives, so dark open surroundings give
+  less than before.
 - **Indirect lighting (VB-SSGI) ghosts and shimmers less.** The temporal accumulation checks each of its four history
   samples against the surface (plane distance and normal) and clips the history by the neighbourhood's variance, and the
   denoiser smooths its noise estimate and follows slanted surfaces, so trails behind moving objects and crawling noise on

@@ -20,9 +20,9 @@ cbuffer GI : register(b0)
     float DiffuseScale;  // 0 shows the gather alone (the diagnostics)
     float Random;        // This frame's salt for the gather's rotation
     float MinSamples;    // Samples that must survive rejection
-    float Visibility;    // Ray-march steps per tap for the occlusion test, 0 disables it
-    float Padding1;      // Rounds the buffer to 64 bytes
-    float Padding2;
+    float Visibility;    // Steps along each side of a gather slice, at least 2
+    float Thickness;     // How deep a sample's surface is taken, as a share of its view depth
+    float UseMips;       // 1 when the distance mips are bound, 0 to march the depth
 };
 
 cbuffer Scene : register(b1)

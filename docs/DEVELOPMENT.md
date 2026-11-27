@@ -3819,18 +3819,26 @@ used. Off, the add-on only checks a flag on each full-screen draw.
 - **Gather** (`ssgi_gather.hlsl`), recorded at the resolve's draw on its deferred
   context, with the game's compute bindings saved and restored: from the resolve's depth (`t11`),
   diffuse light (`t9`), albedo (`t8`, its sRGB view, so linear), the specular light (`t10`) and
-  `cPSScene`. A golden-angle disk of up to 16 jittered taps per pixel, each rejected by plane
-  elevation and source facing, then weighted by inverse-square distance, returns the mean `albedo x
-  diffuse + specular` of the taps that survive; alpha is validity. The radius is a share of the
-  screen's height (50% by default), and the same radius in view units at the pixel's depth. Into an
-  `R16G16B16A16_FLOAT` bounce target at the gather's size (full, half or quarter, rounded up).
-  Before it, `visibility_bitmask::prefilterDistances` fills this add-on's own copy of the distance
-  mips at the render size, and each tap marches them (the **Visibility** setting's steps, 5 by
-  default) from the receiver to the sample: a surface nearer, in view depth, than the ray at that
-  point by more than the ray's thickness allowance blocks the tap, so light does not bleed through
-  occluders, which the disk alone would not see. That allowance is 12% of the ray's view depth,
-  clamped between 0.02 and the radius, so a surface closer than the ray but within the margin still
-  passes. 0 disables the test.
+  `cPSScene`. A visibility-bitmask gather (Therrien et al.): per pixel, a few slices through the view
+  vector (the **Samples** setting, one slice per four, up to 4) are marched in both directions for
+  **Visibility** steps (2 to 8, 5 by default), spaced quadratically out to the radius (a share of the
+  screen's height, 50% by default, and the same radius in view units at the pixel's depth). Each
+  slice keeps a 32-sector bitmask of its hemisphere, with GT-VBAO's horizon remap, so every sector
+  has the same cosine weight. A sample covers the sectors between the horizons of its front and of its
+  back, taken `Thickness` (12% of its view depth, clamped to 0.05 and the radius; a sixth of that on
+  foliage) behind the depth buffer, with a per-pixel dither on the sector edges. It lights only the
+  sectors it covers that no nearer sample covered already, `popcount(new) x cosine at the sample
+  towards the receiver x radiance`, with `albedo x diffuse + specular` as the radiance and a fade over
+  the outer half of the radius so a source does not pop in at its edge; samples beyond the radius
+  neither occlude nor light. The slices are weighted by their projected cosine integral and the sum
+  is the light the hemisphere receives over pi, in the units of the game's diffuse light: an open,
+  dark surrounding gives little, which the earlier per-tap mean did not. Alpha is 1 for any pixel a
+  slice could weigh; zero light is a result. Into an `R16G16B16A16_FLOAT` bounce target at the
+  gather's size (full, half or quarter, rounded up). Before it, `visibility_bitmask::prefilterDistances`
+  fills this add-on's own copy of the distance mips at the render size, which the march reads
+  (smaller copies the farther the sample, negative on foliage); if the prefilter is unavailable the
+  march reads the depth at full size and has no foliage. The slice angle, the step jitter and the
+  dither change every frame from a hash, which the accumulation averages.
 - **Accumulate** (`ssgi_accumulate.hlsl`): reprojects with the velocity and validates each of the
   four bilinear history taps on its own (plane distance to the current pixel's tangent plane, normal,
   screen bounds; a separate aux target carries the history's depth and normal), renormalising the
