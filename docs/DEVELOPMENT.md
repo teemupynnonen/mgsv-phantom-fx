@@ -2301,13 +2301,16 @@ with `fx.py scenarios`.
    at least `lightRays.z` of its own cells away (`HashGridCache_CellSize`, 4 by default; Developer page, "Light cache"),
    not past a fixed 10 m: the cell blurs the light by about a cell over the ray's length, so a hit a few cells off loses
    nothing the ray would show, and near the eye, where cells are small, far more hits qualify. A shaded hit
-   (`OwnLightReaching`) picks one of the sun, a lamp and a self-lit mesh by its light there without the shadow and traces
-   that one shadow ray over the chance it was picked, in place of up to three; the cache's hits (`HitDirectLight`) do
-   the same. Africa's spawn at 22:00, frozen, 1440x810 with Ray Reconstruction, 180 frames a run, the rays' phase: about
-   19.5 to 20 ms before, 17.4 with the one ray alone, 16.5 with the cells alone (71% of first hits from the cache, 36%
-   before), about 16.2 with both; the frame about 4 ms less. The two overlap: a hit the cache takes traces no light rays
-   either way. Tried the same day and left out, all measured there: Russian roulette on the bounces after the first (Ray
-   Reconstruction traces one ray a pixel, so none were left to skip; no change without it), and, for NRD only, half the
+   (`LocalOwnLightReaching`) picks one of a lamp and a self-lit mesh by its light there without the shadow and traces
+   that one shadow ray over the chance it was picked, in place of one to each; the cache's hits (`HitDirectLight`) do
+   the same. The sun keeps its own ray (`SunReaching`): with it among the choice, a hit in the shade spent its one ray on
+   a sun it could not see, lost the lamp's light that frame, and the shade flickered under Ray Reconstruction. Africa's
+   spawn at 22:00, frozen, 1440x810 with Ray Reconstruction, 180 frames a run, the rays' phase: about 19.5 to 20 ms
+   before, 16.5 with the cells alone (21 with the cache off; 71% of first hits from the cache, 36% before). The one
+   shared ray with the sun among the choice took 2 ms more off, but flickered; the version without the sun is not timed
+   yet. The two overlap: a hit the cache takes traces no light rays either way. Tried the same day and left out, all
+   measured there: Russian roulette on the bounces after the first (Ray Reconstruction traces one ray a pixel, so none
+   were left to skip; no change without it), and, for NRD only, half the
    light pixels a frame (NRD's checkerboard, 1.95 to 1.1 ms) and foliage's doubled rays only under 8 frames of history
    (1.95 to 1.6 ms on a frozen frame).
 
