@@ -18,8 +18,9 @@
 // HUD. On a supported build the scene keeps its light until the grading, in SDR too, where the 8 bits
 // showed as bands in smooth fog:
 //
-// - With HDR output, the swap chain becomes R10G10B10A2 with flip model, in the HDR10 colour space (PQ,
-//   BT.2020).
+// - With the scene in float, the swap chain becomes R10G10B10A2 with flip model, so HDR output can turn
+//   on and off without making it again: in the HDR10 colour space (PQ, BT.2020) with HDR output, sRGB
+//   otherwise.
 // - The scene target and its copy, which the renderer makes at known places, become 16-bit float.
 //   They hold sRGB-encoded colour, which 8-bit formats encode and decode in their _SRGB views; the
 //   float targets keep the encoded values, so a draw through such a view (the resolve) is encoded
@@ -31,8 +32,8 @@
 // - The grading pass tonemaps for the game's grading; with HDR output it then adds back the light the
 //   tonemap took.
 // - GammaControl, which wrote the back buffer, applies the game's brightness and maps the light to
-//   the display: with HDR output, its range; in SDR, 8 bits with a dither of half a step, which hides
-//   the steps left.
+//   the display: with HDR output, its range; in SDR, sRGB in 10 bits with a dither of half a step,
+//   which hides the steps left.
 // - The 2D pass's writes are clamped to 0 to 1, as the 8-bit target clamped them.
 //
 // DLSS runs in its HDR mode on the light (upscaler.cpp).
@@ -64,9 +65,11 @@ void detach() noexcept;
 void configure(const Configuration& configuration) noexcept;
 
 // ---- Creation ----
-// The game's swap chain, before it is made or resized: R10G10B10A2 with flip model. Returns true
-// when the description changed.
+// The game's swap chain, before it is made or resized: R10G10B10A2 with flip model while the scene is
+// float, whether HDR output is on or not. Returns true when the description changed.
 bool upgradeSwapChain(DXGI_FORMAT& format, DXGI_SWAP_EFFECT& effect, UINT& bufferCount) noexcept;
+// The swap chain was made R10G10B10A2 this session.
+bool tenBitBackBuffer() noexcept;
 // After the swap chain was made or resized: HDR10 when its display shows HDR, sRGB otherwise.
 void swapChainReady(IDXGISwapChain* chain) noexcept;
 // A 2D texture about to be made: the scene target and its copy become 16-bit float, with unordered

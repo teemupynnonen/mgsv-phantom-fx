@@ -52,8 +52,8 @@ constexpr std::uint32_t AndOpcode = 0x01, MinOpcode = 0x33, OpcodeMask = 0x7FF;
 constexpr std::size_t ClampReach = 8;
 constexpr float HalfMax = 65504;
 
-// How the output shader writes the back buffer (hdr_shaders.hpp, Output).
-enum class Encoding : std::uint32_t { SrgbView, Srgb, Pq };
+// How the output shader writes the R10G10B10A2 back buffer (hdr_shaders.hpp, Output).
+enum class Encoding : std::uint32_t { Srgb, Pq };
 
 struct OutputParameters
 {
@@ -90,7 +90,7 @@ struct DofCopy
 };
 
 std::atomic<Mode> mode{Mode::Off};
-std::atomic<bool> twinsInUse{};
+std::atomic<bool> twinsInUse{}, tenBitChain{};
 std::atomic<Output> shown{Output::Off};
 std::atomic<float> peakNits{}, paperWhiteNits{203}, displayPeak{};
 // When neither the settings nor the display give a peak.
@@ -390,6 +390,7 @@ void detach() noexcept
 {
     shown = Output::Off;
     twinsInUse = false;
+    tenBitChain = false;
     std::unique_lock lock(mutex);
     targets.clear();
     srgbViews.clear();
@@ -417,14 +418,23 @@ void configure(const Configuration& configuration) noexcept
 
 bool upgradeSwapChain(DXGI_FORMAT& format, DXGI_SWAP_EFFECT& effect, UINT& bufferCount) noexcept
 {
-    if (!active()) return false;
+    // In SDR too, so HDR output can turn on later: the swap chain's format and swap effect are set
+    // when it is made, and the game holds views of its back buffer that a resize would need released.
+    if (!isSceneFloat()) return false;
 
     format = BackBufferFormat;
     // HDR needs flip model, which takes at least two buffers.
     if (effect == DXGI_SWAP_EFFECT_DISCARD || effect == DXGI_SWAP_EFFECT_SEQUENTIAL) effect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     bufferCount = std::max(bufferCount, 2u);
+    tenBitChain = true;
+    logOnce("Float scene: the swap chain is R10G10B10A2 with flip model, so HDR output can turn on and off.");
 
     return true;
+}
+
+bool tenBitBackBuffer() noexcept
+{
+    return tenBitChain.load(std::memory_order_relaxed);
 }
 
 void swapChainReady(IDXGISwapChain* chain) noexcept
@@ -533,9 +543,9 @@ bool upgradeView(ID3D11Resource* resource, DXGI_FORMAT& format) noexcept
         return true;
     }
 
-    // The game draws GammaControl into the back buffer through an R8G8B8A8_UNORM_SRGB view, which in
-    // SDR stays as it is.
-    if (!active()) return false;
+    // The game draws GammaControl into the back buffer through an R8G8B8A8_UNORM_SRGB view, which the
+    // R10G10B10A2 back buffer cannot have.
+    if (!tenBitBackBuffer()) return false;
 
     const bool eightBit = format == DXGI_FORMAT_R8G8B8A8_UNORM || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
         || format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
@@ -842,10 +852,9 @@ OutputShader::OutputShader(ID3D11DeviceContext* target) noexcept
 {
     if (!isSceneFloat() || !outputShader) return;
 
-    // In SDR the back buffer is the game's, written through an sRGB view; HDR's swap chain is
-    // R10G10B10A2, encoded here, in PQ while the display shows HDR.
-    auto encoding = Encoding::SrgbView;
-    if (active()) encoding = shown == Output::Hdr10 ? Encoding::Pq : Encoding::Srgb;
+    // The back buffer is R10G10B10A2, encoded here: in PQ while HDR output is on and the display shows
+    // HDR, sRGB otherwise.
+    const auto encoding = active() && shown == Output::Hdr10 ? Encoding::Pq : Encoding::Srgb;
 
     const OutputParameters parameters{paperWhiteNits, peakNitsFor(peakNits), encoding, 0};
     if (FAILED(write(target, outputBuffer.Get(), parameters))) return;

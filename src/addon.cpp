@@ -395,8 +395,9 @@ void onPushDescriptors(command_list* list, shader_stage stages, pipeline_layout,
 
 void showColorSpace()
 {
-    if (effects && hdr::active())
-        effects->set_color_space(hdr::output() == hdr::Output::Hdr10 ? color_space::hdr10_st2084 : color_space::srgb);
+    // Told in SDR too: ReShade takes an R10G10B10A2 back buffer of unknown colour space for HDR10.
+    if (effects && hdr::tenBitBackBuffer())
+        effects->set_color_space(hdr::active() && hdr::output() == hdr::Output::Hdr10 ? color_space::hdr10_st2084 : color_space::srgb);
 }
 
 void onInitSwapchain(swapchain* chain, bool)

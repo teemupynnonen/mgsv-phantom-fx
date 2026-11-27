@@ -188,9 +188,9 @@ void applyMode(bool valid)
     options.numFramesToGenerate = wanted.generatedFrames;
     // Frames without DLSS (menus, loading) turn generation off briefly; keep its memory meanwhile.
     options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
-    // The hudless texture is typeless, so its sRGB view can draw it (upscaler.cpp, "hudless"); with HDR
-    // it has the back buffer's R10G10B10A2.
-    options.hudLessBufferFormat = hdr::active() ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
+    // The hudless texture is typeless, so its sRGB view can draw it (upscaler.cpp, "hudless"); with the
+    // float scene's swap chain it has the back buffer's R10G10B10A2.
+    options.hudLessBufferFormat = hdr::tenBitBackBuffer() ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
     // Dynamic generation follows the display's refresh rate.
     options.dynamicTargetFrameRate = 0;
     report(api.setOptions(Viewport, options), "Setting the frame generation mode");
