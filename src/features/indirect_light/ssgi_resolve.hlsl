@@ -37,7 +37,9 @@ void main(uint3 tid : SV_DispatchThreadID)
 
             const int2 full = clamp((int2)floor((float2(q) + 0.5) * scale), int2(0, 0), int2(Size) - 1);
             const float qz = distanceOf(Depth.Load(int3(full, 0)));
-            const float depthMatch = (geometry && qz > 0.0) ? 1.0 / (1.0 + 32.0 * abs(qz - z) * invZ) : 1.0;
+            // Sky and geometry never mix: the sky has no bounce, and its zero would darken the edge.
+            if (hasGeometry(qz) != geometry) continue;
+            const float depthMatch = geometry ? 1.0 / (1.0 + 32.0 * abs(qz - z) * invZ) : 1.0;
 
             const float weight = bilinear * depthMatch;
             radiance += tap.rgb * weight;

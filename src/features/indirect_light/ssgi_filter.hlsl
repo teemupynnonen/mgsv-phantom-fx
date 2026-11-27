@@ -27,10 +27,17 @@ void main(uint3 tid : SV_DispatchThreadID)
     if (any(pixel >= (uint2)gs)) return;
 
     // Depth and normals only exist at full resolution.
-    const int2 centre = (int2)floor((float2(pixel) + 0.5) * scale);
-    if (any(centre >= int2(Size))) return;
+    const int2 centre = min((int2)floor((float2(pixel) + 0.5) * scale), int2(Size) - 1);
 
     const float4 centreSample = Bounce.Load(int3(pixel, 0));
+    // The accumulate pass's debug views hold signed probes (the reprojection offset); the radiance
+    // clamp below would destroy them, so they pass through to the resolve untouched.
+    if (Debug > 1.5)
+    {
+        Filtered[pixel] = centreSample;
+        return;
+    }
+
     const float z = distanceOf(Depth.Load(int3(centre, 0)));
     if (!hasGeometry(z))
     {
@@ -53,8 +60,9 @@ void main(uint3 tid : SV_DispatchThreadID)
         {
             const int2 q = int2(pixel) + int2(vx, vy);
             if (any(q < 0) || any(q >= gs)) continue;
+            // Validity is the alpha, not the mean: a valid black sample has a mean of zero too.
+            if (Bounce.Load(int3(q, 0)).a <= 0.0) continue;
             const float2 m = Moments.Load(int3(q, 0)).xy;
-            if (m.x <= 0.0) continue;
             const float w = (vx == 0 ? 2.0 : 1.0) * (vy == 0 ? 2.0 : 1.0);
             varianceSum += max(m.y - m.x * m.x, 0.0) * w;
             varianceWeight += w;
@@ -96,8 +104,9 @@ void main(uint3 tid : SV_DispatchThreadID)
             const int2 q = int2(pixel) + int2(dx, dy) * stride;
             if (any(q < 0) || any(q >= gs)) continue;
 
-            // Never-sampled pixels carry zero radiance; averaging that in darkens neighbours.
-            if (Moments.Load(int3(q, 0)).x <= 0.0) continue;
+            // Never-sampled pixels carry zero radiance; averaging that in darkens neighbours. Sampled
+            // black stays: validity is the alpha, not the luminance.
+            if (Bounce.Load(int3(q, 0)).a <= 0.0) continue;
 
             const int2 full = clamp((int2)floor((float2(q) + 0.5) * scale), int2(0, 0), int2(Size) - 1);
             const float qz = distanceOf(Depth.Load(int3(full, 0)));

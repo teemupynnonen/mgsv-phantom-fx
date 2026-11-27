@@ -3853,8 +3853,14 @@ used. Off, the add-on only checks a flag on each full-screen draw.
   weights over the valid taps, so a silhouette tap no longer bleeds in or vetoes the good ones. The
   history is then variance-clipped in YCoCg (mean +- 1.5 sigma of this frame's 3x3, clipped toward
   the mean) instead of min/max clamped. The blend is an adaptive ramp capped by the History setting,
-  and the history's length rides in alpha. Running luminance moments go into an `R16G16_FLOAT`
-  target, fetched over the same valid taps, which the denoiser reads as its noise estimate.
+  and the history's length rides in alpha; a pixel with neither a gather sample nor valid history is
+  written invalid (length 0), and one with history but no sample keeps it. The history's reprojection
+  starts from the texel's block centre, so a zero velocity lands exactly on the texel, and the aux
+  target stores the sign of the normal's z in the sign of its depth. Running luminance moments go into
+  an `R32G32_FLOAT` target (half precision cannot hold a squared luminance), fetched over the same
+  valid taps, which the denoiser reads as its noise estimate. The denoiser takes a sample's validity
+  from the alpha, so a sampled black pixel still counts; the accumulate debug views (signed probes)
+  pass through it unfiltered, and the resolve never mixes sky taps with geometry taps.
   Non-finite values are guarded everywhere: one bad value would be carried forward by the temporal
   blend, squared into infinity by the moments, and render black forever.
 - **Denoise** (`shaders::Filter`): an a-trous edge-aware filter, 1-3 dispatches of 5x5 taps with

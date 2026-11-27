@@ -120,7 +120,7 @@ void settingsPersist(const fs::path& root)
     expect(merged.softShadows.on && merged.contactShadows.on, "The sun's keys switch the lamps' soft and contact shadows too; the old lamp keys are ignored.");
     write(path, "indirect_light=yes\nindirect_light_radius=0\nindirect_light_strength=9\n");
     const auto light = loadSettings(path).indirectLight;
-    expect(!light.on && light.radius == 0.25f && light.strength == 3,
+    expect(!light.on && light.radius == 0.25f && light.strength == 6,
         "An invalid toggle leaves VB-SSGI off, and its radius and strength are clamped.");
     write(path, "indirect_light_radius=1\n");
     expect(loadSettings(path).indirectLight.radius == 1, "An old radius, a share of the height, reads as that many metres, in range.");

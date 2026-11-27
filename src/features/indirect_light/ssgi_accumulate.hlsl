@@ -35,8 +35,8 @@ void main(uint3 tid : SV_DispatchThreadID)
     const int2 gs = (int2(Size) + (int)scale - 1) / (int)scale;
     if (any(pixel >= (uint2)gs)) return;
 
-    const int2 centre = (int2)floor((float2(pixel) + 0.5) * scale);
-    if (any(centre >= int2(Size))) return;
+    // A partial block at the right or bottom edge still owns its pixel: sample the last valid one.
+    const int2 centre = min((int2)floor((float2(pixel) + 0.5) * scale), int2(Size) - 1);
 
     const float4 current = Current.Load(int3(pixel, 0));
     const float z = distanceOf(Depth.Load(int3(centre, 0)));
@@ -48,8 +48,10 @@ void main(uint3 tid : SV_DispatchThreadID)
     const float2 velocity = (Velocity.Load(int3(centre, 0)).ba * 2.0 - 1.0) * 64.0 / float2(Size);
 
     // Reproject in gather space, then fetch the history with a manual bilinear tap.
-    const float2 uv = (float2(centre) + 0.5) / float2(Size);
-    const float2 previous = (uv - velocity) * float2(gs) - 0.5;
+    // From the gather texel's own block centre, not the clamped full-resolution pixel: with zero
+    // velocity this lands exactly on the texel, so a still image is not bilinearly blurred.
+    const float2 uv = (float2(pixel) + 0.5) * scale / float2(Size);
+    const float2 previous = (uv - velocity) * float2(Size) / scale - 0.5;
     const int2 base = (int2)floor(previous);
     const float2 fraction = frac(previous);
     const bool inside = previous.x >= 0.0 && previous.y >= 0.0 && previous.x <= (float)(gs.x - 1) && previous.y <= (float)(gs.y - 1);
@@ -72,11 +74,10 @@ void main(uint3 tid : SV_DispatchThreadID)
             const int2 q = clamp(base + int2(x, y), int2(0, 0), gs - 1);
             const float weight = (x != 0 ? fraction.x : 1.0 - fraction.x) * (y != 0 ? fraction.y : 1.0 - fraction.y);
             const float4 tapAux = HistoryAux.Load(int3(q, 0));
-            const float tapZ = tapAux.x;
-
-            // Reconstruct z with this frame's sign instead of a blind +sqrt, which would mirror the
-            // normal and reject everything as a geometry change.
-            const float tapNormalZ = (N.z < 0.0 ? -1.0 : 1.0) * sqrt(saturate(1.0 - dot(tapAux.yz, tapAux.yz)));
+            // The depth's sign carries the sign of the normal's z (written below), so the previous
+            // normal is rebuilt with its own sign, not this frame's.
+            const float tapZ = abs(tapAux.x);
+            const float tapNormalZ = (tapAux.x < 0.0 ? -1.0 : 1.0) * sqrt(saturate(1.0 - dot(tapAux.yz, tapAux.yz)));
             const float3 tapNormal = normalize(float3(tapAux.yz, tapNormalZ));
 
             // Distance of the tap's surface point to this pixel's tangent plane: a relative depth
@@ -144,27 +145,30 @@ void main(uint3 tid : SV_DispatchThreadID)
         clippedHistory = fromYCoCg(mean + offset / max(outside, 1.0));
     }
 
+    // One decision for colour, length, moments and the diagnostic: the history is usable or it is not.
     const bool hasHistory = tapsValid && historyLength > 0.5;
     // A freshly reset pixel trusts only the current sample and ramps back up; a converged one is
     // limited by the user's ceiling.
     const float adaptive = 1.0 - 1.0 / max(historyLength, 1.0);
     const float blend = hasHistory ? min(HistoryBlend, adaptive) * saturate(HistoryValid) : 0.0;
-    const float3 result = hasSample ? lerp(gathered, clippedHistory, blend) : history;
+    // No sample and no history leaves an invalid pixel (length 0); no sample over valid history keeps it.
+    const float3 result = hasSample ? lerp(gathered, clippedHistory, blend) : (hasHistory ? history : 0.0);
 
-    const float len = hasSample ? (hasHistory ? min(historyLength + 1.0, HISTORY_MAX_LENGTH) : 1.0) : max(historyLength, 1.0);
+    const float len = hasSample ? (hasHistory ? min(historyLength + 1.0, HISTORY_MAX_LENGTH) : 1.0)
+                                : (hasHistory ? min(historyLength, HISTORY_MAX_LENGTH) : 0.0);
     const float4 real = float4(result, len / HISTORY_MAX_LENGTH);
 
     // The history always receives the real result: a probe written into it would poison the next
     // frame and make the view self-fulfilling.
     HistoryOut[pixel] = real;
-    HistoryAuxOut[pixel] = float4(z, N.x, N.y, len / HISTORY_MAX_LENGTH);
+    HistoryAuxOut[pixel] = float4(N.z < 0.0 ? -z : z, N.x, N.y, len / HISTORY_MAX_LENGTH);
 
     // Luminance moments of the incoming sample, not of the blended result: the variance has to
     // describe how much the gather itself fluctuates, or the denoiser gets no signal about where
     // the noise is.
     const float sampleLuminance = dot(gathered, float3(0.2126, 0.7152, 0.0722));
-    float m1 = previousMoments.x;
-    float m2 = previousMoments.y;
+    float m1 = hasHistory ? previousMoments.x : 0.0;
+    float m2 = hasHistory ? previousMoments.y : 0.0;
     if (current.a > 0.5)
     {
         if (hasHistory)

@@ -79,7 +79,7 @@ Target bounce;   // The gather's output, at the gather's size
 Target filtered, accumulated;
 std::array<Target, 2> history;     // Ping-ponged accumulated history
 std::array<Target, 2> historyAux;  // Depth, normal.xy, history length
-std::array<Target, 2> moments;     // Luminance moments, RG16F
+std::array<Target, 2> moments;     // Luminance moments, RG32F: half precision cannot hold a squared luminance
 UINT historyIndex{};
 UINT historyWidth{}, historyHeight{};
 bool historyValid{};
@@ -241,7 +241,7 @@ void ensureTargets(UINT gatherWidth, UINT gatherHeight, UINT width, UINT height,
         made |= visibility_bitmask::ensureTarget(device.Get(), target, gatherWidth, gatherHeight, DXGI_FORMAT_R16G16B16A16_FLOAT,
             "Creating the VB-SSGI history aux");
     for (auto& target : moments)
-        made |= visibility_bitmask::ensureTarget(device.Get(), target, gatherWidth, gatherHeight, DXGI_FORMAT_R16G16_FLOAT,
+        made |= visibility_bitmask::ensureTarget(device.Get(), target, gatherWidth, gatherHeight, DXGI_FORMAT_R32G32_FLOAT,
             "Creating the VB-SSGI moments");
     // The game's diffuse light's format.
     made |= visibility_bitmask::ensureTarget(device.Get(), lit, width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "Creating the VB-SSGI diffuse light");
@@ -323,14 +323,30 @@ bool compute(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D
 
     const auto size = sizeOf(depth);
     std::lock_guard lock(resourceMutex);
-    if (!ensurePipeline()) return false;
+    // Every return before the accumulation pass leaves a frame the history was not carried through.
+    if (!ensurePipeline())
+    {
+        historyValid = false;
+        return false;
+    }
 #if PHANTOM_FX_DEV_TOOLS
     if (reloadWanted.exchange(false)) reloadPasses();
 #endif
-    if (!normals) return progress.wait("no sky light pass has bound the normals yet");
+    if (!normals)
+    {
+        historyValid = false;
+        return progress.wait("no sky light pass has bound the normals yet");
+    }
     if (!size.first || sizeOf(normals) != size || sizeOf(diffuse) != size || sizeOf(albedo) != size)
+    {
+        historyValid = false;
         return progress.wait("the lighting textures differ in size");
-    if (sceneDesc.ByteWidth != visibility_bitmask::SceneConstantsSize) return progress.wait("the resolve has no scene constants");
+    }
+    if (sceneDesc.ByteWidth != visibility_bitmask::SceneConstantsSize)
+    {
+        historyValid = false;
+        return progress.wait("the resolve has no scene constants");
+    }
 
     const auto [width, height] = size;
     const auto& light = settings.light;
