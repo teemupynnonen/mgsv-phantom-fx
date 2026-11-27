@@ -98,15 +98,18 @@ struct Target
     ComPtr<ID3D11UnorderedAccessView> access;
 };
 
-// The fog's settings, and whether the effect plan runs it.
+// The physical sky's settings, and which of the light shafts and the physical sky the effect plan runs.
 struct Wanted
 {
-    VolumetricFog fog;
-    bool running{};
+    PhysicalSky sky;
+    bool shafts{}, physical{};
+
+    bool running() const { return shafts || physical; }
 };
 
 FrameLatch<Wanted> latch;
-std::atomic<bool> active{}, physicalLook{}, pipelineFailed{};
+// active: the fill runs, for the light shafts, the physical sky or both.
+std::atomic<bool> active{}, lightShafts{}, physicalLook{}, pipelineFailed{};
 std::atomic<float> haze{};
 std::atomic<std::uint64_t> lastFill{}; // GetTickCount64
 
@@ -395,7 +398,7 @@ void updateSky(ID3D11DeviceContext* context)
 }
 
 // Fills the game's fog texture with the shadowed fog, before the resolve that reads it first.
-void fill(ID3D11DeviceContext* context, bool physical)
+void fill(ID3D11DeviceContext* context, bool shafts, bool physical)
 {
     auto* fog = gameFog.load();
     ComPtr<ID3D11ShaderResourceView> rain, shadow;
@@ -411,11 +414,13 @@ void fill(ID3D11DeviceContext* context, bool physical)
             shadow = std::move(found->second);
             sunShadows.erase(found);
         }
-        shadowed = shadow != nullptr;
+        const bool sunPass = shadow != nullptr;
+        // Only the light shafts shadow the fog; without them every froxel sees the sun.
+        shadowed = shafts && sunPass;
         // The physical look's sky needs the sun pass's constants, this frame's: a frame without a sun
         // pass (indoors) keeps the game's look. Until 2026-10-26 the last sun pass's were kept, and the
         // main menu's daytime sun lit the sky outside a night-time hospital.
-        physical = physical && shadowed;
+        physical = physical && sunPass;
     }
 
     std::lock_guard lock(resourceMutex);
@@ -478,7 +483,7 @@ void fill(ID3D11DeviceContext* context, bool physical)
     lastFillShadowed = shadowed;
 
     lastFill = GetTickCount64();
-    logOnce(shadowed ? "Volumetric fog: the first fill, with the sun's shadow map." : "Volumetric fog: the first fill without a sun pass before it.");
+    logOnce(shadowed ? "Volumetric fog: the first fill, with the sun's shadow map." : "Volumetric fog: the first fill without the sun's shadow map.");
     if (physical) logOnce("Volumetric fog: the first physical fill.");
 }
 
@@ -569,7 +574,7 @@ bool drawSky(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, bo
 
 void attach(ID3D11Device* gameDevice, ID3D11DeviceContext* gameImmediate) noexcept
 {
-    const bool enable = latch.latest().running;
+    const bool enable = latch.latest().running();
 
     std::lock_guard lock(resourceMutex);
     device = gameDevice;
@@ -580,6 +585,7 @@ void attach(ID3D11Device* gameDevice, ID3D11DeviceContext* gameImmediate) noexce
 void detach() noexcept
 {
     active = false;
+    lightShafts = false;
     physicalLook = false;
     gameFog = nullptr;
     {
@@ -628,10 +634,10 @@ void detach() noexcept
 
 void configure(const Configuration& configuration) noexcept
 {
-    const bool running = configuration.effects.runs(Effect::VolumetricFog);
-    latch.set({configuration.settings.volumetricFog, running});
+    const Wanted wanted{configuration.settings.physicalSky, configuration.effects.runs(Effect::VolumetricFog), configuration.effects.runs(Effect::PhysicalSky)};
+    latch.set(wanted);
 
-    if (!running) return;
+    if (!wanted.running()) return;
 
     std::lock_guard lock(resourceMutex);
     ensurePipeline();
@@ -639,7 +645,7 @@ void configure(const Configuration& configuration) noexcept
 
 Health health()
 {
-    if (!latch.latest().running) return {};
+    if (!latch.latest().running()) return {};
     if (pipelineFailed) return Health::unavailable("Volumetric fog is unavailable (see PhantomFX.log).");
     if (!gameFog) return Health::waiting("Volumetric fog takes a restart of the game.");
     if (GetTickCount64() - lastFill < 1000) return {};
@@ -698,7 +704,8 @@ void note(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         if (!row) return;
 
         if (row->pass == GamePass::Sun && row->isShadowMapped) noteSun(context);
-        else if (row->pass == GamePass::Resolve && row->hasTppTonemap) fill(context, physicalLook.load(std::memory_order_relaxed));
+        else if (row->pass == GamePass::Resolve && row->hasTppTonemap)
+            fill(context, lightShafts.load(std::memory_order_relaxed), physicalLook.load(std::memory_order_relaxed));
     }
     catch (const std::exception& error)
     {
@@ -738,9 +745,10 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
 void present() noexcept
 {
     const auto current = latch.present();
-    active = current.running && !pipelineFailed;
-    physicalLook = active && current.fog.look == AtmosphereLook::Physical;
-    haze = current.fog.haze;
+    active = current.running() && !pipelineFailed;
+    lightShafts = active && current.shafts;
+    physicalLook = active && current.physical;
+    haze = current.sky.haze;
 
     if constexpr (DiagnosticLog)
     {

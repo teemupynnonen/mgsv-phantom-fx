@@ -239,7 +239,7 @@ Settings firstLaunchSettings()
     applyLightingStep(settings, LightingStep::ScreenSpace);
     settings.frameRate.unlocked = true;
     settings.volumetricFog.on = true;
-    settings.volumetricFog.look = AtmosphereLook::Physical;
+    settings.physicalSky.on = true;
 
     return settings;
 }
@@ -321,6 +321,11 @@ Settings loadSettings(const std::filesystem::path& path)
     Settings settings;
     IniReader reader(values);
     describe(settings, reader);
+
+    // Until the physical sky had its own switch, Volumetric fog ran it with atmosphere_look=physical.
+    if (!values.contains("physical_sky"))
+        if (const auto look = values.find("atmosphere_look"); look != values.end())
+            settings.physicalSky.on = settings.volumetricFog.on && trim(look->second) == "physical";
 
     return settings;
 }
