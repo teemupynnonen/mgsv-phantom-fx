@@ -4039,20 +4039,20 @@ planet's centre is the origin, in km; the game's world has y up in metres.
   surface with albedo times that, without the 1 / pi of a physical diffuse surface. The game's sky
   is lit by a sun of its own, about four times brighter: the sky draws' `cPSMaterial` `c3.w` times
   `m_exposure.z`, at most 1000, which multiplies its scattering table as Hillaire's multiplies his.
-  Physical takes that, white, as the sunlight above the air, from a GPU copy of the last
-  sky draw's `cPSMaterial` (the sky in a weather with the sun's sprite: `Sky_Draw_TppBaked`,
-  `Sky_Draw_Tpp`). It takes the sun's direction from there too, `c3.xyz` in the world: the sun pass
+  Physical takes the sun's direction from a GPU copy of the last sky draw's `cPSMaterial` (the sky
+  in a weather with the sun's sprite: `Sky_Draw_TppBaked`, `Sky_Draw_Tpp`), `c3.xyz` in the world,
+  but not its light: as the sunlight above the air, `c3.w` blew the sky out to white (17 against the
+  ground's 0.96 at 17:07 on Mother Base, sun 9 degrees up). The sun pass
   lights the ground with the sun at least about 26 degrees up (`y` 0.436), while the sky's sun sets.
   The game raises `c3.w` as the sun sets (157080 at noon, 283554 one degree up) to make up for the
   longer way through the air, so with the sun pass's direction the evening sky came out about five
   times brighter than at noon and at the HDR peak. The fog is lit as the game lights the ground: its
   phase and shadow take the sun pass's sun (with the sky's, a low sun's glow showed on the sunlit
   ground in front of the hills that hid it), its light the sky's sun through the air, which the
-  planet hides below the horizon. After a sky draw
-  without the sun (`Sky_Draw_TppNoSky`) or before any, it takes the ground's: pi times the game's
-  sunlight over the air's transmittance to the sun pass's sun at the camera (luminance); the game's
-  sky came out about five times brighter than that (75 to 125 nits against 15 to 30 with HDR, paper
-  white 203). The camera's height is `m_eyepos.y`. Every ten seconds of the physical look the sky's
+  planet hides below the horizon. The sunlight above the air is always the ground's: pi times the
+  game's sunlight over the air's transmittance to the sky's sun at the camera (luminance), 6 to 7
+  in that evening frame, where the clouds keep their shape and the sea its colour; half of it was too
+  dark. The camera's height is `m_eyepos.y`. Every ten seconds of the physical look the sky's
   values go to the log ("Physical sky: ..."), read back a frame late at present.
 - **Without a sun pass.** Only a fill whose command list had a sun pass before its resolve is physical,
   and only after one does the sky draw take the physical sky; indoors, without one, the game's look
