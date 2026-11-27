@@ -16,6 +16,7 @@
 // - Ray-traced shadows take the sun's shadow from rays through the ray-traced scene
 //   (ray_tracing::sunShadow; docs/DEVELOPMENT.md, "Ray-traced shadows"), everywhere the sun
 //   lights. The shadow map keeps only what the rays leave out, the alpha-tested meshes' shadows.
+// - The add-on's sea (features/sea) lights its sparkles here, in the sun's colour and shadow.
 //
 // With none running the game draws its own shaders.
 namespace phantom_fx::sun_light_pass

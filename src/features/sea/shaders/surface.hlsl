@@ -17,11 +17,13 @@ Texture2DArray<float4> g_Moments : register(t2);
 // inFoamTexture2 (t5), three foam patterns from light to dense.
 Texture2D<float4> g_GameFoamNoise : register(t3);
 Texture2D<float4> g_GameFoamPattern : register(t4);
+// And its map of the water's depth (inWhitecapTexture1, t2 in its shader): where it turns turquoise.
+Texture2D<float4> g_GameWaterDepth : register(t5);
 SamplerState g_Linear : register(s0);
 SamplerState g_Anisotropic : register(s1);
 
 // The game's near sea draws' pixel material constants (cPSMaterial), as they last ran: c0.xy the scroll, c1.z the
-// foam's speed, c4.w its amount.
+// foam's speed, c3.xyz the direction towards the sun from the atmosphere, c4.w the foam's amount.
 cbuffer GameSeaPixel : register(b11)
 {
     float4 g_GameSeaPixel[8];
@@ -29,8 +31,27 @@ cbuffer GameSeaPixel : register(b11)
 
 static const float EarthRadius = 6371000;
 static const float3 FoamAlbedo = 0.7;
+// The sparkles: the sun lobe's power (higher: fewer, smaller and quicker to blink), a gain before the 0 to 1
+// the G-buffer holds, and how much steeper than the waves' their facets tilt.
+static const float SparklePower = 120, SparkleBoost = 3, SparkleSlope = 3;
+// A sparkle's facet: the angle a pixel spans across (radians), and the smallest facet, in metres, doubled
+// outwards.
+static const float SparkleCellAngle = 0.0008, SparkleCell = 0.25;
+// The wavelength that moves a facet's sparkles, in facets: the one whose drift the reading follows.
+static const float SparkleWaves = 4;
+// The eye's height over the sea for each metre out (the sine of the angle looking down) below which the
+// sparkles fade out, and above which they are whole: 0.005 to 0.02 is 1.3 to 5 km out from the deck at 26 m.
+static const float SparkleHorizonFrom = 0.005, SparkleHorizonTo = 0.02;
+static const float3 TurquoiseAlbedo = float3(0.015, 0.22, 0.17); // Linear
+static const float3 BodyScale = float3(0.4, 0.65, 0.4); // The water's own albedo, darker and tealer as the game's body
 // The game's material table row: white specular, F0 0.027 (7/255), as near as it has to water's 0.02.
 static const float WaterMaterial = 106.0 / 255;
+
+// And its object constants (cVSObject): c9 the direction towards the sun, in the world.
+cbuffer GameSeaObject : register(b12)
+{
+    float4 g_GameSeaObject[13];
+};
 
 struct Interpolants
 {
@@ -139,15 +160,92 @@ float GameFoam(float2 xz, float folds, float distance)
     return saturate(strength * lerp(near, distant, saturate((distance - 100) / 100)) * 0.5);
 }
 
+// The game's sea turns turquoise where its map of the water's depth says (NCalculate's waterDepthTexColor): the map
+// at a tenth of the foam's uv, shifted by the waves' normal the further away, so the zones break up with the waves;
+// only past 100 m (closeRange) and fading out by 2.5 km. Its colour goes from its blue (0.2, 0.35, 0.65) to
+// (0.15, 0.55, 0.7) there. Returns that blend, 0 to 1.
+// The game shifts it by its own smooth normal (its 64 x 64 field's, near flat far off): here the longest waves' slope,
+// and the level of detail of the unshifted map, so the shift does not blur it to its last level.
+float Turquoise(float2 xz, float2 longSlope, float distance)
+{
+    if (g_HasGameFoam <= 0) return 0;
+    float2 uv = xz / max(g_GameSea[1].w, 1) / 10;
+    // The game's normal that far out is all but flat (its far gradient a tenth, over 78 m texels): a small shift, and the
+    // map read blurrier, so the zones stay one soft wash as the game's do rather than breaking into streaks.
+    float2 shift = -longSlope * 0.15 * distance / 75;
+    float depthTexel = g_GameWaterDepth.SampleGrad(g_Linear, uv + shift, ddx(uv) * 3, ddy(uv) * 3).z * saturate(1 - distance / 2500);
+    return smoothstep(0, 0.06, depthTexel) * saturate((distance - 100) / 100);
+}
+
+// The game's colour lives in its sky reflection's, weighed by its Fresnel (NCalculate's fresnel, bias 0.05, power 8,
+// both flattened with distance over 5 km): next to nothing looking down, most of it towards the horizon. With the zones
+// fading by 2.5 km, that leaves its turquoise as a band across the upper sea. Taken on the flat sea, as the game's
+// normal is near flat that far out.
+float GameFresnel(float3 toEye, float distance)
+{
+    float range = saturate(1 - distance / 5000);
+    float facing = 1.0001 - abs(toEye.y) * range;
+    return saturate(0.05 + 0.95 * pow(max(facing, 0), 8 * range));
+}
+
+// The game's sea sparkles where its detailed wave normal mirrors the sun (NCalculate: pow(L.R, reflectionPower)):
+// single crests catching it, which move with the water. The shading's normal is filtered over the pixel, too smooth
+// far out to catch the sun anywhere but its path; here the waves' slopes are read at a facet's size, finer than the
+// pixel's, so facets show, and only a tight lobe around the sun lights them. Handed to the sun pass in the translucency
+// (sun_light.ps.hlsl), which lights it in the sun's colour and shadow.
+float Sparkle(float2 xz, float3 toEye, float distance)
+{
+    float3 sun = g_GameSeaObject[9].xyz;
+    if (dot(sun, sun) < 1e-6) return 0;
+    sun = normalize(sun);
+    // The facets have a size in the world, not on screen: picked by distance and the angle the sea is seen at alone, they
+    // do not move with the resolution, and the waves alone change them between frames. Seen low, a pixel spans far more
+    // sea in depth than across; a facet smaller than that in depth was a different one under each frame's jitter, and
+    // the upscalers' history, taking that for noise, smeared it. Sized between the two, a facet spans about a pixel
+    // both ways: a few pixels wide, as flat as the game's.
+    float across = max(distance, 1) * SparkleCellAngle;
+    float facet = SparkleCell * exp2(floor(log2(max(across * rsqrt(max(toEye.y, 0.005)), SparkleCell) / SparkleCell)));
+    // Seen at the last grazing angles, a pixel spans tens of facets in depth: one lands on it or misses it from frame to
+    // frame, and the sea along the horizon shimmers. There they fade out; above it they stay, as the game's do.
+    float visible = smoothstep(SparkleHorizonFrom, SparkleHorizonTo, toEye.y);
+    if (visible <= 0) return 0;
+    // The waves a facet holds drift downwind at their speed, sqrt(g wavelength / 2 pi); the sea's motion vectors follow
+    // only the eye, so the upscalers drew the sparkles from their history where the waves had been, smeared along the
+    // wind. Read where the waves came from, the pattern stays where it is and only changes as they do, the way the
+    // game's far sparkles stand still. One speed for each facet size, so a size's facets never shear.
+    float wavelength = facet * SparkleWaves;
+    float2 at = xz + WindDirection() * (sqrt(Gravity * wavelength / (2 * Pi)) * g_Time);
+    float2 slope = 0, stretch = 0;
+    [unroll] for (uint cascade = 0; cascade < CASCADES; ++cascade)
+    {
+        float size = g_CascadeSizes[cascade];
+        float level = max(log2(facet * N / size), 0);
+        float4 derivatives = g_Derivatives.SampleLevel(g_Linear, float3(at / size, cascade), level);
+        slope += derivatives.xy;
+        stretch += derivatives.zw;
+    }
+    // Steeper than the waves' own: the game's detail map tilts its facets further than our tiles, so its sparkles reach
+    // well out of the sun's path.
+    slope *= SparkleSlope / max(1 + stretch, 0.25);
+    float3 normal = normalize(float3(-slope.x, 1, -slope.y));
+    float LR = saturate(dot(sun, reflect(-toEye, normal)));
+    // The game's dimming by the hour (NCalculate's dayAndNightTransition, from the atmosphere's sun, c3): whole by
+    // day, out at dusk and dawn, a quarter under the moon, whose light the sun pass lights them with.
+    float sunHeight = g_GameSeaPixel[3].y;
+    float daylight = saturate(1 + (sunHeight - 0.04) * 14) + saturate(1 - (sunHeight + 0.24) * 14) * 0.5;
+    return saturate(pow(LR, SparklePower) * SparkleBoost) * visible * daylight * daylight;
+}
+
 Targets main(Interpolants input)
 {
-    float2 slope = 0, stretch = 0, spread = 0;
+    float2 slope = 0, stretch = 0, spread = 0, longSlope = 0;
     float foam = 0, squeezed = 0;
     [unroll] for (uint cascade = 0; cascade < CASCADES; ++cascade)
     {
         float3 uv = float3(input.grid / g_CascadeSizes[cascade], cascade);
         float4 derivatives = g_Derivatives.Sample(g_Anisotropic, uv);
         float4 moments = g_Moments.Sample(g_Anisotropic, uv);
+        if (cascade == 0) longSlope = derivatives.xy;
         slope += derivatives.xy;
         stretch += derivatives.zw;
         spread += max(moments.xy - derivatives.xy * derivatives.xy, 0);
@@ -171,9 +269,14 @@ Targets main(Interpolants input)
 
     float3 viewNormal = float3(dot(g_Scene[8].xyz, normal), dot(g_Scene[9].xyz, normal), dot(g_Scene[10].xyz, normal));
     Targets output;
-    output.albedo = float4(SrgbOf(lerp(g_WaterAlbedo, FoamAlbedo, foam)), 1);
+    // The game paints its turquoise into the water's own light, which here is the albedo's: the reflection on top is
+    // the sky's, so the albedo goes well past the game's colour ratio for the zones to show as strongly.
+    float distance = length(input.fromEye);
+    float turquoise = saturate(Turquoise(input.grid, longSlope, distance) * GameFresnel(toEye, distance) * 1.5);
+    float3 water = lerp(g_WaterAlbedo * BodyScale, TurquoiseAlbedo, turquoise);
+    output.albedo = float4(SrgbOf(lerp(water, FoamAlbedo, foam)), 1);
     output.normal = float4(viewNormal.xy * 0.5 + 0.5, sqrt(saturate(viewNormal.z * 0.5 + 0.5)), 0);
-    output.material = float4(lerp(roughness, 0.7, foam), lerp(1, 0.4, foam), WaterMaterial, 0);
+    output.material = float4(lerp(roughness, 0.7, foam), lerp(1, 0.4, foam), WaterMaterial, Sparkle(input.grid, toEye, distance) * (1 - foam));
     output.depth = input.position.z;
     return output;
 }

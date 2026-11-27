@@ -4,8 +4,10 @@
 #include "clock.hpp"
 #include "command_list_notes.hpp"
 #include "d3d11_helpers.hpp"
+#include "device_check.hpp"
 #include "features/sea/sea_shaders.hpp"
 #include "frame_latch.hpp"
+#include "game_code.hpp"
 #include "game_constants.hpp"
 #include "log.hpp"
 #include "passes/ray_tracing/shaders/gi_shared.h"
@@ -19,6 +21,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <format>
 #include <mutex>
 #include <optional>
@@ -62,6 +65,23 @@ constexpr float WindOf(weather::Type type)
     }
 }
 
+// The game's pause manager (docs/DEVELOPMENT.md, "Photo mode"), a global with its vtable first: each frame start ORs
+// its active requests' pause bits into + 8, and game time steps by zero while any is set. The sea stops with it: a
+// pause menu, photo mode, a frozen frame.
+constexpr std::uintptr_t PauseManagerRva = 0x2B65D40, PauseVtableRva = 0x20C56C0;
+constexpr std::size_t PauseBits = 8;
+
+bool isGamePaused() noexcept
+{
+    static const std::uint8_t* const manager = [] {
+        auto* base = game_code::image();
+        return isSupportedGameBuild() && *reinterpret_cast<std::uint8_t* const*>(base + PauseManagerRva) == base + PauseVtableRva
+            ? base + PauseManagerRva
+            : nullptr;
+    }();
+    return manager && *reinterpret_cast<const volatile std::uint32_t*>(manager + PauseBits) != 0;
+}
+
 // The wind turns towards the weather's over about 20 seconds; foam fades over about 2.5.
 constexpr float WindSeconds = 20, FoamSeconds = 2.5f;
 constexpr float Choppiness = 1;
@@ -78,10 +98,15 @@ constexpr std::uint64_t ShownForMilliseconds = 60'000, ForgottenAfterMillisecond
 constexpr UINT GameMaterialSlot = 4, GameMaterialSize = 8 * game_constants::RegisterSize;
 // shaders/sea_common.hlsli's cbuffers: Sea at b9 of every stage, the game's sea's material copy at b10, its pixel
 // material's at b11 (the surface's pixel shader).
-constexpr UINT ConstantSlot = 9, GameSeaSlot = 10, GameSeaPixelSlot = 11;
+constexpr UINT ConstantSlot = 9, GameSeaSlot = 10, GameSeaPixelSlot = 11, GameSeaObjectSlot = 12;
+// And its object constants (cVSObject, b5): m_localParam[0] (c9) the direction towards the sun, which the surface's
+// sparkles take at b12.
+constexpr UINT GameObjectSlot = 5, GameObjectSize = 13 * game_constants::RegisterSize;
 // The game's sea's foam textures in its pixel shader (inFoamTexture, inFoamTexture2), and where the surface
 // takes them.
 constexpr UINT GameFoamNoiseSlot = 3, GameFoamPatternSlot = 5, SurfaceFoamSlot = 3;
+// Its map of the water's depth (inWhitecapTexture1), where its sea turns turquoise; the surface takes it at t5.
+constexpr UINT GameWaterDepthSlot = 2;
 struct Constants
 {
     float cascadeSizes[4], cascadeLow[4], cascadeHigh[4];
@@ -163,9 +188,9 @@ ComPtr<ID3D11DeviceContext> immediate;
 ComPtr<ID3D11ComputeShader> spectrumShader, rowShader, columnShader, mapShader;
 ComPtr<ID3D11VertexShader> surfaceVertex;
 ComPtr<ID3D11PixelShader> surfacePixel;
-ComPtr<ID3D11Buffer> constantBuffer, indexBuffer, gameSeaMaterial, gameSeaPixelMaterial;
-// The game's sea's foam textures, as its near patches last bound them; null before.
-ComPtr<ID3D11ShaderResourceView> gameFoamNoise, gameFoamPattern;
+ComPtr<ID3D11Buffer> constantBuffer, indexBuffer, gameSeaMaterial, gameSeaPixelMaterial, gameSeaObject;
+// The game's sea's foam textures and its water depth map, as its near patches last bound them; null before.
+ComPtr<ID3D11ShaderResourceView> gameFoamNoise, gameFoamPattern, gameWaterDepth;
 // The level's readback (planeLevel()): copied from gameSeaMaterial at present, read a second later.
 ComPtr<ID3D11Buffer> levelReadback;
 // Each tile's deepest trough below the level (deepest), read back with the level.
@@ -257,12 +282,42 @@ ComPtr<ID3D11Buffer> makeIndices()
     return buffer;
 }
 
+#if PHANTOM_DEV_SHADERS
+// A dev build's hot reload: present looks at the sea's .hlsl files twice a second or so and, when one was saved,
+// compiles them all again. A failed compile is logged and the shaders in use stay. `sourcesSeen` is the newest file
+// the shaders in use were compiled from.
+std::filesystem::file_time_type sourcesSeen{};
+std::uint64_t sourcesChecked{};
+
+// The newest write among the sea's files; none when the folder could not be read through, as a partial scan would
+// look like a save or hide one.
+std::optional<std::filesystem::file_time_type> newestSource() noexcept
+{
+    std::filesystem::file_time_type newest{};
+    std::error_code error;
+    const auto directory = std::filesystem::path(PHANTOM_DEV_SHADER_ROOT) / "features/sea/shaders";
+    for (std::filesystem::directory_iterator entry(directory, error), end; !error && entry != end; entry.increment(error))
+    {
+        const auto written = entry->last_write_time(error);
+        if (error) return std::nullopt;
+        newest = std::max(newest, written);
+    }
+    if (error) return std::nullopt;
+
+    return newest;
+}
+#endif
+
 // Makes everything once, its shaders from their precompiled bytecode (compiled from source in a dev build); call with resourceMutex held. Returns false when it is unavailable.
 bool ensurePipeline()
 {
     if (surfacePixel) return true;
     if (!device || hasPipelineFailed) return false;
 
+#if PHANTOM_DEV_SHADERS
+    // Before compiling: a file saved meanwhile is newer, and the next look reloads it.
+    if (const auto newest = newestSource()) sourcesSeen = *newest;
+#endif
     try
     {
         constantBuffer = makeConstantBuffer(device.Get(), sizeof(Constants), "Creating the sea's constants");
@@ -271,10 +326,12 @@ bool ensurePipeline()
         copy.ByteWidth = GameMaterialSize;
         copy.Usage = D3D11_USAGE_DEFAULT;
         copy.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-        const std::array<float, GameMaterialSize / 4> zeros{};
+        const std::array<float, std::max(GameMaterialSize, GameObjectSize) / 4> zeros{};
         const D3D11_SUBRESOURCE_DATA initial{zeros.data()};
         check(device->CreateBuffer(&copy, &initial, gameSeaMaterial.GetAddressOf()), "Creating the game's sea constants");
         check(device->CreateBuffer(&copy, &initial, gameSeaPixelMaterial.GetAddressOf()), "Creating the game's sea pixel constants");
+        copy.ByteWidth = GameObjectSize;
+        check(device->CreateBuffer(&copy, &initial, gameSeaObject.GetAddressOf()), "Creating the game's sea object constants");
         D3D11_BUFFER_DESC readback{};
         readback.ByteWidth = GameMaterialSize;
         readback.Usage = D3D11_USAGE_STAGING;
@@ -333,6 +390,40 @@ bool ensurePipeline()
     }
 }
 
+#if PHANTOM_DEV_SHADERS
+// Call with resourceMutex held.
+void reloadShadersIfSaved()
+{
+    if (++sourcesChecked % 30 != 1) return;
+
+    const auto newest = newestSource();
+    if (!newest || *newest == sourcesSeen) return;
+    sourcesSeen = *newest;
+    if (!surfacePixel) return; // ensurePipeline compiles them from the files anyway
+
+    try
+    {
+        auto spectrumNew = computeShader(device.Get(), shaders::Spectrum, "sea-spectrum");
+        auto rowNew = computeShader(device.Get(), shaders::Fft, "sea-fft-rows");
+        auto columnNew = computeShader(device.Get(), shaders::FftColumns, "sea-fft-columns");
+        auto mapNew = computeShader(device.Get(), shaders::Maps, "sea-maps");
+        auto vertexNew = vertexShader(device.Get(), shaders::SurfaceVertex, "sea-surface-vertex");
+        auto pixelNew = pixelShader(device.Get(), shaders::SurfacePixel, "sea-surface-pixel");
+        spectrumShader = std::move(spectrumNew);
+        rowShader = std::move(rowNew);
+        columnShader = std::move(columnNew);
+        mapShader = std::move(mapNew);
+        surfaceVertex = std::move(vertexNew);
+        surfacePixel = std::move(pixelNew);
+        log("Sea: shaders reloaded.");
+    }
+    catch (const std::exception& error)
+    {
+        log(std::string("Sea: shader reload failed, the previous shaders stay: ") + error.what());
+    }
+}
+#endif
+
 void releasePipeline()
 {
     spectrumShader.Reset();
@@ -345,8 +436,10 @@ void releasePipeline()
     indexBuffer.Reset();
     gameSeaMaterial.Reset();
     gameSeaPixelMaterial.Reset();
+    gameSeaObject.Reset();
     gameFoamNoise.Reset();
     gameFoamPattern.Reset();
+    gameWaterDepth.Reset();
     levelReadback.Reset();
     pixelReadback.Reset();
     deepestReadback.Reset();
@@ -482,7 +575,7 @@ public:
     SavedSurfaceState& operator=(const SavedSurfaceState&) = delete;
 
 private:
-    static constexpr UINT ViewCount = SurfaceFoamSlot + 2, SamplerCount = 2, TargetCount = 4, ConstantCount = GameSeaPixelSlot + 1 - ConstantSlot;
+    static constexpr UINT ViewCount = SurfaceFoamSlot + 3, SamplerCount = 2, TargetCount = 4, ConstantCount = GameSeaObjectSlot + 1 - ConstantSlot;
 
     template<class Object, std::size_t Count> static void release(Object* (&objects)[Count])
     {
@@ -556,12 +649,12 @@ bool drawSea(ID3D11DeviceContext* context, const Constants& constants)
 
     ID3D11ShaderResourceView* const maps[]{displacement.view.Get(), derivatives.view.Get(), moments.view.Get()};
     context->VSSetShader(surfaceVertex.Get(), nullptr, 0);
-    ID3D11Buffer* const buffers[]{constantBuffer.Get(), gameSeaMaterial.Get(), gameSeaPixelMaterial.Get()};
+    ID3D11Buffer* const buffers[]{constantBuffer.Get(), gameSeaMaterial.Get(), gameSeaPixelMaterial.Get(), gameSeaObject.Get()};
     context->VSSetConstantBuffers(ConstantSlot, 2, buffers);
     context->VSSetShaderResources(0, 1, maps);
     context->VSSetSamplers(0, 1, linearSampler.GetAddressOf());
     ID3D11SamplerState* const samplers[]{linearSampler.Get(), anisotropicSampler.Get()};
-    ID3D11ShaderResourceView* const pixelMaps[]{maps[0], maps[1], maps[2], gameFoamNoise.Get(), gameFoamPattern.Get()};
+    ID3D11ShaderResourceView* const pixelMaps[]{maps[0], maps[1], maps[2], gameFoamNoise.Get(), gameFoamPattern.Get(), gameWaterDepth.Get()};
     context->PSSetShader(surfacePixel.Get(), nullptr, 0);
     context->PSSetConstantBuffers(ConstantSlot, static_cast<UINT>(std::size(buffers)), buffers);
     context->PSSetShaderResources(0, static_cast<UINT>(std::size(pixelMaps)), pixelMaps);
@@ -602,6 +695,17 @@ void takeGameFoam(ID3D11DeviceContext* context)
     const auto noiseTexels = texelsOf(noise.Get()), patternTexels = texelsOf(pattern.Get());
     if (desc.ByteWidth != GameMaterialSize || !isFoam(noiseTexels) || !isFoam(patternTexels)) return;
 
+    // Its map of where the sea shows turquoise (inWhitecapTexture1, which NCalculate reads as the water's depth).
+    ComPtr<ID3D11ShaderResourceView> waterDepth;
+    context->PSGetShaderResources(GameWaterDepthSlot, 1, waterDepth.GetAddressOf());
+    const auto waterDepthTexels = texelsOf(waterDepth.Get());
+    if (isFoam(waterDepthTexels) && waterDepth != gameWaterDepth)
+    {
+        log(std::format("Sea: the game's water depth map: {} x {}, format {}, {} levels.", waterDepthTexels.Width, waterDepthTexels.Height,
+            static_cast<int>(waterDepthTexels.Format), waterDepthTexels.MipLevels));
+        gameWaterDepth = waterDepth;
+    }
+
     context->CopyResource(gameSeaPixelMaterial.Get(), material.Get());
     if (noise != gameFoamNoise || pattern != gameFoamPattern)
     {
@@ -630,6 +734,11 @@ void copyGameSea(ID3D11DeviceContext* context, std::uint64_t presented)
     if (!ensurePipeline()) return;
 
     context->CopyResource(gameSeaMaterial.Get(), material.Get());
+    ComPtr<ID3D11Buffer> object;
+    context->VSGetConstantBuffers(GameObjectSlot, 1, object.GetAddressOf());
+    D3D11_BUFFER_DESC objectDesc{};
+    if (object) object->GetDesc(&objectDesc);
+    if (objectDesc.ByteWidth == GameObjectSize) context->CopyResource(gameSeaObject.Get(), object.Get());
     notes.note(keyOf(context), [](Notes& contextNotes) { contextNotes.isGameSeaCopied = true; });
     logOnce("Sea: its level and wind come from the game's sea.");
     takeGameFoam(context);
@@ -782,7 +891,7 @@ void present() noexcept
     notes.present();
 
     const auto ticks = clock::ticksNow();
-    const double elapsed = lastPresent ? std::clamp(clock::millisecondsOf(ticks - lastPresent) / 1000, 0.0, 0.1) : 0;
+    const double elapsed = lastPresent && !isGamePaused() ? std::clamp(clock::millisecondsOf(ticks - lastPresent) / 1000, 0.0, 0.1) : 0;
     lastPresent = ticks;
 
     {
@@ -791,6 +900,9 @@ void present() noexcept
 
         if (settings.isRunning)
         {
+#if PHANTOM_DEV_SHADERS
+            reloadShadersIfSaved();
+#endif
             const auto now = GetTickCount64();
             if (now - lastGBuffer.load() > ForgottenAfterMilliseconds) lastGameSea = 0;
             const auto gameSea = lastGameSea.load();

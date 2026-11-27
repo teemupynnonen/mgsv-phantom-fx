@@ -123,10 +123,12 @@ void main(uint2 id : SV_DispatchThreadID)
         translucencyScale = color.w;
     }
 
+    bool isSea = g_HasSea && g_SeaDepth.Load(int3(id, 0)) == depth;
+    // The sea's translucency holds its sparkles (features/sea, surface.hlsl's Sparkle), not light through leaves.
+    float translucency = isSea ? 0 : specular.w;
     g_NormalRoughness[id] = float4(world, roughness);
     g_DiffuseAlbedo[id] = float4(g_HasAlbedo ? g_Albedo.Load(int3(id, 0)).rgb : 0.5, 1);
-    bool isSea = g_HasSea && g_SeaDepth.Load(int3(id, 0)) == depth;
     g_SpecularAlbedo[id] = float4(isSea ? WaterReflectance(toEyeN, roughness) : saturate(reflected * ((1 - roughness) * 0.5)), isSea ? 0 : 1);
-    g_Material[id] = float4(saturate(specularColor), specular.w);
-    g_Lobe[id] = float4(saturate(specular.w * translucencyScale), F0, anisotropy, 0);
+    g_Material[id] = float4(saturate(specularColor), translucency);
+    g_Lobe[id] = float4(saturate(translucency * translucencyScale), F0, anisotropy, 0);
 }
