@@ -120,8 +120,12 @@ void settingsPersist(const fs::path& root)
     expect(merged.softShadows.on && merged.contactShadows.on, "The sun's keys switch the lamps' soft and contact shadows too; the old lamp keys are ignored.");
     write(path, "indirect_light=yes\nindirect_light_radius=0\nindirect_light_strength=9\n");
     const auto light = loadSettings(path).indirectLight;
-    expect(!light.on && light.radius == 0.05f && light.strength == 3,
+    expect(!light.on && light.radius == 0.25f && light.strength == 3,
         "An invalid toggle leaves VB-SSGI off, and its radius and strength are clamped.");
+    write(path, "indirect_light_radius=1\n");
+    expect(loadSettings(path).indirectLight.radius == 1, "An old radius, a share of the height, reads as that many metres, in range.");
+    write(path, "indirect_light_radius=50\n");
+    expect(loadSettings(path).indirectLight.radius == 8, "A radius in metres is clamped at the most.");
 
     const Settings upscaling{.upscaling = {.mode = Mode::Custom, .dlssPreset = Preset::K, .sharpness = 0.25f, .customRenderScale = 0.75f}};
     saveSettings(path, upscaling);
@@ -132,7 +136,7 @@ void settingsPersist(const fs::path& root)
              Settings{.upscaling = {.sharpness = 2}}, Settings{.upscaling = {.customRenderScale = 2}},
              Settings{.frameGeneration = {.mode = FrameGenerationMode::Count}}, Settings{.sun = {.diameterDegrees = 0}},
              Settings{.globalIllumination = {.raysPerLightPixel = 3}}, Settings{.ambientOcclusion = {.radiusMetres = 0}},
-             Settings{.ambientOcclusion = {.strength = 4}}, Settings{.indirectLight = {.radius = 5}}, Settings{.indirectLight = {.strength = -1}}})
+             Settings{.ambientOcclusion = {.strength = 4}}, Settings{.indirectLight = {.radius = 20}}, Settings{.indirectLight = {.strength = -1}}})
         expect(saveRejected(path, chosen, invalid), "Invalid settings cannot replace valid saved ones.");
 }
 

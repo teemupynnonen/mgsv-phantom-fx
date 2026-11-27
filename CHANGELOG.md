@@ -4,6 +4,9 @@
 
 ### New
 
+- **Bounce light's radius is now a distance in metres**: it reaches the same distance around near and far
+  surfaces instead of growing with distance (2.5 m by default, 0.25 to 8 m). An old `indirect_light_radius`
+  value, a share of the screen's height, now reads as that many metres, so check it in the menu.
 - **Indirect lighting (VB-SSGI) is a visibility-bitmask gather**: a few slices through each pixel are
   marched over the prefiltered depth (apart from GTVBAO's copy), keeping a 32-sector occlusion bitmask
   each, and the bounce takes light only from the sectors a surface uncovers first, so occluders stop

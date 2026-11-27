@@ -3821,8 +3821,11 @@ used. Off, the add-on only checks a flag on each full-screen draw.
   diffuse light (`t9`), albedo (`t8`, its sRGB view, so linear), the specular light (`t10`) and
   `cPSScene`. A visibility-bitmask gather (Therrien et al.): per pixel, a few slices through the view
   vector (the **Samples** setting, one slice per four, up to 4) are marched in both directions for
-  **Visibility** steps (2 to 8, 5 by default), spaced quadratically out to the radius (a share of the
-  screen's height, 50% by default, and the same radius in view units at the pixel's depth). Each
+  **Visibility** steps (2 to 8, 5 by default), spaced quadratically out to the radius (a fixed radius in
+  metres, 2.5 m by default, 0.25 to 8; `indirect_light_radius` was a share of the height before, and an old
+  value just reads as metres, clamped; projected to pixels per pixel from its view depth and the projection
+  scale, `2 z invP11 / height` metres a pixel, and clamped to 6 pixels at least and 30% of the height at
+  most, the thickness and fade using the clamped reach). Each
   slice keeps a 32-sector bitmask of its hemisphere, with GT-VBAO's horizon remap, so every sector
   has the same cosine weight. A sample covers the sectors between the horizons of its front and of its
   back, taken `Thickness` (12% of its view depth, clamped to 0.05 and the radius; a sixth of that on

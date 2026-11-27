@@ -377,12 +377,7 @@ bool compute(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D
         visibility_bitmask::Parameters vbParameters{};
         vbParameters.size[0] = width;
         vbParameters.size[1] = height;
-        // The mips' falloff radius: the gather's world radius at a nominal 50 m, from the projection.
-        float invP11 = 1.0f / 3.1f;
-        if (scene)
-            if (const auto sceneConstants = constant_capture::written<game_constants::SceneConstants>(scene))
-                invP11 = std::max(sceneConstants->projectionParam[1], 1e-3f);
-        vbParameters.radius = light.radius * 2.0f * 50.0f * invP11;
+        vbParameters.radius = light.radius;
         vbParameters.maxRadiusPixels = visibility_bitmask::MaxRadiusShare * static_cast<float>(height);
         try
         {

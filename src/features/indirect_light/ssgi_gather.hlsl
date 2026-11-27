@@ -26,6 +26,8 @@ static const uint StepLimit = 8;
 // doubling of the distance the next.
 static const uint DistanceMipCount = 5;
 static const float DistanceMipOffset = 3.3;
+static const float MinRadiusPixels = 6.0;  // The reach on screen never falls under this
+static const float MaxRadiusShare = 0.3;   // ...or over this share of the height
 
 // The distance at a sample `offset` pixels from the receiver, from a smaller copy the farther it
 // lies; negative on foliage. Without the mips, the depth at full size and no foliage.
@@ -82,11 +84,13 @@ void main(uint3 tid : SV_DispatchThreadID)
     const float3 N = decodeNormal(Normals.Load(int3(centre, 0)).xyz);
     const float3 viewDir = -P * rsqrt(dot(P, P));
 
-    // The radius as a share of the screen's height, and the same radius in view units at this
-    // depth: a world-space radius needs a known world scale, and the distance is not in metres.
-    const float radiusFraction = max(Radius, 0.001);
-    const float radiusPixels = radiusFraction * Size.y;
-    const float radiusWorld = radiusFraction * 2.0 * z * Scene[21].y;
+    // The radius is fixed in metres and projected to pixels from this pixel's depth, so the
+    // reach is the same distance everywhere instead of growing with it. The pixel clamp keeps far
+    // pixels from collapsing onto themselves and near ones from costing the whole screen; the world
+    // radius follows the clamped reach so the thickness and the falloff agree with the taps.
+    const float metresPerPixel = 2.0 * z * Scene[21].y / Size.y;
+    const float radiusPixels = clamp(max(Radius, 0.01) / metresPerPixel, MinRadiusPixels, MaxRadiusShare * Size.y);
+    const float radiusWorld = radiusPixels * metresPerPixel;
 
     // Samples sets the slices, Visibility the steps along each side of one. Each step moves at least
     // a pixel; the spacing grows quadratically, so the near field is dense.
