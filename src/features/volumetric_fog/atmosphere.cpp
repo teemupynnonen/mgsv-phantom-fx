@@ -129,8 +129,9 @@ ComPtr<ID3D11Device> device;
 ID3D11DeviceContext* immediate{};
 ComPtr<ID3D11ComputeShader> visibilityShader, mediaShader, integrateShader;
 ComPtr<ID3D11ComputeShader> transmittanceShader, multipleScatteringShader, parameterShader, skyViewShader, ambientShader;
-// The sky draw without and with the sun's or the moon's sprite.
-std::array<ComPtr<ID3D11PixelShader>, 2> skyShaders;
+// The sky draw without and with the sun's or the moon's sprite, then the same clamped for HDR output,
+// which can turn on and off while the game runs (drawSky).
+std::array<ComPtr<ID3D11PixelShader>, 4> skyShaders;
 ComPtr<ID3D11Buffer> constantBuffer;
 ComPtr<ID3D11SamplerState> linearClamp, shadowSampler;
 Copies copies;
@@ -209,11 +210,13 @@ bool ensurePipeline()
         ambientShader = computeShader(device.Get(), shaders::SkyAmbient, "sky-ambient");
         // The float scene takes TppTonemap out of the scene for the session.
         const char* floatScene = hdr::isSceneFloat() ? "1" : "0";
-        const char* hdrOutput = hdr::active() ? "1" : "0";
-        const D3D_SHADER_MACRO withoutSprite[]{{"MOON", "0"}, {"FLOAT_SCENE", floatScene}, {"HDR_OUTPUT", hdrOutput}, {}};
-        const D3D_SHADER_MACRO withSprite[]{{"MOON", "1"}, {"FLOAT_SCENE", floatScene}, {"HDR_OUTPUT", hdrOutput}, {}};
-        skyShaders[0] = pixelShader(device.Get(), shaders::SkyDraw, "sky", withoutSprite);
-        skyShaders[1] = pixelShader(device.Get(), shaders::SkyDraw, "sky-sprite", withSprite);
+        for (const bool hdrOutput : {false, true})
+            for (const bool sprite : {false, true})
+            {
+                const D3D_SHADER_MACRO macros[]{{"MOON", sprite ? "1" : "0"}, {"FLOAT_SCENE", floatScene}, {"HDR_OUTPUT", hdrOutput ? "1" : "0"}, {}};
+                const char* name = hdrOutput ? (sprite ? "sky-sprite-hdr" : "sky-hdr") : (sprite ? "sky-sprite" : "sky");
+                skyShaders[(hdrOutput ? 2 : 0) + (sprite ? 1 : 0)] = pixelShader(device.Get(), shaders::SkyDraw, name, macros);
+            }
 
         constantBuffer = makeConstantBuffer(device.Get(), sizeof(Constants), "Creating the fog constants");
         copies = {constantCopy(SystemSize), constantCopy(SceneSize), constantCopy(MaterialSize), constantCopy(ObjectSize), constantCopy(SceneSize),
@@ -528,9 +531,10 @@ bool drawSky(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, bo
 {
     std::array<ID3D11ShaderResourceView*, 2> gameViews{};
     bool copied{};
+    const auto skyShader = (hdr::active() ? 2 : 0) + (sprite ? 1 : 0);
     {
         std::lock_guard lock(resourceMutex);
-        if (!skyReady || !skyShaders[sprite ? 1 : 0]) return false;
+        if (!skyReady || !skyShaders[skyShader]) return false;
 
         if (sprite)
         {
@@ -543,7 +547,7 @@ bool drawSky(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, bo
 
         context->PSGetShaderResources(SkyParameterSlot, static_cast<UINT>(gameViews.size()), gameViews.data());
         ID3D11ShaderResourceView* const views[]{skyParameters.view.Get(), skyView.view.Get()};
-        context->PSSetShader(skyShaders[sprite ? 1 : 0].Get(), nullptr, 0);
+        context->PSSetShader(skyShaders[skyShader].Get(), nullptr, 0);
         context->PSSetShaderResources(SkyParameterSlot, static_cast<UINT>(std::size(views)), views);
     }
 

@@ -250,6 +250,7 @@ void onInitPipeline(device* device, pipeline_layout, uint32_t count, const pipel
             const auto [hdrOriginal, hdrSize] = hdr::originalOf(shader->code, shader->code_size);
             const auto [code, size] = game_dither::originalOf(hdrOriginal, hdrSize);
             game_shaders::pixelShaderCreated(code, size, reinterpret_cast<IUnknown*>(pipeline.handle));
+            hdr::pixelShaderCreated(shader->code, reinterpret_cast<ID3D11PixelShader*>(pipeline.handle));
         }
         else if (subobjects[i].type == pipeline_subobject_type::vertex_shader)
             game_shaders::vertexShaderCreated(shader->code, shader->code_size, reinterpret_cast<IUnknown*>(pipeline.handle));
@@ -363,6 +364,10 @@ void onBindRenderTargets(command_list* list, uint32_t count, const resource_view
 
 void onBindPipeline(command_list* list, pipeline_stage stages, pipeline pipeline)
 {
+    // A sky shader's clamp follows HDR output as it is now: its other variant binds in its place.
+    if ((stages & pipeline_stage::pixel_shader) == pipeline_stage::pixel_shader)
+        if (auto* other = hdr::shaderFor(reinterpret_cast<ID3D11PixelShader*>(pipeline.handle))) native(list)->PSSetShader(other, nullptr, 0);
+
     if ((stages & pipeline_stage::vertex_shader) != pipeline_stage::vertex_shader) return;
 
     const auto kind = game_shaders::vertexShaderOf(reinterpret_cast<IUnknown*>(pipeline.handle));

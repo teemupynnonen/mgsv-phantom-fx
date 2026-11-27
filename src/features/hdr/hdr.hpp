@@ -91,6 +91,11 @@ const std::vector<std::uint8_t>* patchedShader(const void* code, std::size_t siz
 // The game's own code for code patchedShader returned, which the add-on's parts identify shaders by;
 // other code as it is.
 std::pair<const void*, std::size_t> originalOf(const void* code, std::size_t size) noexcept;
+// A pixel shader the game made from `code`: a sky shader keeps its other clamp variant beside it.
+void pixelShaderCreated(const void* code, ID3D11PixelShader* made) noexcept;
+// A pixel shader the game binds: the sky variant to bind in its place for HDR output as it is now, or
+// null to keep it.
+ID3D11PixelShader* shaderFor(ID3D11PixelShader* bound) noexcept;
 
 // ---- Recording, on the game's render and worker threads ----
 // Before a draw, whoever draws it. Keeps a resolve's tonemap curve, copies the scene for the depth

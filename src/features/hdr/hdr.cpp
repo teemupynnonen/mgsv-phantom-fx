@@ -75,10 +75,19 @@ struct Upgraded
 };
 
 // A game shader the add-on made from patched bytecode, and the game's own, which the add-on's other
-// parts identify it by.
+// parts identify it by. A sky shader, whose clamp to 1 stays with HDR output and is lifted in SDR, also
+// has the other variant made, which binds in place of the game's while HDR output is the other way.
 struct Patched
 {
     std::vector<std::uint8_t> code, original;
+    bool lifted{}; // The clamp in `code` is lifted
+    ComPtr<ID3D11PixelShader> other;
+};
+
+// A sky shader as the game made it and its other variant, by the clamp.
+struct SkyVariants
+{
+    ComPtr<ID3D11PixelShader> clampKept, clampLifted;
 };
 
 // The scene copy the depth of field composites over, kept in float: the game's is 8-bit.
@@ -122,6 +131,9 @@ std::unordered_map<ID3D11View*, ID3D11Resource*> srgbViews;
 // code; kept for the session.
 std::map<DxbcHash, Patched> patchedShaders;
 std::unordered_map<const void*, const Patched*> patchedByCode;
+// The sky shaders by the object the game made and binds.
+std::unordered_map<ID3D11PixelShader*, SkyVariants> skyShaders;
+std::atomic<bool> hasSkyVariants{};
 
 // Compiles the shaders and makes the fixed buffers; call with the mutex held.
 void createPipeline()
@@ -406,6 +418,8 @@ void detach() noexcept
     std::unique_lock lock(mutex);
     targets.clear();
     srgbViews.clear();
+    hasSkyVariants = false;
+    skyShaders.clear();
     patchedByCode.clear();
     patchedShaders.clear();
     dofCopy = {};
@@ -640,7 +654,8 @@ const std::vector<std::uint8_t>* patchedShader(const void* code, std::size_t siz
         if (const auto found = patchedShaders.find(*hash); found != patchedShaders.end()) return &found->second.code;
 
         const bool draw2D = draw2DSource(std::string_view(static_cast<const char*>(code), size), "_ps.hlsl");
-        const auto patched = draw2D ? saturateOutput(code, size) : withoutTonemap(code, size, !active());
+        const bool lift = !active();
+        const auto patched = draw2D ? saturateOutput(code, size) : withoutTonemap(code, size, lift);
         if (!patched)
         {
             if (draw2D) logOnce("Float scene: the 2D pass shader " + toHex(*hash) + " keeps its writes unclamped.");
@@ -655,10 +670,21 @@ const std::vector<std::uint8_t>* patchedShader(const void* code, std::size_t siz
             return nullptr;
         }
 
+        // The sky's other variant, for HDR output turned the other way; none for shaders without the clamp.
+        ComPtr<ID3D11PixelShader> other;
+        if (!draw2D)
+            if (const auto variant = withoutTonemap(code, size, !lift); variant && *variant != *patched
+                && FAILED(device->CreatePixelShader(variant->data(), variant->size(), nullptr, other.GetAddressOf())))
+            {
+                other.Reset();
+                logOnce("Float scene: Direct3D refused the other sky variant of " + toHex(*hash) + "; its clamp follows the setting at start.");
+            }
+
         const auto* original = static_cast<const std::uint8_t*>(code);
-        auto& entry = patchedShaders[*hash] = Patched{std::move(*patched), std::vector(original, original + size)};
+        auto& entry = patchedShaders[*hash] = Patched{std::move(*patched), std::vector(original, original + size), lift, std::move(other)};
         patchedByCode[entry.code.data()] = &entry;
-        log(std::string("Float scene: ") + (draw2D ? "clamped the writes of 2D pass shader " : "took TppTonemap out of shader ") + toHex(*hash) + ".");
+        log(std::string("Float scene: ") + (draw2D ? "clamped the writes of 2D pass shader " : "took TppTonemap out of shader ") + toHex(*hash)
+            + (entry.other ? ", with both sky clamps." : "."));
 
         return &entry.code;
     }
@@ -677,6 +703,49 @@ std::pair<const void*, std::size_t> originalOf(const void* code, std::size_t siz
     if (found == patchedByCode.end()) return {code, size};
 
     return {found->second->original.data(), found->second->original.size()};
+}
+
+void pixelShaderCreated(const void* code, ID3D11PixelShader* made) noexcept
+{
+    if (!isSceneFloat() || !code || !made) return;
+
+    try
+    {
+        ComPtr<ID3D11PixelShader> other;
+        std::vector<std::uint8_t> original;
+        {
+            std::unique_lock lock(mutex);
+            const auto found = patchedByCode.find(code);
+            if (found == patchedByCode.end() || !found->second->other) return;
+
+            const auto& entry = *found->second;
+            other = entry.other;
+            original = entry.original;
+            auto& variants = skyShaders[made];
+            (entry.lifted ? variants.clampLifted : variants.clampKept) = made;
+            (entry.lifted ? variants.clampKept : variants.clampLifted) = other;
+            hasSkyVariants = true;
+        }
+
+        // The other variant is the same game shader to the add-on's parts.
+        game_shaders::pixelShaderCreated(original.data(), original.size(), other.Get());
+    }
+    catch (...)
+    {
+    }
+}
+
+ID3D11PixelShader* shaderFor(ID3D11PixelShader* bound) noexcept
+{
+    if (!hasSkyVariants.load(std::memory_order_relaxed) || !bound) return nullptr;
+
+    std::shared_lock lock(mutex);
+    const auto found = skyShaders.find(bound);
+    if (found == skyShaders.end()) return nullptr;
+
+    auto* wanted = (active() ? found->second.clampKept : found->second.clampLifted).Get();
+
+    return wanted != bound ? wanted : nullptr;
 }
 
 bool beforeDraw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_shaders::DrawnShader& shader) noexcept
