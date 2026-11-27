@@ -26,6 +26,12 @@
    checked. The Developer page's Light cache has the distance and a button that measures what the cache saves where you
    stand.
 
+- **Path tracing's light costs several milliseconds less with Ray Reconstruction.** A ray's hit takes the light cache's
+  light whenever it is a few cache cells away, not only past 10 metres, and a hit it still lights traces one shadow
+  ray to a lamp or a glowing mesh, picked by how much light each gives there, instead of one to each; the sun keeps its
+  own ray. At Africa's spawn at night (1440x810, Ray Reconstruction) the cache change alone took the global
+  illumination's rays from about 21 to about 16.5 ms. The image looks the same.
+
 - **Ray-traced lights measure their volume once, not every frame.** At Mother Base at night with 128 lights traced, that
   was 128 dispatches a frame, about 3.3 ms: roughly 16% of a 1080p frame and 6-8% at 4K. A light undrawn for 60 frames
   is measured again, so a new map keeps none of the old one's boxes.

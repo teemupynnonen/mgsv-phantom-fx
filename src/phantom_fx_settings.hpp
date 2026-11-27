@@ -155,8 +155,9 @@ struct Diagnostics
     int lightVolumes{};            // 0 the ray-traced lights within the game's volumes, 1 those with a shadow map beyond, 2 every one beyond
     bool logGlobalIlluminationOften{}; // The global illumination's light logged every few frames, not every ten seconds
     // The light cache's part in the light (docs/DEVELOPMENT.md, "Making it cheaper"): how distant a hit takes its light
-    // from a cell, metres (0: never), and the samples a cell averages over (fewer follow a change sooner, more noise).
-    float lightCacheReach{10};
+    // from a cell, in cells of the hit's own size (0: never), and the samples a cell averages over (fewer follow a change
+    // sooner, more noise).
+    float lightCacheReach{4};
     float hashMaxSamples{16};
     // What the light's rays leave out, to time what each part costs (Developer page, Light cache). Both change the
     // picture, so they are for measuring.
