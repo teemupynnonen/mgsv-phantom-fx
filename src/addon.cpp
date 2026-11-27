@@ -602,9 +602,12 @@ void onDestroyCommandList(command_list* list)
 }
 
 // With frame generation the game's swap chain is the presenter's stand-in, whose Present follows.
-void onPresent(command_queue* queue, swapchain*, const rect*, const rect*, uint32_t, const rect*)
+void onPresent(command_queue* queue, swapchain* chain, const rect*, const rect*, uint32_t, const rect*)
 {
     if (queue->get_immediate_command_list() != immediateList) return;
+
+    // HDR output turned on or off since the last frame.
+    if (hdr::present(reinterpret_cast<IDXGISwapChain*>(chain->get_native()))) showColorSpace();
 
     const bool generating = presenter::active();
     upscaler::setFrameGeneration(generating);
@@ -690,8 +693,9 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshadeMo
     if constexpr (DevTools) dev::install(directory);
     upscaler::initialize(directory);
     core::initialize(directory, isSupportedGameBuild());
-    // The game makes its swap chain and targets next, so the float scene and HDR are decided now.
-    if (isSupportedGameBuild()) hdr::enable(core::currentSettings().hdr.on ? hdr::Mode::HdrOutput : hdr::Mode::FloatScene);
+    // The game makes its swap chain and targets next, so the float scene is decided now; HDR output
+    // follows the settings while the game runs.
+    if (isSupportedGameBuild()) hdr::enable();
 
     // Frame generation takes over the swap chain the game creates next, so it starts with the game.
     if (const auto mode = core::currentSettings().frameGeneration.mode; isSupportedGameBuild() && mode != upscaler::FrameGenerationMode::Off)

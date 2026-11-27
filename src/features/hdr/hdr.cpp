@@ -89,8 +89,11 @@ struct DofCopy
     ComPtr<ID3D11ShaderResourceView> view;
 };
 
-std::atomic<Mode> mode{Mode::Off};
+std::atomic<bool> floatScene{}, outputWanted{};
 std::atomic<bool> twinsInUse{}, tenBitChain{};
+// The HDR output the swap chain's colour space was last set for; none after a new swap chain.
+std::mutex outputMutex;
+std::optional<bool> appliedOutput;
 std::atomic<Output> shown{Output::Off};
 std::atomic<float> peakNits{}, paperWhiteNits{203}, displayPeak{};
 // When neither the settings nor the display give a peak.
@@ -105,7 +108,9 @@ thread_local ID3D11Resource* gameDofCopy{};
 std::shared_mutex mutex;
 ComPtr<ID3D11Device> device;
 ComPtr<ID3D11ComputeShader> captureShader, encodeShader, decodeShader;
-ComPtr<ID3D11PixelShader> gradeShader, reduceShader, outputShader;
+// The grading without and with the light the tonemap took added back (HDR output), so HDR output can
+// turn on and off.
+ComPtr<ID3D11PixelShader> gradeShaders[2], reduceShader, outputShader;
 DofCopy dofCopy;
 ComPtr<ID3D11Buffer> outputBuffer, curveBuffer;
 ComPtr<ID3D11ShaderResourceView> curveView;
@@ -130,8 +135,9 @@ void createPipeline()
     captureShader = computeShader(device.Get(), shaders::Capture, "hdr-capture");
     encodeShader = computeShader(device.Get(), shaders::Encode, "hdr-encode");
     decodeShader = computeShader(device.Get(), shaders::Decode, "hdr-decode");
-    const D3D_SHADER_MACRO grade[]{{"UPGRADE_TONEMAP", active() ? "1" : "0"}, {}};
-    gradeShader = pixelShader(device.Get(), shaders::Grade, "hdr-grade", grade);
+    const D3D_SHADER_MACRO sdrGrade[]{{"UPGRADE_TONEMAP", "0"}, {}}, hdrGrade[]{{"UPGRADE_TONEMAP", "1"}, {}};
+    gradeShaders[0] = pixelShader(device.Get(), shaders::Grade, "hdr-grade-sdr", sdrGrade);
+    gradeShaders[1] = pixelShader(device.Get(), shaders::Grade, "hdr-grade", hdrGrade);
     reduceShader = pixelShader(device.Get(), shaders::Reduce, "hdr-reduce");
     outputShader = pixelShader(device.Get(), shaders::Output, "hdr-output");
     outputBuffer = makeConstantBuffer(device.Get(), sizeof(OutputParameters), "Creating the HDR output constants");
@@ -339,25 +345,28 @@ void composeDofOverFloat(ID3D11DeviceContext* context)
 }
 }
 
-void enable(Mode chosen) noexcept
+void enable() noexcept
 {
-    mode = chosen;
-    if (chosen == Mode::HdrOutput) log("HDR output is on: the swap chain and the scene targets are made for it.");
-    else if (chosen == Mode::FloatScene) log("The scene targets are made float, with SDR output.");
+    floatScene = true;
+    log("The scene targets are made float; HDR output follows the settings.");
 }
 
 bool isSceneFloat() noexcept
 {
-    return mode.load(std::memory_order_relaxed) != Mode::Off;
+    return floatScene.load(std::memory_order_relaxed);
 }
 
 bool active() noexcept
 {
-    return mode.load(std::memory_order_relaxed) == Mode::HdrOutput;
+    return isSceneFloat() && outputWanted.load(std::memory_order_relaxed);
 }
 
 Output output() noexcept
 {
+    if (!outputWanted.load(std::memory_order_relaxed)) return Output::Off;
+    // The float scene could not start, or this build of the game is not supported.
+    if (!isSceneFloat()) return Output::Unavailable;
+
     return shown;
 }
 
@@ -380,9 +389,8 @@ void attach(ID3D11Device* gameDevice) noexcept
     catch (const std::exception& error)
     {
         // The game has made none of its targets yet, so it runs with its own 8-bit scene.
-        if (active()) shown = Output::Unavailable;
         log(std::string(active() ? "HDR output is unavailable: " : "The scene stays 8-bit: ") + error.what());
-        mode = Mode::Off;
+        floatScene = false;
     }
 }
 
@@ -391,6 +399,10 @@ void detach() noexcept
     shown = Output::Off;
     twinsInUse = false;
     tenBitChain = false;
+    {
+        std::lock_guard outputLock(outputMutex);
+        appliedOutput.reset();
+    }
     std::unique_lock lock(mutex);
     targets.clear();
     srgbViews.clear();
@@ -400,7 +412,7 @@ void detach() noexcept
     captureShader.Reset();
     encodeShader.Reset();
     decodeShader.Reset();
-    gradeShader.Reset();
+    for (auto& shader : gradeShaders) shader.Reset();
     reduceShader.Reset();
     outputShader.Reset();
     outputBuffer.Reset();
@@ -412,6 +424,7 @@ void detach() noexcept
 
 void configure(const Configuration& configuration) noexcept
 {
+    outputWanted = configuration.settings.hdr.on;
     peakNits = configuration.settings.hdr.peakNits;
     paperWhiteNits = configuration.settings.hdr.paperWhiteNits;
 }
@@ -437,15 +450,22 @@ bool tenBitBackBuffer() noexcept
     return tenBitChain.load(std::memory_order_relaxed);
 }
 
-void swapChainReady(IDXGISwapChain* chain) noexcept
+namespace
 {
-    if (!active() || !chain) return;
+// Sets the colour space for the HDR output wanted, when it is not what was last set. The display is
+// asked each time, so one whose HDR was turned on in Windows since is followed. Call with outputMutex
+// held; returns true when the colour space was set.
+bool applyOutput(IDXGISwapChain* chain)
+{
+    const bool wanted = active();
+    if (!tenBitBackBuffer() || !chain || appliedOutput == wanted) return false;
 
     ComPtr<IDXGISwapChain3> chain3;
     if (FAILED(chain->QueryInterface(IID_PPV_ARGS(&chain3))))
     {
+        appliedOutput = wanted;
         logOnce("HDR: the swap chain has no colour spaces (IDXGISwapChain3).");
-        return;
+        return false;
     }
 
     // The display shows HDR when Windows has it on for the output that holds the window.
@@ -462,21 +482,41 @@ void swapChainReady(IDXGISwapChain* chain) noexcept
         displayPeak = maxNits > 0 ? maxNits : 0;
     }
 
+    appliedOutput = wanted;
+    const bool hdr10 = wanted && hdrDisplay;
     UINT support{};
-    const auto space = hdrDisplay ? DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+    const auto space = hdr10 ? DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
     if (FAILED(chain3->CheckColorSpaceSupport(space, &support)) || !(support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT)
         || FAILED(chain3->SetColorSpace1(space)))
     {
         shown = Output::Sdr;
-        logOnce("HDR: the swap chain cannot present HDR10, so the game shows SDR.");
-        return;
+        log(hdr10 ? "HDR: the swap chain cannot present HDR10, so the game shows SDR." : "HDR: the swap chain refused the sRGB colour space.");
+        return false;
     }
 
-    const auto now = hdrDisplay ? Output::Hdr10 : Output::Sdr;
-    if (shown.exchange(now) == now) return;
+    shown = hdr10 ? Output::Hdr10 : Output::Sdr;
+    if (hdr10) log("HDR: the swap chain presents HDR10; the display reports " + std::to_string(std::lround(maxNits)) + " nits at most.");
+    else if (wanted) log("HDR: Windows HDR is off for this display, so the game shows SDR.");
+    else log("HDR output is off: the swap chain presents sRGB.");
 
-    log(hdrDisplay ? "HDR: the swap chain presents HDR10; the display reports " + std::to_string(std::lround(maxNits)) + " nits at most."
-                   : std::string("HDR: Windows HDR is off for this display, so the game shows SDR."));
+    return true;
+}
+}
+
+void swapChainReady(IDXGISwapChain* chain) noexcept
+{
+    std::lock_guard lock(outputMutex);
+    appliedOutput.reset();
+    applyOutput(chain);
+}
+
+bool present(IDXGISwapChain* chain) noexcept
+{
+    if (!tenBitBackBuffer()) return false;
+
+    std::lock_guard lock(outputMutex);
+
+    return applyOutput(chain);
 }
 
 bool upgradeTexture(DXGI_FORMAT& format, bool& unorderedAccess) noexcept
@@ -737,7 +777,7 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         if (!row) return false;
 
         ID3D11PixelShader* replacement{};
-        if (row->pass == GamePass::Grade) replacement = gradeShader.Get();
+        if (row->pass == GamePass::Grade) replacement = gradeShaders[active() ? 1 : 0].Get();
         else if (row->pass == GamePass::Reduce)
         {
             // Only the reduction of the scene itself; the game runs it again on its own result.
