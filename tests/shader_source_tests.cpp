@@ -4,6 +4,7 @@
 #include "features/volumetric_fog/atmosphere_shaders.hpp"
 #include "passes/sun_light_pass_shaders.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -38,6 +39,12 @@ int main()
         const auto code = phantom_fx::compileShaderFile(*shader);
         expect(isDxbc(code), shader->source);
     }
+
+    // Hot reload watches a shader's own file and what it includes: the sky's pixel shader reaches the atmosphere's.
+    std::vector<std::filesystem::path> files;
+    phantom_fx::compileShaderFile(phantom_fx::atmosphere::shaders::SkyDraw(true, true, true), &files);
+    expect(!files.empty() && files.front().filename().string().starts_with("sky_draw"), "the source comes first");
+    expect(std::ranges::any_of(files, [](const auto& file) { return file.filename() == "atmosphere.hlsli"; }), "the includes are listed");
 
     // The sun pass indexes PathTraced by whether the draw is inside the shadow range: only [1] has the clouds' shadow.
     const auto& pathTraced = phantom_fx::sun_light_pass::shaders::PathTraced;
