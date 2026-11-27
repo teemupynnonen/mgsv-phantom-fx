@@ -3831,15 +3831,21 @@ used. Off, the add-on only checks a flag on each full-screen draw.
   occluders, which the disk alone would not see. That allowance is 12% of the ray's view depth,
   clamped between 0.02 and the radius, so a surface closer than the ray but within the margin still
   passes. 0 disables the test.
-- **Accumulate** (`ssgi_accumulate.hlsl`): reprojects with the velocity, fetches the ping-ponged
-  history bilinearly, clips it to this frame's 3x3 neighbourhood, and rejects on depth, normal and
-  screen bounds (a separate aux target carries the history's depth and normal). The blend is an
-  adaptive ramp capped by the History setting, and the history's length rides in alpha. Running
-  luminance moments go into an `R16G16_FLOAT` target, which the denoiser reads as its noise estimate.
+- **Accumulate** (`ssgi_accumulate.hlsl`): reprojects with the velocity and validates each of the
+  four bilinear history taps on its own (plane distance to the current pixel's tangent plane, normal,
+  screen bounds; a separate aux target carries the history's depth and normal), renormalising the
+  weights over the valid taps, so a silhouette tap no longer bleeds in or vetoes the good ones. The
+  history is then variance-clipped in YCoCg (mean +- 1.5 sigma of this frame's 3x3, clipped toward
+  the mean) instead of min/max clamped. The blend is an adaptive ramp capped by the History setting,
+  and the history's length rides in alpha. Running luminance moments go into an `R16G16_FLOAT`
+  target, fetched over the same valid taps, which the denoiser reads as its noise estimate.
   Non-finite values are guarded everywhere: one bad value would be carried forward by the temporal
   blend, squared into infinity by the moments, and render black forever.
-- **Denoise** (`shaders::Filter`): an a-trous edge-aware filter, 1-3 dispatches of 5x5 taps whose
-  stride doubles each step (1, 2, 4), weighted by normal, depth and the measured per-pixel noise.
+- **Denoise** (`shaders::Filter`): an a-trous edge-aware filter, 1-3 dispatches of 5x5 taps with
+  B3-spline weights (1/16, 1/4, 3/8, 1/4, 1/16) whose stride doubles each step (1, 2, 4), weighted
+  by normal, depth and the measured per-pixel noise. The variance is pre-blurred with a 3x3 tent
+  before it sets the luminance edge-stop, and the depth weight's tolerance scales with the local depth
+  gradient times the tap offset, so tilted surfaces are not mistaken for edges.
   Never-sampled pixels are skipped, not averaged in. The targets alternate so no dispatch reads what
   it writes.
 - **Resolve** (`shaders::Resolve`) at the render size: a depth-joint bilateral upsample of the

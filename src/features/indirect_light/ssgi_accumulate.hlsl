@@ -1,8 +1,9 @@
-// The temporal half: reprojects with the game's velocity, rejects on depth, normal and screen
-// bounds, clips the history to this frame's neighbourhood, keeps a ping-ponged history with its
+// The temporal half: reprojects with the game's velocity, validates each history tap on plane distance, normal
+// and screen bounds, variance-clips the history to this frame's neighbourhood, keeps a ping-ponged history with its
 // length in alpha, and maintains the luminance moments the denoiser reads.
 #include "ssgi_common.hlsli"
 #define HISTORY_MAX_LENGTH 32.0
+#define VARIANCE_CLIP_GAMMA 1.5
 
 Texture2D<float4> Current : register(t0);      // This frame's gather
 Texture2D<float4> History : register(t1);      // The previous accumulated result
@@ -15,6 +16,16 @@ RWTexture2D<float4> HistoryOut : register(u0);
 RWTexture2D<float4> Accumulated : register(u1); // What the filter reads; a debug view may show here
 RWTexture2D<float4> HistoryAuxOut : register(u2);
 RWTexture2D<float2> MomentsOut : register(u3);
+
+float3 toYCoCg(float3 c)
+{
+    return float3(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * c.r - 0.5 * c.b, -0.25 * c.r + 0.5 * c.g - 0.25 * c.b);
+}
+
+float3 fromYCoCg(float3 c)
+{
+    return float3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z);
+}
 
 [numthreads(8, 8, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
@@ -41,8 +52,17 @@ void main(uint3 tid : SV_DispatchThreadID)
     const float2 previous = (uv - velocity) * float2(gs) - 0.5;
     const int2 base = (int2)floor(previous);
     const float2 fraction = frac(previous);
+    const bool inside = previous.x >= 0.0 && previous.y >= 0.0 && previous.x <= (float)(gs.x - 1) && previous.y <= (float)(gs.y - 1);
+
+    // Each tap is validated on its own against the geometry it was accumulated on, and the weights
+    // are renormalised over the valid ones: one test on the blended fetch lets a silhouette tap
+    // bleed the wrong surface's light in, or throws away the three taps that were fine. The aux
+    // target is what makes this possible, a disocclusion cannot be told from colour alone.
+    const float3 currentPosition = viewPosition(float2(centre) + 0.5, z);
     float3 history = 0;
+    float2 previousMoments = 0;
     float historyLength = 0;
+    float validWeight = 0;
     [unroll]
     for (int y = 0; y <= 1; ++y)
     {
@@ -50,12 +70,36 @@ void main(uint3 tid : SV_DispatchThreadID)
         for (int x = 0; x <= 1; ++x)
         {
             const int2 q = clamp(base + int2(x, y), int2(0, 0), gs - 1);
-            const float4 tap = History.Load(int3(q, 0));
             const float weight = (x != 0 ? fraction.x : 1.0 - fraction.x) * (y != 0 ? fraction.y : 1.0 - fraction.y);
+            const float4 tapAux = HistoryAux.Load(int3(q, 0));
+            const float tapZ = tapAux.x;
+
+            // Reconstruct z with this frame's sign instead of a blind +sqrt, which would mirror the
+            // normal and reject everything as a geometry change.
+            const float tapNormalZ = (N.z < 0.0 ? -1.0 : 1.0) * sqrt(saturate(1.0 - dot(tapAux.yz, tapAux.yz)));
+            const float3 tapNormal = normalize(float3(tapAux.yz, tapNormalZ));
+
+            // Distance of the tap's surface point to this pixel's tangent plane: a relative depth
+            // test fails on grazing surfaces, where neighbouring pixels legitimately differ in depth,
+            // and passes a thin step at the same distance.
+            const int2 tapFull = min((int2)floor((float2(q) + 0.5) * scale), int2(Size) - 1);
+            const float3 tapPosition = viewPosition(float2(tapFull) + 0.5, tapZ);
+            const float planeDistance = abs(dot(N, tapPosition - currentPosition));
+            const bool valid = tapZ > 0.0 && planeDistance <= 0.01 * z && dot(N, tapNormal) >= 0.9 && tapAux.w > 0.0;
+            if (!valid) continue;
+
+            const float4 tap = History.Load(int3(q, 0));
             history += tap.rgb * weight;
             historyLength += tap.a * HISTORY_MAX_LENGTH * weight;
+            previousMoments += Moments.Load(int3(q, 0)).xy * weight;
+            validWeight += weight;
         }
     }
+    const bool tapsValid = inside && validWeight > 1.0e-3;
+    const float invValid = tapsValid ? 1.0 / validWeight : 0.0;
+    history *= invValid;
+    historyLength *= invValid;
+    previousMoments *= invValid;
 
     // One non-finite value poisons the history permanently: the temporal blend carries it forward,
     // the moments square it into infinity, and the pixel renders black.
@@ -64,11 +108,13 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     const bool hasSample = current.a > 0.5;
 
-    // Neighbourhood clip: the history may only move the result within what this frame's
-    // neighbourhood allows. Starved neighbours are skipped, or the range always includes zero and
-    // the history can only darken.
-    float3 minimum = gathered;
-    float3 maximum = gathered;
+    // Variance clipping: the history may only move the result within mean +- gamma * sigma of this
+    // frame's 3x3, in YCoCg where luma and chroma separate. A min/max box is as wide as the
+    // noisiest outlier, so it lets a ghost through exactly where the gather is noisy. Starved
+    // neighbours are skipped, or the statistics always include zero and the history can only darken.
+    float3 moment1 = 0;
+    float3 moment2 = 0;
+    float count = 0;
     [unroll]
     for (int dy = -1; dy <= 1; ++dy)
     {
@@ -78,31 +124,32 @@ void main(uint3 tid : SV_DispatchThreadID)
             const int2 q = clamp(int2(pixel) + int2(dx, dy), int2(0, 0), gs - 1);
             const float4 neighbour = Current.Load(int3(q, 0));
             if (neighbour.a <= 0.5 || any(!isfinite(neighbour.rgb))) continue;
-            minimum = min(minimum, neighbour.rgb);
-            maximum = max(maximum, neighbour.rgb);
+            const float3 ycocg = toYCoCg(min(neighbour.rgb, 1.0e4));
+            moment1 += ycocg;
+            moment2 += ycocg * ycocg;
+            count += 1.0;
         }
     }
+    float3 clippedHistory = history;
+    if (count > 0.5)
+    {
+        const float3 mean = moment1 / count;
+        const float3 sigma = sqrt(max(moment2 / count - mean * mean, 0.0));
+        const float3 extent = VARIANCE_CLIP_GAMMA * sigma + 1.0e-4;
+        const float3 offset = toYCoCg(history) - mean;
+        // Scale the offset to the box surface along the line to the mean, not per channel, so the
+        // history's hue is kept.
+        const float3 normalised = abs(offset) / extent;
+        const float outside = max(normalised.x, max(normalised.y, normalised.z));
+        clippedHistory = fromYCoCg(mean + offset / max(outside, 1.0));
+    }
 
-    // Rejection against the geometry the history was accumulated on: a disocclusion or a
-    // silhouette cannot be recognised from colour alone, which is why the aux target exists.
-    const int2 auxPixel = clamp((int2)round(previous), int2(0, 0), gs - 1);
-    const float4 previousAux = HistoryAux.Load(int3(auxPixel, 0));
-    const float previousZ = previousAux.x;
-    const float2 previousNormalXY = previousAux.yz;
-    // Reconstruct z with this frame's sign instead of a blind +sqrt, which would mirror the normal
-    // and reject everything as a geometry change.
-    const float previousNormalZ = (N.z < 0.0 ? -1.0 : 1.0) * sqrt(saturate(1.0 - dot(previousNormalXY, previousNormalXY)));
-    const float3 previousNormal = normalize(float3(previousNormalXY, previousNormalZ));
-    const bool inside = previous.x >= 0.0 && previous.y >= 0.0 && previous.x <= (float)(gs.x - 1) && previous.y <= (float)(gs.y - 1);
-    const bool depthMatches = previousZ > 0.0 && abs(z - previousZ) <= 0.02 * max(z, 1.0e-6);
-    const bool normalMatches = dot(N, previousNormal) >= 0.9;
-    const bool hasHistory = inside && depthMatches && normalMatches && historyLength > 0.5;
-
+    const bool hasHistory = tapsValid && historyLength > 0.5;
     // A freshly reset pixel trusts only the current sample and ramps back up; a converged one is
     // limited by the user's ceiling.
     const float adaptive = 1.0 - 1.0 / max(historyLength, 1.0);
     const float blend = hasHistory ? min(HistoryBlend, adaptive) * saturate(HistoryValid) : 0.0;
-    const float3 result = hasSample ? lerp(gathered, clamp(history, minimum, maximum), blend) : history;
+    const float3 result = hasSample ? lerp(gathered, clippedHistory, blend) : history;
 
     const float len = hasSample ? (hasHistory ? min(historyLength + 1.0, HISTORY_MAX_LENGTH) : 1.0) : max(historyLength, 1.0);
     const float4 real = float4(result, len / HISTORY_MAX_LENGTH);
@@ -116,7 +163,6 @@ void main(uint3 tid : SV_DispatchThreadID)
     // describe how much the gather itself fluctuates, or the denoiser gets no signal about where
     // the noise is.
     const float sampleLuminance = dot(gathered, float3(0.2126, 0.7152, 0.0722));
-    const float2 previousMoments = Moments.Load(int3(auxPixel, 0)).xy;
     float m1 = previousMoments.x;
     float m2 = previousMoments.y;
     if (current.a > 0.5)

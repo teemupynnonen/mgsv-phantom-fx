@@ -8,6 +8,10 @@
   (apart from GTVBAO's copy), and every tap ray-marches the prefiltered depth, so occluders stop the
   bounced light instead of bleeding through. New **Visibility** setting: ray-march steps per tap
   (0 to 8, 5 by default; 0 disables the test).
+- **Indirect lighting (VB-SSGI) ghosts and shimmers less.** The temporal accumulation checks each of its four history
+  samples against the surface (plane distance and normal) and clips the history by the neighbourhood's variance, and the
+  denoiser smooths its noise estimate and follows slanted surfaces, so trails behind moving objects and crawling noise on
+  slopes shrink.
 - **Indirect lighting is now VB-SSGI**, ported from the RenoDX MGSV add-on's indirect lighting
   (`renodx-mgsv` `src/games/mgsv/il`), in place of SSILVB's visibility-bitmask gather: a golden-angle
   gather of the neighbouring surfaces' light, temporal accumulation against the game's velocity
