@@ -194,9 +194,10 @@ void main(uint3 tid : SV_DispatchThreadID)
     }
     else if (Debug > 3.5)
     {
-        // Reprojection offset in pixels: R/G the jitter the scene constants advertise, B the raw
-        // velocity's magnitude.
-        Accumulated[pixel] = float4(Scene[28].x * (float)Size.x, Scene[28].y * (float)Size.y,
+        // Reprojection offset in pixels: R/G the jitter the scene constants advertise, shifted by
+        // half a pixel so mid grey is none (the display is unsigned and would clip the negative
+        // half), B the raw velocity's magnitude.
+        Accumulated[pixel] = float4(Scene[28].x * (float)Size.x + 0.5, Scene[28].y * (float)Size.y + 0.5,
                                     length(abs(velocity) * float2(Size)), 1.0);
     }
     else if (Debug > 2.5)

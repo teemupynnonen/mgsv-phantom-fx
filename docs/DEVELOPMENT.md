@@ -3880,7 +3880,8 @@ used. Off, the add-on only checks a flag on each full-screen draw.
   that differ or without `cPSScene` keeps the game's diffuse light and logs the reason once.
 - **Diagnostics.** "VB-SSGI only" writes the light without the game's diffuse light and draws the
   resolve with `shaders::Show`: the bounce alone, as light before the albedo. The **Debug view**
-  setting shows the gather alone, the history delta, the history length, the reprojection offset or
+  setting shows the gather alone, the history delta, the history length, the reprojection offset
+  (its jitter channels shifted by half a pixel, so mid grey is none; the display is unsigned) or
   the measured variance, and it draws through `shaders::Show` too: the game's resolve would multiply
   the light by the albedo, and the gathered light is what is being judged. Both views write the
   resolve's alpha, `sqrt(luminance / 32)`, which exposure, bloom and depth of field read from the

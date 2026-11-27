@@ -47,7 +47,8 @@ void main(uint3 tid : SV_DispatchThreadID)
         }
     }
 
-    const float3 bounce = radiance / max(weightSum, 1.0e-4) * Amount;
+    // The accumulate pass's diagnostics (Debug above 1) are measurements, not light: Strength does not scale them.
+    const float3 bounce = radiance / max(weightSum, 1.0e-4) * (Debug > 1.5 ? 1.0 : Amount);
     const float4 diffuse = Diffuse.Load(int3(pixel, 0));
     const float3 output = Debug > 0.5 ? bounce : diffuse.rgb * DiffuseScale + bounce;
     Out[pixel] = float4(output, diffuse.a);
