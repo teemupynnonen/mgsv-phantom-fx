@@ -21,10 +21,6 @@ void setVelocityOnly(bool on) noexcept;
 // While frame generation runs the blur is halved, as NVIDIA's DLSS-G guide asks: each frame shows half
 // the motion.
 void setFrameGeneration(bool on) noexcept;
-// Another effect's (SSGI's temporal accumulation) asking for the velocity passes too: while on,
-// the engine draws them every frame, whatever the upscaler asks. The blur still follows the game's
-// setting and the add-on's toggle.
-void wantVelocityPasses(bool on) noexcept;
 // Its setting off keeps the engine's blur out even with the upscaler on; the strength multiplies the
 // radius the game's setting asks for, 1 being the game's own.
 void configure(const Configuration& configuration) noexcept;

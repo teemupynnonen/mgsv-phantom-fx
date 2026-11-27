@@ -494,7 +494,14 @@ void note(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         const auto* row = shader.row();
         if (row && row->pass == GamePass::CameraVelocity)
         {
-            noteVelocity(context);
+            // Observing must never stop the game's draw; only the main view's velocity counts, as for the rays.
+            try
+            {
+                if (viewportFillsTarget(context)) noteVelocity(context);
+            }
+            catch (...)
+            {
+            }
             return;
         }
     }

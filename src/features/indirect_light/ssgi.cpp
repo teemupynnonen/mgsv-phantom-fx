@@ -2,7 +2,7 @@
 
 #include "constant_capture.hpp"
 #include "d3d11_helpers.hpp"
-#include "features/motion_blur/motion_blur.hpp"
+#include "passes/velocity_request.hpp"
 #include "frame_latch.hpp"
 #include "log.hpp"
 #include "passes/indirect_light_pass.hpp"
@@ -288,7 +288,7 @@ void configure(const Configuration& configuration) noexcept
     wantedRunning = running;
     // The temporal accumulation reprojects with the game's velocity buffer, which the engine draws
     // only with motion blur or an upscaler; force the velocity passes on while SSGI runs.
-    motion_blur::wantVelocityPasses(running);
+    velocity_request::want(running);
     if (!running) return;
 
     std::lock_guard lock(resourceMutex);
