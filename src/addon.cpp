@@ -195,6 +195,9 @@ void onInitCommandQueue(command_queue* queue)
     immediateList = queue->get_immediate_command_list();
     auto* wrapper = wrapperOf(queue, context);
     auto* device = reinterpret_cast<ID3D11Device*>(queue->get_device()->get_native());
+#if PHANTOM_DEV_SHADERS
+    reloadShadersOn(context);
+#endif
     hdr::attach(device);
     upscaler::attach(device, context, wrapper);
     modules::attach(device, context);
@@ -760,6 +763,9 @@ extern "C" __declspec(dllexport) void AddonUninit(HMODULE addon, HMODULE reshade
 #if PHANTOM_FX_DEV_TOOLS
     // Joined here, where the loader lock is not held: at process detach it would join under it (hot_kernels.hpp).
     hot_kernels::stop();
+#endif
+#if PHANTOM_DEV_SHADERS
+    stopShaderReload();
 #endif
     photo_mode::leave();
     // Removes every engine hook, so the game keeps running without the add-on.

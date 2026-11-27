@@ -119,8 +119,13 @@ To add a shader:
 
 `PHANTOM_DEV_SHADERS` (set by the `dev` preset; `-DPHANTOM_DEV_SHADERS=ON` turns it on for any preset)
 makes the helpers compile `Shader::source` from the checkout at run time (`src/shader_source.cpp`):
-includes are found next to the file, then from `src/`. A shader edit then shows after a restart of the
-game, without a build. The bytecode is still precompiled by the next build, so a compile error fails
+includes are found next to the file, then from `src/`. A shader edit then shows within a second, without
+a build or a restart (`src/core/shader_reload.cpp`): a worker thread watches every shader the helpers
+made and the files it includes, compiles the ones that changed, and the context's `PSSetShader`,
+`VSSetShader` and `CSSetShader` bind the newest in place of the one a feature holds. They are hooked for
+the immediate context and for the deferred contexts the game records most of its frame on (another
+class in `d3d11.dll`). The log says "Shader reload: ... drawn from its saved source", or why a shader
+was kept. A changed constant buffer or binding still needs a build. The bytecode is still precompiled by the next build, so a compile error fails
 that build either way. With it off, a release build is checked after linking
 (`phantom_forbid_runtime_compile`, `src/core/cmake/check_no_runtime_compile.ps1`): the build fails if the add-on
 imports any `D3DCompile*` function (`D3DReflect`, which only reads bytecode, is fine), and the script's
