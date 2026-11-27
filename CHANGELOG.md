@@ -4,6 +4,9 @@
 
 ### New
 
+- **Indirect lighting (VB-SSGI) converges to a cleaner, fuller-detail result**: the gather's sampling
+  noise is now evenly spread over pixels and frames, and at half or quarter resolution each frame
+  reads a different pixel of every block, so the accumulated light matches full resolution.
 - **Indirect lighting (VB-SSGI) tests what blocks each gather tap**: the distance prefilter runs for it
   (apart from GTVBAO's copy), and every tap ray-marches the prefiltered depth, so occluders stop the
   bounced light instead of bleeding through. New **Visibility** setting: ray-march steps per tap

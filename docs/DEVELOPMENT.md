@@ -3819,7 +3819,13 @@ used. Off, the add-on only checks a flag on each full-screen draw.
 - **Gather** (`ssgi_gather.hlsl`), recorded at the resolve's draw on its deferred
   context, with the game's compute bindings saved and restored: from the resolve's depth (`t11`),
   diffuse light (`t9`), albedo (`t8`, its sRGB view, so linear), the specular light (`t10`) and
-  `cPSScene`. A golden-angle disk of up to 16 jittered taps per pixel, each rejected by plane
+  `cPSScene`. The disk's rotation and radius jitter come from the R2 low-discrepancy sequence in 32-bit
+  fixed point (pixel x, y and the frame index as its three terms; `noiseBits` in `ssgi_common.hlsli`),
+  so a pixel's values over frames are evenly spread, and the frame index (`Random`, modulo 65536)
+  wraps without a seam. Below full resolution each frame takes a different pixel of the 2x2 or 4x4
+  block (all of them once per 4 or 16 frames, in a per-pixel order) for depth, normal and colour, so
+  the accumulation converges on the full-resolution result; the history reset is unaffected. A
+  golden-angle disk of up to 16 jittered taps per pixel, each rejected by plane
   elevation and source facing, then weighted by inverse-square distance, returns the mean `albedo x
   diffuse + specular` of the taps that survive; alpha is validity. The radius is a share of the
   screen's height (50% by default), and the same radius in view units at the pixel's depth. Into an

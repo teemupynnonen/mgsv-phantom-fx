@@ -38,9 +38,15 @@ void main(uint3 tid : SV_DispatchThreadID)
     if (any(pixel >= (uint2)gs)) return;
 
     // The gather may run below full resolution; its threads map onto full-resolution pixels, which
-    // is where every G-buffer read and every sample offset lives.
-    const int2 centre = (int2)floor((float2(pixel) + 0.5) * scale);
-    if (any(centre >= int2(Size))) return;
+    // is where every G-buffer read and every sample offset lives. Each frame a different pixel of
+    // the pixel's block stands for it (every cell once per block, in a per-pixel order), so the
+    // accumulation converges on the full-resolution result rather than on one fixed subsample.
+    // 65536 is a multiple of every block's cell count, so the order stays even when the index wraps.
+    const uint frame = (uint)Random;
+    const uint blockSide = (uint)scale;
+    const uint cells = blockSide * blockSide;
+    const uint cell = (frame * 7u + (noiseBits(pixel, 0, 2) >> 24)) % cells;
+    const int2 centre = min((int2)(pixel * blockSide + uint2(cell % blockSide, cell / blockSide)), int2(Size) - 1);
 
     const float z = distanceOf(Depth.Load(int3(centre, 0)));
     if (!hasGeometry(z))
@@ -60,8 +66,8 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     const uint sampleCount = (uint)clamp(Samples, 1.0, (float)SSGI_MAX_SAMPLES);
     const uint minSamples = (uint)clamp(MinSamples, 1.0, (float)SSGI_MAX_SAMPLES);
-    const uint frameSalt = (uint)(Random * 65535.0);
-    const float rotation = hash01(pixel, frameSalt) * 6.2831853;
+    const float rotation = noise01(pixel, frame, 0) * 6.2831853;
+    const float radiusNoise = noise01(pixel, frame, 1);
 
     float3 sum = 0;
     float weightSum = 0;
@@ -70,7 +76,9 @@ void main(uint3 tid : SV_DispatchThreadID)
     [loop]
     for (uint index = 0; index < sampleCount; ++index)
     {
-        const float radiusJitter = hash01(pixel, index * 977u + frameSalt + 1u);
+        // One noise value per pixel and frame, stepped per tap by the R2 constant, so the radii of a
+        // pixel's taps stay spread and do not repeat across neighbours.
+        const float radiusJitter = frac(radiusNoise + index * 0.7548776662);
         const int2 samplePixel = (int2)round(float2(centre) + diskSample(index, sampleCount, rotation, radiusJitter) * radiusPixels);
         if (any(samplePixel < 0) || any(samplePixel >= int2(Size))) continue;
 

@@ -63,7 +63,7 @@ struct Wanted
 
 FrameLatch<Wanted> latch;
 std::atomic<bool> wantedRunning{}, pipelineFailed{};
-std::atomic<std::uint64_t> frameCounter{}; // For the gather's per-frame rotation salt
+std::atomic<std::uint64_t> frameCounter{}; // For the gather's per-frame noise
 
 // ---- Direct3D, guarded by resourceMutex ----
 std::mutex resourceMutex;
@@ -358,7 +358,7 @@ bool compute(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D
     parameters.debug = static_cast<float>(light.debug);
     // The diagnostics and every debug view show SSGI's light alone, without the game's diffuse.
     parameters.diffuseScale = (settings.shownAlone || light.debug >= 1) ? 0.0f : 1.0f;
-    parameters.random = static_cast<float>((frameCounter.load() * 2654435761u) & 0xFFFFu) / 65535.0f;
+    parameters.random = static_cast<float>(frameCounter.load() & 0xFFFFu);
     parameters.minSamples = 1.0f;
     parameters.visibility = light.visibility;
 
