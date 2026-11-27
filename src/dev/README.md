@@ -13,7 +13,7 @@ PhantomFX's own probes.
 | `devkit_link.cpp` | PhantomFX's lines in the DevKit add-on's command files, plugged in through `../devkit/extension.hpp`: DevKit owns the runner, the waits and F9 (`../devkit/automation.*`) and knows nothing of these |
 | `../devkit/` | What another MGSV add-on can build on: the saves redirection, Lua in the game, travel, cutscenes, its own Developer page in plain ImGui, and the logger and toasts the core sets |
 | `inspect_trace.*`, `inspect.hlsl`, `inspect_shared.h` | A debug case's record of every pixel, a trace like any other |
-| `game_shadow.*` | A debug case's reference: the game's shadow per pixel, drawn at the sun pass |
+| `game_shadow.*`, `shaders/sun_light_game_shadow.ps.hlsl` | A debug case's reference: the game's shadow per pixel, drawn at the sun pass (the sun pass's shader with `GAME_SHADOW` defined) |
 | `held_camera.*` | A debug case's camera, which photo mode's camera update takes |
 | `perf_record.*` | What frames cost, on file: a row a second, and captures for comparing frames |
 | `hot_kernels.*` | The ray tracing's Direct3D 12 kernels, recompiled and swapped in as their sources are saved |
@@ -45,7 +45,8 @@ Delete this folder, `src/devkit/`, `src/devaddon/`, `tools/automation/` and `.ag
 | `src/remaster/remaster.cpp` | The `tool_hooks.hpp` include and the four calls of it |
 | `src/passes/ray_tracing/trace.cpp` | `inspect_trace` in the list and the include |
 | `src/passes/sun_light_pass.cpp` | The `game_shadow` block, its `detach` and the include |
-| `src/passes/sun_light_pass_shaders.hpp` | The three `GAME_SHADOW` blocks |
+| `src/passes/shaders/sun_light.ps.hlsl` | The three `#if GAME_SHADOW` blocks |
+| `src/passes/sun_light_pass_shaders.hpp`, `CMakeLists.txt` | The `GameShadow` constant, and the `sun_light_game_shadow` entry of `PHANTOM_FX_SHADERS` |
 | `src/performance.cpp`, `src/features/ray_traced_lights/local_lights.cpp` | The `perf_record` call and the include; in `local_lights.cpp` also `dev::recordingDirectory()` and `dev/dev.hpp` |
 | `src/features/photo_mode/photo_mode.cpp` | The `held_camera` calls, `heldCamera` and the include; the `game_lua` include, `teleportRequested`, the `Warp` state, its capture at `selectorUpdate`'s teleport and the clears `leave` makes, and `onFrameStart`'s teleport warp |
 | `src/features/photo_mode/photo_mode.hpp` | The `teleport()` and `onFrameStart()` declarations |

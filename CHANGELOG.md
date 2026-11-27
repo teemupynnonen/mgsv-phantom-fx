@@ -4,6 +4,20 @@
 
 ### New
 
+- **Bounce light is now VB-SSGI, a visibility-bitmask gather.** It replaces SSILVB's gather (ported from the RenoDX
+  MGSV add-on's indirect lighting, `renodx-mgsv` `src/games/mgsv/il`): a few slices through each pixel are marched
+  over the prefiltered depth, each keeping a 32-sector occlusion bitmask, and the bounce takes light only from the
+  sectors a surface uncovers first, so occluders stop the light and thin ones hide only what lies behind them. Its
+  temporal accumulation (against the game's velocity buffer, which is forced on while it runs), a-trous denoiser and
+  joint-bilateral resolve ghost and shimmer less, and the sampling noise is spread evenly over pixels and frames. The
+  bounce is the light the hemisphere receives, so **Strength** now defaults to 3 (up to 6). **Samples** sets the slices
+  (one per four) and the new **Visibility** the march steps along each side of one (2 to 8, 5 by default, so the
+  occlusion test cannot be switched off). More new settings: **Resolution** (full, half or quarter; below full, each
+  frame reads a different pixel of every block), **Denoise passes**, **History** and a **Debug view**. **Radius** is now
+  a distance in metres (2.5 m by default, 0.25 to 8 m), the same around near and far surfaces; an old
+  `indirect_light_radius` value, a share of the screen's height, now reads as that many metres, so check it in the menu.
+  The `indirect_light` switch and the strength key are unchanged.
+
 - **Bushes and grass move with the wind in the ray-traced scene.** Their traced shadows, bounce light and reflections
   move with them. The clone plugin's rocks and props stay put.
 

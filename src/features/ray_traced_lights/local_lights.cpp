@@ -8,6 +8,7 @@
 #include "dev_tools.hpp"
 #include "features/path_tracing/path_tracing.hpp"
 #include "features/ray_traced_lights/lamp_shadow_rays.hpp"
+#include "features/ray_traced_lights/local_lights_shaders.hpp"
 #include "dev/dev.hpp"
 #include "game_lights.hpp"
 #include "game_shaders.hpp"
@@ -60,116 +61,11 @@ constexpr float AddedSpecular = 1.0f;
 // captures had at most 66 (2026-10-24).
 constexpr float BeamEdge = 1000.0f;
 
-// The full-screen triangle in the light passes' vertex shaders' form (Lighting_*_vs): the clip-space
-// position twice, then where it samples the light targets, from the viewport within them.
-constexpr char FullScreenSource[] = R"(
-cbuffer LightPass : register(b0)
-{
-    float4 ViewToUv; // xy: the viewport's size over the targets'; zw: its corner over the targets'
-    uint4 Shadow;    // y: 1 when the light was traced, so the share holds its shadow
-};
-
-void main(uint id : SV_VertexID, out float4 position : SV_Position, out float4 clip : TEXCOORD0, out float4 sampling : TEXCOORD1)
-{
-    float2 xy = float2(id == 1 ? 3.0 : -1.0, id == 2 ? -3.0 : 1.0);
-    position = float4(xy, 0.0, 1.0);
-    clip = position;
-    sampling = float4((xy * float2(0.5, -0.5) + 0.5) * ViewToUv.xy + ViewToUv.zw, 0.0, 1.0);
-}
-)";
-
-// The light's volume as the game drew it, in the same form, from a copy of its indices and vertices.
-constexpr char VolumeSource[] = R"(
-cbuffer LightPass : register(b0)
-{
-    float4 ViewToUv;
-    uint4 Shadow;
-    uint4 Volume; // x: 1 for 32-bit indices, y: the vertices' stride, z: where they start
-    float4 Jitter; // xy: the upscaler's jitter in NDC, which the game's volumes lack (game_light_volumes.hpp)
-};
-
-ByteAddressBuffer Drawn : register(t0);
-
-void main(uint id : SV_VertexID, out float4 position : SV_Position, out float4 clip : TEXCOORD0, out float4 sampling : TEXCOORD1)
-{
-    uint index = Volume.x ? Drawn.Load(id * 4) : (Drawn.Load((id * 2) & ~3u) >> ((id % 2) * 16)) & 0xFFFF;
-    position = asfloat(Drawn.Load4(Volume.z + index * Volume.y));
-    position.xy += Jitter.xy * position.w;
-    clip = position;
-    sampling = float4((position.xy * float2(0.5, -0.5) + 0.5 * position.w) * ViewToUv.xy + ViewToUv.zw * position.w, position.zw);
-}
-)";
-
-// On the light's far faces, the light's shadow into both light targets' alpha, for the light's blend to
-// scale it by; where the surface lies past them, none of its light. The full-screen triangle, at depth 0
-// (as far as can be), lies past every surface.
-constexpr char ShadowSource[] = R"(
-cbuffer LightPass : register(b0)
-{
-    float4 ViewToUv;
-    uint4 Shadow;
-};
-
-Texture2D<float> Share : register(t0); // The share of the traced lights' light that reaches
-Texture2D<float> Depth : register(t1); // Reversed: the nearer, the greater
-
-void main(float4 position : SV_Position, out float4 diffuse : SV_Target0, out float4 specular : SV_Target1)
-{
-    int3 pixel = int3(position.xy, 0);
-    float lit = Shadow.y ? Share.Load(pixel) : 1.0;
-    diffuse = specular = float4(0.0, 0.0, 0.0, position.z <= Depth.Load(pixel) ? lit : 0.0);
-}
-)";
-
-// On the light's near faces: a surface short of them is outside its volume, so none of its light.
-constexpr char BeforeVolumeSource[] = R"(
-Texture2D<float> Depth : register(t1);
-
-void main(float4 position : SV_Position, out float4 diffuse : SV_Target0, out float4 specular : SV_Target1)
-{
-    if (position.z >= Depth.Load(int3(position.xy, 0))) discard;
-    diffuse = specular = 0.0;
-}
-)";
-
-// A light's volume's bounds in the world, from the copy of its indices and vertices (clip space, as the
-// game drew it) through the inverse of the light pass's m_projectionView.
-constexpr char BoundsSource[] = R"(
-cbuffer Bounds : register(b0)
-{
-    float4 ClipToWorld[4]; // Rows applied as dot(row, v)
-    uint4 Volume;          // x: 1 for 32-bit indices, y: the vertices' stride, z: where they start, w: how many indices
-    uint4 Slot;            // x: the light's place in Bounds
-};
-
-ByteAddressBuffer Drawn : register(t0);
-RWStructuredBuffer<float4> Bounds : register(u0); // Two a light: lowest, highest
-
-[numthreads(1, 1, 1)]
-void main()
-{
-    float3 lowest = 1e30, highest = -1e30;
-    for (uint i = 0; i < Volume.w; ++i)
-    {
-        uint index = Volume.x ? Drawn.Load(i * 4) : (Drawn.Load((i * 2) & ~3u) >> ((i % 2) * 16)) & 0xFFFF;
-        float4 clip = asfloat(Drawn.Load4(Volume.z + index * Volume.y));
-        float4 world = float4(dot(ClipToWorld[0], clip), dot(ClipToWorld[1], clip), dot(ClipToWorld[2], clip), dot(ClipToWorld[3], clip));
-        float3 corner = world.xyz / world.w;
-        lowest = min(lowest, corner);
-        highest = max(highest, corner);
-    }
-
-    Bounds[Slot.x * 2] = float4(lowest, 1.0);
-    Bounds[Slot.x * 2 + 1] = float4(highest, 1.0);
-}
-)";
-
 struct PassConstants
 {
     float viewToUv[4];
     std::uint32_t shadow[4];
     std::uint32_t volume[4];
-    float jitter[4];
 };
 
 struct BoundsConstants
@@ -262,8 +158,6 @@ ComPtr<ID3D11Buffer> passBuffer, sceneBuffer, lightBuffer, materialBuffer;
 bool pipelineFailed{};
 // The frame's lights from the lists run so far, and whether a list with a draw point has run.
 std::vector<Light> frameLights;
-// The places of the lights the rays took at the last kick: a place they had keeps a small advantage (light_choice).
-std::vector<std::uint64_t> lightingPlaces;
 bool drawPointRan{};
 // The volumes' bounds: the shader and its output, its copies on their way back, the lights each holds by
 // slot, and this frame's so far.
@@ -302,11 +196,9 @@ bool ensurePipeline()
 
     try
     {
-        shadowShader = pixelShader(device.Get(), ShadowSource, "light-shadow");
-        beforeVolumeShader = pixelShader(device.Get(), BeforeVolumeSource, "light-before-volume");
-        const auto volumeCode = compile(VolumeSource, "light-volume", "vs_5_0");
-        check(device->CreateVertexShader(volumeCode->GetBufferPointer(), volumeCode->GetBufferSize(), nullptr, volumeShader.ReleaseAndGetAddressOf()),
-            "Creating the lights' volume vertex shader");
+        shadowShader = pixelShader(device.Get(), shaders::Shadow, "light-shadow");
+        beforeVolumeShader = pixelShader(device.Get(), shaders::BeforeVolume, "light-before-volume");
+        volumeShader = vertexShader(device.Get(), shaders::Volume, "light-volume");
 
         D3D11_BLEND_DESC blend{};
         blend.RenderTarget[0].SrcBlend = blend.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
@@ -348,7 +240,7 @@ bool ensurePipeline()
         lightBuffer = makeConstantBuffer(device.Get(), sizeof(LampLightConstants), "Creating the lights' light constants");
         materialBuffer = makeConstantBuffer(device.Get(), sizeof(LampMaterialConstants), "Creating the lights' material constants");
 
-        boundsShader = computeShader(device.Get(), BoundsSource, "light-volume-bounds");
+        boundsShader = computeShader(device.Get(), shaders::Bounds, "light-volume-bounds");
         boundsConstants = makeConstantBuffer(device.Get(), sizeof(BoundsConstants), "Creating the lights' bounds constants");
         D3D11_BUFFER_DESC bounds{};
         bounds.ByteWidth = GI_MAX_LOCAL_LIGHTS * 2 * 16;
@@ -365,10 +257,7 @@ bool ensurePipeline()
             check(device->CreateBuffer(&bounds, nullptr, readback.ReleaseAndGetAddressOf()), "Creating the lights' bounds readback");
 
         // Last, so it marks a complete pipeline.
-        const auto fullScreenCode = compile(FullScreenSource, "light-full-screen", "vs_5_0");
-        check(device->CreateVertexShader(fullScreenCode->GetBufferPointer(), fullScreenCode->GetBufferSize(), nullptr,
-                  fullScreenShader.ReleaseAndGetAddressOf()),
-            "Creating the lights' vertex shader");
+        fullScreenShader = vertexShader(device.Get(), shaders::FullScreen, "light-full-screen");
         log("Ray-traced lights ready.");
 
         return true;
@@ -586,8 +475,7 @@ void drawAgain(const Light& light)
     const auto& viewport = drawn.viewport;
     const PassConstants pass{{viewport.Width / static_cast<float>(width), viewport.Height / static_cast<float>(height),
                                  viewport.TopLeftX / static_cast<float>(width), viewport.TopLeftY / static_cast<float>(height)},
-        {0, share ? 1u : 0u, 0, 0}, {volume.wideIndices ? 1u : 0u, volume.stride, VolumeVertexStart, 0},
-        {drawn.scene.cameraCenterOffset[0], drawn.scene.cameraCenterOffset[1], 0, 0}};
+        {0, share ? 1u : 0u, 0, 0}, {volume.wideIndices ? 1u : 0u, volume.stride, VolumeVertexStart, 0}};
     auto constants = drawn.light;
     if (!drawn.game->specular) constants.specularScale = AddedSpecular;
     check(write(immediate, passBuffer.Get(), pass), "Writing the lights' constants");
@@ -649,11 +537,8 @@ void measureVolumes()
             || frameBoundsLights.size() >= GI_MAX_LOCAL_LIGHTS)
             continue;
 
-        // The volume's vertices are the game's, without the jitter its m_projectionView has.
-        auto scene = light.drawn.scene;
-        camera::applyJitter(scene, {-scene.cameraCenterOffset[0], -scene.cameraCenterOffset[1]});
         camera::Matrix projectionView{};
-        for (std::size_t i = 0; i < projectionView.size(); ++i) projectionView[i] = scene.projectionView[i / 4][i % 4];
+        for (std::size_t i = 0; i < projectionView.size(); ++i) projectionView[i] = light.drawn.scene.projectionView[i / 4][i % 4];
         const auto clipToWorld = camera::inverse(projectionView);
         BoundsConstants constants{{}, {volume.wideIndices ? 1u : 0u, volume.stride, VolumeVertexStart, volume.count},
             {static_cast<std::uint32_t>(frameBoundsLights.size()), 0, 0, 0}};
@@ -808,8 +693,7 @@ void drawFrameLights()
         immediate->GSSetShader(nullptr, nullptr, 0);
         immediate->OMSetDepthStencilState(noDepth.Get(), 0);
         static int recordBatch{};
-        std::filesystem::path record;
-        if constexpr (DevTools) record = dev::recordingDirectory();
+        const auto record = DiagnosticLog ? dev::recordingDirectory() : std::filesystem::path{};
         if (record.empty()) recordBatch = 0;
         else saveForRecord(record, recordBatch, "before");
 
@@ -1049,8 +933,7 @@ std::vector<TracedLight> takeForTrace(const SceneConstants& camera) noexcept
                         drawn.push_back(&light.drawn);
                     }
 
-            const auto choice = light_choice::choose(drawn, camera, lightingPlaces);
-            lightingPlaces = choice.places;
+            const auto choice = light_choice::choose(drawn, camera);
             otherFrame += choice.otherFrame;
             overCap += choice.overCap;
             if constexpr (DevTools) perf_record::onLights(choice.taken.size(), choice.overCap);

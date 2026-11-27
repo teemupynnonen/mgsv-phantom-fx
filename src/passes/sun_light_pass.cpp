@@ -85,7 +85,7 @@ std::size_t pathTracedOf(bool isShadowMapped)
     return 4 + (isShadowMapped ? 1 : 0);
 }
 
-// Compiles the shaders once; call with resourceMutex held. Returns false when they are unavailable.
+// Makes the shaders once, from their precompiled bytecode (compiled from source in a dev build); call with resourceMutex held. Returns false when they are unavailable.
 bool ensurePipeline()
 {
     if (optionsBuffer) return true;
@@ -95,16 +95,10 @@ bool ensurePipeline()
     {
         for (const bool isShadowMapped : {true, false})
             for (const bool reflectsSky : {true, false})
-            {
-                const D3D_SHADER_MACRO defines[]{{"SHADOW_MAP", isShadowMapped ? "1" : "0"}, {"SKY_REFLECTION", reflectsSky ? "1" : "0"}, {}};
-                replacements[replacementOf(isShadowMapped, reflectsSky)] = pixelShader(device.Get(), shaders::SunLight, "sun-light", defines);
-            }
+                replacements[replacementOf(isShadowMapped, reflectsSky)] = pixelShader(device.Get(), shaders::SunLight[isShadowMapped][reflectsSky], "sun-light");
 
         for (const bool isInShadowRange : {true, false})
-        {
-            const D3D_SHADER_MACRO defines[]{{"SHADOW_MAP", "0"}, {"SKY_REFLECTION", "0"}, {"PATH_TRACED", "1"}, {"CLOUD_SHADOW", isInShadowRange ? "1" : "0"}, {}};
-            replacements[pathTracedOf(isInShadowRange)] = pixelShader(device.Get(), shaders::SunLight, "sun-light-path-traced", defines);
-        }
+            replacements[pathTracedOf(isInShadowRange)] = pixelShader(device.Get(), shaders::PathTraced[isInShadowRange], "sun-light-path-traced");
 
         // Last, so it marks a complete pipeline.
         optionsBuffer = makeConstantBuffer(device.Get(), sizeof(ShaderOptions), "Creating the sun shadow options");

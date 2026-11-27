@@ -34,10 +34,7 @@ ComPtr<ID3D11Texture2D> answer;
 void drawAnswer(ID3D11Device* device, ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, UINT width, UINT height)
 {
     if (!shader)
-    {
-        const D3D_SHADER_MACRO defines[]{{"SHADOW_MAP", "1"}, {"SKY_REFLECTION", "0"}, {"GAME_SHADOW", "1"}, {}};
-        shader = pixelShader(device, sun_light_pass::shaders::SunLight, "sun-light-game-shadow", defines);
-    }
+        shader = pixelShader(device, sun_light_pass::shaders::GameShadow, "sun-light-game-shadow");
 
     ComPtr<ID3D11Texture2D> texture;
     {

@@ -14,7 +14,7 @@
 // nothing on it is lit or reflected like the rest of the world, and the ray tracing does not see it.
 //
 // While the game shows its sea, the add-on draws its own into the G-buffer, at the frame's first draw of
-// the main view's G-buffer: waves from an ocean spectrum, on the GPU (sea_shaders.hpp), as one of the
+// the main view's G-buffer: waves from an ocean spectrum, on the GPU (shaders/), as one of the
 // game's materials, so the game's lighting, fog and screen-space reflections, the global illumination and
 // path tracing take it as any surface. The game's sea draws are skipped.
 namespace phantom_fx::sea

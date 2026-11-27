@@ -77,7 +77,7 @@ ComputeTexture specularWithReflections;
 // The masks' atlas: GI_LAMP_MASK_TILES tiles across, shared with Direct3D 12.
 ComputeTexture maskAtlas;
 
-// Compiles the shaders once; call with resourceMutex held. Returns false when they are unavailable.
+// Makes the shaders once from their precompiled bytecode (compiled from source in a dev build); call with resourceMutex held. Returns false when they are unavailable.
 bool ensurePipeline()
 {
     if (blendShader) return true;
@@ -89,9 +89,7 @@ bool ensurePipeline()
         addShader = computeShader(device.Get(), shaders::AddReflections, "pt-add-reflections");
         blendParameters = makeConstantBuffer(device.Get(), sizeof(BlendParameters), "Creating the reflections' blend constants");
 
-        const auto tiles = std::to_string(GI_LAMP_MASK_TILES), size = std::to_string(GI_LAMP_MASK_SIZE);
-        const D3D_SHADER_MACRO maskDefines[]{{"GI_LAMP_MASK_TILES", tiles.c_str()}, {"GI_LAMP_MASK_SIZE", size.c_str()}, {}};
-        maskShader = computeShader(device.Get(), shaders::MaskCopy, "pt-masks", maskDefines);
+        maskShader = computeShader(device.Get(), shaders::MaskCopy, "pt-masks");
         maskParameters = makeConstantBuffer(device.Get(), sizeof(MaskParameters), "Creating the masks' constants");
         D3D11_SAMPLER_DESC sampler{};
         sampler.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -99,9 +97,7 @@ bool ensurePipeline()
         sampler.MaxLOD = D3D11_FLOAT32_MAX;
         check(device->CreateSamplerState(&sampler, maskSampler.ReleaseAndGetAddressOf()), "Creating the masks' sampler");
 
-        const auto fullScreenCode = compile(shaders::FullScreen, "pt-full-screen", "vs_5_0");
-        check(device->CreateVertexShader(fullScreenCode->GetBufferPointer(), fullScreenCode->GetBufferSize(), nullptr, fullScreenShader.ReleaseAndGetAddressOf()),
-            "Creating the lamps' vertex shader");
+        fullScreenShader = vertexShader(device.Get(), shaders::FullScreen, "pt-full-screen");
         lampShader = pixelShader(device.Get(), shaders::AddLampLight, "pt-add-lamp-light");
         // Added as the game adds its lights' light, its alpha (the lights' shadow share) kept.
         D3D11_BLEND_DESC adding{};

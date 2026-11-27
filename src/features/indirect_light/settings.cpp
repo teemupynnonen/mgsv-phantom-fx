@@ -5,6 +5,9 @@ namespace phantom_fx
 namespace
 {
 constexpr IndirectLight Defaults{};
+
+const SettingChoice Resolutions[]{{0, "Full"}, {1, "Half"}, {2, "Quarter"}};
+const SettingChoice DebugViews[]{{0, "Off"}, {1, "GI only"}, {2, "History delta"}, {3, "History length"}, {4, "Reprojection"}, {5, "Variance"}};
 }
 
 void describe(IndirectLight& light, SettingVisitor& visit)
@@ -14,28 +17,76 @@ void describe(IndirectLight& light, SettingVisitor& visit)
             .iniKey = "indirect_light",
             .section = Section::Lighting,
             .name = "Bounce light",
-            .tech = "SSILVB",
-            .tip = "Screen-space indirect lighting with visibility bitmask: light bounces off nearby surfaces onto others, taking their "
-                   "colour, such as sunlit ground brightening the underside of a jeep. It only knows what is on screen. Off leaves the game's "
-                   "indirect light unchanged.",
-            .summary = "Light picks up colour from nearby surfaces.",
-            .keywords = "SSGI bounce radius strength",
+            .tech = "VB-SSGI",
+            .tip = "Screen-space GI with a visibility bitmask: light bounces off nearby surfaces onto others, taking their colour, "
+                   "such as sunlit ground brightening the underside of a jeep. Each gather sample is ray-marched against the "
+                   "prefiltered depth, so occluders stop the light instead of bleeding through, and it accumulates over frames and "
+                   "denoises. It only knows what is on screen. Off leaves the game's indirect light unchanged.",
+            .summary = "Light bounces off nearby surfaces and takes their colour; occluders stop it. It only knows what is on screen.",
+            .keywords = "VB-SSGI SSGI bounce gather visibility occlusion radius strength samples history denoise",
             .effect = Effect::IndirectLight,
             .replacedBy = Effect::GlobalIllumination,
             .needsSupportedBuild = true});
-    visit.slider(light.radiusMetres,
+    visit.slider(light.radius,
         {.iniKey = "indirect_light_radius",
             .label = "Radius",
             .min = 0.25f,
-            .max = 4,
-            .standard = Defaults.radiusMetres,
+            .max = 8,
+            .standard = Defaults.radius,
             .format = "%.2f m",
-            .tip = "How far around a surface SSILVB looks for surfaces that light it."});
+            .tip = "How far around a surface, in metres, the gather looks for surfaces that light it. The same distance near and far, "
+                   "within limits on screen."});
     visit.slider(light.strength,
         {.iniKey = "indirect_light_strength",
             .label = "Strength",
-            .max = 3,
+            .max = 6,
             .standard = Defaults.strength,
-            .tip = "1 is physically based; higher brightens the bounced light, 0 turns it off."});
+            .tip = "How much of the gathered light reaches the image; 1 is the physical bounce alone, which the game's own ambient "
+                   "hides, 0 turns it off."});
+    visit.slider(light.samples,
+        {.iniKey = "indirect_light_samples",
+            .label = "Samples",
+            .min = 2,
+            .max = 16,
+            .standard = Defaults.samples,
+            .format = "%.0f",
+            .tip = "Gather samples per pixel; every four is one slice through the pixel that the march sweeps. More is less noise, at linear cost."});
+    visit.choice(light.resolution,
+        {.iniKey = "indirect_light_resolution",
+            .label = "Resolution",
+            .choices = Resolutions,
+            .tip = "The resolution the gather, its history and its denoiser run at."});
+    visit.slider(light.denoisePasses,
+        {.iniKey = "indirect_light_denoise",
+            .label = "Denoise passes",
+            .min = 1,
+            .max = 3,
+            .standard = Defaults.denoisePasses,
+            .format = "%.0f",
+            .tip = "A-trous iterations the denoiser runs; each widens its reach four times."});
+    visit.slider(light.history,
+        {.iniKey = "indirect_light_history",
+            .label = "History",
+            .max = 0.95f,
+            .standard = Defaults.history,
+            .format = "%.0f %%",
+            .readoutScale = 100,
+            .tip = "Ceiling on how much of the previous frame survives: the bounce accumulates over frames up to this, which steadies it."});
+    visit.slider(light.visibility,
+        {.iniKey = "indirect_light_visibility",
+            .label = "Visibility",
+            .min = 2,
+            .max = 8,
+            .standard = Defaults.visibility,
+            .format = "%.0f",
+            .tip = "March steps along each side of a gather slice, over the prefiltered depth. More steps find thinner occluders and "
+                   "more of the light they hide, at linear cost."});
+    visit.choice(light.debug,
+        {.iniKey = "indirect_light_debug",
+            .label = "Debug view",
+            .choices = DebugViews,
+            .control = ChoiceControl::Dropdown,
+            .tip = "Shows a diagnostic view instead of the scene, the gathered light alone (before the game multiplies it by the "
+                   "albedo)."});
 }
-}
+}  // namespace phantom_fx
