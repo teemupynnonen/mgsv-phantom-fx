@@ -18,7 +18,7 @@ cbuffer GI : register(b0)
     float HistoryValid;  // 0 when the velocity is missing or the history has reset
     float Debug;         // Diagnostic view, 0 off
     float DiffuseScale;  // 0 shows the gather alone (the diagnostics)
-    float Random;        // This frame's salt for the gather's rotation
+    float Random;        // The frame index modulo 65536, exact in a float, for the gather's noise
     float MinSamples;    // Samples that must survive rejection
     float Visibility;    // Steps along each side of a gather slice, at least 2
     float Thickness;     // How deep a sample's surface is taken, as a share of its view depth
@@ -58,21 +58,19 @@ float3 decodeNormal(float3 encoded)
     return normalize(float3(sign(Scene[21].x) * xy.x, xy.y, -z));
 }
 
-// Integer hash for the gather's rotation: interleaved gradient noise is a diagonal ramp, which
-// read as screen-space stripes, and a hash has no screen-space structure to leak.
-uint hash(uint x)
+// The R2 low-discrepancy sequence as a spatiotemporal noise, in 32-bit fixed point so the sum wraps
+// exactly (a float would lose its fraction as the frame index grows). The pixel term spreads
+// neighbours evenly over [0, 1); the frame term steps every pixel by the golden ratio, so the values
+// one pixel sees over time are evenly spread too, where a hash only converges as 1/sqrt(n).
+// `phase` decorrelates independent uses of it.
+uint noiseBits(uint2 pixel, uint frame, uint phase)
 {
-    x ^= x >> 16;
-    x *= 0x7feb352du;
-    x ^= x >> 15;
-    x *= 0x846ca68bu;
-    x ^= x >> 16;
-    return x;
+    return pixel.x * 3242174889u + pixel.y * 2447445414u + frame * 2654435769u + phase * 0x9e3779b9u;
 }
 
-float hash01(uint2 pixel, uint salt)
+float noise01(uint2 pixel, uint frame, uint phase)
 {
-    return (float)(hash(pixel.x + hash(pixel.y + hash(salt))) & 0xFFFFFFu) * (1.0 / 16777216.0);
+    return (float)(noiseBits(pixel, frame, phase) >> 8) * (1.0 / 16777216.0);
 }
 
 // Golden-angle spiral over the unit disk with a jittered radius, so no fixed set of radii bands.

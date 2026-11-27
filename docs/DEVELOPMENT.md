@@ -3840,8 +3840,12 @@ used. Off, the add-on only checks a flag on each full-screen draw.
   gather's size (full, half or quarter, rounded up). Before it, `visibility_bitmask::prefilterDistances`
   fills this add-on's own copy of the distance mips at the render size, which the march reads
   (smaller copies the farther the sample, negative on foliage); if the prefilter is unavailable the
-  march reads the depth at full size and has no foliage. The slice angle, the step jitter and the
-  dither change every frame from a hash, which the accumulation averages.
+  march reads the depth at full size and has no foliage. The slice angle, the step jitter and the dither come from the R2 low-discrepancy sequence in 32-bit
+  fixed point (pixel x, y and the frame index as its three terms; `noiseBits` in `ssgi_common.hlsli`),
+  so a pixel's values over frames are evenly spread, and the frame index (`Random`, modulo 65536)
+  wraps without a seam. Below full resolution each frame takes a different pixel of the 2x2 or 4x4
+  block (all of them once per 4 or 16 frames, in a per-pixel order) for depth, normal and colour, so
+  the accumulation converges on the full-resolution result; the history reset is unaffected. The accumulation averages them.
 - **Accumulate** (`ssgi_accumulate.hlsl`): reprojects with the velocity and validates each of the
   four bilinear history taps on its own (plane distance to the current pixel's tangent plane, normal,
   screen bounds; a separate aux target carries the history's depth and normal), renormalising the

@@ -68,9 +68,15 @@ void main(uint3 tid : SV_DispatchThreadID)
     if (any(pixel >= (uint2)gs)) return;
 
     // The gather may run below full resolution; its threads map onto full-resolution pixels, which
-    // is where every G-buffer read and every sample offset lives.
-    const int2 centre = (int2)floor((float2(pixel) + 0.5) * scale);
-    if (any(centre >= int2(Size))) return;
+    // is where every G-buffer read and every sample offset lives. Each frame a different pixel of
+    // the pixel's block stands for it (every cell once per block, in a per-pixel order), so the
+    // accumulation converges on the full-resolution result rather than on one fixed subsample.
+    // 65536 is a multiple of every block's cell count, so the order stays even when the index wraps.
+    const uint frame = (uint)Random;
+    const uint blockSide = (uint)scale;
+    const uint cells = blockSide * blockSide;
+    const uint cell = (frame * 7u + (noiseBits(pixel, 0, 2) >> 24)) % cells;
+    const int2 centre = min((int2)(pixel * blockSide + uint2(cell % blockSide, cell / blockSide)), int2(Size) - 1);
 
     const float z = distanceOf(Depth.Load(int3(centre, 0)));
     if (!hasGeometry(z))
@@ -104,10 +110,9 @@ void main(uint3 tid : SV_DispatchThreadID)
     const float thickness = clamp(Thickness * z, 0.05, radiusWorld);
     const float foliageThickness = clamp(Thickness * 0.17 * z, 0.02, radiusWorld);
 
-    const uint frameSalt = (uint)(Random * 65535.0);
-    const float sliceNoise = hash01(pixel, frameSalt);
-    const float stepNoise = hash01(pixel, frameSalt + 1u);
-    const float ditherNoise = hash01(pixel, frameSalt + 2u);
+    const float sliceNoise = noise01(pixel, frame, 0);
+    const float stepNoise = noise01(pixel, frame, 1);
+    const float ditherNoise = noise01(pixel, frame, 3);
 
     // GT-VBAO spreads the slices evenly around the view vector, not in the image plane, and projects them.
     const float a = 1 / (1 + viewDir.z);
