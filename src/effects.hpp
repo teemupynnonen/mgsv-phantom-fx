@@ -17,7 +17,8 @@ enum class Effect : std::uint8_t
 {
     Sea,
     WaterCaustics,
-    VolumetricFog,
+    VolumetricFog, // Light shafts
+    PhysicalSky,
     PathTracing,
     RayTracedShadows,
     RayTracedLights,

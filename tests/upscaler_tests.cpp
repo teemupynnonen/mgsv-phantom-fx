@@ -85,12 +85,21 @@ void settingsPersist(const fs::path& root)
         .frameGeneration = {.mode = FrameGenerationMode::X3}, .sun = {.diameterDegrees = 1.25f}, .rayTracedShadows = {.on = true, .withGameShadows = true}, .softShadows = {.on = true},
         .contactShadows = {.on = true, .shape = {.contrast = 2, .reachPixels = 40, .thickness = 0.01f, .fadeMetres = 300}},
         .rayTracedLights = {.on = true, .shadowRaysPerPixel = 8, .flashlightBrightness = 3.5f}, .globalIllumination = {.raysPerLightPixel = 4}, .ambientOcclusion = {.on = true, .radiusMetres = 2, .strength = 1.5f},
-        .indirectLight = {.on = true, .radius = 0.9f, .strength = 0.5f}, .volumetricFog = {.on = true, .look = AtmosphereLook::Physical, .haze = 0.5f},
+        .indirectLight = {.on = true, .radius = 0.9f, .strength = 0.5f}, .volumetricFog = {.on = true}, .physicalSky = {.on = true, .haze = 0.5f},
         .frameRate = {.unlocked = true}};
     saveSettings(path, chosen);
     expect(loadSettings(path) == chosen,
         "Restart restores the upscaler, mode, preset, sharpening, frame rate unlock, frame generation, soft, screen-space and ray-traced "
-        "shadows, the contact shadows' shape, GTVBAO, VB-SSGI, the global illumination's rays and the volumetric fog.");
+        "shadows, the contact shadows' shape, GTVBAO, VB-SSGI, the global illumination's rays, the light shafts and the physical sky.");
+    write(path, "volumetric_fog=1\natmosphere_look=physical\n");
+    const auto physical = loadSettings(path);
+    expect(physical.volumetricFog.on && physical.physicalSky.on, "The old physical look keeps its light shafts and turns the physical sky on.");
+    write(path, "volumetric_fog=1\natmosphere_look=mgsv\n");
+    expect(!loadSettings(path).physicalSky.on, "The old MGSV look keeps the game's sky.");
+    write(path, "volumetric_fog=0\natmosphere_look=physical\n");
+    expect(!loadSettings(path).physicalSky.on, "The old physical look did nothing with the fog off, so the sky stays the game's.");
+    write(path, "volumetric_fog=1\natmosphere_look=physical\nphysical_sky=0\n");
+    expect(!loadSettings(path).physicalSky.on, "The physical sky's own switch wins over the old look.");
     write(path, "frame_generation=dynamic\n");
     expect(loadSettings(path).frameGeneration.mode == FrameGenerationMode::Dynamic, "Dynamic frame generation is read back.");
     write(path, "frame_generation=fsr\n");
@@ -207,11 +216,11 @@ void effectPlan()
     all.rayTracedShadows.on = all.softShadows.on = all.contactShadows.on = true;
     all.rayTracedLights.on = true;
     all.globalIllumination.on = all.ambientOcclusion.on = all.indirectLight.on = true;
-    all.volumetricFog.on = all.sea.on = true;
+    all.volumetricFog.on = all.physicalSky.on = all.sea.on = true;
 
     const auto plan = planEffects(all, {});
     expect(plan.runs(Effect::RayTracedShadows) && plan.runs(Effect::RayTracedLights) && plan.runs(Effect::GlobalIllumination)
-            && plan.runs(Effect::VolumetricFog) && plan.runs(Effect::Sea),
+            && plan.runs(Effect::VolumetricFog) && plan.runs(Effect::PhysicalSky) && plan.runs(Effect::Sea),
         "The effects nothing replaces run.");
 
     for (const auto effect : {Effect::SoftShadows, Effect::SunContactShadows, Effect::LampContactShadows, Effect::LampSoftShadows, Effect::AmbientOcclusion,

@@ -3960,7 +3960,18 @@ Not handled:
 ## Volumetric fog
 
 The game's fog has no shadows, so it has no light shafts. The add-on keeps its formula and its
-weather, and shadows the sun in it.
+weather, and shadows the sun in it. Two switches under World share this code
+(`src/features/volumetric_fog/`), each its own effect:
+
+| Switch | Key | Effect | What it changes |
+| --- | --- | --- | --- |
+| **Light shafts** | `volumetric_fog` | `Effect::VolumetricFog` | The fill shadows the sun in each froxel (the visibility pass below) |
+| **Physical sky** | `physical_sky`, `atmosphere_haze` | `Effect::PhysicalSky` | The fill takes Earth's air and a height fog in place of the game's formula, and the sky draws are replaced ("Physical look") |
+
+The fill runs while either runs; only Light shafts binds the shadow map, and Physical sky still needs a
+sun pass in the frame for its constants. The larger fog texture runs with both off. Until 2026-11-27
+both were one switch, Volumetric fog, with `atmosphere_look=mgsv|physical`; `loadSettings` reads an old
+`atmosphere_look=physical` with the fog on as both on, while the file has no `physical_sky`.
 
 - **The game's fog.** `VolFog_TppVolFog` (the frame's first draw, 768 vertices, two triangles per
   slice) fills a 512x256 `R16G16B16A16_FLOAT` texture: 128 slices of view depth in 32 x 4 tiles of
@@ -3982,8 +3993,8 @@ weather, and shadows the sun in it.
   unordered access. At the fog pass the add-on draws the game's own
   draw with a viewport over the whole texture: its vertices place each slice's tile in clip space,
   and its froxel positions interpolate across the tile, so the game's fog fills the larger tiles
-  exactly as the readers sample them. This runs with the volumetric fog on or off.
-- **Shadowed fill.** With the volumetric fog on, the fog pass's `cPSSystem`, `cPSScene`,
+  exactly as the readers sample them. This runs with both switches off.
+- **Shadowed fill.** With Light shafts or Physical sky on, the fog pass's `cPSSystem`, `cPSScene`,
   `cPSMaterial` and `cPSObject` are copied on the GPU in its command list, and the sun pass's
   (`SunLight_DL_CS_ES`, or `SunLight_DL_CS` in rain) `cPSScene` and `cPSLight` with its shadow
   atlas. Before the first resolve (`DR_VolFog_TppTonemap*`, `DR_TonemapRainFilter*`) three compute
@@ -4013,7 +4024,7 @@ weather, and shadows the sun in it.
 
 ### Physical look
 
-With **Look** set to Physical the fill builds Earth's atmosphere as Hillaire's reference for "A
+With **Physical sky** on the fill builds Earth's atmosphere as Hillaire's reference for "A
 Scalable and Production Ready Sky and Atmosphere Rendering Technique" (Epic Games, 2020, MIT; the
 same as Unreal Engine's sky atmosphere) does, and draws the sky from it. In its frame z is up and the
 planet's centre is the origin, in km; the game's world has y up in metres.

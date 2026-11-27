@@ -45,6 +45,7 @@ struct Settings
     AmbientOcclusion ambientOcclusion;
     IndirectLight indirectLight;
     VolumetricFog volumetricFog;
+    PhysicalSky physicalSky;
     Sea sea;
     WaterCaustics waterCaustics;
     DepthOfField depthOfField;
@@ -72,6 +73,7 @@ template<class Visit> void forEachFeature(Settings& settings, Visit&& visit)
     visit(settings.ambientOcclusion);
     visit(settings.indirectLight);
     visit(settings.volumetricFog);
+    visit(settings.physicalSky);
     visit(settings.sea);
     visit(settings.waterCaustics);
     visit(settings.depthOfField);
@@ -122,7 +124,7 @@ LightingStep lightingStepOf(const Settings& settings);
 // The lighting effects are switched as their step switches them: no effect of it switched off.
 bool isLightingAsStep(const Settings& settings);
 // A first launch, without a settings file: screen-space lighting, upscaled at Quality, the frame rate
-// unlocked and the fog physical.
+// unlocked, light shafts and the physical sky.
 Settings firstLaunchSettings();
 
 // What the image shows for troubleshooting. The Shadow views, of the ray-traced shadows, and the Light

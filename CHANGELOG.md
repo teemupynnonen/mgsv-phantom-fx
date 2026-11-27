@@ -30,6 +30,12 @@
 
 ### Changed
 
+- **Volumetric fog is now two switches: Light shafts and Physical sky.** Volumetric fog used to shadow the sun in the
+  fog and, with its Look set to Physical, also replace the game's sky and haze, so one switch did two unrelated things.
+  **Light shafts** (the `volumetric_fog` key) only shadows the sun in the fog. **Physical sky** (`physical_sky`, with
+  **Haze**) only replaces the sky and the air, and now works without the light shafts. A settings file with the old
+  Physical look turns both on, so nothing changes on screen.
+
 - **The Sea looks like the game's again, with the add-on's waves and reflections.** The water is the game's darker
   teal, with its turquoise wash in the upper sea, and the sun sparkles on the waves out to the horizon as the game's
   does. The sparkles hold still under Ray Reconstruction instead of smearing with the wind, are dim under the moon,

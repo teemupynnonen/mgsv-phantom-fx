@@ -63,7 +63,7 @@ Needs DXR 1.1.
 - **Contact shadows** (Bend Studio's screen-space shadows)
 - **Ambient occlusion** (GTVBAO)
 - **Bounce light** (VB-SSGI)
-- **Volumetric fog** with light shafts and a physical sky
+- **Light shafts** through the game's fog, and a **physical sky** and air
 - **Sea:** ocean waves around Mother Base, lit and reflected like the rest of the world
 - **Water caustics:** rippling sunlight on riverbeds
 

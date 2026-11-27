@@ -84,9 +84,11 @@ const EffectLine EffectLines[]{
     {.effect = Effect::IndirectLight, .passes = {{Pass::SsgiPrefilter, "Depth prefilter"}, {Pass::SsgiGather, "Gather"}, {Pass::SsgiAccumulate, "Temporal accumulation"}, {Pass::SsgiFilter, "Denoise"},
             {Pass::SsgiResolve, "Resolve to the render size"}},
         .health = ssgi::health},
-    {.effect = Effect::VolumetricFog, .passes = {{Pass::FogPass, "The game's fog pass, larger"}, {Pass::SkyTables, "Sky tables (physical look)"}, {Pass::FogShadow, "Sun shadow in the fog"},
-            {Pass::FogScattering, "Scattering"}, {Pass::FogIntegration, "Integration"}, {Pass::Sky, "Physical sky"}},
+    // The fill's scattering and integration run for either; they count with the light shafts.
+    {.effect = Effect::VolumetricFog, .passes = {{Pass::FogPass, "The game's fog pass, larger"}, {Pass::FogShadow, "Sun shadow in the fog"},
+            {Pass::FogScattering, "Scattering"}, {Pass::FogIntegration, "Integration"}},
         .health = atmosphere::health},
+    {.effect = Effect::PhysicalSky, .passes = {{Pass::SkyTables, "Sky tables"}, {Pass::Sky, "Sky draw"}}, .health = atmosphere::health},
     {.effect = Effect::Sea, .passes = {{Pass::SeaWaves, "Waves: spectrum, FFT and maps"}, {Pass::SeaSurface, "Surface into the G-buffer"}},
         .health = sea::health},
     {.effect = Effect::WaterCaustics, .passes = {{Pass::WaterCaustics, "Webs over the rivers"}}, .health = water_caustics::health},
