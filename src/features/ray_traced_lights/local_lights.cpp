@@ -9,7 +9,7 @@
 #include "features/path_tracing/path_tracing.hpp"
 #include "features/ray_traced_lights/lamp_shadow_rays.hpp"
 #include "features/ray_traced_lights/local_lights_shaders.hpp"
-#include "frame_log.hpp"
+#include "dev/dev.hpp"
 #include "game_lights.hpp"
 #include "game_shaders.hpp"
 #include "log.hpp"
@@ -693,7 +693,7 @@ void drawFrameLights()
         immediate->GSSetShader(nullptr, nullptr, 0);
         immediate->OMSetDepthStencilState(noDepth.Get(), 0);
         static int recordBatch{};
-        const auto record = DiagnosticLog ? frame_log::recordingDirectory() : std::filesystem::path{};
+        const auto record = DiagnosticLog ? dev::recordingDirectory() : std::filesystem::path{};
         if (record.empty()) recordBatch = 0;
         else saveForRecord(record, recordBatch, "before");
 

@@ -1,21 +1,71 @@
 # Phantom FX changelog
 
-## 2.0.1
+## Unreleased
 
 ### New
 
-- **Photo mode: no near clip plane.** A new **No near clip plane** switch under Photo mode on the Camera page moves
-  the free camera's near clip plane from 7 cm to 1 mm, so what the camera nearly touches no longer vanishes. Off by
-  default; the game's own camera is untouched.
+- **Bushes and grass move with the wind in the ray-traced scene.** Their traced shadows, bounce light and reflections
+  move with them. The clone plugin's rocks and props stay put.
+
+- **DevKit: a developer toolkit of its own, for any MGSV add-on.** It runs beside Phantom FX with shader lookup, a frame
+  recorder, keyboard-free automation of a game copy, and an MCP server; `--preset tools` builds it without Phantom FX's
+  changes to the frame. It is built from source and is not in the download.
+
+- **Photo mode: no near clip plane.** The **No near clip plane** switch under Photo mode moves the free camera's near
+  clip plane from 7 cm to 1 mm, so what the camera nearly touches no longer vanishes. Off by default.
+
+### Performance
+
+- **Path tracing's rays wait less for each other.** With Ray Reconstruction, the lamps' light and the sun's rays now
+  run alongside the global illumination's rays instead of each waiting for the last to finish, so the GPU stays busy
+  through each trace's slowest rays. The image is the same. The budget counts their time in Global illumination's line.
+
+- **Path tracing's distant hits read the light cache.** What a global illumination ray finds 10 metres or more away
+  now takes its light from the light cache instead of tracing its own shadow and bounce rays. At DLAA in Africa that
+  saves about 0.3 ms in most places, and about 3 ms of a 58 ms frame (night) in the heaviest areas of Africa. The image holds in the scenes
+   checked. The Developer page's Light cache has the distance and a button that measures what the cache saves where you
+   stand.
+
+- **Path tracing's light costs several milliseconds less with Ray Reconstruction.** A ray's hit takes the light cache's
+  light whenever it is a few cache cells away, not only past 10 metres, and a hit it still lights traces one shadow
+  ray to a lamp or a glowing mesh, picked by how much light each gives there, instead of one to each; the sun keeps its
+  own ray. At Africa's spawn at night (1440x810, Ray Reconstruction) the cache change alone took the global
+  illumination's rays from about 21 to about 16.5 ms. The image looks the same.
+
+- **Ray-traced lights measure their volume once, not every frame.** At Mother Base at night with 128 lights traced, that
+  was 128 dispatches a frame, about 3.3 ms: roughly 16% of a 1080p frame and 6-8% at 4K. A light undrawn for 60 frames
+  is measured again, so a new map keeps none of the old one's boxes.
 
 ### Fixed
 
+- **Glass reflections and shadows are right again.** Panes reflect sharply and their inner face keeps the sun's glow;
+  the cheaper glass tracing of 2.0.0 is undone.
+
+- **Textures stay sharper in the lower upscaling modes.** Ultra Performance looked muddy even at 4K because the
+  texture bias only matched the render size. It now sharpens one more step, as AMD advises, and applies by itself:
+  the **Texture detail bias** slider is gone.
+
+- **The Mother Base emblem shows again in Sortie Prep.** It was a black square in front of Snake, the horse and the
+  helicopter; it now keeps its texture and place, with a steady edge along a character.
+
+- **Wall lamps no longer flicker with the upscaler, however still the camera.** The upscaler's jitter no longer reaches
+  the depth their volumes test against. At Africa's villa lamps, 0.24% of the pixels flickered; now 0.000%.
+
+- **A lamp drawn as two spots no longer makes its wall flicker.** Lights at one place are chosen together, so the wall
+  no longer jumps between the rays and the game's unshadowed draw. At the villa's lamps its brightness swung
+  `0.23 -> 0.79`; it now stays within `0.25 -> 0.28`.
+
+- **Wall lamps no longer swap their light between frames while you move.** A spot's direction is now part of its
+  identity, and the traced lights no longer change with the upscaler's jitter.
+
 - Ray-traced light where things touch the ground: no pale glow under Snake's arm when he lies prone, and no black
-  patches on the ground by a boot or a knee resting on a slope.
-- The ray-traced ground is now the game's own terrain as it draws it, near and far, so shadows, bounce light and
+  patches by a boot or a knee on a slope.
+- The ray-traced ground is the game's own terrain as it draws it, near and far, so shadows, bounce light and
   reflections meet the ground where it really is.
 - Ray-traced bounce light and reflections no longer leak in from outside: no orange glow or pale lines along pipes,
   frames and furniture standing close to a room's wall.
+- Ray-traced shadows: opaque surfaces facing away from the sun no longer get sunlight through their own back, so shaded
+  walls no longer show bright specular dots.
 
 ## 2.0.0
 

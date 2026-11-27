@@ -69,6 +69,7 @@ struct Textures
     ID3D11Texture2D* surfaceDepth{};
     ID3D11Texture2D* surfaceNormal{};
     ID3D11Texture2D* surfaceReflection{};
+    ID3D11Texture2D* forwardShadow{};
 };
 
 using Matrix = std::array<float, 16>; // Rows applied as dot(row, v), as the engine's
@@ -124,6 +125,9 @@ struct Frame
     std::uint32_t frameIndex{};
     kick_traces::KickTraces traces; // The one answer to what runs; a texture a trace needs is there when it runs
     bool showScene{}; // The output shows the traced scene instead of the light
+    float lightCacheReach{4}; // Cells from which a light ray's first hit takes its light from the cache (TraceLight); 0 never
+    float hashMaxSamples{16};  // The light cache's samples a cell averages over (UpdateTiles)
+    unsigned lightAblation{};  // What the light's rays leave out, to time the rest (Diagnostics): 1 the bounce rays, 2 the hits' own light
     bool logOften{};  // Diagnostics: the light's statistics logged every few frames (as each readback returns), not every ten seconds
     // Self-lit meshes' light: its scale from the game's units, and the most radiance one lights others with, so scaled;
     // what tunes each and a number that changes with it (scene_contents::GameScene).
@@ -139,6 +143,7 @@ struct Frame
     bool debugShadows{};
     bool shadowStarts{};     // The debug view: where the shadow rays leave each pixel (ShadowStartColor)
     bool twoSidedShadows{};  // Diagnostics: rays towards lights blocked by every surface from both sides, as until 2026-10-26
+    bool mainViewCastsSun{}; // Diagnostics: main-view-only meshes with a sun stand-in block the sun (GI_GEOMETRY_STOOD_IN)
     LightDebugView lightDebugView{}; // Diagnostics, with textures.lightDebug
     std::uint32_t lightRays{2}; // The light's rays a light pixel, 1 to 4 (TraceLight)
     bool usesShortLightRays{true}; // They look LightRayReach metres, not without end

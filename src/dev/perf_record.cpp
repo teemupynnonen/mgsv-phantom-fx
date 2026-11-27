@@ -2,8 +2,8 @@
 
 #include "clock.hpp"
 #include "core.hpp"
-#include "dev/automation.hpp"
-#include "dev/game_lua.hpp"
+#include "devkit/commands.hpp"
+#include "devkit/game_lua.hpp"
 #include "dev/held_camera.hpp"
 #include "log.hpp"
 #include "passes/ray_tracing/shaders/gi_shared.h"
@@ -51,7 +51,8 @@ static_assert(PassNames.back() != nullptr, "A pass has no name");
 
 constexpr std::pair<std::uint32_t, const char*> CounterNames[]{{GI_COUNTER_HITS, "hits"}, {GI_COUNTER_NEAR_HITS, "nearHits"}, {GI_COUNTER_BOUNCE_HITS, "bounceHits"},
     {GI_COUNTER_VISIBILITY0, "intoCache"}, {GI_COUNTER_VISIBILITY1, "multibounce"}, {GI_COUNTER_MULTIBOUNCE_AWAY, "multibounceAway"}, {GI_COUNTER_LIGHTS, "cacheHitsLit"},
-    {GI_COUNTER_COPIES, "copiesSkipped"}, {GI_COUNTER_UPDATE_TILES, "cacheTiles"}, {GI_COUNTER_FOLIAGE, "foliagePixels"}};
+    {GI_COUNTER_COPIES, "copiesSkipped"}, {GI_COUNTER_UPDATE_TILES, "cacheTiles"}, {GI_COUNTER_FOLIAGE, "foliagePixels"},
+    {GI_COUNTER_CACHED_HITS, "firstHitsFromCache"}};
 
 // What frames cost, added up.
 struct Tally
@@ -216,7 +217,7 @@ std::string timeOfDay()
 bool writeLine(const Json& line)
 {
     static bool wasFailing{};
-    if (!file.is_open()) file.open(folder / (automation::timeNow() + ".jsonl"), std::ios::app);
+    if (!file.is_open()) file.open(folder / (devkit::commands::timeNow() + ".jsonl"), std::ios::app);
 
     file << line.dump() << '\n';
     file.flush();
@@ -343,7 +344,7 @@ void onFrameStart() noexcept
 
         readAt = now;
         Place read;
-        if (const auto outcome = game_lua::run(game_lua::StateScript, "=perf"); outcome && outcome->ran)
+        if (const auto outcome = devkit::game_lua::run(devkit::game_lua::StateScript, "=perf"); outcome && outcome->ran)
         {
             std::istringstream lines(outcome->text);
             for (std::string line; std::getline(lines, line);)

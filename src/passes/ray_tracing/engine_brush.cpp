@@ -45,7 +45,9 @@ constexpr std::size_t BrushName = 0x48, PluginCount = 0x130, PluginLinks = 0x138
 constexpr std::uint32_t MaxPlugins = 256;
 // The plugins that draw a model (ObjectBrushPluginClone, TppObjectBrushPluginBush,
 // TppObjectBrushPluginFlutteringGrass): its resource at +0x90, its scale range at +0xA8 and +0xAC.
+// The bush's and the fluttering grass are the plugins the game sways in the wind; the clone's props stand.
 constexpr std::uintptr_t PluginVtables[]{0x2166630, 0x21A63F0, 0x21AD270};
+constexpr std::size_t PluginKinds = std::size(PluginVtables);
 constexpr std::size_t PluginModel = 0x90, PluginScale = 0xA8;
 // A block: its brush's name at +0xA0, its placements at +0x98, its id at +0xB8 (the low 16 bits: row x
 // 64 + column of the brush's grid). The placements start with their groups' range (begin, end), the
@@ -73,11 +75,13 @@ std::uintptr_t imageBase{};
 std::mutex liveMutex;
 std::unordered_set<std::uintptr_t> brushes, blocks;
 
-// A brush's plugin that draws a model, by plugin index: its model resource and scale range.
+// A brush's plugin that draws a model, by plugin index: its model resource, its scale range and its
+// kind (its place in PluginVtables).
 struct Plugin
 {
     std::uintptr_t resource{};
     float scaleMin{}, scaleRange{};
+    std::uint8_t kind{};
 };
 
 // A block's placements as read when first seen, a group a plugin. By block, on the snapshot's thread.
@@ -85,11 +89,16 @@ struct Group
 {
     std::uintptr_t resource{};
     std::vector<scene_description::Transform> transforms;
+    std::vector<std::uint8_t> scales; // Each placement's scale byte, which the game also reads as its wind phase
+    std::uint8_t kind{};
 };
 std::unordered_map<std::uintptr_t, std::vector<Group>> readBlocks;
 
 // Diagnostics.
 std::atomic<std::uint32_t> lastBrushes{}, lastBlocks{}, lastPlacements{}, unknownPlacements{};
+std::array<std::atomic<std::uint32_t>, PluginKinds> lastKinds{};
+constexpr const char* PluginNames[]{"clone", "bush", "grass"};
+static_assert(std::size(PluginNames) == PluginKinds);
 
 template<std::size_t Index>
 std::uintptr_t detour(std::uintptr_t self, std::uintptr_t argument)
@@ -146,11 +155,13 @@ std::vector<Plugin> pluginsOf(std::uintptr_t brush)
     for (std::uint32_t i = 0; i < *count; ++i)
     {
         const auto plugin = linkArray[i] ? read<std::uintptr_t>(linkArray[i] + LinkPlugin) : std::nullopt;
-        if (!plugin || std::none_of(std::begin(PluginVtables), std::end(PluginVtables), [&](auto vtable) { return isA(*plugin, imageBase + vtable); })) continue;
+        const auto kind = plugin ? std::find_if(std::begin(PluginVtables), std::end(PluginVtables), [&](auto vtable) { return isA(*plugin, imageBase + vtable); })
+                                 : std::end(PluginVtables);
+        if (kind == std::end(PluginVtables)) continue;
 
         const auto resource = read<std::uintptr_t>(*plugin + PluginModel);
         const auto scale = read<std::array<float, 2>>(*plugin + PluginScale);
-        if (resource && scale) plugins[i] = {*resource, (*scale)[0], (*scale)[1] - (*scale)[0]};
+        if (resource && scale) plugins[i] = {*resource, (*scale)[0], (*scale)[1] - (*scale)[0], static_cast<std::uint8_t>(kind - std::begin(PluginVtables))};
     }
 
     return plugins;
@@ -213,7 +224,9 @@ std::vector<Group> readBlock(std::uintptr_t block, const NamedPlugins& named)
             const auto& plugin = plugins[pluginIndex];
             const float scale = plugin.scaleMin + plugin.scaleRange * (static_cast<float>(scaleByte) / 255.0f);
             made.resource = plugin.resource;
+            made.kind = plugin.kind;
             made.transforms.push_back(transformOf(centreX + x16 / UnitsPerMetre, y, centreZ + z16 / UnitsPerMetre, rotation, scale));
+            made.scales.push_back(scaleByte);
         }
 
         if (!made.transforms.empty()) groups.push_back(std::move(made));
@@ -242,7 +255,8 @@ std::string hook(std::uintptr_t base) noexcept
     return " The object brush's constructors are hooked: the scene takes its vegetation.";
 }
 
-void collect(const std::function<void(std::uintptr_t resource, std::span<const scene_description::Transform> transforms)>& place)
+void collect(const std::function<void(std::uintptr_t resource, std::span<const scene_description::Transform> transforms,
+    std::span<const std::uint8_t> scales, std::uint8_t plugin)>& place)
 {
     std::vector<std::uintptr_t> liveBrushes, liveBlocks;
     {
@@ -256,6 +270,7 @@ void collect(const std::function<void(std::uintptr_t resource, std::span<const s
     NamedPlugins named;
     bool namedRead{};
     std::uint32_t placements{};
+    std::array<std::uint32_t, PluginKinds> kinds{};
     for (const auto block : liveBlocks)
     {
         auto found = readBlocks.find(block);
@@ -279,19 +294,23 @@ void collect(const std::function<void(std::uintptr_t resource, std::span<const s
 
         for (const auto& group : found->second)
         {
-            place(group.resource, group.transforms);
+            place(group.resource, group.transforms, group.scales, group.kind);
             placements += static_cast<std::uint32_t>(group.transforms.size());
+            kinds[group.kind] += static_cast<std::uint32_t>(group.transforms.size());
         }
     }
 
     lastBrushes = static_cast<std::uint32_t>(liveBrushes.size());
     lastBlocks = static_cast<std::uint32_t>(liveBlocks.size());
     lastPlacements = placements;
+    for (std::size_t i = 0; i < PluginKinds; ++i) lastKinds[i] = kinds[i];
 }
 
 std::string status()
 {
+    std::string kinds;
+    for (std::size_t i = 0; i < PluginKinds; ++i) kinds += (i ? ", " : "") + std::string(PluginNames[i]) + " " + std::to_string(lastKinds[i].load());
     return "the object brush: " + std::to_string(lastPlacements.load()) + " placements in " + std::to_string(lastBlocks.load()) + " blocks of "
-        + std::to_string(lastBrushes.load()) + " brushes (" + std::to_string(unknownPlacements.load()) + " of plugins that draw no model left out)";
+        + std::to_string(lastBrushes.load()) + " brushes (" + kinds + "; " + std::to_string(unknownPlacements.load()) + " of plugins that draw no model left out)";
 }
 }

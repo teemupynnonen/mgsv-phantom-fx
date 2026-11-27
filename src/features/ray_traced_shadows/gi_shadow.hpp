@@ -29,6 +29,9 @@ public:
     // The rays, then the denoiser's passes, into the output; the rays alone `forReconstruction`. Needs the
     // frame's scene built.
     void record(gi_d3d12::Recorder& recorder, bool forReconstruction);
+    // The rays alone, for Ray Reconstruction, without their timing or the barrier after them, to run alongside the
+    // light's rays (gi_light::Light::record).
+    void dispatchRaysForReconstruction(gi_d3d12::Recorder& recorder);
 
 private:
     UINT renderWidth, renderHeight;

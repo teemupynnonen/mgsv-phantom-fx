@@ -1,80 +1,168 @@
 #include "dev/dev.hpp"
 
 #include "core.hpp"
-#include "dev/automation.hpp"
-#include "dev/cutscenes.hpp"
-#include "dev/game_lua.hpp"
+#include "device_check.hpp"
+#include "dev/devkit_link.hpp"
 #include "dev/perf_record.hpp"
 #include "dev/remaster/tool.hpp"
-#include "dev/travel.hpp"
+#include "devkit/cutscenes.hpp"
+#include "devkit/game.hpp"
+#include "devkit/game_lua.hpp"
+#include "devkit/host.hpp"
+#include "devkit/log.hpp"
+#include "devkit/travel.hpp"
 #include "features/photo_mode/photo_mode.hpp"
 #include "fxui/fxui.hpp"
 #include "log.hpp"
+#include "performance.hpp"
 
-#include <algorithm>
-#include <array>
+#include <Windows.h>
+#include <cstdint>
 #include <format>
-#include <optional>
 #include <string>
+#include <string_view>
+
+// The devkit's game layer: the build check the add-on makes.
+namespace devkit::game
+{
+bool isSupportedBuild() noexcept
+{
+    return phantom_fx::isSupportedGameBuild();
+}
+}
 
 namespace phantom_fx::dev
 {
 namespace
 {
-using fxui::State;
 using fxui::Tone;
 
-// A tool that runs Lua has nothing to run on a game version without it.
-fxui::ItemSpec luaTool(fxui::ItemSpec spec)
+fxui::Tone toneOf(devkit::Tone tone)
 {
-    if (game_lua::isSupported()) return spec;
+    switch (tone)
+    {
+    case devkit::Tone::Dim: return fxui::Tone::Dim;
+    case devkit::Tone::Ok: return fxui::Tone::Ok;
+    case devkit::Tone::Warn: return fxui::Tone::Warn;
+    case devkit::Tone::Bad: return fxui::Tone::Bad;
+    }
 
-    spec.state = State::Unavailable;
-    spec.message = "Unavailable for this game version.";
-
-    return spec;
+    return fxui::Tone::Dim;
 }
 
-// Free roam in another of the game's maps.
-void drawTravel()
+// What the light's rays cost, part by part: each part left out for a few seconds, after a few seconds with everything as
+// it was, and the GPU's cost averaged over what is left after the settling. Run from the Light cache item, so it needs
+// the Developer page open.
+struct LightAblation
 {
-    const fxui::Item item(luaTool({.id = "travel",
-        .name = "Travel",
-        .summary = "Free roam in another map, after one loading screen.",
-        .keywords = "teleport map location Afghanistan Africa Mother Base free roam"}));
-    if (!item || !game_lua::isSupported()) return;
+    static constexpr int Variants = 3, Phases = Variants * 2, PhaseMs = 6000, SettleMs = 2000;
+    static constexpr const char* Names[Variants]{"the light cache", "the bounce rays", "the hits' own light"};
+    bool running{};
+    int phase{};
+    std::uint64_t phaseStart{};
+    Diagnostics base;
+    double baseFrame{}, baseRays{}, baseCount{};
+    double frame[Variants]{}, rays[Variants]{}, count[Variants]{};
+    std::string result;
+};
 
-    std::array<fxui::Option, static_cast<std::size_t>(travel::Map::Count)> maps{};
-    for (std::size_t i = 0; i < maps.size(); ++i) maps[i].label = travel::name(static_cast<travel::Map>(i));
-    const int pressed = fxui::segmented("Go to", -1, maps,
-        "Leaves free roam as the helicopter would and arrives on foot: in Afghanistan and Africa where the game puts a player found off the map, "
-        "at Mother Base on the Command platform. The game saves on the way, as it does when leaving free roam.");
-    if (pressed >= 0) travel::go(static_cast<travel::Map>(pressed));
+LightAblation ablation;
+
+// The settings of phase `phase`: the variant that phase tests left out, everything else as it was.
+Diagnostics ablatedSettings(int phase)
+{
+    auto settings = ablation.base;
+    const int variant = phase / 2;
+    if (phase % 2 == 1)
+    {
+        if (variant == 0) settings.lightCacheReach = 0;
+        if (variant == 1) settings.lightBounces = false;
+        if (variant == 2) settings.lightHitLight = false;
+    }
+    return settings;
 }
 
-// Any of the game's cutscenes, in its own mission.
-void drawCutscenes()
+void drawLightCache()
 {
-    const fxui::Item item(luaTool({.id = "cutscenes",
-        .name = "Cutscenes",
-        .summary = "Plays any cutscene the game's scripts name, after one loading screen.",
-        .keywords = "demo movie story mission play watch scene"}));
-    if (!item || !game_lua::isSupported()) return;
+    const fxui::Item item({.id = "lightCache", .name = "Light cache", .summary = "How distant a hit reads the light cache, how fast its cells follow a change, and what the light's rays cost.",
+        .keywords = "cache lag light global illumination distance samples compare cost bounce"});
+    if (!item) return;
 
-    static std::optional<std::size_t> selected;
-    const auto labels = cutscenes::labels();
-    const char* const preview = selected ? labels[*selected].data() : "Pick a cutscene";
-    if (const auto picked = fxui::searchCombo("Cutscene", preview, labels, selected)) selected = picked;
+    performance::watch();
+    auto options = core::currentDiagnostics();
+    bool changed = false;
+    changed |= fxui::slider("Hits from the cache past (cells)", options.lightCacheReach,
+        {.min = 0.0f, .max = 32.0f, .standard = 4.0f, .format = "%.0f",
+            .tip = "A light ray's first hit this many of its own cells away or further takes its light from the cache, about four rays "
+                   "fewer. Fewer cells: more hits, more cost saved, more blur and lag. 0 turns it off."});
+    changed |= fxui::slider("Cache samples a cell", options.hashMaxSamples,
+        {.min = 1.0f, .max = 32.0f, .standard = 16.0f, .format = "%.0f",
+            .tip = "Cells average over this many samples: fewer follow a light's change sooner, with more noise."});
+    if (changed && !ablation.running) core::applyDiagnostics(options);
 
-    if (fxui::button("Play",
-            "From free roam or the ACC. A story cutscene loads its mission and ends in the ACC, with no mission clear; a Mother Base one ends in free "
-            "roam there. The game saves on the way, as it does when leaving free roam. The story stays where it is, unless the game plays another "
-            "Mother Base cutscene in its place, which a toast says. Cutscenes start in the mission's own time and weather, not always the ones they "
-            "have in the story.",
-            selected.has_value()))
-        cutscenes::play(*selected);
+    const auto costs = performance::status().costs;
+    const auto rays = costs.passes[static_cast<std::size_t>(performance::Pass::GiRays)];
+    fxui::note(Tone::Dim, std::format("Now: GPU frame {:.2f} ms, the global illumination's rays {:.2f} ms.", costs.gpuFrame, rays));
+
+    if (!ablation.running)
+    {
+        if (fxui::button("Compare what the rays cost (36 s)",
+                "Times the rays with everything on, then with the light cache off, their bounce rays out, and the hits' own light out, six "
+                "seconds each. Stand still, in the light you want to judge."))
+        {
+            ablation = {};
+            ablation.running = true;
+            ablation.base = options;
+            ablation.phaseStart = GetTickCount64();
+            core::applyDiagnostics(ablatedSettings(0));
+        }
+    }
+    else
+    {
+        const auto now = GetTickCount64();
+        const int variant = ablation.phase / 2;
+        if (now - ablation.phaseStart >= LightAblation::SettleMs)
+        {
+            if (ablation.phase % 2 == 1)
+            {
+                ablation.frame[variant] += costs.gpuFrame;
+                ablation.rays[variant] += rays;
+                ablation.count[variant] += 1;
+            }
+            else
+            {
+                ablation.baseFrame += costs.gpuFrame;
+                ablation.baseRays += rays;
+                ablation.baseCount += 1;
+            }
+        }
+        fxui::note(Tone::Warn, std::format("Comparing: step {} of {}, {}{}. Stay on this page and keep still.", ablation.phase + 1,
+            LightAblation::Phases, ablation.phase % 2 ? "without " : "with ", ablation.phase % 2 ? LightAblation::Names[variant] : "everything"));
+        if (now - ablation.phaseStart >= LightAblation::PhaseMs)
+        {
+            ablation.phase += 1;
+            ablation.phaseStart = now;
+            const bool done = ablation.phase >= LightAblation::Phases;
+            core::applyDiagnostics(done ? ablation.base : ablatedSettings(ablation.phase));
+            if (done)
+            {
+                ablation.running = false;
+                const auto mean = [](double sum, double count) { return count > 0 ? sum / count : 0.0; };
+                const double baseFrame = mean(ablation.baseFrame, ablation.baseCount), baseRays = mean(ablation.baseRays, ablation.baseCount);
+                std::string text = std::format("Everything on: GPU frame {:.2f} ms, rays {:.2f} ms.", baseFrame, baseRays);
+                for (int i = 0; i < LightAblation::Variants; ++i)
+                {
+                    const double frame = mean(ablation.frame[i], ablation.count[i]), withoutRays = mean(ablation.rays[i], ablation.count[i]);
+                    text += std::format("  Without {}: {:.2f} and {:.2f} ms, so it costs {:.2f} of the frame and {:.2f} of the rays.",
+                        LightAblation::Names[i], frame, withoutRays, baseFrame - frame, baseRays - withoutRays);
+                }
+                ablation.result = text;
+                log(text);
+            }
+        }
+    }
+    if (!ablation.result.empty()) fxui::note(Tone::Ok, ablation.result);
 }
-
 // What frames cost, on file.
 void drawCostRecording()
 {
@@ -84,65 +172,36 @@ void drawCostRecording()
 
     bool isOn = perf_record::isRecording();
     if (fxui::checkbox("Record the costs", isOn,
-            "Writes every pass, the rays, the lights, the map and the clock to PhantomFX-automation/perf once a second, until turned off, across starts. "
+            "Writes every pass, the rays, the lights, the map and the clock to DevKit/perf once a second, until turned off, across starts. "
             "tools/automation/perf.py log reads it. Debug cases keep their own costs either way."))
         perf_record::setRecording(isOn);
 }
 
-// Lua typed here runs in the game's own script state.
-void drawLuaConsole()
-{
-    const fxui::Item item(luaTool({.id = "luaConsole",
-        .name = "Lua console",
-        .summary = "Runs Lua in the game's own scripts at the next frame: an expression shows its value, print() its lines.",
-        .keywords = "script execute run code vars gvars mvars svars TppMission"}));
-    if (!item || !game_lua::isSupported()) return;
-
-    static std::array<char, 16 * 1024> code{};
-    const bool submitted = fxui::textBox("##luaCode", code, 8);
-    const auto console = game_lua::console();
-    if (fxui::button("Run", "Ctrl+Enter in the box runs it too. It runs on the game thread at the next frame start, as the game's own scripts do.",
-            !console.waiting)
-        || submitted)
-        game_lua::submit(code.data());
-    if (!console.last) return;
-
-    fxui::gap(6);
-    const auto& last = *console.last;
-    fxui::note(last.ran ? Tone::Ok : Tone::Bad, std::format("Run {}: {}", console.runs, last.ran ? "done" : "error"));
-    if (last.text.empty()) return;
-
-    std::string output = last.text;
-    const auto lines = static_cast<float>(std::ranges::count(output, '\n') + 1);
-    fxui::textBox("##luaOutput", {output.data(), output.size() + 1}, std::clamp(lines, 1.0f, 12.0f), true);
-}
 }
 
 void install(const std::filesystem::path& addonDirectory) noexcept
 {
-    automation::install(addonDirectory);
-    perf_record::install(addonDirectory / "PhantomFX-automation" / "perf");
+    devkit::setName("PhantomFX");
+    devkit::setToast([](devkit::Tone tone, std::string_view text, std::string_view detail) { fxui::toast(toneOf(tone), text, detail); });
+    devkit::setLogger(&log);
+    perf_record::install(addonDirectory / "DevKit" / "perf");
+    devkit_link::install();
 }
 
 /** The game thread, at the main loop's frame start: each tool that runs there, in order. */
 void onFrameStart() noexcept
 {
-    travel::onFrameStart();
-    cutscenes::onFrameStart();
-    game_lua::onFrameStart();
-    automation::onFrameStart();
+    devkit::travel::onFrameStart();
+    devkit::cutscenes::onFrameStart();
+    devkit::game_lua::onFrameStart();
+    devkit_link::onFrameStart();
     perf_record::onFrameStart();
     photo_mode::onFrameStart();
 }
 
-void onPresent(ID3D11DeviceContext* context, ID3D11Resource* backBuffer) noexcept
+std::filesystem::path recordingDirectory() noexcept
 {
-    automation::onPresent(context, backBuffer);
-}
-
-void onCaseKey() noexcept
-{
-    automation::caseKey();
+    return devkit_link::recordingDirectory();
 }
 
 void drawPage()
@@ -150,12 +209,14 @@ void drawPage()
     const fxui::Page page(Section::Developer);
     if (!page) return;
 
-    drawTravel();
-    drawCutscenes();
-    drawCostRecording();
-    drawLuaConsole();
-    remaster::drawTool();
-    if constexpr (DiagnosticLog)
+    if constexpr (ToolsOnly) fxui::note(Tone::Dim, "The tools build: PhantomFX's own changes to the frame are off; its tools here read what of it runs.");
+    else
+    {
+        drawCostRecording();
+        remaster::drawTool();
+        drawLightCache();
+    }
+    if constexpr (DiagnosticLog && !ToolsOnly)
     {
         auto options = core::currentDiagnostics();
         const fxui::Item item({.id = "globalIlluminationLog", .name = "Global illumination log", .keywords = "log often light fade"});

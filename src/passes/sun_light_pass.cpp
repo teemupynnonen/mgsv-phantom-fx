@@ -24,6 +24,8 @@
 
 namespace phantom_fx::sun_light_pass
 {
+using fxcore::FrameLatch;
+
 namespace
 {
 using Microsoft::WRL::ComPtr;

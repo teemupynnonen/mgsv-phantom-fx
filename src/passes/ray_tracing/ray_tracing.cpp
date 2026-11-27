@@ -52,6 +52,7 @@
 
 namespace phantom_fx::ray_tracing
 {
+using fxcore::FrameLatch;
 namespace
 {
 using Microsoft::WRL::ComPtr;
@@ -68,9 +69,13 @@ struct Options
     float sunSize{0.53f}; // The sun's angular diameter for the shadows and the light's hits, in degrees
     int lightPixelRays{2}; // The light's rays a light pixel (a 2 x 2 of render pixels): 1, 2 or 4
     bool usesShortLightRays{true}; // The light's rays look LightRayReach metres (gi_renderer.cpp), not without end
+    float lightCacheReach{4}; // Diagnostics: from how far a light ray's first hit takes its light from the cache, in cells (0: never)
+    float hashMaxSamples{16};  // Diagnostics: the cache's samples a cell averages over
+    unsigned lightAblation{};  // Diagnostics: what the light's rays leave out, to time the rest (gi_light.hlsl)
     bool debugShadows{}; // Diagnostics: the shadow debug view and probe (shadowDebug, shadowProbe), with the shadows
     bool shadowStarts{}; // Diagnostics: the debug view shows where the shadow rays leave each pixel
     bool twoSidedShadows{}; // Diagnostics: every surface blocks rays towards lights from both sides, as until 2026-10-26
+    bool mainViewCastsSun{}; // Diagnostics: a model's main-view-only meshes block the sun where it has a sun stand-in (GI_GEOMETRY_STOOD_IN)
     gi_renderer::LightDebugView lightDebugView{}; // Diagnostics: over the image (lightDebug)
 
     bool logOften{};   // Diagnostics: the light's statistics logged every few frames (as each readback returns), not every ten seconds
@@ -781,6 +786,7 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         textures.surfaceDepth = surfaces.depth;
         textures.surfaceNormal = surfaces.normal;
         textures.surfaceReflection = surfaces.reflection;
+        textures.forwardShadow = surfaces.forwardShadow;
     }
 
     frame.width = depthOut.width;
@@ -840,9 +846,13 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     frame.debugShadows = shadowDebug != nullptr;
     frame.shadowStarts = options.shadowStarts;
     frame.twoSidedShadows = options.twoSidedShadows;
+    frame.mainViewCastsSun = options.mainViewCastsSun;
     frame.lightDebugView = options.lightDebugView;
     frame.lightRays = static_cast<std::uint32_t>(std::clamp(options.lightPixelRays, 1, 4));
     frame.usesShortLightRays = options.usesShortLightRays;
+    frame.lightCacheReach = options.lightCacheReach;
+    frame.hashMaxSamples = options.hashMaxSamples;
+    frame.lightAblation = options.lightAblation;
     // The lights' colours in the sun's units for the hits (gi_light.hlsl, LocalLightAt).
     for (auto& localLight : localLightsToTrace)
         for (auto& value : localLight.color) value *= LightScale;
@@ -961,9 +971,13 @@ void configure(const Configuration& configuration) noexcept
         .sunSize = settings.sun.diameterDegrees,
         .lightPixelRays = settings.globalIllumination.raysPerLightPixel,
         .usesShortLightRays = settings.globalIllumination.usesShortRays,
+        .lightCacheReach = diagnostics.lightCacheReach,
+        .hashMaxSamples = diagnostics.hashMaxSamples,
+        .lightAblation = (diagnostics.lightBounces ? 0u : 1u) | (diagnostics.lightHitLight ? 0u : 2u),
         .debugShadows = diagnostics.debugView == DebugView::ShadowRays || diagnostics.debugView == DebugView::ShadowStarts,
         .shadowStarts = diagnostics.debugView == DebugView::ShadowStarts,
         .twoSidedShadows = diagnostics.twoSidedShadows,
+        .mainViewCastsSun = diagnostics.mainViewCastsSun,
         .lightDebugView = diagnostics.debugView == DebugView::LightHistory      ? gi_renderer::LightDebugView::History
                           : diagnostics.debugView == DebugView::LightValidation ? gi_renderer::LightDebugView::Validation
                                                                                 : gi_renderer::LightDebugView::None,

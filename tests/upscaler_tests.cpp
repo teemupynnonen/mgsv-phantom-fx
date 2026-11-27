@@ -35,6 +35,7 @@ namespace
 {
 namespace fs = std::filesystem;
 using namespace phantom_fx;
+using fxcore::FrameLatch;
 using namespace phantom_fx::upscaler;
 
 void expect(bool condition, const char* message)
@@ -106,9 +107,7 @@ void settingsPersist(const fs::path& root)
     write(path, "sharpness=7\n");
     expect(loadSettings(path).upscaling.sharpness == 1, "Sharpening is clamped.");
     write(path, "custom_scale=0.1\nmip_bias_offset=-5\n");
-    const auto clamped = loadSettings(path).upscaling;
-    expect(clamped.customRenderScale == Upscaling::MinRenderScale && clamped.textureBiasOffset == Upscaling::MinTextureBiasOffset,
-        "The custom scale and the texture bias offset are clamped.");
+    expect(loadSettings(path).upscaling.customRenderScale == Upscaling::MinRenderScale, "The custom scale is clamped, and the retired texture bias key is ignored.");
     write(path, "ambient_occlusion=gtvbao\nocclusion_radius=10\nocclusion_strength=-1\n");
     const auto occlusion = loadSettings(path).ambientOcclusion;
     expect(!occlusion.on && occlusion.radiusMetres == 4 && occlusion.strength == 0,
@@ -124,13 +123,13 @@ void settingsPersist(const fs::path& root)
     expect(!light.on && light.radiusMetres == 0.25f && light.strength == 3,
         "An invalid toggle leaves SSILVB off, and its radius and strength are clamped.");
 
-    const Settings upscaling{.upscaling = {.mode = Mode::Custom, .dlssPreset = Preset::K, .sharpness = 0.25f, .customRenderScale = 0.75f, .textureBiasOffset = -0.5f}};
+    const Settings upscaling{.upscaling = {.mode = Mode::Custom, .dlssPreset = Preset::K, .sharpness = 0.25f, .customRenderScale = 0.75f}};
     saveSettings(path, upscaling);
-    expect(loadSettings(path) == upscaling, "Restart restores an upscaling mode with its custom scale and texture bias offset.");
+    expect(loadSettings(path) == upscaling, "Restart restores an upscaling mode with its custom scale.");
 
     for (const auto& invalid : {Settings{.upscaling = {.upscaler = Upscaler::Count}}, Settings{.upscaling = {.mode = Mode::Count}},
              Settings{.upscaling = {.dlssPreset = static_cast<Preset>(7)}}, Settings{.upscaling = {.sharpness = std::numeric_limits<float>::quiet_NaN()}},
-             Settings{.upscaling = {.sharpness = 2}}, Settings{.upscaling = {.customRenderScale = 2}}, Settings{.upscaling = {.textureBiasOffset = 3}},
+             Settings{.upscaling = {.sharpness = 2}}, Settings{.upscaling = {.customRenderScale = 2}},
              Settings{.frameGeneration = {.mode = FrameGenerationMode::Count}}, Settings{.sun = {.diameterDegrees = 0}},
              Settings{.globalIllumination = {.raysPerLightPixel = 3}}, Settings{.ambientOcclusion = {.radiusMetres = 0}},
              Settings{.ambientOcclusion = {.strength = 4}}, Settings{.indirectLight = {.radiusMetres = 5}}, Settings{.indirectLight = {.strength = -1}}})
@@ -625,10 +624,10 @@ void modeMaths()
             && nominalScale(Dlss, Mode::Custom, std::numeric_limits<float>::quiet_NaN()) == Upscaling{}.customRenderScale,
         "Custom uses its scale within the supported range.");
 
-    expect(mipBias(1, 0) == 0 && close(mipBias(0.5f, 0), -1) && close(mipBias(2.0f / 3, 0), std::log2(2.0 / 3)),
-        "The texture LOD bias is log2(render / output).");
-    expect(close(mipBias(0.5f, 0.25f), -0.75) && close(mipBias(0.5f, -9), -1 + Upscaling::MinTextureBiasOffset) && mipBias(0, 0) == 0,
-        "The offset is added within its range, and invalid scales give no bias.");
+    expect(close(mipBias(0.5f), -2) && close(mipBias(1.0f / 3), std::log2(1.0 / 3) - 1) && close(mipBias(2.0f / 3), std::log2(2.0 / 3) - 1),
+        "The texture LOD bias is log2(render / output) - 1.");
+    expect(mipBias(1) == 0 && mipBias(2) == 0 && mipBias(0) == 0 && mipBias(std::numeric_limits<float>::quiet_NaN()) == 0,
+        "Rendering at the output size, or an invalid scale, gives no bias.");
 
     expect(multiplier(FrameGenerationMode::Off) == 0 && multiplier(FrameGenerationMode::X2) == 2 && multiplier(FrameGenerationMode::X6) == 6
             && multiplier(FrameGenerationMode::Dynamic) == 0 && multiplier(FrameGenerationMode::Fsr) == 0,
@@ -686,8 +685,7 @@ void planKeptForOtherSettings()
     auto other = wanted;
     other.dlssPreset = Preset::K;
     other.sharpness = 1;
-    other.textureBiasOffset = -1;
-    expect(plan.isFor(other, Output), "The preset, sharpening and the texture bias keep the plan.");
+    expect(plan.isFor(other, Output), "The preset and sharpening keep the plan.");
 
     auto fsr = wanted, quality = wanted, scaled = wanted;
     fsr.upscaler = Upscaler::Fsr;

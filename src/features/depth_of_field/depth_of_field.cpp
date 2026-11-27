@@ -13,6 +13,7 @@
 
 namespace phantom_fx::depth_of_field
 {
+using fxcore::FrameLatch;
 namespace
 {
 using game_shaders::GamePass;

@@ -16,6 +16,8 @@
 
 namespace phantom_fx::contact_shadow_trace
 {
+using fxcore::FrameLatch;
+
 namespace
 {
 using Microsoft::WRL::ComPtr;

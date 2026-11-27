@@ -900,6 +900,15 @@ void drawGradedScene(ID3D11DeviceContext* context, ID3D11RenderTargetView* scene
     drawStretch(context, *stretch, stretch->pixel.Get(), {output.view.Get()}, scene);
 }
 
+// For ui_redirect::draw2D.
+std::array<float, 2> recordingJitter() noexcept
+{
+    std::lock_guard lock(recordMutex);
+    const auto& frame = frames.current();
+
+    return frame.isJittered ? frame.jitter : std::array<float, 2>{};
+}
+
 std::uint64_t currentRecordingFrame()
 {
     std::lock_guard lock(recordMutex);
@@ -1499,7 +1508,7 @@ void updatePlan()
     {
         plan.reset();
         jitterPhases = std::max(camera::jitterPhases(1.0f), leastPhases);
-        targetMipBias = replacing ? mipBias(1.0f, wanted.textureBiasOffset) : 0.0f;
+        targetMipBias = 0.0f;
         render_scale::request({}, {});
         return;
     }
@@ -1522,7 +1531,7 @@ void updatePlan()
 
     const float scale = static_cast<float>(plan->render.width) / static_cast<float>(plan->output.width);
     jitterPhases = std::max(camera::jitterPhases(scale), leastPhases);
-    targetMipBias = mipBias(scale, wanted.textureBiasOffset);
+    targetMipBias = mipBias(scale);
     render_scale::request(plan->render, plan->output);
 }
 
@@ -1555,6 +1564,11 @@ ID3D11SamplerState* biasedCopy(ID3D11SamplerState* sampler, float bias)
         device->CreateSamplerState(&desc, entry.biased.GetAddressOf());
         log("Texture LOD bias " + std::to_string(bias) + " on a material sampler (filter " + hex(desc.Filter) + ", anisotropy "
             + std::to_string(desc.MaxAnisotropy) + ").");
+    }
+    else
+    {
+        log("Texture LOD bias skipped on a sampler (filter " + hex(desc.Filter) + ", address " + std::to_string(desc.AddressU) + "/" + std::to_string(desc.AddressV)
+            + ", LOD " + std::to_string(desc.MinLOD) + "-" + std::to_string(desc.MaxLOD) + ").");
     }
 
     std::unique_lock lock(samplerMutex);
@@ -1671,9 +1685,10 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
     {
         // The UI target is used whenever the engine's targets are smaller than the output, whatever the
         // mode, so the UI and GammaControl always agree on where the frame is.
-        if (ui_redirect::drawing2D(context) && ui_redirect::draw2D(context, call))
+        if (ui_redirect::drawing2D(context) && ui_redirect::draw2D(context, call, recordingJitter))
         {
-            recordUiTargetUse(context);
+            // Without upscaling, the draw was made in place.
+            if (ui_redirect::isUpscaling()) recordUiTargetUse(context);
 
             return true;
         }

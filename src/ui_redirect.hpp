@@ -2,6 +2,7 @@
 
 #include <d3d11.h>
 #include <wrl/client.h>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -108,10 +109,14 @@ bool drawing2D(ID3D11DeviceContext* context) noexcept;
 // 2D pass's other draws, go into smaller targets.
 bool drawingIntoScene(ID3D11DeviceContext* context) noexcept;
 
+// The jitter of the frame being recorded, in render pixels (x right, y down); zero when unjittered.
+using JitterSource = std::array<float, 2> (*)() noexcept;
+
 // On a recording context. Each returns true when the call was made on the output target instead,
 // so the game's own call must be skipped.
-// A draw of the engine's 2D pass into the scene target.
-bool draw2D(ID3D11DeviceContext* context, const DrawCall& call) noexcept;
+// A draw of the engine's 2D pass into the scene target. Without upscaling, a depth-tested one is made
+// in place against the scene's depth without the jitter, and also returns true.
+bool draw2D(ID3D11DeviceContext* context, const DrawCall& call, JitterSource jitter) noexcept;
 // A clear of the scene target within the 2D pass.
 bool clearTarget(ID3D11DeviceContext* context, ID3D11RenderTargetView* view, const float color[4]) noexcept;
 // GammaControl, which reads the scene target and writes the back buffer.

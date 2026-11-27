@@ -114,12 +114,17 @@ constexpr std::uint64_t MaxGroupInstances = 4096, MaxFileBytes = 64ull << 20;
 constexpr std::uint32_t UnreadableRetries = 600;
 // New model files read a take at most; the rest wait for the next takes.
 constexpr std::uint64_t ParseBytesPerTake = 8ull << 20;
+// The game's per-clump wind phase: its placement record's scale byte, over 255, in radians.
+constexpr float ClumpPhasePerByte = 6.2831853f / 255.0f;
 
 using VisibilityTest = void (*)(std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t, std::uintptr_t,
     std::uintptr_t, std::uintptr_t, std::uintptr_t);
 std::array<VisibilityTest, 2> originals{};
 std::uintptr_t base{};
 std::atomic<bool> active{};
+// The wind the game's vegetation draws last showed (noteVegetationWind).
+std::mutex windMutex;
+VegetationWind wind;
 
 // Taking a snapshot: one job thread a frame.
 std::mutex snapshotMutex;
@@ -686,10 +691,28 @@ void snapshot()
             ++others;
     }
 
-    // The object brush's vegetation, a plugin's placements in a block at a time.
-    engine_brush::collect([&](std::uintptr_t resource, std::span<const scene_description::Transform> transforms) {
+    // The object brush's vegetation, a plugin's placements in a block at a time; the bush's and the
+    // fluttering grass's lean as the game leans them: its wave's phase, direction and top lean from the
+    // vegetation draws' material constants (gi_inputs.cpp), a scattered offset a clump, its feet held at
+    // the placement's base. The clone's props stand. Until the game drew vegetation, none sways.
+    const auto latestWind = vegetationWind();
+    engine_brush::collect([&](std::uintptr_t resource, std::span<const scene_description::Transform> transforms, std::span<const std::uint8_t> scales,
+                              std::uint8_t plugin) {
         if (const auto hash = modelResource(resource, ModelFile::Rigid, Source::ObjectBrush))
-            for (const auto& transform : transforms) instances.push_back({*hash, transform, 0});
+            for (std::size_t i = 0; i < transforms.size(); ++i)
+            {
+                if (!plugin || !latestWind.seen)
+                {
+                    instances.push_back({*hash, transforms[i], 0});
+                    continue;
+                }
+
+                // The game's own per-clump phase: the placement's scale byte as radians, plus the material's
+                // wave phase; the lean's direction and size are the material's.
+                const auto phase = latestWind.phase + static_cast<float>(scales[i]) * ClumpPhasePerByte;
+                const auto lean = latestWind.base + latestWind.amplitude * std::sin(phase);
+                instances.push_back({*hash, scene_description::leanedByWind(transforms[i], lean * latestWind.directionX, lean * latestWind.directionZ), 0});
+            }
     });
 
     // A rigid model no visibility manager holds, those it holds being placed above: the helicopter's cabin, 71%
@@ -837,6 +860,29 @@ std::string hook() noexcept
     }
 
     return "The visibility tests are hooked: the ray-traced scene takes the game's loaded models from its visibility manager." + engine_brush::hook(base);
+}
+
+void noteVegetationWind(const game_constants::VegetationMaterialConstants& material) noexcept
+{
+    // A wave shader with a phase of 0 has a still material; the frames seen draw the vegetation nearest the
+    // camera last, so the last animated draw's wind is the one the eye watches.
+    const auto length = std::hypot(material.direction[0], material.direction[2]);
+    if (!length || material.wave[0] == 0 || material.wave[1] <= 0) return;
+
+    std::lock_guard lock(windMutex);
+    wind.directionX = material.direction[0] / length;
+    wind.directionZ = material.direction[2] / length;
+    wind.base = material.direction[3];
+    wind.phase = material.wave[0];
+    wind.amplitude = material.wave[1];
+    wind.seen = true;
+}
+
+VegetationWind vegetationWind() noexcept
+{
+    std::lock_guard lock(windMutex);
+
+    return wind;
 }
 
 void setActive(bool on) noexcept
@@ -1076,6 +1122,12 @@ std::string status()
 {
     if (!snapshots.load()) return "the game's scene: no snapshot yet";
 
+    const auto vegetation = vegetationWind();
+    const auto windText = vegetation.seen
+        ? std::format("phase {:.3f}, direction ({:.2f}, {:.2f}), amplitude {:.3f}", vegetation.phase, vegetation.directionX, vegetation.directionZ,
+              vegetation.amplitude)
+        : std::string("none yet");
+
     return "the game's scene: " + std::to_string(lastInstances.load()) + " instances from " + std::to_string(lastOwners.load()) + " owners ("
         + std::to_string(lastOtherOwners.load()) + " of other kinds, " + std::to_string(lastLeftOut.load()) + " left out, "
         + std::to_string(lastHidden.load()) + " models the game hides, " + std::to_string(lastFadedOut.load()) + " faded out, "
@@ -1089,6 +1141,6 @@ std::string status()
         + std::to_string(modelsParsed.load()) + " parsed, "
         + std::to_string(parseFailures.load()) + " failed, " + std::to_string(sharedFiles.load())
         + " asked for by the object brush and another source (roles from the first); " + std::to_string(shadowlessMeshes.load())
-        + " meshes left out (no shadow or see-through, or a character's shadow stand-in); " + engine_brush::status();
+        + " meshes left out (no shadow or see-through, or a character's shadow stand-in); " + engine_brush::status() + "; vegetation wind: " + windText;
 }
 }

@@ -3,13 +3,14 @@
 // the rest of Phantom FX's features (features/, one folder each), plugged into the game's passes
 // they share (passes/). It lets the game start under ReShade (device_check.hpp), holds the settings
 // and hands every change to the modules (core.hpp), draws the settings window (menu.hpp), and has
-// an optional pipeline recorder (frame_log.hpp), the GPU costs of its passes (performance.hpp) and
+// the GPU costs of its passes (performance.hpp) and
 // weather and time control (weather.hpp) for development.
 // NGX receives ReShade's wrapped context, so other add-ons that follow DLSS evaluations see it like
 // a game's own DLSS.
 #include "character.hpp"
 #include "constant_capture.hpp"
 #include "core.hpp"
+#include "core/order.hpp"
 #include "d3d12_helpers.hpp"
 #include "dev/dev.hpp"
 #include "dev_tools.hpp"
@@ -32,9 +33,12 @@
 #include "features/upscaling/fxaa.hpp"
 #include "features/upscaling/upscaler.hpp"
 #include "features/volumetric_fog/atmosphere.hpp"
-#include "frame_log.hpp"
 #include "fxui/fxui.hpp"
+#if PHANTOM_FX_DEV_TOOLS
+#include "dev/hot_kernels.hpp"
+#endif
 #include "game_dither.hpp"
+#include "game_light_volumes.hpp"
 #include "game_loop.hpp"
 #include "game_shaders.hpp"
 #include "log.hpp"
@@ -77,6 +81,33 @@ command_list* immediateList{};
 bool overlayOpen{};
 // ReShade's runtime, which draws its effects and overlay on the back buffer in the colour space it is told.
 effect_runtime* effects{};
+
+// The draw owners in priority order, the first that takes a draw drawing it in the game's place.
+using DrawOwners = fxcore::Chain<ID3D11DeviceContext*, const ui_redirect::DrawCall&, game_shaders::DrawnShader&>;
+DrawOwners drawOwners;
+DrawOwners drawIndexedOwners;
+
+void registerDrawOwners()
+{
+    // Each takes game passes of its own (the upscaler also the 2D pass), so their order does not matter.
+    drawOwners.add(10, "atmosphere", atmosphere::draw);
+    drawOwners.add(20, "indirect light pass", indirect_light_pass::draw);
+    drawOwners.add(30, "sun light pass", sun_light_pass::draw);
+    drawOwners.add(40, "path tracing", path_tracing::draw);
+    drawOwners.add(50, "sea", sea::draw);
+    drawOwners.add(60, "hdr", hdr::draw);
+    drawOwners.add(70, "depth of field", depth_of_field::draw);
+    drawOwners.add(80, "upscaler", upscaler::draw);
+
+    // A point or spot light's draws have two; the ray-traced lights come first, so the local light
+    // pass never draws a light the rays shadow.
+    drawIndexedOwners.add(10, "local lights", local_lights::draw);
+    drawIndexedOwners.add(20, "local light pass", local_light_pass::draw);
+    drawIndexedOwners.add(30, "sea", sea::draw);
+    drawIndexedOwners.add(40, "forward water pass", forward_water_pass::draw);
+    drawIndexedOwners.add(50, "glass", glass::draw);
+    drawIndexedOwners.add(60, "upscaler", upscaler::draw);
+}
 
 ID3D11DeviceContext* native(command_list* list)
 {
@@ -262,11 +293,8 @@ bool onDraw(command_list* list, uint32_t vertices, uint32_t instances, uint32_t 
         return true;
     }
 
-    // 3. The owners. Each takes game passes of its own (the upscaler also the 2D pass), so their order
-    // does not matter.
-    const bool drawn = atmosphere::draw(context, call, shader) || indirect_light_pass::draw(context, call, shader)
-        || sun_light_pass::draw(context, call, shader) || path_tracing::draw(context, call, shader) || sea::draw(context, call, shader)
-        || hdr::draw(context, call, shader) || depth_of_field::draw(context, call, shader) || upscaler::draw(context, call, shader);
+    // 3. The owners, in priority order: the first that takes the draw draws it in the game's place.
+    const bool drawn = drawOwners.run(context, call, shader) != nullptr;
 
     // The game's sky, then again for the rays; the physical sky's own draw does the same (atmosphere.cpp).
     if (!drawn && sky_capture::isWanted())
@@ -293,10 +321,8 @@ bool onDrawIndexed(command_list* list, uint32_t indices, uint32_t instances, uin
     game_shaders::DrawnShader shader(context);
     ray_tracing::note(context, call, shader);
     sea::note(context, call, shader);
-    // The one order among the owners that matters: a point or spot light's draws have two, and the
-    // ray-traced lights come first, so the local light pass never draws a light the rays shadow.
-    if (hiddenUi(list) || local_lights::draw(context, call, shader) || local_light_pass::draw(context, call, shader) || sea::draw(context, call, shader)
-        || forward_water_pass::draw(context, call, shader) || glass::draw(context, call, shader) || upscaler::draw(context, call, shader))
+    // The one order among the owners that matters is a light's two draws (registerDrawOwners).
+    if (hiddenUi(list) || drawIndexedOwners.run(context, call, shader) != nullptr)
         return true;
 
     // The sky's dome and clouds, then again for the rays.
@@ -468,10 +494,25 @@ void onDestroyResourceView(device*, resource_view destroyed)
 bool onCreatePipeline(device* device, pipeline_layout, uint32_t count, const pipeline_subobject* subobjects)
 {
     if (device->get_api() != device_api::d3d11) return false;
+    // The tools build leaves the game's shaders as they are: no dither out, no HDR in.
+    if constexpr (ToolsOnly) return false;
 
     bool changed{};
     for (uint32_t i = 0; i < count; ++i)
     {
+        if (subobjects[i].type == pipeline_subobject_type::vertex_shader && subobjects[i].data)
+        {
+            auto* shader = static_cast<shader_desc*>(subobjects[i].data);
+            if (const auto* jittered = game_light_volumes::jittered(reinterpret_cast<ID3D11Device*>(device->get_native()), shader->code, shader->code_size))
+            {
+                shader->code = jittered->data();
+                shader->code_size = jittered->size();
+                changed = true;
+            }
+
+            continue;
+        }
+
         if (subobjects[i].type != pipeline_subobject_type::pixel_shader || !subobjects[i].data) continue;
 
         auto* shader = static_cast<shader_desc*>(subobjects[i].data);
@@ -560,12 +601,9 @@ void onDestroyCommandList(command_list* list)
 }
 
 // With frame generation the game's swap chain is the presenter's stand-in, whose Present follows.
-void onPresent(command_queue* queue, swapchain* swapChain, const rect*, const rect*, uint32_t, const rect*)
+void onPresent(command_queue* queue, swapchain*, const rect*, const rect*, uint32_t, const rect*)
 {
     if (queue->get_immediate_command_list() != immediateList) return;
-
-    if constexpr (DevTools)
-        dev::onPresent(native(queue->get_immediate_command_list()), reinterpret_cast<ID3D11Resource*>(swapChain->get_current_back_buffer().handle));
 
     const bool generating = presenter::active();
     upscaler::setFrameGeneration(generating);
@@ -614,7 +652,6 @@ void onReshadePresent(effect_runtime* runtime)
     if (runtime->is_key_pressed(VK_F4)) photo_mode::toggleBlur();
     if constexpr (DevTools)
     {
-        if (runtime->is_key_pressed(VK_F9)) dev::onCaseKey();
         // Enter teleports the player to the free camera (photo_mode.cpp); the overlay's own Enter is left alone.
         if (!overlayOpen && runtime->is_key_pressed(VK_RETURN)) photo_mode::teleport();
     }
@@ -649,7 +686,6 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshadeMo
     log(sun_movement::makeSmooth());
     if (isSupportedGameBuild() && !weather::supported()) log("The weather manager has unexpected code; the weather menu is unavailable.");
 
-    frame_log::install(directory);
     if constexpr (DevTools) dev::install(directory);
     upscaler::initialize(directory);
     core::initialize(directory, isSupportedGameBuild());
@@ -664,6 +700,8 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshadeMo
         GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN, reinterpret_cast<LPCWSTR>(&AddonInit), &pinned);
         presenter::install(directory, mode == upscaler::FrameGenerationMode::Fsr ? presenter::Route::Fsr : presenter::Route::Streamline);
     }
+
+    registerDrawOwners();
 
     reshade::register_event<reshade::addon_event::init_command_queue>(onInitCommandQueue);
     reshade::register_event<reshade::addon_event::destroy_command_queue>(onDestroyCommandQueue);
@@ -717,12 +755,15 @@ extern "C" __declspec(dllexport) void AddonUninit(HMODULE addon, HMODULE reshade
 {
     // ReShade unloads add-ons when its last device goes; the next load reports the game's device again.
     detachEffects();
+#if PHANTOM_FX_DEV_TOOLS
+    // Joined here, where the loader lock is not held: at process detach it would join under it (hot_kernels.hpp).
+    hot_kernels::stop();
+#endif
     photo_mode::leave();
     // Removes every engine hook, so the game keeps running without the add-on.
     MH_Uninitialize();
     immediateList = nullptr;
     effects = nullptr;
     reshade::unregister_overlay("Phantom FX", onOverlay);
-    frame_log::uninstall();
     reshade::unregister_addon(addon, reshadeModule);
 }

@@ -4,6 +4,7 @@ cbuffer LightPass : register(b0)
     float4 ViewToUv;
     uint4 Shadow;
     uint4 Volume; // x: 1 for 32-bit indices, y: the vertices' stride, z: where they start
+    float4 Jitter; // xy: the upscaler's jitter in NDC, which the game's volumes lack (game_light_volumes.hpp)
 };
 
 ByteAddressBuffer Drawn : register(t0);
@@ -12,6 +13,7 @@ void main(uint id : SV_VertexID, out float4 position : SV_Position, out float4 c
 {
     uint index = Volume.x ? Drawn.Load(id * 4) : (Drawn.Load((id * 2) & ~3u) >> ((id % 2) * 16)) & 0xFFFF;
     position = asfloat(Drawn.Load4(Volume.z + index * Volume.y));
+    position.xy += Jitter.xy * position.w;
     clip = position;
     sampling = float4((position.xy * float2(0.5, -0.5) + 0.5 * position.w) * ViewToUv.xy + ViewToUv.zw * position.w, position.zw);
 }

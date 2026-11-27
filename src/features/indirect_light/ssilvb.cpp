@@ -16,6 +16,7 @@
 
 namespace phantom_fx::ssilvb
 {
+using fxcore::FrameLatch;
 namespace
 {
 using Microsoft::WRL::ComPtr;

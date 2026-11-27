@@ -8,7 +8,7 @@
 struct ID3D11DeviceContext;
 struct ID3D11Resource;
 
-// Text and file forms of Direct3D 11 resources for frame_log's diagnostics.
+// Text and file forms of Direct3D 11 resources for the DevKit's frame log (devkit/frame_log.hpp).
 namespace phantom_fx
 {
 std::string formatName(DXGI_FORMAT format);

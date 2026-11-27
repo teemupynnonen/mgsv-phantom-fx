@@ -16,6 +16,11 @@ namespace phantom_fx::scene_description
 using Transform = std::array<float, 12>; // Object to world: three rows applied as dot(row, (v, 1))
 using Vertex = std::array<float, 3>;
 
+// A placement leaned by the wind: each point moves by `lean` along the ground for every metre it stands
+// above the placement's origin, so a grass clump's feet stay put and its tops swing. `lean` is the wind's
+// direction times its strength, the tangent of the lean.
+Transform leanedByWind(Transform placement, float leanX, float leanZ);
+
 // The most bones a model is posed with (Model::bones).
 constexpr std::uint32_t MaxBones = 1024;
 
@@ -40,7 +45,9 @@ enum class MeshRole : std::uint8_t
     MainViewOnly, // A rigid model's solid mesh the game never draws into its shadow maps: rays towards lights pass it
     Emissive,     // A self-lit mesh (a bulb, a sign): it gives light, takes none, and rays towards lights pass it
     ShadowOnly,   // A rigid model's stand-in for main-view cut-outs the scene drops (a tarp's): only rays towards lights meet it
-    SunShadowOnly // Any other rigid model's solid stand-in: of the rays towards lights, only the sun's meet it
+    SunShadowOnly, // Any other rigid model's solid stand-in: of the rays towards lights, only the sun's meet it
+    CutOutStandIn,  // A rigid model's cut-out stand-in (a pylon's lattice, a tree's canopy card): cut out, and only rays towards lights meet it
+    MainViewCutOut  // A rigid model's cut-out mesh the game never casts (a tree fern's fronds): cut out, and rays towards lights pass it
 };
 
 // Why the scene leaves a model out. A revealed scene (engine_scene::Reveal) takes it all the same, with
@@ -106,6 +113,8 @@ struct ModelPart
     std::uint32_t mesh{};
     std::uint32_t group{};
     MeshRole role{};
+    // A main-view-only mesh of a model with a sun stand-in (GI_GEOMETRY_STOOD_IN): a window's trim, which the stand-in leaves open.
+    bool isStoodIn{};
     std::uint64_t baseTexture{};
     bool textureIsMask{};
     std::uint64_t specularTexture{}, normalTexture{};
@@ -181,7 +190,7 @@ struct Material
 {
     std::uint32_t flags{}, texture{};
     float alphaThreshold{};
-    float texelsPerMetre{}; // Where its alpha is tested, and a pane's: the texture's texels along a metre of the mesh, on average
+    float texelsPerMetre{}; // Where its alpha is tested: the texture's texels along a metre of the mesh, on average
     std::uint32_t specularTexture{}, normalTexture{}, materialIndex{};
     std::array<float, 3> emission{};
     std::uint32_t layerTexture{}, layerMaskTexture{};

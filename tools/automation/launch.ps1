@@ -1,8 +1,9 @@
 # Starts the automation copy of the game and waits for it to close. Its display settings are its own
-# (install.ps1 writes them, src/dev/save_redirect.hpp points the game at them).
+# (install.ps1 writes them, src/devkit/save_redirect.hpp points the game at them).
 param(
-    [string]$Game = (Join-Path $env:USERPROFILE 'Documents\Development\mgsv-automation\game'),
-    [string]$Steam = 'C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP',
+    [string]$Game = $(if ($env:PHANTOM_FX_AUTOMATION_GAME) { $env:PHANTOM_FX_AUTOMATION_GAME } else { Join-Path $env:USERPROFILE 'Documents\Development\mgsv-automation\game' }),
+    # The player's game the copy is made from: PHANTOM_FX_GAME, else Steam's usual folder.
+    [string]$Steam = $(if ($env:PHANTOM_FX_GAME) { $env:PHANTOM_FX_GAME } else { 'C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP' }),
     # Off-screen by default: the game keeps rendering there (not when minimised), out of the way.
     [switch]$Visible
 )
@@ -35,18 +36,25 @@ $playerFiles = foreach ($folder in $playerFolders) {
 }
 
 $player = [Automation.Window]::GetForegroundWindow()
+# A show from the last session does not carry over: each launch starts off screen until asked.
+Remove-Item (Join-Path $Game 'DevKit\visible') -Force -ErrorAction SilentlyContinue
 $process = Start-Process (Join-Path $Game 'mgsvtpp.exe') -WorkingDirectory $Game -PassThru
 "Started the game, process $($process.Id)"
 # The game places its window as it starts, so it is moved again until it stays put. Off-screen it
 # should not take the keyboard either, so the window that had the focus gets it back.
 for ($second = 0; -not $Visible -and $second -lt 60 -and -not $process.HasExited; $second++) {
     Start-Sleep -Seconds 1
+    # show asked for the window: leave it where it is.
+    if (Test-Path (Join-Path $Game 'DevKit\visible')) { break }
     $process.Refresh()
+    # An exited process has no handle at all: skip it rather than end the script before the player's files are checked.
+    $window = $process.MainWindowHandle
+    if (-not $window -or $window -eq [System.IntPtr]::Zero) { continue }
     $rect = New-Object Automation.Window+Rect
-    if ($process.MainWindowHandle -ne 0 -and [Automation.Window]::GetWindowRect($process.MainWindowHandle, [ref]$rect) -and $rect.Left -gt -1000) {
-        [Automation.Window]::SetWindowPos($process.MainWindowHandle, [System.IntPtr]::Zero, -6000, 100, 0, 0, $NoSizeNoOrderNoActivate) | Out-Null
+    if ([Automation.Window]::GetWindowRect($window, [ref]$rect) -and $rect.Left -gt -1000) {
+        [Automation.Window]::SetWindowPos($window, [System.IntPtr]::Zero, -6000, 100, 0, 0, $NoSizeNoOrderNoActivate) | Out-Null
     }
-    if ($process.MainWindowHandle -ne 0 -and [Automation.Window]::GetForegroundWindow() -eq $process.MainWindowHandle) {
+    if ([Automation.Window]::GetForegroundWindow() -eq $window) {
         [Automation.Window]::SetForegroundWindow($player) | Out-Null
     }
 }

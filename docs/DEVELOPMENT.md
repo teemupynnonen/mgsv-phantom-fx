@@ -2,12 +2,14 @@
 
 ## Build
 
-Requires Visual Studio 2022 (or Build Tools) with the C++ workload and CMake 3.25 or later, and the
+Requires Visual Studio 2022 (or Build Tools) with the C++ workload, CMake 3.25 or later, and the
 Windows SDK, whose `fxc.exe` precompiles the Direct3D 11 shaders (configure fails without it; point
-`-DPHANTOM_FXC=<path>` at one if it is not found). The shaders are generated (the `phantom_shaders`
+`-DPHANTOM_FXC=<path>` at one if it is not found). `src/core` is a git submodule, so fetch it in a fresh
+clone or worktree, and again when a pull moves it. The shaders are generated (the `phantom_shaders`
 target) before `phantom_fx` builds. From a x64 developer prompt:
 
 ```
+git submodule update --init --recursive
 cmake --preset release
 cmake --build --preset release
 ```
@@ -17,12 +19,23 @@ ReShade 6.8.0 add-on headers with the Dear ImGui header, and the nlohmann/json 3
 and checked by SHA-256. Frame generation needs the Streamline SDK 2.14.1, which only its release archive carries:
 the first configure downloads it once (about 280 MB, checked by SHA-256) and keeps the headers,
 license and x64 runtime files. FSR needs the AMD FSR SDK 2.3.0's API headers and AMD's signed
-Direct3D 12 DLLs, pinned by commit and checked by SHA-256 like the rest (about 66 MB). The add-on is
+Direct3D 12 DLLs, pinned by commit and checked by SHA-256 like the rest (about 66 MB). It also fetches NVIDIA NRD
+v4.18.0 by commit, and the Direct3D 12 Agility SDK 1.620.1 from NuGet, checked by SHA-256. The add-on is
 written to `build/release/PhantomFX.addon64` together with `nvngx_dlss.dll`, `nvngx_dlssd.dll`, Streamline's `sl.*.dll`
-and `nvngx_dlssg.dll`, and AMD's `amd_fidelityfx_*_dx12.dll`.
+and `nvngx_dlssg.dll`, AMD's `amd_fidelityfx_*_dx12.dll`, and `PhantomFX/D3D12/D3D12Core.dll`.
 It builds with `/W4 /WX`. The version comes from `project()` in `CMakeLists.txt`: it fills the
 add-on's version resource (`src/version.rc.in`), which ReShade shows and logs, and the first line
 of `PhantomFX.log`.
+
+### The tools build
+
+The `tools` preset (`cmake --preset tools`, into `build/tools`) is for debugging **another mod's** rendering:
+the hooks and the Developer page without PhantomFX's own changes to the frame. It sets `PHANTOM_FX_TOOLS_ONLY`
+(`ToolsOnly` in `src/dev_tools.hpp`), which turns the enhancements off whatever the settings or F1 say, forces
+upscaling and frame generation off, and leaves the game's shaders unpatched (no dither out, no HDR in,
+`onCreatePipeline`). What it keeps: every hook, the frame recorder, the shader list, DevKit's page and the
+automation lines. What it loses: the tools that read PhantomFX's own passes answer that the scene is not
+running. Its Developer page says so, and `PhantomFX.log` says it when something asks for the enhancements.
 
 ### The diagnostic log
 
@@ -30,7 +43,7 @@ The `release` preset is what players get: `PhantomFX.log` holds only what happen
 the game build, sizes, what was identified, failures, and NGX's and Streamline's own messages). The
 `dev` preset (`cmake --preset dev`, `cmake --build --preset dev`, into `build/dev`) sets
 `PHANTOM_FX_DIAGNOSTIC_LOG`, which adds the statistics logged every few seconds and the work that
-only feeds them (`DiagnosticLog` in `src/log.hpp`, tested with `if constexpr`):
+only feeds them (`DiagnosticLog` in `src/core/log.hpp`, tested with `if constexpr`):
 
 - the global illumination's light, rays, largest values and cost (the output and counters copied
   back from the GPU every ten seconds), its lights and exposures, its scene, its characters' bones
@@ -46,16 +59,27 @@ only feeds them (`DiagnosticLog` in `src/log.hpp`, tested with `if constexpr`):
 - the shadow probe's findings, while its debug view shows;
 - Developer, **Log global illumination often**.
 
-Its log's first line says "with the diagnostic log". Builds for in-game checks use this preset.
-It also sets `PHANTOM_FX_DEV_TOOLS` (`DevTools` in `src/dev_tools.hpp`), which adds the overlay's
-**Developer** page, below Diagnostics: **Travel** (see "Travel"), **Cutscenes** (see "Cutscenes"),
-the **Lua console** (see "Game Lua"), a line on the remastering tool (**F6** marks, **F7** opens its panel:
-`src/remaster/README.md`) and the log switch above, and the debug cases (see "Debug cases"). All of it lives in `src/dev/`, whose README says how the core reaches it and how to detach it.
+Its log's first line says "with the diagnostic log". Builds for in-game checks use this preset. It also writes
+`build/dev/DevKit.addon64`, the separate developer add-on with travel, cutscenes and the Lua console, which runs
+beside PhantomFX on its frame start (`src/devaddon/README.md`). The preset also sets `PHANTOM_FX_DEV_TOOLS` (`DevTools` in `src/dev_tools.hpp`),
+which adds the overlay's **Developer** page, below Diagnostics: **Costs on file**, a line on the remastering tool
+(**F6** marks, **F7**
+opens its panel: `src/remaster/README.md`) and the log switch above, and the debug cases (see "Debug cases").
+Travel, cutscenes and the Lua console are the separate `DevKit.addon64`'s page (`src/devaddon/`), which the dev
+preset also builds; most of PhantomFX's own tools live in `src/dev/`, and what another MGSV add-on can use in
+`src/devkit/`; both READMEs say how the core reaches them and how to detach them.
 It is left out of a release build altogether, not just switched off: CMake drops the folder's files
 and the `InspectPixels` kernel, and the little the core keeps for it stands behind `DevTools` or
 `#if PHANTOM_FX_DEV_TOOLS`. Those files hook the system's file calls, patch Steam's interfaces and
 run what they are told, which security software rightly flags.
 `tools/automation/check_release.py` looks through a built add-on for the tools' known markers.
+
+A dev build also reloads the ray tracing's Direct3D 12 kernels as their sources are saved (`src/dev/hot_kernels.hpp`):
+a thread watches each kernel's `.hlsl` and the shared includes, compiles what changed with the build's DXC, and the
+renderer swaps in the new pipelines at the start of a frame. An edit shows in about a second (saving a shared include
+recompiles every kernel, about 2 s); what was saved after the add-on was built compiles when the game starts, and a
+renderer that starts again (ray effects switched off and on) gets every edit so far. A failed compile is logged in `PhantomFX.log` and the kernel in use stays. Only a
+kernel's body reloads: a new or moved register or binding still needs a rebuild.
 
 `cmake --install build/release --component addon --prefix <dir>` collects the add-on, its DLLs,
 player documentation and licenses for distribution. The DLLs are at the install root;
@@ -65,7 +89,7 @@ documentation and licenses are in `PhantomFX/`.
 
 The Direct3D 11 shaders are dedicated `.hlsl` files under each feature's `shaders/` directory, with the
 parts they share in `src/shaders/*.hlsli`. CMake precompiles each one with the Windows SDK's fxc at
-build time (`phantom_precompile_shader` in `cmake/phantom_shaders.cmake`) into
+build time (`phantom_precompile_shader` in `src/core/cmake/phantom_shaders.cmake`) into
 `build/<preset>/phantom_shaders/<name>.hpp`; a release build ships only that bytecode and cannot
 compile HLSL at run time. The generated `g_<name>` array is wrapped by a `Shader` (`src/d3d11_helpers.hpp`: bytecode, its size, the
 source path relative to `src/`, the profile) in the feature's `*_shaders.hpp`. That header is a shim: it
@@ -98,7 +122,7 @@ makes the helpers compile `Shader::source` from the checkout at run time (`src/s
 includes are found next to the file, then from `src/`. A shader edit then shows after a restart of the
 game, without a build. The bytecode is still precompiled by the next build, so a compile error fails
 that build either way. With it off, a release build is checked after linking
-(`phantom_forbid_runtime_compile`, `cmake/check_no_runtime_compile.ps1`): the build fails if the add-on
+(`phantom_forbid_runtime_compile`, `src/core/cmake/check_no_runtime_compile.ps1`): the build fails if the add-on
 imports any `D3DCompile*` function (`D3DReflect`, which only reads bytecode, is fine), and the script's
 `-Source` mode fails on `.cpp`, `.hpp` or `.h` files naming one outside `d3d11_helpers.hpp`,
 `shader_source.hpp` and `shader_source.cpp`.
@@ -113,10 +137,10 @@ reflections) are separate `.hlsl` files compiled by DXC into DXIL headers, as be
 ctest --test-dir build/release
 ```
 
-This runs thirteen tests that need neither the game nor a GPU (with `PHANTOM_DEV_SHADERS` a fourteenth,
-`shader_source`; the dev preset also adds the tools' `marks` test from `src/dev/tests.cmake`).
-`tests/shader_source_tests.cpp` (that fourteenth): five of the add-on's shaders, one of each kind of
-variant (glass, water, sky draw, sun light, path-traced sun), compile from the checkout through
+This runs the tests that need neither the game nor a GPU (a `PHANTOM_DEV_SHADERS` build adds
+`shader_source`, and a dev build also adds the remastering tool's `marks`).
+`tests/shader_source_tests.cpp` (with `PHANTOM_DEV_SHADERS`): five of the add-on's shaders, one of each
+kind of variant (glass, water, sky draw, sun light, path-traced sun), compile from the checkout through
 `compileShaderFile` into DXBC, so a broken path or `#include` shows up without a game.
 `tests/upscaler_tests.cpp`: settings
 (defaults, round trip, clamping, invalid files and values), the mode maths (render scales, texture LOD
@@ -138,7 +162,9 @@ traced, as today), texture copies arriving and replacing one another, a layered 
 pool, characters built, refitted and made again, the palette budget, frames without a newer list, the
 instance cap's order and the terrain rings' remaking. `tests/light_choice_tests.cpp`:
 which lights a kick gives the rays: the most pixels first, then the nearest, the light cap's edge, the
-same choice whatever order the lights come in, a
+same choice whatever order the lights come in and wherever the upscaler's jitter put each light's edges,
+two spots at one place pointing apart taken as two lights, and two spots at one place taken or left out
+together, a
 light drawn from another eye left and counted, one reaching no pixel left out; a light's reach (around
 the camera, behind it, a narrow spot's, the viewport's corner); a light as the rays take it (its range,
 its rays' radius, where its shadow map starts) and its key from two cameras. `tests/game_shaders_tests.cpp`:
@@ -165,6 +191,11 @@ the eye are, in the bins or past them, however far it reaches, and stays out of 
 `tests/kernel_table_tests.cpp`: what the build makes of the compiled kernels: each kind of binding its own type,
 what the root signature binds left out, a slot with two names, a name with two shapes and a kernel without
 bindings failing.
+`tests/settings_tests.cpp`: every described setting saved and read back, unknown keys, a missing file and invalid
+values. `tests/water_tests.cpp`: the water features' shaders compile and the caustics' web tiles.
+`tests/remaster_tests.cpp`: the rule file read, written and read back, and lamps found by their place.
+`src/dev/remaster/marks_tests.cpp` (dev builds): the marks' file and a mark's material found again.
+The core brings its own three: the frame order and latch, the settings file format and the GPU timer.
 Everything else is checked in the game.
 
 ## Package a release
@@ -180,10 +211,11 @@ This produces `build/release/PhantomFX-<version>.zip` and its `.sha256` checksum
 | Path in the ZIP | What |
 | --- | --- |
 | `PhantomFX.addon64`, `nvngx_dlss.dll`, `nvngx_dlssd.dll` | The add-on and the DLSS and Ray Reconstruction models, beside `mgsvtpp.exe` |
+| `PhantomFX/D3D12/D3D12Core.dll` | The Direct3D 12 Agility SDK runtime, for opacity micromaps |
 | `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`, `sl.reflex.dll`, `sl.pcl.dll`, `nvngx_dlssg.dll` | NVIDIA Streamline and the frame generation model |
 | `amd_fidelityfx_loader_dx12.dll`, `amd_fidelityfx_upscaler_dx12.dll`, `amd_fidelityfx_framegeneration_dx12.dll` | AMD FSR upscaling and frame generation |
 | `PhantomFX/README.md`, `CHANGELOG.md`, `LICENSE` | Player documentation and the add-on's license |
-| `PhantomFX/*-LICENSE.txt` | NVIDIA DLSS, NVIDIA Streamline, NVIDIA NRD (global illumination's denoiser), AMD FSR SDK, MinHook, ReShade, Dear ImGui, nlohmann/json (the material rules), AMD FidelityFX (RCAS), Bend Studio (screen-space shadows), three-gtvbao and Intel XeGTAO (GTVBAO), AMD Capsaicin (global illumination) |
+| `PhantomFX/*-LICENSE.txt` | NVIDIA DLSS, NVIDIA Streamline, NVIDIA NRD (global illumination's denoiser), AMD FSR SDK, MinHook, ReShade, Dear ImGui, nlohmann/json (the material rules), AMD FidelityFX (RCAS), Bend Studio (screen-space shadows), three-gtvbao and Intel XeGTAO (GTVBAO), AMD Capsaicin (global illumination), SSRT3 (SSILVB), RenoDX, Unreal Engine's sky atmosphere, Microsoft Agility SDK |
 
 CPack packages only the `addon` component, so SDK headers, static libraries, tests, debug symbols
 and local settings are left out. ReShade is installed separately by the player.
@@ -196,8 +228,22 @@ The code is laid out by what it does for the player:
   one feature stays in its folder.
 - `src/passes/`: the game's passes that several features change, and what they share there. A
   feature plugs into a pass; the pass composes the features' parts into the game's draw.
-- `src/`: the add-on itself (the core, the window, the cost measurement) and what everything shares
-  (the game's code, the camera, Direct3D helpers, the log).
+- `src/core/`: the static library every add-on links, and what more than one of them uses (see "The core").
+- `src/`: the add-on itself (the settings in force, the window, the cost measurement) and what only it uses
+  (the 2D-pass redirect, the render size, the weather).
+
+### The core
+
+`phantom_fx_core` (`src/core/`, namespace `fxcore`) is the static library an add-on links for what more than one of
+them uses: the frame's slots and draw chain (`order.hpp`), the frame latch, the log and clock, the Direct3D helpers,
+the GPU timer, the camera maths, the game's constants, shaders and lights, the constant capture and the settings file
+format. Its headers keep the names they had in `src/`, so the add-on includes `"log.hpp"` or `"game_shaders.hpp"`
+unchanged; those files keep the `phantom_fx` namespace, while the core's own code is `fxcore`.
+
+`src/core/docs/addon-core.md` (the core repository, a submodule here) is the guide for a new add-on: the target and what the core publishes, a working entry point and
+its events, the draw schedule, settings with their own file, tests, and what the core does not provide yet. The core is a
+CMake project of its own (`src/core/CMakeLists.txt`), so another add-on adds it with `add_subdirectory` and links
+`phantom_fx_core`; it fetches MinHook itself and builds alone.
 
 ### The add-on
 
@@ -232,7 +278,7 @@ what draws it, when that is the feature's own.
 | `contact_shadows/` | Settings only: one switch for the sun's and the lamps' contact shadows, and the contrast, reach, thickness and fade of their trace (`passes/contact_shadow_trace.*`) |
 | `ray_traced_shadows/` | `gi_shadow.*`: the sun's shadow rays and the FidelityFX Shadow Denoiser on Direct3D 12. `shaders/gi_shadow.hlsl`, `shaders/gi_shadow_filter.hlsl`: the rays, the denoiser's temporal pass and filters |
 | `ray_traced_lights/` | `local_lights.*`: the game's point and spot light draws kept for their stencil, their light drawn again at the sun pass's list with specular and the rays' shadow (see "Ray-traced lights"). `light_choice.*`: which lights a kick gives the rays (each light's reach, the light cap) and each light as the rays take it. `lamp_shadow_rays.*`, `shaders/light_shadows.hlsl`: the lamps' shadow rays and filter, a trace (see "What a kick traces") |
-| `global_illumination/` | `gi_light.*`, `shaders/gi_light.hlsl`: the light on Direct3D 12, its rays, the denoiser's inputs and the render size (see "Global illumination"); their hits' light and the hash grid cache in `passes/ray_tracing/shaders/gi_hit_light.hlsli`. `gi_denoiser.*`: NVIDIA NRD's RELAX denoiser without NRI. `gi_lighting.*`: the game's sky and sun in the light's terms. `light_combine.*`: the traced light in place of the game's probe light at the resolve |
+| `global_illumination/` | `river_light.*`: a river's own light under the global illumination. `gi_light.*`, `shaders/gi_light.hlsl`: the light on Direct3D 12, its rays, the denoiser's inputs and the render size (see "Global illumination"); their hits' light and the hash grid cache in `passes/ray_tracing/shaders/gi_hit_light.hlsli`. `gi_denoiser.*`: NVIDIA NRD's RELAX denoiser without NRI. `gi_lighting.*`: the game's sky and sun in the light's terms. `light_combine.*`: the traced light in place of the game's probe light at the resolve |
 | `path_tracing/` | `path_tracing.*`: path tracing on Direct3D 11: the traced reflections added at the resolve and blended as the game blends its own, the lamps' light added at the draw point, the masks' atlas (see "Path tracing"). `shaders/add_reflections.cs.hlsl`, `shaders/reflection_blend.ps.hlsl`, `shaders/add_lamp_light.ps.hlsl`, `shaders/mask_copy.cs.hlsl`, `shaders/reconstruction_guides.cs.hlsl`, `shaders/sky_to_ray_units.cs.hlsl`, `shaders/full_screen.vs.hlsl`: those draws. `forward_surfaces.*`, `glass.*`, `water.*`, `shaders/glass_surface.ps.hlsl`, `shaders/glass_surface_color.ps.hlsl`, `shaders/mirror_surface.ps.hlsl`, `shaders/water_surface.ps.hlsl` (and its variants), `shaders/surfaces_composite.ps.hlsl`, `shaders/surface_output.hlsli`: the forward surfaces, their surfaces drawn beside the game's and what they reflect added over the scene (see "Forward surfaces: rivers, liquids and glass"). `sky_capture.*`: the game's sky drawn again for the rays. `path_tracing_rays.*`: its passes on Direct3D 12. `shaders/reflections.hlsl`, `shaders/direct_light.hlsl`: the reflections and the point and spot lights |
 | `ambient_occlusion/` | `gtvbao.*`: GTVBAO's occlusion multiplied into the indirect light at the upscale. `shaders/gtvbao_apply.ps.hlsl`: that multiply |
 | `indirect_light/` | `ssilvb.*`: SSILVB's light, brought to the render size and added to the diffuse light the resolve reads. `shaders/ssilvb_upsample.cs.hlsl`: the upsample |
@@ -283,47 +329,57 @@ what draws it, when that is the feature's own.
 | File | Purpose |
 | --- | --- |
 | `src/render_scale.cpp`, `src/render_scale.hpp` | Hook on the renderer's per-frame step: the engine renders at the requested size |
-| `src/ui_redirect.cpp`, `src/ui_redirect.hpp` | The draw call every module sees; the grading, the 2D pass and `GammaControl` on output-size targets while the engine renders below them |
-| `src/game_constants.hpp` | The game's constant buffers by name (see "Constant buffers"): the system, scene, sun and lamp light, material, object, bones and probe constants, each with its slot, and a light pass's view space in the world |
-| `src/constant_capture.cpp`, `src/constant_capture.hpp` | The constant capture: what each of the game's threads last wrote to the constant buffers the contact shadows and the ray tracing read, copied at the game's unmap after the upscaler's jitter, read by type and only at the size written |
-| `src/camera.cpp`, `src/camera.hpp` | The main camera in the scene constants: main-view recognition, jitter, reprojection, camera cuts |
-| `src/game_shaders.cpp`, `src/game_shaders.hpp` | The game's shaders the add-on knows, in one table: each pixel shader's checksum, the game pass it draws and what tells it apart from its pass's others (a sun's shadow map, a light's kind); its vertex shaders by source name (the 2D pass, models, terrain); its input layouts' position formats. Every copy the game makes is known; a draw looks its pixel shader up once (`DrawnShader`) |
-| `src/game_lights.hpp` | What a point or spot light shader is (its row in `game_shaders.hpp`), for the local light pass and the ray-traced lights: its kind and twin, a light's range, its sphere on screen |
-| `src/device_check.cpp`, `src/device_check.hpp` | Lets the game start under ReShade (see below); the build check |
-| `src/game_code.hpp` | The game's image, checks of its code, hooks (MinHook) and code patches |
+| `src/ui_redirect.cpp`, `src/ui_redirect.hpp`, `src/ui_redirect_shaders.hpp` | The draw call every module sees; the grading, the 2D pass and `GammaControl` on output-size targets while the engine renders below them, with the scene's depth for the 2D pass's depth-tested draws |
+| `src/core/game/game_constants.hpp` | The game's constant buffers by name (see "Constant buffers"): the system, scene, sun and lamp light, material, object, bones and probe constants, each with its slot, and a light pass's view space in the world |
+| `src/core/capture/constant_capture.cpp`, `src/core/capture/constant_capture.hpp` | The constant capture: what each of the game's threads last wrote to the constant buffers the contact shadows and the ray tracing read, copied at the game's unmap after the upscaler's jitter, read by type and only at the size written |
+| `src/core/game/camera.cpp`, `src/core/game/camera.hpp` | The main camera in the scene constants: main-view recognition, jitter, reprojection, camera cuts |
+| `src/core/game/game_shaders.cpp`, `src/core/game/game_shaders.hpp` | The game's shaders the add-on knows, in one table: each pixel shader's checksum, the game pass it draws and what tells it apart from its pass's others (a sun's shadow map, a light's kind); its vertex shaders by source name (the 2D pass, models, terrain); its input layouts' position formats. Every copy the game makes is known; a draw looks its pixel shader up once (`DrawnShader`) |
+| `src/core/game/game_lights.hpp` | What a point or spot light shader is (its row in `game_shaders.hpp`), for the local light pass and the ray-traced lights: its kind and twin, a light's range, its sphere on screen |
+| `src/core/game/device_check.cpp`, `src/core/game/device_check.hpp` | Lets the game start under ReShade (see below); the build check |
+| `src/core/game/game_code.hpp` | The game's image, checks of its code, hooks (MinHook) and code patches |
 | `src/game_memory.hpp` | Guarded reads of the game's objects |
+| `src/character.cpp`, `src/character.hpp` | The overlay's character swapper: the game's player characters and outfits |
+| `src/range_allocator.hpp` | First-fit ranges, for the ray-traced scene's large buffers |
+| `src/passes/ray_tracing/half_float.hpp` | A 16-bit float read as a float |
+| `src/core/order.cpp`, `src/core/order.hpp` | The frame's slots and the draw chain: which feature owns a draw |
+| `src/core/gpu_timer.cpp`, `src/core/gpu_timer.hpp` | What an add-on's passes cost on the GPU, for other add-ons; PhantomFX uses `src/performance.*` |
+| `src/core/settings/ini.cpp`, `src/core/settings/ini.hpp` | The settings file's `key=value` format |
 | `src/game_loop.cpp`, `src/game_loop.hpp` | Hooks on the main loop's frame start and end, for Reflex and the weather menu |
 | `src/fidelityfx.cpp`, `src/fidelityfx.hpp` | Loads the AMD FSR API, for FSR upscaling and frame generation |
 | `src/weather.cpp`, `src/weather.hpp` | The overlay's weather and time control, on the Sandbox tab (see "Weather and time") |
 | `src/sun_movement.cpp`, `src/sun_movement.hpp` | The sun and moon move every frame instead of in the game's steps (see "Sun movement") |
 | `src/game_dither.cpp`, `src/game_dither.hpp` | The game's colour dither taken out of its shaders as they are made (see "Dither") |
+| `src/game_light_volumes.cpp`, `src/game_light_volumes.hpp` | The game's light volumes moved by the upscaler's jitter, in its 24 light vertex shaders as they are made (see "Ray-traced lights", "The jitter on the game's light volumes") |
 | `src/dev_tools.hpp` | Whether the build has the Developer page (the dev preset) |
 | `src/dev/` | The development tools, in a dev build alone; its README says how to detach them. `dev.*`: the core's one door to them, and the Developer page |
-| `src/dev/game_lua.cpp`, `src/dev/game_lua.hpp` | Lua in the game's script state, and the Developer page's console (see "Game Lua") |
-| `src/dev/travel.cpp`, `src/dev/travel.hpp` | The Developer page's travel: free roam in another map, and the way the page's tools leave a mission (see "Travel") |
-| `src/dev/cutscenes.cpp`, `src/dev/cutscenes.hpp`, `src/dev/cutscene_list.hpp` | The Developer page's cutscene player and its list (see "Cutscenes") |
+| `src/devkit/` | What another MGSV add-on can build on, in a dev build alone (its `README.md`): the saves redirection, Lua in the game, travel, cutscenes, and its own Developer page in plain ImGui. Built as the separate `DevKit.addon64` (`src/devaddon/`) |
+| `src/devkit/game_lua.cpp`, `src/devkit/game_lua.hpp` | Lua in the game's script state, and the DevKit add-on's console (see "Game Lua") |
+| `src/devkit/travel.cpp`, `src/devkit/travel.hpp` | The DevKit add-on's travel: free roam in another map, and the way the page's tools leave a mission (see "Travel") |
+| `src/devkit/cutscenes.cpp`, `src/devkit/cutscenes.hpp`, `src/devkit/cutscene_list.hpp` | The DevKit add-on's cutscene player and its list (see "Cutscenes") |
 | `src/remaster/` | The remastering rules: they change the game's materials as they are made, saved in `materials.json` and built into the add-on (see its `README.md`, and "Materials") |
 | `src/dev/remaster/` | The remastering tool that writes them: a dev build's marks, and the panel that tunes them |
-| `src/frame_log.cpp`, `src/frame_log.hpp` | Development diagnostics, off by default: shader log, F10 frame record, constant and texture dumps |
-| `src/dev/automation.cpp`, `src/dev/automation.hpp` | Dev builds: commands from files into the running game, F9's debug cases (see "Debug cases") |
-| `src/dev/inspect_trace.cpp`, `src/dev/inspect_trace.hpp`, `src/dev/shaders/inspect.hlsl`, `src/dev/inspect_shared.h` | A debug case's record of every pixel, a trace of its own |
+| `src/devkit/frame_log.cpp`, `src/devkit/frame_log.hpp` | DevKit's render diagnostics: the shaders the game creates (search, assembly), F10 frame record (off unless `DevKit/frame-log` exists), constant and texture dumps |
+| `src/devkit/automation.cpp`, `src/devkit/automation.hpp` | DevKit: the runner over `src/devkit/commands.*`, the lines that stand on the game alone, the waits and F9, and the registry add-ons plug into (see "Debug cases") |
+| `src/devkit/extension.hpp` | DevKit's C API for another add-on: its lines, state, status, F9, waits and render-thread jobs |
+| `src/dev/devkit_link.cpp` | PhantomFX's lines in DevKit's command files: the held camera, records, costs, probes, scene, settings, sky and the debug case |
+| `src/dev/inspect_trace.cpp`, `src/dev/inspect_trace.hpp`, `src/dev/inspect.hlsl`, `src/dev/inspect_shared.h` | A debug case's record of every pixel, a trace of its own |
 | `src/dev/shaders/sun_light_game_shadow.ps.hlsl` | A debug case's reference shader: the sun pass's replacement that writes the game's own shadow per pixel (`GAME_SHADOW`), compiled only in a dev build (see `src/dev/game_shadow.*`) |
 | `src/dev/game_shadow.cpp`, `src/dev/game_shadow.hpp` | A debug case's reference: the game's shadow per pixel, drawn at the sun pass |
 | `src/dev/held_camera.cpp`, `src/dev/held_camera.hpp` | A debug case's camera, which photo mode's camera update takes |
 | `src/dev/perf_record.cpp`, `src/dev/perf_record.hpp` | What frames cost, on file, a row a second and captures for comparing frames (see "Costs on file") |
-| `src/dev/save_redirect.cpp`, `src/dev/save_redirect.hpp` | The automation copy of the game: its saves, backups and display settings kept apart from the player's |
-| `tools/automation/` | Dev builds: `fx.py` talks to the running game, `case.py` reports a debug case, `perf.py` reads and compares the costs on file, `scout.py` scouts showcase shots (a pose, time and weather, Phantom FX on and off, kept in a shot list), `install.ps1` and `launch.ps1` run the automation copy; `check_release.py` fails if any of it reached a release build |
+| `src/devkit/save_redirect.cpp`, `src/devkit/save_redirect.hpp` | The automation copy of the game: its saves, backups and display settings kept apart from the player's |
+| `tools/automation/` | Dev builds: `fx.py` talks to the running game, `case.py` reports a debug case, `perf.py` reads and compares the costs on file, `scout.py` scouts showcase shots (a pose, time and weather, Phantom FX on and off, kept in a shot list), `mcp_server.py` gives the same tools to an MCP client with `test_mcp.py` checking it without the game, `install.ps1` and `launch.ps1` run the automation copy; `check_release.py` fails if any of it reached a release build |
 | `src/resource_dump.cpp`, `src/resource_dump.hpp` | Format names, constant rows, DDS saving for the dumps |
-| `src/shader_bytecode.cpp`, `src/shader_bytecode.hpp` | DXBC checksum (bytes 4 to 20 of the container), the instruction walk, the output saturation patch, the dither patch |
-| `src/log.cpp`, `src/log.hpp` | `PhantomFX.log` beside the add-on, one per game session |
-| `src/clock.hpp` | `QueryPerformanceCounter` ticks and the milliseconds between them |
-| `src/frame_latch.hpp` | A module's settings as configure sets them and as the frame being recorded uses them, latched at present |
+| `src/core/shader_bytecode.cpp`, `src/core/shader_bytecode.hpp` | DXBC checksum (bytes 4 to 20 of the container), the instruction walk, the output saturation patch, the dither patch |
+| `src/core/log.cpp`, `src/core/log.hpp` | The add-on's log file (`PhantomFX.log`, `DevKit.log`), one per game session |
+| `src/core/clock.hpp` | `QueryPerformanceCounter` ticks and the milliseconds between them |
+| `src/core/frame_latch.hpp` | A module's settings as configure sets them and as the frame being recorded uses them, latched at present |
 | `src/command_list_notes.hpp` | A module's notes by deferred context, then by command list, until the immediate context runs it; their merge in the order they run, and their expiry (see "What the add-on changes", "Command lists") |
-| `src/hresult.hpp` | `check`: a failed Direct3D or Windows call as an exception naming the step |
-| `src/d3d11_helpers.hpp` | Direct3D 11 helpers for the effects: shaders from bytecode (or, in development builds, from source), dynamic constant buffers, compute textures, texture sizes |
-| `src/shader_source.cpp` | Development builds only (`PHANTOM_DEV_SHADERS`): compiles a shader's `.hlsl` from the checkout at run time, `#include`s and all |
-| `cmake/phantom_shaders.cmake` | Finds fxc in the Windows SDK; `phantom_precompile_shader` (a shader's bytecode into `build/<preset>/phantom_shaders/<name>.hpp`, rebuilt when the source or anything it `#include`s changes); `phantom_forbid_runtime_compile` (runs the check below after linking a release build) |
-| `cmake/check_no_runtime_compile.ps1` | Fails a release build whose add-on imports any `D3DCompile*` function, and `-Source` fails on source that names one outside the development-only files |
+| `src/core/hresult.hpp` | `check`: a failed Direct3D or Windows call as an exception naming the step |
+| `src/core/d3d11_helpers.hpp` | Direct3D 11 helpers for the effects: `Shader` from precompiled bytecode (or, in development builds, its `.hlsl`), dynamic constant buffers, compute textures, texture sizes |
+| `src/core/shader_source.cpp` | Development builds only (`PHANTOM_DEV_SHADERS`): compiles a shader's `.hlsl` from the checkout at run time, `#include`s and all |
+| `src/core/cmake/phantom_shaders.cmake` | Finds fxc in the Windows SDK; `phantom_precompile_shader` (a shader's bytecode into `build/<preset>/phantom_shaders/<name>.hpp`, rebuilt when the source or anything it `#include`s changes); `phantom_forbid_runtime_compile` (runs the check below after linking a release build) |
+| `src/core/cmake/check_no_runtime_compile.ps1` | Fails a release build whose add-on imports any `D3DCompile*` function, and `-Source` fails on source that names one outside the development-only files |
 | `src/d3d12_helpers.hpp` | Direct3D 12 helpers for the ray tracing, FSR and the presenter: barriers, the device on Direct3D 11's GPU behind ReShade's proxy, shared textures and fences opened in Direct3D 12 |
 | `src/version.rc.in` | Version resource template: name, author and version from `CMakeLists.txt` |
 
@@ -349,7 +405,7 @@ A new lighting effect takes:
    enhancements switch follow. Where it changes a game pass others change too, it plugs
    into that pass (`src/passes/`). Where it handles the game's draws itself, it knows them by their
    game pass (`row()` of the draw's `game_shaders::DrawnShader`; a shader the table lacks is a new
-   row in `src/game_shaders.hpp`) and goes in the draw events (`onDraw`, `onDrawIndexed` in
+   row in `src/core/game/game_shaders.hpp`) and goes in the draw events (`onDraw`, `onDrawIndexed` in
    `src/addon.cpp`): what it only takes from a draw is a `note`, which returns nothing and runs with
    the other notes, before every owner; what may draw it in the game's place, or skip it, is a `draw`,
    which goes with the owners and takes game passes no other owner takes.
@@ -383,6 +439,8 @@ Into the game folder (`steamapps\common\MGS_TPP`), beside `mgsvtpp.exe`:
 | `ReShade.ini` | Minimal: no effects, Generic Depth and Effect Runtime Sync disabled |
 | `PhantomFX.addon64` | This build |
 | `nvngx_dlss.dll`, `nvngx_dlssd.dll` | This build (the DLSS SDK's, copied beside the add-on) |
+| `PhantomFX/D3D12/D3D12Core.dll` | This build (the Agility SDK's), for opacity micromaps |
+| `DevKit.addon64` | The `dev` or `tools` build, for the command files, F9 and the developer tools |
 
 ReShade writes `ReShade.log`, the add-on `PhantomFX.log` and `PhantomFX.ini`. Uninstall by deleting
 these files.
@@ -410,7 +468,7 @@ the CRT, `PostQuitMessage` from `mgsvtpp.exe+0x7082A`, under both ReShade and Re
 It is a local check; nothing is sent anywhere.
 
 **Fix.** ReShade loads add-ons inside `D3D11CreateDevice`, before the check runs.
-`passDeviceCheck()` (`src/device_check.cpp`) verifies the build and the function's first bytes
+`passDeviceCheck()` (`src/core/game/device_check.cpp`) verifies the build and the function's first bytes
 (`40 53 48 81 EC 60 04 00 00`) and writes `mov al, 1; ret` (`B0 01 C3`) over its start, in memory
 only. The game file is never changed. Without the add-on, ReShade alone cannot run the game.
 
@@ -449,19 +507,32 @@ the option saved on, the game's first requests at start-up get the `Variable` wa
 
 ## Diagnostics
 
-RenderDoc cannot capture this game (see "Known limitations of the tools"), so the add-on has its
-own recorder, `src/frame_log.cpp`. It is off unless a `PhantomFX-frame-log` folder exists beside the
-add-on when the game starts; without the folder it registers no event and costs nothing. It only
-reads state; the frame renders unchanged. Its files go into that folder:
+RenderDoc cannot capture this game (see "Known limitations of the tools"), so the DevKit add-on
+(`DevKit.addon64`, not PhantomFX: any MGSV mod can use it) has its own recorder, `src/devkit/frame_log.cpp`.
+The frame recording is off unless a `DevKit/frame-log` folder exists beside the add-ons when the game starts;
+without the folder it registers no recording event and costs nothing. It only reads state; the frame renders
+unchanged. Its files go into that folder:
 
-- Every shader is logged once to `PhantomFX.log` (stage, checksum, size). With a `shaders` folder
-  inside, the bytecode is saved there. The game's shaders keep reflection and debug info (cbuffer
+- Every shader the game creates is kept (bytecode and the source name in its debug data) and logged once to
+  `DevKit.log` (stage, checksum, size), whether or not the folder is there. The DevKit overlay page searches them
+  by stage, hash or source name and shows a shader's assembly; the command-file lines `shaders [<text>]` and
+  `shader <hash start|name> [save]` do the same, and `save` writes `<stage>_<hash>.dxbc` and `.asm` into
+  `DevKit/shaders`. With a `shaders` folder inside the frame-log folder, every shader's bytecode is saved there
+  as it is created. The game's shaders keep reflection and debug info (cbuffer
   and variable names, `#line` source paths), so `D3DDisassemble` names every pass.
-- F10 records a frame to `frame-<n>.txt`, after one warm-up frame, in GPU order: command lists
+- F10 (or the `frame` line, which waits for it) records a frame to `frame-<n>.txt`, after thirty warm-up presents
+  (the game records a list many frames before the immediate context executes it, and a list is read only
+  if it was recorded while this runs: with one warm-up frame a free-roam frame held 34 calls, the interface alone,
+  and with thirty 7,000), in GPU order: command lists
   recorded on deferred contexts appear, indented, where the immediate context executes them. Each
   call lists shaders, targets, depth, viewport, blend, depth state, shader resources, UAVs and
   constant buffers. `frame-<n>-writers.txt` lists the call stacks of constant buffer maps by size.
-  Once both are written, a "Frame captured" toast with the file name shows at the right of the screen.
+  Once both are written, `DevKit.log` says "Frame captured" with the file name; DevKit shows nothing on screen.
+- `trigger.txt` (a shader hash, or any text of a record line) makes F10 wait for a rare call: it
+  records frame after frame, each over the last, until a line has that text, then keeps that frame
+  and the one before it as `frame-<n>-before.txt`. F10 again stops waiting and keeps the frame.
+  It costs a record a frame while it waits, and the folders the lights and the scene dumped into go as
+  it turns over, all but the frame before's.
 - `dump.txt` (`<checksum> <count>` per line) makes the first calls with those shaders add their
   constant buffer contents (as the game wrote them on that thread) and save their textures as DDS
   in `frame-<n>/` once their command list has run, so a list's textures are as it left them, not as
@@ -486,17 +557,22 @@ frames with DLSS on, `PhantomFX.log` gets a status line with the same counts.
 ### Debug cases
 
 So lighting faults can be looked into without anyone sending pictures or numbers back and forth; the skill
-`.agents/skills/mgsv-automation` tells agents how to work with it. Dev builds only:
+`.agents/skills/mgsv-automation` tells agents how to work with it. Dev builds only, with both `PhantomFX.addon64`
+and `DevKit.addon64` loaded (DevKit reads the key and the command files; PhantomFX plugs its lines and the case in):
 **F9** freezes the game where it is and records a case; F9 again lets it go. The game stays frozen in between, so
 more can be asked of the same frame. Aim the screen's centre at the fault first if there is one spot to look at.
+An MCP client gets the same tools from `tools/automation/mcp_server.py` (`docs/AUTOMATION.md` has the command to
+register): its `start` installs, launches, presses the startup notices away and stops in free roam as one job; a long
+replay or scenario run is a job too, and a case comes back with its pictures. It closes a copy it started after ten minutes with no tool
+call, and when the server exits.
 
-- **What a case holds** (`PhantomFX-automation/cases/<time>/`): the frame as traced and as the game draws it, from
+- **What a case holds** (`DevKit/cases/<time>/`): the frame as traced and as the game draws it, from
   the same frozen camera and world (`traced.dds`, `vanilla.dds`); the ray tracing's textures (depth, normals,
   albedo, the light, the sun's and lamps' shadows, reflections, the lamps' light); what the game's shadow map
   alone says of each pixel (`game-shadow.dds`, 1 lit, 0 blocked, -1 no answer: `SHADOW_MAP` with `GAME_SHADOW` in
   `src/dev/shaders/sun_light_game_shadow.ps.hlsl`, drawn after the sun pass with its inputs as bound); what the scene is at
   (`state.txt`), the settings; what the frozen frame costs (`perf.json`, "Costs on file"); and two records of every pixel.
-- **A record** (`scene.bin`, `revealed.bin`: `GIInspectPixel`, `InspectPixels` in `src/dev/shaders/inspect.hlsl`) has what the
+- **A record** (`scene.bin`, `revealed.bin`: `GIInspectPixel`, `InspectPixels` in `src/dev/inspect.hlsl`) has what the
   camera's ray meets first, what the scene has within a tolerance of the game's surface, what blocks the ray to the
   sun, and the game's distance. The `.tsv` beside it names every hit as the probes do.
 - **The revealed scene** answers what the scene lacks. The record is taken again with everything the scene leaves
@@ -511,7 +587,8 @@ more can be asked of the same frame. Aim the screen's centre at the fault first 
   with a pixel to probe and, from the revealed scene, what is there and why it was left out. Run it with
   `uv run --with numpy --with pillow --with scipy python tools/automation/case.py`.
 
-The running game takes commands from files (`src/dev/automation.hpp` lists them, `tools/automation/fx.py` sends them):
+The running game takes commands from files, which `tools/automation/fx.py` sends. DevKit's own lines are listed in
+`src/devkit/automation.hpp`, PhantomFX's are registered in `src/dev/devkit_link.cpp`, and `help` lists both:
 the probes at any pixel (`probe <x> <y>`), the camera anywhere while frozen, settings and debug views, the Lua
 console, and `reveal <hash>`, which tries the scene with a model in it: a fix for a left-out model can be seen
 working before it is written. `fx.py case` records a case without the key.
@@ -521,7 +598,7 @@ working before it is written. `fx.py case` records a case without the key.
 `fx.py --copy acc` goes on into the helicopter's cabin (`TppMission.ReserveMissionClear` for mission 40050). The title
 screen shows the same cabin but moves on by itself: a freeze there lands in a loading screen, which stalls under the pause
 and renders nothing. It reads
-and writes its own saves (`PhantomFX-automation/saves`, `src/dev/save_redirect.hpp`), and `launch.ps1` checks the player's
+and writes its own saves (`DevKit/saves`, `src/devkit/save_redirect.hpp`), and `launch.ps1` checks the player's
 files are unchanged afterwards. Never run it beside the player's game: `launch.ps1` would put back saves the
 player's game wrote meanwhile.
 
@@ -543,11 +620,11 @@ the settings, so a run under others is a reason to accept, not a fault.
 
 ### Costs
 
-Diagnostics ends with what the add-on's passes cost on the GPU (`src/performance.cpp`): one row
+The **Budget** tab shows what the add-on's passes cost on the GPU (`src/performance.cpp`): one row
 per effect with a bar, its milliseconds and its share of the GPU frame, each opening to its passes,
 averaged over about half a second. The GPU frame runs from a timestamp at the frame's first
 command list to one at its present. Frames are timed only while the costs are on screen (the
-Diagnostics section open, or **Show the costs over the game**), measured, or in a dev build kept on
+settings window open, or **Show the costs over the game**), measured, or in a dev build kept on
 file ("Costs on file"); otherwise no query is made.
 
 - **Timestamps.** Each pass ends a timestamp query before and after its work (`performance::Timed`),
@@ -588,7 +665,7 @@ file ("Costs on file"); otherwise no query is made.
 ### Costs on file
 
 So a play session needs no one watching it. With **Record the costs** on the Developer page ticked, a dev build keeps the
-costs running and writes what each second cost to `PhantomFX-automation/perf/<time>.jsonl` (`src/dev/perf_record.cpp`): the
+costs running and writes what each second cost to `DevKit/perf/<time>.jsonl` (`src/dev/perf_record.cpp`): the
 frames' times with their spread, the GPU frame, each pass, each traced phase, the lights, the scene as the second's last
 kick had it with what the second built, and the rays' counters, with the map, the game's clock, the camera and whether the
 game is frozen. A line with the settings in force, as PhantomFX.ini's lines, comes first and whenever they change. It is
@@ -635,10 +712,10 @@ the state back there for the overlay. Nothing is saved.
 
 ### Game Lua
 
-`src/dev/game_lua.cpp` runs Lua in the game's own script state, on the game thread at the main loop's
-frame start, the way the game's own calls into it run. The dev build's Developer page has a **Lua
-console** on it: Ctrl+Enter or Run runs the box's code at the next frame start, and the output box
-shows what it printed and returned, or its error with the stack.
+`src/devkit/game_lua.cpp` runs Lua in the game's own script state, on the game thread at the main loop's
+frame start, the way the game's own calls into it run. The DevKit add-on's Developer page has a **Lua
+console** on it: Run runs the box's code at the next frame start, and the output box shows what it
+printed and returned, or its error with the stack.
 
 - **Lua.** Lua 5.1.5 is linked into the exe (its copyright string at `0x24B47A0`). The base
   library's table at `0x24B6A70` gives `loadstring` (`0x1A2E2E0`), which calls `luaL_loadbuffer`
@@ -656,13 +733,20 @@ shows what it printed and returned, or its error with the stack.
   whether to try the code as an expression first (`return ` before it, as an interactive Lua does).
   While the code runs, `print` collects lines in place of the game's; the code runs under `xpcall`
   with `debug.traceback` when the game has the debug library. The lines and the returned values come
-  back as one string; an error is raised again with the lines before it.
+  back as one string; an error comes back as marked text after those lines, never raised, as another mod's hooks
+  turn a raised one into a crash.
+- **Hooks.** Before the tools run, each function above is checked against this build's bytes at its
+  address (`devkit::game::matchesPastHooks`, `src/devkit/game.hpp`). A function another mod hooked is accepted when
+  the rest of the bytes, past the hook's jump and the `int3`/`nop` it fills the rest of the cut instruction with,
+  are this build's. Infinite Heaven's IHHook hooks these functions, so its game's Lua tools call
+  through it. A function whose code differs elsewhere still makes the tools unavailable, and the log
+  names its address.
 
 ### Travel
 
-The dev build's Developer page has **Travel** (`src/dev/travel.cpp`): Afghanistan, Africa or Mother
+The DevKit add-on's Developer page has **Travel** (`src/devkit/travel.cpp`): Afghanistan, Africa or Mother
 Base free roam from any free roam, after one loading screen, without the helicopter and the sortie
-screens. It runs a chunk through Game Lua, and a toast says whether the game left or why not.
+screens. It runs a chunk through Game Lua, and `DevKit.log` says whether the game left or why not.
 
 - **Leaving.** The chunk calls `TppMission.ReserveMissionClear` with `FROM_HELISPACE` and the
   destination's free roam (30010, 30020, 30050), the call free roam's own scripts make; the free
@@ -681,16 +765,16 @@ screens. It runs a chunk through Game Lua, and a toast says whether the game lef
   Base (9.12, 8.75, -42.43), the Command platform's first helipad (landing point
   `cl00pl0_mb_fndt_plnt_heli_30050` in `mbdvc_map_mbstage_parameter.lua`, the same in every
   layout).
-- **Shared.** The leaving and the arrival on foot are Lua helpers in `src/dev/travel.cpp`, which
+- **Shared.** The leaving and the arrival on foot are Lua helpers in `src/devkit/travel.cpp`, which
   `travel::depart` puts ahead of a chunk. The cutscene player leaves the same way.
 
 ### Cutscenes
 
-The dev build's Developer page has **Cutscenes** (`src/dev/cutscenes.cpp`): a searchable list of the
+The DevKit add-on's Developer page has **Cutscenes** (`src/devkit/cutscenes.cpp`): a searchable list of the
 game's cutscenes and a Play button, for free roam and the ACC. The game calls a cutscene a demo.
 Search takes the mission's code or title, the name in its script or the demo id.
 
-- **List.** `src/dev/cutscene_list.hpp` holds 198 cutscenes: each mission's `demoList` (157, without the
+- **List.** `src/devkit/cutscene_list.hpp` holds 198 cutscenes: each mission's `demoList` (157, without the
   names that repeat a demo id and the placeholders that are not cutscenes) and 41 of the 47 in
   `TppDefine.MB_FREEPLAY_DEMO_PRIORITY_LIST`. Only the running mission's list is in memory, so the
   file is written out from the game's `s*_demo.lua` scripts.
@@ -740,8 +824,8 @@ Search takes the mission's code or title, the name in its script or the demo id.
   cutscene than the pick, the wraps go, that one runs as usual and the status says so. The player
   stays in Mother Base free roam afterwards.
 - **Status.** The scripts cannot call out, so while a cutscene is on its way the add-on reads
-  `TppDemo.phantomFxStatus` once every 60 frames. `PhantomFX.log` gets "playing", "done" or the
-  problem, and a problem also shows as a toast. A Mother Base cutscene says "playing" as the game
+  `TppDemo.phantomFxStatus` once every 60 frames. `DevKit.log` gets "playing", "done" or the
+  problem. A Mother Base cutscene says "playing" as the game
   asks for it and "done" at the end of its chain. Between the two, Play is refused: leaving mid-cutscene
   would lose the end that puts the end scripts back. It is a field of a module because the game's
   `_G` has a metatable that drops new globals without an error.
@@ -760,10 +844,10 @@ Known limits:
   level it has not reached.
 - The five cutscenes of `f30010` do not load: four are in a side op's pack and `Demo_RecoverVolgin`
   needs the `recoverVolginDemo` label. Their labels say so, and the 60 s limit ends them in the ACC,
-  with a toast.
+  saying so in the log.
 - The 60 s limit starts in our sequence. A hang before that, in `Seq_Mission_Prepare`, stays on the
   black screen until the game is killed.
-- Mother Base cutscenes have no time limit. If the game never asks for the pick, no toast says so.
+- Mother Base cutscenes have no time limit. If the game never asks for the pick, nothing says so.
 
 ## How Fox Engine renders
 
@@ -876,7 +960,7 @@ Checksums are the DXBC header checksum (bytes 4 to 20) as lowercase hex.
 
 ### Constant buffers
 
-The add-on reads these by name through `src/game_constants.hpp`, whose `static_assert`s check each
+The add-on reads these by name through `src/core/game/game_constants.hpp`, whose `static_assert`s check each
 register's offset.
 
 `cPSSystem`, slot `b0` (64 bytes):
@@ -1670,8 +1754,41 @@ rate"), the photo mode hooks (see "Photo mode"), the game loop hooks (see "Frame
     `m_viewportSize.xy` copied over from a buffer holding the output size (a partial copy into a
     constant buffer, which Direct3D 11.1 drivers allow). A clear of the scene target from such a
     context goes to the output target.
+  - Only draws whose viewport covers the scene target are made there. As a save loads, the game
+    builds the Mother Base emblem with `Draw2D` shaders in corners of the scene target (1024x1024,
+    512x512 and 256x256 from 0,0, then 128x128 down to 8x8 in a row from 256,0) and reads it back
+    into the BC3 texture the sortie prep shows. Made on the output target, the game read back an
+    empty corner and the emblem was black at every mode until the next load (2026-11-04).
   - Every clear of a render-size depth-stencil also clears the output-size one, so the 2D pass's
     stencil masks work.
+  - A `Draw2D` draw that tests depth, blending over, is made in two passes of its own
+    (`compositeBehind`): into a float scratch layer, premultiplied; then over the
+    target, through `shaders::CompositeBehind`. The sortie prep's emblem is the only such draw in
+    the F10 records (frame 20182, #874: `Draw2D_Ui2_BL`, `greater_equal`, no depth write) and the
+    one UI image the game hides behind the 3D view: without the scene's depth it passed everywhere
+    and stood in front of Snake and the horse. The second pass reads the game's render-size
+    depth-stencil, without the upscaler's jitter (the scene is drawn jittered) and without the
+    one-pixel holes hair leaves in it (a dither pattern the image's upscaler fills and the depth
+    keeps). Read nearest against the draw's depth, the emblem's edge changed with the jitter every
+    frame, and nearest again over 2x2 closed the holes but grew every outline by a render pixel, a
+    band of backdrop between a character and the emblem. So the pixel's coverage is measured
+    instead: the depth is compared with the draw's at four places across the pixel, bilinearly, and
+    the emblem is blended in by `1 - coverage`. Where the pixel is partly the character, the grey
+    the upscaler mixed into it is replaced too: the backdrop is taken from nearby places nothing
+    covers, and the emblem takes its place (`out = pixel + (1 - cover) * (emblem - alpha * backdrop)`).
+    A depth-tested draw the composite cannot take, one that blends other than over (the training
+    area's circles, additive, in Mother Base's records) or one with stencil, is drawn on the output
+    target with the filled depth as before.
+    Depth a redirected 2D draw writes stays on the output-size depth, so a later fill drops it;
+    none writes depth in the records.
+  - Without upscaling (DLAA), the game draws the emblem itself, against its own render-size depth
+    and so against the jitter: the same two-pass draw is made in place on the scene target. Only for
+    draws that test depth, leave stencil alone and blend over; the rest stay the game's own.
+  - The composite's surfaces are made when first needed (the layer in `R16G16B16A16_FLOAT`, the
+    backdrop in the target's format) and again when the target's size or format changes. The stretch
+    that fills a depth-stencil with the scene's depth, `fillDepth` and `shaders::StretchDepth`, stays
+    for a draw the composite cannot take: it writes `SV_Depth` through a full-screen triangle, with
+    the stencil left alone.
   - `GammaControl` reads the output target's `_SRGB` view in place of the scene target.
   - When `GammaControl`'s viewport has its scene's size and the back buffer is larger (the exclusive
     fullscreen box), every `GammaControl` draw gets the viewport and scissor over the whole back
@@ -2025,6 +2142,9 @@ the game's lights) is left alone until it runs.
     its vertex shader gives none). The last drawn is the nearest, as the game sorts what blends; the weights blend as the
     game blends, so a pane drawn twice, as many are, weighs as it shows. A mirror with the live picture stays the game's
     (its texture is a render target), and so does whatever a smaller camera's view draws.
+    Its shadow map leaves the draw too (`t8`, `s15`), replaced by a 1x1 lit one and the sampler that always compares
+    (`forward_surfaces::tracedShadow`): the map's shadow no longer matches a scene the rays shaded, and the composite
+    dims the pane by the rays' shadow at its own pixels instead.
   - **The trace** (`ray_tracing::traceSurfaces`). Before the exposure's list, a frame that drew a surface signals the fence,
     and Direct3D 12 traces the marked pixels on the scene the kick built, in a list of their own (`gi_renderer::traceSurfaces`), up to
     `SpecularRays` as any glossy surface; Direct3D 11 waits. The rays' hits come from the same `ReflectedLight`. So
@@ -2034,21 +2154,17 @@ the game's lights) is left alone until it runs.
     encoded and added by the surface's alpha, in the scene's encoded values, as the game blends its glass, over a copy of the
     scene, before the exposure, the depth of field and the upscaler read it. So a particle in front of a pane has the
     reflection over it. A traced reflection is added to what the draw left, as encoding the sum of the two would need
-    each pane's own colour.
+    each pane's own colour. The rays' shadow on the pane itself (`TraceSurfaceReflections`, `g_ForwardShadow`: a ray from
+    the surface towards the sun's disc, one sample) dims it as the sun's absence does, to 0.85: a pane is mostly what it
+    reflects and the sky behind it, so blocking the sun barely changes it.
   - **The rays.** Glass used to be left out for its alpha and shadow bytes. It is now `MeshRole::Glass`, taken by its material: any
     with a `GlassColor` vector, which four techniques have and no other (`fox3DFW_Glass_CommonRef`, `_CommonRef_LNM`,
     `_LNM` and two unnamed); mirrors are `MeshRole::Mirror`, by their technique, `fox3DFW_ParallaxReflection`. They are non-opaque
-    in their structures, so `CutOutBlocks` lets every ray through in one place, and the global illumination's rays and the
-    camera's pass as before. A ray towards the sun or a lamp keeps, past each pane it crosses (`PassPane`, past the pane it
-    left, `IsOwnPane`), what the pane lets through (`PaneTransmittance`): what clean glass's two faces do not reflect at the
-    ray's angle (`ClearGlassTransmittance`, Schlick with F0 0.04: 92% head-on, a third at 80 degrees), less half of what the
-    mask covers (`DirtLoss`: dirt scatters much of its light on through, and a covered texel is no wall; the 0.5 is a
-    judgement), read over a fixed 2 cm patch (`PaneShadowBlur`) at the level its texels a metre give. As hair, each pane
-    counts once (`NO_DUPLICATE_ANYHIT_INVOCATION`), and so does a sheet drawn as a quad for each side: a pane within
-    `SamePane` (1 cm) of the one last crossed is its other side. The Afghan huts' windows are such (84a2aa9c6ae74858 mesh 1,
-    4 triangles a sash): counted twice, their sun on the floor read 0.54 where one sheet lets through 0.73. A mirror lets
-    the light through. The pane's own dirt keeps the game's shadow map in its draw, which shades only what the pane itself
-    shows, not what is seen through it. Only a reflection's rays meet them
+    in their structures, so `CutOutBlocks` lets every ray through in one place. A ray towards the sun or a lamp keeps, past
+    each pane it crosses, what the pane neither reflects nor covers (`PaneTransmittance`: 1 - its cover, `GlassCover`, by
+    its row of the table, the same split a reflection's ray takes), so a pane's dirt and frosting dim the light behind it,
+    as hair does (`NO_DUPLICATE_ANYHIT_INVOCATION`, so each pane counts once). A mirror lets it through; the global
+    illumination's rays and the camera's pass as before. Only a reflection's rays meet them
     (`RayAlongReflection`, `TraceReflectionRay`): by chance, as much as a pane's cover (`Base_Tex_LIN`, red, or alpha in a colour
     texture) by its table's row gives, a ray reflects as from a mirror, and otherwise goes on, through at most `MostPanes`, with
     nothing behind the pane taken for a copy of it. A mirror reflects all of a ray: it has no row of the table, and its mask is
@@ -2196,7 +2312,66 @@ the game's lights) is left alone until it runs.
   the diffuse light target, which its exposure measures.
 - **Cost** (2026-10-30, 2228x1254 rendered for 3840x2160): the light's line in the log,
   which holds the reflections and the lights, 4 to 5.7 ms, against about 2.4 ms with Ray Reconstruction
-  alone. The budget has its own line: the reflections, the lights and adding their light.
+  alone. The budget has its own line: the reflections and adding their light. The lamps' rays run alongside the
+  global illumination's and count in its line (see "Overlapping traces").
+
+### Making it cheaper
+
+The plan of 2026-11-25 for the cost of path tracing itself, each without changing what the rays find, in the order
+to try. Measure each with `perf.py ab` on a frozen frame (or the MCP's `capture` with `kind: perf`), and check the look
+with `fx.py scenarios`.
+
+1. **Overlapping traces** (done; see "Overlapping traces"). The traces no longer wait for each other's last waves.
+   A small gain, under the drift between sessions at DLAA and Balanced (0.2 to 0.3 ms of 42 to 58 ms at DLAA). The
+   frame's cost is `TraceLight` (27 ms of 58 at night), so start there: options 5 and 2.
+2. **Tile classification for the reflections.** A wave of `TraceReflections` mixes rough pixels (a ray and a cache
+   lookup) with glossy ones (up to three specular rays, each with the sun's, a lamp's and a self-lit mesh's shadow
+   rays and a bounce), and runs as long as its slowest pixel. A cheap pass would list the glossy pixels, compacted,
+   for an indirect dispatch of their own (`Recorder::indirect`), and the rough ones take a light kernel. The same
+   split fits `TraceLight`, whose foliage pixels take twice the rays.
+3. **Shader Execution Reordering.** The glossy hits' material reads and shading are the frame's most divergent work.
+   Shader model 6.9 reorders threads by a hint (`MaybeReorderThread`, with `HitObject::FromRayQuery` keeping the
+   inline `RayQuery` code), but only in a ray generation shader: the reflections would move from a compute kernel to
+   one. Needs an Agility SDK with shader model 6.9.
+4. **The cache past a ray's footprint.** Only a rough surface's first hit takes the cache's light today
+   (`CachedLight`); a glossy path's second and third hits are shaded afresh. Where a hit's cone
+   (`cone.x + travelled * cone.y`) is at least a cache cell wide (`HashGridCache_CellSize`), the cell's light is as
+   sharp as the ray can show, as NVIDIA's SHaRC ends its paths.
+5. **The cache for distant diffuse hits** (done 2026-11-25; Developer page, "Light cache", 10 m). Each hit of
+   `TraceLight` traced the sun's, a lamp's and a self-lit mesh's shadow rays and a bounce, about four rays a pixel. A
+   first hit 10 m or more away now takes its cell's light (`HashGridCache_FilteredRadiance` and `FilteredIndirect`),
+   and keeps the cell lit by queueing itself as a sample (`HashGridCache_KeepForLight`, at most
+   `HASH_CELL_SAMPLES_PER_FRAME` a cell a frame, into a third region of the hit buffers). A self-lit mesh, and a cell
+   without samples yet, trace as before. About 36% of the first hits take it (`firstHitsFromCache`).
+    The saving depends on the spot. Most places, measured in Africa with the Developer page's Light cache comparison (the
+    cache off and on in turn, in one session), show about 0.3 ms. Africa's heaviest areas show about 3 ms: two builds
+    compared at DLAA in the automation copy gave night 58.4 to 55.1 ms and noon 43.6 to 41.2 ms (not a live toggle).
+    The
+   scenarios `africa-roof` and `acc-cabin` stay fine and `mother-base-helipad` reads as before (1.08x); the other two
+   did not run (map transitions).
+   The light lags a step change, the worst case, which goes against a choice made for it ("Nothing of the hit's own
+   light comes from a history", see "Global illumination"). Africa at night, the clock jumped from 12:00 to 22:00 with
+   the camera held, 14 frames captured a build: the traced build settles in 3 frames, the cached one is still moving
+   at frame 8 (2.5% of the frame's range from its settled image, the far lamp-lit geometry most of it), half way at
+   12 and there by 24, about 1.3 s at 55 ms. That is the cache's own average (`AccumulateCell`: a sixteenth a frame
+   at most, 16 samples), which the existing cells already had; a first hit's own light did not. A lamp switched
+   on, or headlights driving past, lag by that much beyond 10 m; the sun's own drift is far slower.
+6. **The cache by the hit's cells, and one light ray a hit** (2026-11-27). A first hit takes its cell's light when it is
+   at least `lightRays.z` of its own cells away (`HashGridCache_CellSize`, 4 by default; Developer page, "Light cache"),
+   not past a fixed 10 m: the cell blurs the light by about a cell over the ray's length, so a hit a few cells off loses
+   nothing the ray would show, and near the eye, where cells are small, far more hits qualify. A shaded hit
+   (`LocalOwnLightReaching`) picks one of a lamp and a self-lit mesh by its light there without the shadow and traces
+   that one shadow ray over the chance it was picked, in place of one to each; the cache's hits (`HitDirectLight`) do
+   the same. The sun keeps its own ray (`SunReaching`): with it among the choice, a hit in the shade spent its one ray on
+   a sun it could not see, lost the lamp's light that frame, and the shade flickered under Ray Reconstruction. Africa's
+   spawn at 22:00, frozen, 1440x810 with Ray Reconstruction, 180 frames a run, the rays' phase: about 19.5 to 20 ms
+   before, 16.5 with the cells alone (21 with the cache off; 71% of first hits from the cache, 36% before). The one
+   shared ray with the sun among the choice took 2 ms more off, but flickered; the version without the sun is not timed
+   yet. The two overlap: a hit the cache takes traces no light rays either way. Tried the same day and left out, all
+   measured there: Russian roulette on the bounces after the first (Ray Reconstruction traces one ray a pixel, so none
+   were left to skip; no change without it), and, for NRD only, half the
+   light pixels a frame (NRD's checkerboard, 1.95 to 1.1 ms) and foliage's doubled rays only under 8 frames of history
+   (1.95 to 1.6 ms on a frozen frame).
 
 ## HDR
 
@@ -2650,6 +2825,65 @@ and the threads recording the next frame use it at the same time.
 
 So far the lamps' shadow rays are a trace (`lamp_shadow_rays.*`), and so is a dev build's record of a debug case (`src/dev/inspect_trace.*`); the others are recorded by `gi_renderer` itself.
 
+### Overlapping traces
+
+Every pass on the Direct3D 12 queue ended in a full UAV barrier (`Recorder::barrier`), so the traces ran one after
+the other: the lamps' light, then the sun's rays, then the light's rays, then the reflections. A trace's last waves,
+the slowest incoherent rays, leave most of the GPU idle until they finish, and with a barrier after each trace
+nothing else could fill that time.
+
+With Ray Reconstruction (always, under path tracing), the lamps' light (`TraceLampLight`) and the sun's rays
+(`TraceSunShadows`, which then has no denoiser after it) read nothing the light's passes write, and the light reads
+nothing of theirs. So `gi_renderer` hands them to `gi_light::Light::record` as `alongsideRays`, which dispatches them
+right after `TraceLight` and before the barrier after it: three traces share one wait. Everything else is as it was:
+the albedos the light's hits read are still learned after its rays (`LearnAlbedo`, after the barrier), and each trace
+writes its own outputs. What a ray finds does not change, so the image does not either. The one change outside the
+frame is a diagnostic: the sun's and lamps' rays now run after `ClearCounters`, so the copies they skip count in
+`GI_COUNTER_COPIES` ("copiesSkipped").
+
+They stay apart, each with its own barrier, where something reads their result before the light runs: the shadow
+debug view and probe, the scene view (no light passes) and without Ray Reconstruction (the sun's denoiser follows
+its rays).
+
+Timing follows the work. Timestamps between dispatches that overlap would split their time arbitrarily, so the
+group has one mark, the light's "rays and their hits' light" (`Pass::GiRays`): with Ray Reconstruction the budget's
+global illumination line holds the sun's and lamps' rays, and path tracing's line has no row of its own for the lamps.
+The total, and the hand-over computed from it, are unchanged.
+
+The reflections stay after the light's cache update: they read its cells (`CachedLight`), which `UpdateTiles` writes.
+
+**Measured 2026-11-25: a small gain, under what one frame-time capture can resolve at native resolution.** The three
+grouped traces read 0.25 to 0.9 ms shorter in each of the first two runs, but the whole frame's gain is within the drift
+between sessions (below). A first run at Ultra Performance (640x360) with the copy's
+vsync on read 17.5 ms against 18.5 ms, but the GPU was not running flat out, so it does not count; two more runs under
+the 60 fps cap (the copy took `"vsync": "Enable"` from the player's display config; `unlock_fps` alone does not lift
+it) pinned the frame at 16.67 ms and measured nothing. Measure GPU-bound: DLAA at 1920x1080, `unlock_fps=1`, vsync
+disabled in the copy's `DevKit/local/TPP_GRAPHICS_CONFIG` only.
+
+Africa free roam, clear, frozen at the boot's spot, three captures of 240 frames a session, four fresh sessions
+(without, with, without, with). GPU frame by session:
+
+| | Without | With |
+| --- | --- | --- |
+| 22:00 | 58.98, 57.90 ms | 57.81, 58.40 ms |
+| 12:00 | 42.32, 42.94 ms | 42.40, 42.38 ms |
+
+The means differ by 0.3 ms at night and 0.2 ms at noon (0.6%), less than the spread between two sessions of the same
+build (1.1 ms and 0.6 ms). At this size each trace is long enough that the idle end of one is a small share of it.
+Timestamps next to overlapped work split their time differently, so read the phases there as approximate.
+
+At Balanced (1114x626 rendered for 1920x1080), the same four sessions read, mean of three captures a spot: 22:00 25.8
+and 27.1 ms without, 28.1 and 27.0 with; 12:00 19.8 and 21.0 without, 21.9 and 21.1 with. Two sessions of one build
+differ by up to 1.3 ms there, more than the change accounts for, and the first session was the quickest at both spots.
+
+Where a DLAA frame goes (without it, 22:00 / 12:00): "rays and their hits' light" (`TraceLight`) 27.3 / 15.0 ms,
+the reflections 6.6 / 5.4, the sun's rays 3.7 / 4.2, the cache's hit lighting 3.5 / 2.3, the cache update 1.1 / 1.0,
+and DLSS Ray Reconstruction about 7.7 ms.
+
+The scenarios the same day read alike with and without it: `afghanistan-ruins` 1.19x and 1.21x the game's light,
+`mother-base-helipad` 1.08x both, `africa-roof` fine. Both are over what they expect (1.03x and 0.86x, set on
+2026-11-08), but without it too: that drift came earlier, and is not this.
+
 ### Kernels and their slots
 
 A kernel's HLSL is the one home of its slots: the `register()` lines, each in the file of the trace that owns it. A
@@ -2911,7 +3145,22 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   stand-in (model `84a1b19dea6952c1`, mesh 9) kept 80 to 100% of a room's main lamp, an unshadowed spot,
   off its wall 0.9 m from it (the lamp probe), and the scene view went red over the room: the camera's
   rays met stand-ins short of what the game drew. Cut-out stand-ins stay in, for the main-view cut-out
-  meshes left out (the pylon's lattice).
+  meshes left out (the pylon's lattice). Since 2026-11-07 only rays towards lights meet them
+  (`MeshRole::CutOutStandIn`: `GI_GEOMETRY_CUT_OUT | GI_GEOMETRY_SHADOW_ONLY`). In Africa's jungle each tree
+  fern's fronds (model `84a1f5deb4c61e59`, mesh 0, alpha 0x80 shadow 0x01) are drawn in the main view alone,
+  and the game casts them through a canopy card (model `84a3bde77c6368f3`, 10 triangles, about 22 x 22 m,
+  alpha 0xa0 shadow 0x42) 14 to 20 m up, one a tree. Met by every ray, the cards were a lid over the forest:
+  the camera's ray met one at 36 m where the game drew ground at 105 m, they stood in front of 14% of the
+  frame, and the floor under them lost the sky's light while the sun's shadow matched the game's.
+  Their fronds are cut out and are in the scene only beside a solid stand-in, as since 2026-11-09: alone they
+  are dropped, and the card casts for them. In, the fronds cost every global illumination and reflection ray
+  4.5 ms of the case's 6.7 ms frame (1280x720, 240 frames), the card 2 ms, for the same shade. A structure whose
+  meshes all let a light's rays through is
+  `GI_MASK_VIEW_ONLY`, which those rays skip whole, so its fronds may take an opacity micromap. A jungle tree
+  with a canopy card is skinned, and so was taken for a character until 2026-11-09, its card dropped with its other
+  stand-ins: the sun then reached the floor the game's map shades (`84a0fe379b794365`, no shadow over 12.5% of the
+  frame at the case's rock). A character's stand-in with the decal alpha bit is now kept as a rigid model's cut-out
+  stand-in, for rays towards lights alone; those without it stay dropped, as a woman's outfit's was (2026-10-24).
   Since 2026-10-27 a solid stand-in is kept again where its model's main view shows cut-out meshes the
   scene leaves out (shadow bit 0 with alpha bit 5 or 7), as the only thing the rays have of them, and
   only for rays towards lights (`GI_GEOMETRY_SHADOW_ONLY`, `StopsRay`): every other ray passes it, and
@@ -3070,7 +3319,9 @@ denoiser (see "Ray Reconstruction").
   behind for some, so the hidden bush's leaves showed as shadows on what lay
   behind (the shadow probe, 2026-10-24: the camera's ray met leaves 0.1 to 1.4 m away, the game's
   surface 2.4 to 5.9 m). Found, the ray leaves its exact
-  point on the triangle, a shadow ray from the side facing the light, lifted off it along the normal by 16 float
+  point on the triangle, a shadow ray from the side facing the light (an opaque surface whose own face turns
+  away from it keeps the eye's side, so its triangle stops the ray instead of the ray passing the backs of
+  the wall and lighting its bumps), lifted off it along the normal by 16 float
   steps of the point's largest coordinate (`LiftOffTriangle`; coordinates under 128 m count as 128),
   and nothing near it is skipped. That is about 2 mm at 1,200 m from the map's origin, where the game's
   maps reach. The point comes from the triangle's corners and the ray is traced in the instance's own
@@ -3308,6 +3559,24 @@ With DLSS Ray Reconstruction denoising, the rays go out without the filter (see 
   (`c6.z^(-1/16)`) the brightness's square root further, where the brighter light falls to the same
   dimness. Set when the light is noted, so its redrawn light, its shadow rays and its bounce all have
   it. Only the look: the game's guards see as before.
+- **The jitter on the game's light volumes** (`src/game_light_volumes.cpp`, 2026-11-09). The volumes come
+  in clip space, worked out on the CPU from the game's own camera, so the upscaler's jitter, which only
+  goes into the scene constants, reached the depth they test but not them: a lamp's volume lying on a
+  wall passed or failed the marking draw's `greater_equal` by that frame's jitter. Africa's villa lamps
+  flickered with the camera still, `0.24%` of the pixels at DLSS Ultra Performance and `0.000%` with the
+  jitter off, at 40 frames; the smaller the render scale, the larger the jitter in render pixels, the
+  worse. All 24 of the game's light vertex shaders are one code under a name each (2026-11-09), so each
+  is made from `game_light_volumes`' own, which adds `cPSScene`'s `c28` (the jitter in NDC) times `w` to
+  the clip position and then works out the sampling position as the game's does: `m_renderInfo` times
+  `m_renderBuffer.zwzw` from `cVSSystem` for the viewport within the targets. At the villa lamps after
+  it, `0.000%` with the effects on or off. The lights drawn again add it to their copies of the volumes,
+  and their bounds come from the volume through the unjittered `m_projectionView`. The shift is in NDC
+  times `w`, so it holds for any projection: a perspective pass scales it with depth, and an orthographic
+  one (`w` 1) moves by the jitter itself. It is read from the scene constants the draw binds, not from a
+  camera of the add-on's: a light's draws bind the main camera's, which is why the jitter reaches them; a
+  pass whose `c28` is zero gets no shift, so the shader is a no-op there rather than a wrong shift — the
+  game without the upscaler, or a view the add-on did not jitter, such as the intro mirror's smaller one
+  when the frames it starts on are not the main camera's.
 - **Drawn with.** Each kind of light (point or spot, mask or not, `SSLighting2` or `NA`) is drawn again
   with the game's own shader for it with specular and without a shadow map, which reads `c8.x` and the
   specular tables at `t8` and `t9`; a light whose own shader has no specular gets a scale of 1, as the
@@ -3355,7 +3624,7 @@ With DLSS Ray Reconstruction denoising, the rays go out without the filter (see 
   casters. Before 2026-10-24 each light took one ray to its centre
   and a bit, and its hard edge showed every pixel's difference.
 - **Bounce.** With the global illumination on, the same lights light the surfaces its rays hit
-  (`SampledLocalLight` in `src/passes/ray_tracing/shaders/gi_hit_light.hlsli`), first and later
+  (`ChooseLocalLight` and `OwnLightReaching` in `src/passes/ray_tracing/shaders/gi_hit_light.hlsli`), first and later
   bounces, besides the sun and the sky: every light's diffuse light there without shadows, as the game's shaders work it out
   (`LocalLightAt`: the falloff, a point's least and added distance, a spot's cap and cone, the colour
   in the sun's units), picks one in proportion (weighted reservoir sampling, a candidate a light), and
@@ -3476,7 +3745,7 @@ Not handled:
 ### Light bins
 
 Path tracing's lamps at every pixel and the rays' hits at every bounce pick among the frame's lights (`TraceLampLight`,
-`SampledLocalLightReaching`). Walking all of them cost more than the rays that followed: at Mother Base at night a frame
+`ChooseLocalLight`). Walking all of them cost more than the rays that followed: at Mother Base at night a frame
 asks 6.5 million places, and of the 128 lights only 3.2 can reach one on average.
 
 `src/passes/ray_tracing/light_bins.cpp` keeps three tables in the frame's constants, one for each world axis: 2 m bins around
@@ -3911,8 +4180,8 @@ at `t14` with `s15`; `cPSMaterial` at `b4`, whose `[0]` holds the normal map's t
 - **Shadow.** Where the rays took the shadow's place on the ground, the river's draw takes a 1x1 white shadow map and a
   sampler that always passes, so the map's shadow, which no longer matches the rays' scene, does not darken the
   surface. The water takes no sun shadow of its own: its reflection is what the eye reads, and the bed's shadow stays
-  in the deferred lighting under it. Glass keeps the game's: it barely shows there, and a shadow of its own would take a
-  sun ray for each pixel of glass.
+  in the deferred lighting under it. Glass takes the rays' shadow too, a sun ray for each of its pixels (the forward
+  surfaces' composite).
 - **Reflection.** While the reflections are traced, the river's draw leaves its cube map out and records the water as a
   surface: its depth, its ripples' normal and, in the normal's `w`, negative, the share of what it reflects that
   shows. The sign marks water. The share is there and not in the weights because those blend: a pane drawn over a river
@@ -4146,7 +4415,7 @@ F2 does nothing.
   position, facing the camera's yaw. The game's warp needs game time, so the request is taken at the
   next selector update (which also clears the pause), and a held camera, as a debug case leaves behind,
   is let go so the pause really clears; the warp then runs at the next frame start through the game's
-  Lua, from `dev::onFrameStart` (`src/dev/game_lua.hpp`): `GameObject.SendCommand` with
+  Lua, from `dev::onFrameStart` (`src/devkit/game_lua.hpp`): `GameObject.SendCommand` with
   `WarpAndWaitBlock` for the player (object 0), or `SetPosition` for the vehicle or walker gear they are
   in; missions and free roam only. It is the call Infinite Heaven's `InfTppUtil.Warp` makes.
 - **Near clip plane.** With **No near clip plane** on, the swapped-in camera's near plane (`+0x48`,

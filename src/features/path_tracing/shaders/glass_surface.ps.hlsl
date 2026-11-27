@@ -61,7 +61,10 @@ Surface main(float4 position : SV_Position, float2 uv : TEXCOORD0, float2 range 
     const float reflection = cover * world.w * sheetReflectance * reflectionShare;
     Surface surface;
     surface.depth = position.z;
-    surface.normal = float4(normal, m_materials[3].y);
+    // Sharp, as the game's own reflection is: it samples its cube map at full detail. GlassRoughness (m_materials[3].y) is
+    // only its sun highlight's (shininess 2^(12 - 11 x roughness)), and many windows hold 1 there; read as the reflection's
+    // roughness it spread every ray into a haze of the room's light, and a pane reflected nothing anyone could make out.
+    surface.normal = float4(normal, 0);
     surface.weight = float4(reflection * tint * m_materials[1].rgb * FogTransmittance(position.xy, range.y), alpha);
     return surface;
 }

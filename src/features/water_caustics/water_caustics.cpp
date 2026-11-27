@@ -21,6 +21,7 @@
 
 namespace phantom_fx::water_caustics
 {
+using fxcore::FrameLatch;
 namespace
 {
 using Microsoft::WRL::ComPtr;

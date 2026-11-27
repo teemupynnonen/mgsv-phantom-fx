@@ -1,4 +1,4 @@
-"""Says what is wrong in a debug case (src/dev/automation.hpp, docs/DEVELOPMENT.md "Debug cases").
+"""Says what is wrong in a debug case (src/devkit/automation.hpp, docs/DEVELOPMENT.md "Debug cases").
 
   case.py [--copy] [<case>]     report.md, numbers.json and pictures in the case's folder; the latest case by default
 
@@ -23,7 +23,7 @@ HEADER = np.dtype([("magic", "S4"), ("width", "<u4"), ("height", "<u4"), ("frame
 PIXEL = np.dtype([("view", "<u4"), ("view_distance", "<f4"), ("surface", "<u4"), ("surface_distance", "<f4"), ("sun", "<u4"), ("sun_distance", "<f4"),
     ("game_distance", "<f4"), ("kinds", "<u4")])
 
-# As GI_INSPECT_SURFACE_* in src/dev/shaders/inspect.hlsl.
+# As GI_INSPECT_SURFACE_* in src/dev/inspect.hlsl.
 SURFACE_METRES, SURFACE_SHARE = 0.05, 0.02
 # Regions under this share of the frame are noise: alpha-tested edges and the shadow map's texels.
 LEAST_REGION = 0.0005
@@ -312,10 +312,15 @@ def same_view(first, second):
         return None
 
     a, b = Record(Path(first) / "scene"), Record(Path(second) / "scene")
+    near, far = a.pixels["game_distance"], np.asarray(b.pixels["game_distance"])
+    # Another render size: the copy runs windowed at whatever the desktop allows, a case in the player's game
+    # at their resolution. The second reads nearest at the first's pixels.
     if a.pixels.shape != b.pixels.shape:
-        return None
+        height, width = near.shape
+        rows = np.minimum((np.arange(height) + 0.5) * b.pixels.shape[0] / height, b.pixels.shape[0] - 1).astype(int)
+        columns = np.minimum((np.arange(width) + 0.5) * b.pixels.shape[1] / width, b.pixels.shape[1] - 1).astype(int)
+        far = far[np.ix_(rows, columns)]
 
-    near, far = a.pixels["game_distance"], b.pixels["game_distance"]
     shown = (near > 0) | (far > 0)
     same = np.abs(near - far) <= SAME_VIEW_SHARE * np.maximum(near, far)
 
