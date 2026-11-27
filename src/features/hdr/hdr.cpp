@@ -438,7 +438,8 @@ void detach() noexcept
 
 void configure(const Configuration& configuration) noexcept
 {
-    outputWanted = configuration.settings.hdr.on;
+    // The scene stays the game's 8-bit one when the float scene did not start: HDR output takes a restart.
+    if (isSceneFloat()) outputWanted = configuration.settings.hdr.on;
     peakNits = configuration.settings.hdr.peakNits;
     paperWhiteNits = configuration.settings.hdr.paperWhiteNits;
 }

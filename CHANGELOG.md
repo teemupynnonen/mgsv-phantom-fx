@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-- **HDR turns on and off without a restart.** The swap chain is now made for HDR from the start whenever the scene
-  is float, so the overlay's **HDR output** switch applies from the next frame: the colour space, the grading and the
-  sky's clamp follow it, and the display is asked again each time, so turning HDR on in Windows first and then in the
-  game works without restarting. SDR now writes the 10-bit back buffer, with the dither at a 10-bit step; it looks
-  as before.
+- **HDR turns on and off without a restart.** A new **Switch without a restart** setting (`hdr_hot`) keeps the scene
+  in 16-bit float from start, so the overlay's **HDR output** switch applies from the next frame: the colour space, the
+  grading and the sky's clamp follow it, and the display is asked again each time, so turning HDR on in Windows first
+  and then in the game works without restarting. It is off by default: then the float scene starts only with HDR on, as
+  before, and SDR keeps the game's own 8-bit scene. With it, SDR writes the 10-bit back buffer, which looked as before.
 
 - **The bushes and grass the object brush places move with the wind.** In the ray-traced scene they stood still, so
   their traced shadows, bounce light and reflections did not move either. They now lean with the same wave the game's

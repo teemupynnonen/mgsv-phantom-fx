@@ -698,9 +698,13 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshadeMo
     if constexpr (DevTools) dev::install(directory);
     upscaler::initialize(directory);
     core::initialize(directory, isSupportedGameBuild());
-    // The game makes its swap chain and targets next, so the float scene is decided now; HDR output
-    // follows the settings while the game runs.
-    if (isSupportedGameBuild()) hdr::enable();
+    // The game makes its swap chain and targets next, so the float scene is decided now: with HDR on, or
+    // with HDR switchable while the game runs. Otherwise HDR takes a restart (hdr/settings.hpp).
+    if (isSupportedGameBuild())
+    {
+        const auto& hdrSettings = core::currentSettings().hdr;
+        if (hdrSettings.on || hdrSettings.hot) hdr::enable();
+    }
 
     // Frame generation takes over the swap chain the game creates next, so it starts with the game.
     if (const auto mode = core::currentSettings().frameGeneration.mode; isSupportedGameBuild() && mode != upscaler::FrameGenerationMode::Off)

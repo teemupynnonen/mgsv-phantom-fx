@@ -2238,16 +2238,20 @@ the game's lights) is left alone until it runs.
 
 ## HDR
 
-With `hdr=1` in `PhantomFX.ini` the game outputs HDR10 (`src/features/hdr/`); it turns on and off
-from the next frame, as everything it needs is made at start whichever it is.
+With `hdr=1` in `PhantomFX.ini` (a restart applies it) the game outputs HDR10 (`src/features/hdr/`).
+With `hdr_hot=1` too the float scene starts whether HDR is on or not, so HDR turns on and off from
+the next frame; the display is asked again at each switch, so HDR turned on in Windows since the game
+started is followed. Without `hdr_hot` the float scene starts only with HDR on, and SDR is the game's
+own 8-bit scene: it costs nothing, but HDR takes a restart.
 The game tonemaps early, in the deferred resolve (`TppTonemap`, `cPSMaterial` c0 = a, b, c, usually
 4.87, 0.6, 0.453: x up to b, then b + c - 1 / (a (x - b + c)), which an 8-bit target clamps at 1,
 reached at x = 4) and inline in 23 forward shaders (sky, clouds, oceans, wormholes, sand wind), and
 everything after worked on that image in 8 bits. With HDR the scene keeps its light up to the
 grading, as RenoDX's mods do, and the grading and output follow RenoDX's and Luma's defaults.
 
-**The float scene in SDR.** On a supported build the scene keeps its light in SDR too (since
-2026-10-30, issue #54): all of the below but the light the grading gives back and the HDR output. In 8 bits, smooth fog showed steps of one and two levels, a few of three (measured
+**The float scene in SDR.** With `hdr_hot=1` the scene keeps its light in SDR too (since
+2026-10-30, issue #54; behind the setting since 2026-11-27, as it costs the 0.3 ms below always):
+all of the below but the light the grading gives back and the HDR output. In 8 bits, smooth fog showed steps of one and two levels, a few of three (measured
 in a screenshot at 3840x2160, DLSS Quality); the game hid them with an 8x8 dither before the
 upscaler, which the upscaler made a grid (issue #28, see "Dither"). The grading is the game's own
 and the sky keeps its light (see "TppTonemap out"), so below the tonemap's knee the image is the
