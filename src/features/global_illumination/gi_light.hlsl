@@ -297,7 +297,7 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
             // the cell's average only blurs the light by a cell over the ray's length, so a hit a few cells away loses nothing a ray would
             // show, near the eye (small cells) as well as far from it, where a fixed distance took too few hits to matter.
             const float3 hitPosition = origin + hit.distance * direction;
-            if (false && g_Frame.lightRays.z > 0u && hit.distance >= float(g_Frame.lightRays.z) * HashGridCache_CellSize(hitPosition) &&
+            if (g_Frame.lightRays.z > 0u && hit.distance >= float(g_Frame.lightRays.z) * HashGridCache_CellSize(hitPosition) &&
                 !(HitFlags(visibility) & GI_GEOMETRY_EMISSIVE))
             {
                 uint hitTile;
@@ -308,7 +308,7 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
                     HashGridCache_TouchCell(hitTile, isNewHitTile);
                     HashGridCache_KeepForLight(visibility, hitCell, 2u * g_Frame.lightLayout.z, g_Frame.lightLayout.z);
                     float4 direct = HashGridCache_FilteredRadiance(g_HashGridCache_ValueBuffer, hitCell, HASH_MAX_SAMPLE_COUNT);
-                    if (direct.w >= HASH_MAX_SAMPLE_COUNT)
+                    if (direct.w >= 1.0f)
                     {
                         light = direct.rgb / direct.w + HashGridCache_FilteredIndirect(hitCell);
                         CountDiagnostic(GI_COUNTER_CACHED_HITS, true);
