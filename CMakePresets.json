@@ -26,7 +26,8 @@
       "inherits": "release",
       "cacheVariables": {
         "PHANTOM_FX_DIAGNOSTIC_LOG": true,
-        "PHANTOM_FX_DEV_TOOLS": true
+        "PHANTOM_FX_DEV_TOOLS": true,
+        "PHANTOM_DEV_SHADERS": true
       }
     },
     {

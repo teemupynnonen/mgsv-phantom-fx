@@ -3,6 +3,7 @@
 #include "d3d11_helpers.hpp"
 #include "game_shaders.hpp"
 #include "log.hpp"
+#include "phantom_shaders/light_volume_jittered.hpp"
 #include "shader_bytecode.hpp"
 
 #include <wrl/client.h>
@@ -15,33 +16,8 @@ namespace phantom_fx::game_light_volumes
 {
 namespace
 {
-// The game's Lighting_*_vs and SSLighting2_*_vs, with the volume moved by the jitter first: the clip-space
-// position twice, then where it samples the light targets.
-constexpr char Source[] = R"(
-cbuffer cVSSystem : register(b0)
-{
-    float4 m_param;
-    float4 m_renderInfo;
-    float4 m_renderBuffer;
-    float4 m_dominantLightDir;
-};
-
-cbuffer cVSScene : register(b2)
-{
-    float4 m_registers[28];
-    float4 m_cameraCenterOffset; // xy: the jitter in NDC (camera::applyJitter)
-};
-
-void main(float4 inPosition : POSITION, out float4 position : SV_Position, out float4 clip : TEXCOORD0, out float4 sampling : TEXCOORD1)
-{
-    position = inPosition;
-    position.xy += m_cameraCenterOffset.xy * position.w;
-    clip = position;
-    float4 viewToUv = m_renderInfo * m_renderBuffer.zwzw;
-    float2 screen = position.xy * float2(0.5, -0.5) + 0.5 * position.w;
-    sampling = float4(screen * viewToUv.xy + viewToUv.zw * position.w, position.zw);
-}
-)";
+inline constexpr Shader JitteredVolume{g_light_volume_jittered, sizeof(g_light_volume_jittered),
+    "passes/shaders/light_volume_jittered.vs.hlsl", "vs_5_0"};
 
 std::once_flag compiled;
 std::optional<std::vector<std::uint8_t>> code; // Empty when it did not compile or Direct3D refused it
@@ -65,9 +41,9 @@ const std::vector<std::uint8_t>* jittered(ID3D11Device* device, const void* orig
         std::call_once(compiled, [device] {
             try
             {
-                const auto blob = compile(Source, "light-volume-jittered", "vs_5_0");
-                const auto* bytes = static_cast<const std::uint8_t*>(blob->GetBufferPointer());
-                std::vector<std::uint8_t> made(bytes, bytes + blob->GetBufferSize());
+                const auto bytecode = bytecodeOf(JitteredVolume);
+                const auto* bytes = static_cast<const std::uint8_t*>(bytecode.bytes);
+                std::vector<std::uint8_t> made(bytes, bytes + bytecode.size);
 
                 Microsoft::WRL::ComPtr<ID3D11VertexShader> shader;
                 if (!device || FAILED(device->CreateVertexShader(made.data(), made.size(), nullptr, shader.GetAddressOf())))

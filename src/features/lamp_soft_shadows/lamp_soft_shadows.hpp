@@ -16,7 +16,7 @@ namespace phantom_fx::lamp_soft_shadows
 void attach(ID3D11Device* device) noexcept;
 // Releases everything; only when no Direct3D work can run (device teardown, unload).
 void detach() noexcept;
-// Compiles the shaders while the effect runs, before its first frame.
+// Makes the shaders (precompiled; compiled from source in a dev build) while the effect runs, before its first frame.
 void configure(const Configuration& configuration) noexcept;
 // For the budget: unavailable when its shaders did not compile (see PhantomFX.log).
 Health health();

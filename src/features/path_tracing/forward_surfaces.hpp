@@ -12,7 +12,7 @@
 // them; and most are drawn among the particles, after the game's reflection blend. This module owns what they share:
 //
 // - the surface targets: the nearest surface's depth and normal at each pixel, and the weight the game's shader gives
-//   its reflection, which glass and water record through `record`, with the shaders kept here for them (surface_shaders.hpp);
+//   its reflection, which glass and water record through `record`, with the shaders kept here for them (shaders/*_surface*.ps.hlsl);
 // - the second, short trace before the exposure's list (ray_tracing::traceSurfaces) and the composite that adds what
 //   those pixels reflect over the scene at those weights (executing);
 // - Ray Reconstruction's guides, which tell it where a surface dominates (guideReconstruction).

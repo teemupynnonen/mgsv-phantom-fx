@@ -43,7 +43,7 @@ std::array<Target, 2> gathered; // At the march's size
 Target edges;                   // Depth edges for the denoiser, written by the march
 visibility_bitmask::Progress progress{"SSILVB"};
 
-// Compiles the shader once; call with resourceMutex held. Returns false when SSILVB is unavailable.
+// Makes the shader once from its precompiled bytecode (compiled from source in a dev build); call with resourceMutex held. Returns false when SSILVB is unavailable.
 bool ensurePipeline()
 {
     if (upsampleShader) return true;

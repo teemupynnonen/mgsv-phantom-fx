@@ -35,7 +35,7 @@ float WaterReflectance(float toEyeN, float roughness)
 }
 
 // A river's or a liquid's, near a mirror as the game's shader samples its cube map: the ripples' normal does the rest.
-// The guides take the same (surface_shaders.hpp, ReconstructionGuides).
+// The guides take the same (reconstruction_guides.cs.hlsl).
 static const float WaterRoughness = 0.05f;
 // FP16's largest, which Ray Reconstruction takes as the sky.
 static const float SkyHitDistance = 65504.0f;
@@ -311,7 +311,7 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
     if (depth <= 0.0f) return;
 
     float4 normalRoughness = g_SurfaceNormal.Load(int3(did, 0));
-    // A river or a liquid (WaterSurface, surface_shaders.hpp) marks itself with a negative w.
+    // A river or a liquid (water_surface.ps.hlsl) marks itself with a negative w.
     const bool isWater = normalRoughness.w < 0.0f;
     if (isWater) normalRoughness.w = WaterRoughness;
     float3 normal = normalize(normalRoughness.xyz);

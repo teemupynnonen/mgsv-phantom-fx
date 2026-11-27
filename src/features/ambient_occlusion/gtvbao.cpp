@@ -37,7 +37,7 @@ std::array<Target, 2> visibility;
 Target edges; // Depth edges for the denoiser, written by the march
 visibility_bitmask::Progress progress{"GTVBAO"};
 
-// Compiles the shaders once; call with resourceMutex held. Returns false when GTVBAO is unavailable.
+// Makes the shaders once from their precompiled bytecode (compiled from source in a dev build); call with resourceMutex held. Returns false when GTVBAO is unavailable.
 bool ensurePipeline()
 {
     if (applyShader) return true;

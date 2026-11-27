@@ -7,7 +7,6 @@
 #include "features/path_tracing/path_tracing_shaders.hpp"
 #include "features/path_tracing/surface_shaders.hpp"
 #include "log.hpp"
-#include "passes/forward_scene.hpp"
 #include "passes/ray_tracing/ray_tracing.hpp"
 #include "performance.hpp"
 
@@ -22,7 +21,6 @@ namespace phantom_fx::forward_surfaces
 namespace
 {
 using Microsoft::WRL::ComPtr;
-
 constexpr float ClearColor[4]{};
 
 struct CompositeParameters
@@ -78,12 +76,7 @@ bool hasPipelineFailed{};
 bool hasSurfaces{}, areTargetsDrawn{}, hasReflected{};
 ComPtr<ID3D11RenderTargetView> scene;
 
-ComPtr<ID3D11PixelShader> surfaceShader(const char* source, const char* name, const D3D_SHADER_MACRO* defines = nullptr)
-{
-    return pixelShader(device.Get(), (std::string(forward_scene::Common) + surface_shaders::SurfaceOutput + source).c_str(), name, defines);
-}
-
-// Compiles the surfaces' shaders and makes the states once; call with resourceMutex held. Returns false when they are unavailable.
+// Makes the surfaces' shaders from their precompiled bytecode (compiled from source in a dev build) and the states once; call with resourceMutex held. Returns false when they are unavailable.
 bool ensurePipeline()
 {
     if (compositeShader) return true;
@@ -91,14 +84,10 @@ bool ensurePipeline()
 
     try
     {
-        const auto fullScreenCode = compile(path_tracing::shaders::FullScreen, "surfaces-full-screen", "vs_5_0");
-        check(device->CreateVertexShader(fullScreenCode->GetBufferPointer(), fullScreenCode->GetBufferSize(), nullptr, fullScreenShader.ReleaseAndGetAddressOf()),
-            "Creating the surfaces' vertex shader");
+        fullScreenShader = vertexShader(device.Get(), path_tracing::shaders::FullScreen, "surfaces-full-screen");
         compositeParameters = makeConstantBuffer(device.Get(), sizeof(CompositeParameters), "Creating the surfaces' constants");
 
-        const auto guidesCode = compile(surface_shaders::ReconstructionGuides, "surfaces-guides", "cs_5_0");
-        check(device->CreateComputeShader(guidesCode->GetBufferPointer(), guidesCode->GetBufferSize(), nullptr, guidesShader.ReleaseAndGetAddressOf()),
-            "Creating the surfaces' guides");
+        guidesShader = computeShader(device.Get(), surface_shaders::ReconstructionGuides, "surfaces-guides");
 
         // The nearest surface is the last drawn: the game sorts what blends. The weights blend as the game blends the
         // surfaces, so a pane drawn twice weighs as it shows.
@@ -146,17 +135,13 @@ bool ensurePipeline()
         always.MaxLOD = D3D11_FLOAT32_MAX;
         check(device->CreateSamplerState(&always, litSampler.ReleaseAndGetAddressOf()), "Creating the surfaces' lit sampler");
 
-        const D3D_SHADER_MACRO color[]{{"COLOR_TEXTURE", "1"}, {}};
-        glassShader = surfaceShader(surface_shaders::GlassSurface, "glass-surface");
-        colorGlassShader = surfaceShader(surface_shaders::GlassSurface, "glass-surface-color", color);
-        mirrorShader = surfaceShader(surface_shaders::MirrorSurface, "mirror-surface");
+        glassShader = pixelShader(device.Get(), surface_shaders::Glass, "glass-surface");
+        colorGlassShader = pixelShader(device.Get(), surface_shaders::GlassColor, "glass-surface-color");
+        mirrorShader = pixelShader(device.Get(), surface_shaders::Mirror, "mirror-surface");
         for (int layered = 0; layered < 2; ++layered)
             for (int twoChannel = 0; twoChannel < 2; ++twoChannel)
                 for (int ripples = 0; ripples < 2; ++ripples)
-                {
-                    const D3D_SHADER_MACRO defines[]{{"LAYERED", layered ? "1" : "0"}, {"TWO_CHANNEL", twoChannel ? "1" : "0"}, {"RIPPLES", ripples ? "1" : "0"}, {}};
-                    waterShaders[layered][twoChannel][ripples] = surfaceShader(surface_shaders::WaterSurface, "water-surface", defines);
-                }
+                    waterShaders[layered][twoChannel][ripples] = pixelShader(device.Get(), surface_shaders::Water[layered][twoChannel][ripples], "water-surface");
 
         // Last, so it marks a complete pipeline.
         compositeShader = pixelShader(device.Get(), surface_shaders::Composite, "surfaces-composite");
