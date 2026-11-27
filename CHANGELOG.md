@@ -38,6 +38,11 @@
 
 ### Fixed
 
+- **The light cache no longer makes fireflies in dark rooms.** A ray's distant hit took a cell's light as soon as it
+  had one sample, and from a coarser cell area when it had few, which in an unlit interior divided one bright sample by
+  a small weight, or averaged in a sunlit wall beyond the room. It now takes only the hit's own cell once a full cell's
+  samples are in; a less-lit cell traces its own rays as before.
+
 - **Glass reflections and shadows are right again.** Panes reflect sharply and their inner face keeps the sun's glow;
   the cheaper glass tracing of 2.0.0 is undone.
 
