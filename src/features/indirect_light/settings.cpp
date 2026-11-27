@@ -39,9 +39,10 @@ void describe(IndirectLight& light, SettingVisitor& visit)
     visit.slider(light.strength,
         {.iniKey = "indirect_light_strength",
             .label = "Strength",
-            .max = 3,
+            .max = 6,
             .standard = Defaults.strength,
-            .tip = "1 is one full bounce; higher brightens the bounced light, 0 turns it off."});
+            .tip = "How much of the gathered light reaches the image; 1 is the physical bounce alone, which the game's own ambient "
+                   "hides, 0 turns it off."});
     visit.slider(light.samples,
         {.iniKey = "indirect_light_samples",
             .label = "Samples",

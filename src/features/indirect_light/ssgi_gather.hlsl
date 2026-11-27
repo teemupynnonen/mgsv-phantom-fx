@@ -2,7 +2,7 @@
 // vector are marched over the distance mips (or the depth, without them); each slice keeps a
 // 32-sector occlusion bitmask of the hemisphere, every sample covering the sectors its surface
 // spans at the thickness given, and lights only the sectors it uncovers first, with the radiance
-// it reflects (albedo x diffuse light + specular) times its cosine towards the receiver. Equal
+// it reflects (albedo x diffuse light + specular), the sectors it spans being its cosine. Equal
 // sectors carry equal cosine weight (GT-VBAO's horizon remap), so the sum is the light the
 // hemisphere receives over pi, in the units of the game's diffuse light. Alpha is validity. It
 // reads the game's diffuse light and writes its own target, so reading neighbours while writing
@@ -186,17 +186,19 @@ void main(uint3 tid : SV_DispatchThreadID)
                 const uint covered = width > 0 ? (0xFFFFFFFFu >> (Sectors - width)) << start : 0;
 
                 // Only the sectors this sample uncovers first take its light: nearer samples hide
-                // what lies behind them. Its surface sends light this way by its cosine towards the
-                // receiver (SSRT3); its back sends none.
+                // what lies behind them. Its surface sends light this way over the sectors it
+                // spans; its back sends none.
                 const uint lit = covered & ~occluded;
                 if (lit != 0)
                 {
-                    const float facing = saturate(dot(decodeNormal(Normals.Load(int3(texel, 0)).xyz), -toSample * invLength));
+                    // The sectors already measure how much of the hemisphere the source spans, so its
+                    // cosine is only a back-face test: weighting by it too darkened every bounce.
+                    const float facing = dot(decodeNormal(Normals.Load(int3(texel, 0)).xyz), -toSample * invLength) > 0 ? 1.0 : 0.0;
                     if (facing > 0)
                     {
-                        // A fade over the outer half of the radius, so a source does not pop in
+                        // A fade over the outer quarter of the radius, so a source does not pop in
                         // at its edge as the camera moves; the occlusion above stays hard.
-                        const float fade = saturate(2 - 2 * sampleDistance / radiusWorld);
+                        const float fade = saturate(4 - 4 * sampleDistance / radiusWorld);
                         const float3 radiance = Albedo.Load(int3(texel, 0)).rgb * LightSource.Load(int3(texel, 0)).rgb
                                               + Specular.Load(int3(texel, 0)).rgb;
                         sliceLight += countbits(lit) * facing * fade * radiance;

@@ -3830,9 +3830,8 @@ used. Off, the add-on only checks a flag on each full-screen draw.
   has the same cosine weight. A sample covers the sectors between the horizons of its front and of its
   back, taken `Thickness` (12% of its view depth, clamped to 0.05 and the radius; a sixth of that on
   foliage) behind the depth buffer, with a per-pixel dither on the sector edges. It lights only the
-  sectors it covers that no nearer sample covered already, `popcount(new) x cosine at the sample
-  towards the receiver x radiance`, with `albedo x diffuse + specular` as the radiance and a fade over
-  the outer half of the radius so a source does not pop in at its edge; samples beyond the radius
+  sectors it covers that no nearer sample covered already, `popcount(new) x radiance`, with `albedo x diffuse + specular` as the radiance and a fade over
+  the outer quarter of the radius so a source does not pop in at its edge; samples beyond the radius
   neither occlude nor light. The slices are weighted by their projected cosine integral and the sum
   is the light the hemisphere receives over pi, in the units of the game's diffuse light: an open,
   dark surrounding gives little, which the earlier per-tap mean did not. Alpha is 1 for any pixel a

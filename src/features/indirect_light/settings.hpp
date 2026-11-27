@@ -8,7 +8,7 @@ struct IndirectLight
 {
     bool on{};
     float radius{2.5f};        // Metres the gather reaches around a pixel
-    float strength{1};         // The gathered light's multiplier at the resolve
+    float strength{3};         // The gathered light's multiplier at the resolve
     float samples{8};          // Gather samples per pixel
     int resolution{1};         // The gather's resolution: 0 full, 1 half, 2 quarter
     float denoisePasses{3};    // A-trous iterations the denoiser runs
