@@ -28,6 +28,13 @@
 - **Photo mode: no near clip plane.** The **No near clip plane** switch under Photo mode moves the free camera's near
   clip plane from 7 cm to 1 mm, so what the camera nearly touches no longer vanishes. Off by default.
 
+### Changed
+
+- **The Sea looks like the game's again, with the add-on's waves and reflections.** The water is the game's darker
+  teal, with its turquoise wash in the upper sea, and the sun sparkles on the waves out to the horizon as the game's
+  does. The sparkles hold still under Ray Reconstruction instead of smearing with the wind, are dim under the moon,
+  and the sea stops moving while the game is paused or in photo mode.
+
 ### Performance
 
 - **Path tracing's rays wait less for each other.** With Ray Reconstruction, the lamps' light and the sun's rays now

@@ -18,6 +18,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -115,6 +116,54 @@ bool ensurePipeline()
         return false;
     }
 }
+
+#if PHANTOM_DEV_SHADERS
+// A dev build's hot reload, as the sea's: present looks at the sun pass's .hlsl files twice a second or so and, when
+// one was saved, compiles them all again. A failed compile is logged and the shaders in use stay.
+std::filesystem::file_time_type sourcesSeen{};
+std::uint64_t sourcesChecked{};
+
+std::filesystem::file_time_type newestSource() noexcept
+{
+    std::filesystem::file_time_type newest{};
+    std::error_code error;
+    for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::path(PHANTOM_DEV_SHADER_ROOT) / "passes/shaders", error))
+        if (entry.path().filename().string().starts_with("sun_light")) newest = std::max(newest, entry.last_write_time(error));
+
+    return newest;
+}
+
+// Call with resourceMutex held.
+void reloadShadersIfSaved()
+{
+    if (++sourcesChecked % 30 != 1) return;
+
+    const auto newest = newestSource();
+    if (sourcesSeen == std::filesystem::file_time_type{} || newest == sourcesSeen)
+    {
+        sourcesSeen = newest;
+        return;
+    }
+    sourcesSeen = newest;
+    if (!optionsBuffer) return; // ensurePipeline compiles them from the files anyway
+
+    try
+    {
+        std::array<ComPtr<ID3D11PixelShader>, 6> made;
+        for (const bool isShadowMapped : {true, false})
+            for (const bool reflectsSky : {true, false})
+                made[replacementOf(isShadowMapped, reflectsSky)] = pixelShader(device.Get(), shaders::SunLight[isShadowMapped][reflectsSky], "sun-light");
+        for (const bool isInShadowRange : {true, false})
+            made[pathTracedOf(isInShadowRange)] = pixelShader(device.Get(), shaders::PathTraced[isInShadowRange], "sun-light-path-traced");
+        replacements = std::move(made);
+        log("Sun light pass shaders reloaded.");
+    }
+    catch (const std::exception& error)
+    {
+        log(std::string("Sun light pass shader reload failed, the previous shaders stay: ") + error.what());
+    }
+}
+#endif
 
 // Writes the replacement shaders' options on `context`; call with resourceMutex held. With the
 // ray-traced shadow, the shadow map's part is always soft.
@@ -315,5 +364,9 @@ void present() noexcept
     const auto current = latch.present();
     active = current.any() && !pipelineFailed;
     contact_shadow_trace::tracesThisFrame(contact_shadow_trace::Tracer::Sun, active && current.contactShadows);
+#if PHANTOM_DEV_SHADERS
+    std::lock_guard lock(resourceMutex);
+    reloadShadersIfSaved();
+#endif
 }
 }

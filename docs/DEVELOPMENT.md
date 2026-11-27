@@ -4214,6 +4214,23 @@ screen-space reflections, the global illumination and path tracing take it as an
   G-buffer ran before it (handed over, see "Command lists"): a frame counter by presents does not tell, as
   the game records the next frame while it runs the last. A path-traced reflection's hit on the plane is lit
   like any other hit, diffuse: no reflection of its own.
+- **The game's look** (2026-11-27, `surface.hlsl`). The body is the albedo times `BodyScale` (0.4, 0.65, 0.4),
+  the game's darker teal. The turquoise is the game's own map of it, `inWhitecapTexture1` (its PS `t2`, which
+  `NCalculate` reads as the water's depth), bound at the surface's `t5` and weighed by the game's Fresnel, blurred
+  and gated low: a smooth wash in the upper sea, no spots.
+- **Sparkles.** `Sparkle` reads the waves' slopes at a facet size in the world, set by the distance and the angle
+  the sea is seen at, so a facet spans about a pixel both ways; seen low, smaller facets were a different one under
+  each frame's jitter and Ray Reconstruction smeared them. It lights them where the facet mirrors the sun
+  (`pow(L.R, 120)`), the sun's direction the game's sea's `cVSObject` `c9` (copied to `b12`), and fades them at
+  grazing angles. A facet reads the waves where they came from, drifting downwind at the deep-water speed of four
+  facets' wavelength: the motion vectors follow only the eye, and the pattern travelling with the wind smeared
+  under Ray Reconstruction. Night dims them as the game's do (`NCalculate`'s `dayAndNightTransition`, from the
+  atmosphere's sun in `cPSMaterial` `c3`: a quarter under the moon). The value goes to the G-buffer's
+  translucency with material 106; the sun pass lights it in the sun's colour and shadow past 250 m, and Ray
+  Reconstruction's guides and path tracing take the sea's translucency as none. Added after the upscaler instead,
+  out of its history, they shimmered heavily.
+- **Time.** The waves' clock stops while the game's pause manager (`0x2B65D40`, bits at `+8`) has any bit set:
+  the pause menu, photo mode and the automation's held camera.
 - **Cost** (2026-10-30, 4K output): 0.27 ms for the waves and the surface (the budget's timed passes). The
   lighting and the rays the sea's pixels then take are in the cost measurement's step for it.
 

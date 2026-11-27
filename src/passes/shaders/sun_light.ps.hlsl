@@ -43,6 +43,9 @@ cbuffer cSunShadows : register(b6) // The add-on's options
     float3 g_padding;
 };
 
+// The sea's sparkles: their brightness, and the metres from the camera where they start and reach full strength.
+static const float SparkleGain = 10, SparkleFrom = 250, SparkleTo = 1200;
+
 SamplerState g_samplerPoint_Wrap : register(s8);
 SamplerState g_samplerPoint_Clamp : register(s9);
 SamplerState g_samplerLinear_Wrap : register(s10);
@@ -366,6 +369,16 @@ void main(float4 position : SV_Position, float4 clipPosition : TEXCOORD0, float4
     float F0 = material0.x;
     float anisoRoughness = material0.w;
     float lookupFresnel = g_lut1.Sample(g_samplerLinear_Clamp, float2(LH, F0)).x;
+
+    // The add-on's sea (features/sea) hands its sparkles over in the translucency, with water's material: where its
+    // waves' finer facets mirror the sun (surface.hlsl's Sparkle). Lit here in the sun's colour, past SparkleFrom, as
+    // the game's are only away from the camera. The sea is no leaf, so its light does not wrap.
+    float3 glints = 0;
+    if (abs(materialIndex * 255 - 106) < 0.5 && translucent > 0)
+    {
+        glints = lightColor.xyz * (translucent * SparkleGain * smoothstep(SparkleFrom, SparkleTo, viewPosition.z));
+        translucent = 0;
+    }
     float LNTranslucent = saturate(max(translucent * material1.w, translucent * (1 - LN * LN) + LN));
     float3 specularColor = specularIntensity * material1.xyz;
 
@@ -374,7 +387,7 @@ void main(float4 position : SV_Position, float4 clipPosition : TEXCOORD0, float4
     float2 lutValue = g_lut2.Sample(g_samplerLinear_Clamp, lutCoordinate).xy;
     lutValue *= lutValue;
     float specularPower = saturate(LN * 4) * (lutValue.x / lutValue.y * lookupFresnel);
-    float3 specular = specularPower * (lightColor.xyz * specularColor);
+    float3 specular = specularPower * (lightColor.xyz * specularColor) + glints;
     float3 diffuse = lightColor.xyz * (LNTranslucent * 1 * 1);
 
 #if SKY_REFLECTION
