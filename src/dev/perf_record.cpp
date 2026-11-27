@@ -41,7 +41,7 @@ constexpr std::array<const char*, static_cast<std::size_t>(Pass::Count)> PassNam
     "UpscalerInputs", "Upscaler", "UpscalerOutput",
     "SunTrace", "SunLight", "LampTraces", "LampShadows", "LampSoftLight",
     "OcclusionPrefilter", "OcclusionMarch", "OcclusionDenoise", "OcclusionApply",
-    "LightPrefilter", "LightMarch", "LightDenoise", "LightUpsample",
+    "SsgiPrefilter", "SsgiGather", "SsgiAccumulate", "SsgiFilter", "SsgiResolve",
     "FogPass", "SkyTables", "FogShadow", "FogScattering", "FogIntegration", "Sky",
     "SeaWaves", "SeaSurface", "WaterCaustics",
     "GiInputs", "GiProbeLight", "GiCombine", "GiWait", "LocalLights", "PathTracedLight",
@@ -51,7 +51,8 @@ static_assert(PassNames.back() != nullptr, "A pass has no name");
 
 constexpr std::pair<std::uint32_t, const char*> CounterNames[]{{GI_COUNTER_HITS, "hits"}, {GI_COUNTER_NEAR_HITS, "nearHits"}, {GI_COUNTER_BOUNCE_HITS, "bounceHits"},
     {GI_COUNTER_VISIBILITY0, "intoCache"}, {GI_COUNTER_VISIBILITY1, "multibounce"}, {GI_COUNTER_MULTIBOUNCE_AWAY, "multibounceAway"}, {GI_COUNTER_LIGHTS, "cacheHitsLit"},
-    {GI_COUNTER_COPIES, "copiesSkipped"}, {GI_COUNTER_UPDATE_TILES, "cacheTiles"}, {GI_COUNTER_FOLIAGE, "foliagePixels"}};
+    {GI_COUNTER_COPIES, "copiesSkipped"}, {GI_COUNTER_UPDATE_TILES, "cacheTiles"}, {GI_COUNTER_FOLIAGE, "foliagePixels"},
+    {GI_COUNTER_CACHED_HITS, "firstHitsFromCache"}};
 
 // What frames cost, added up.
 struct Tally

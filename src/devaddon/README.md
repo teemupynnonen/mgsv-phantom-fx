@@ -15,10 +15,10 @@ screens that wait for one without taking the keyboard or the foreground.
 
 ## Use
 
-Copy `build/dev/DevKit.addon64` beside `mgsvtpp.exe` with ReShade 6.8. The add-on keeps its files in
-`DevKit/` beside itself:
+Copy `build/dev/DevKit.addon64` beside `mgsvtpp.exe` with ReShade 6.8. Its log, `DevKit.log`, is beside the add-on
+and says why a tool did not run; it also takes the notices, as DevKit shows none on screen. Its other files are in
+`DevKit/` beside it:
 
-- `DevKit.log` — its log, including the reasons a tool did not run.
 - `DevKit/` — the automation (`src/devkit/automation.*`, its lines are listed in the header):
   `<name>.cmd` files, one line at a time, and F9's debug cases. The name is the one the
   `tools/automation` scripts know. When it holds `saves/` and `local/`, the game's Steam Cloud and user

@@ -14,20 +14,21 @@ which is the add-on to run when PhantomFX's own dev build is not.
 | `game.hpp` | The game's image and code checks, and the build check the add-on answers |
 | `game_lua.*` | Lua in the game's own script state: expressions, print(), and the console's queue |
 | `travel.*`, `cutscenes.*`, `cutscene_list.hpp` | Free roam in another map, and any cutscene the game's scripts name |
+| `keys.*`, `gamepad.*` | Key presses to the game's window, and a synthetic gamepad button merged into XInput |
 | `frame_log.*` | The game's shaders (kept, searched, disassembled, saved) and the frame recorder: every draw with its shaders, targets and states, dumps of constants and textures |
 | `automation.*`, `extension.hpp` | The runner's lines and the API an add-on plugs its own into |
 | `page.*` | The devkit's own Developer page: travel, cutscenes, shaders and the Lua console in plain ImGui |
 
 `devkit.cmake` builds the static library. The add-on answers `devkit::game::isSupportedBuild()` (PhantomFX:
-`src/device_check.cpp`); everything else the devkit needs is in its folder. `src/dev/` stays PhantomFX's own: its
-Developer page with the debug cases and the probes into its passes. The devkit's page is plain ImGui, so it looks
-like ReShade's other windows.
+`src/dev/dev.cpp`, with the core's `game/device_check.cpp`). The devkit also needs the core (`src/core`,
+`phantom_fx_core`). `src/dev/` stays PhantomFX's own: its Developer page with the debug cases and the probes into its
+passes. The devkit's page is plain ImGui, so it looks like ReShade's other windows.
 
 ## Using it in another add-on
 
-1. Bring `src/devkit/` into the add-on's tree (or make this repository a submodule and add its `src` to the
-   include path), and build `devkit.cmake` as a static library in the dev preset alone. Link it only there. It
-   needs MinHook, which `devkit.cmake` links for the saves redirection.
+1. Bring `src/devkit/` and the core into the add-on's tree (or make this repository a submodule and add its `src`
+   to the include path), and build `devkit.cmake` as a static library in the dev preset alone. Link it only there.
+   `devkit.cmake` links `phantom_fx_core` and MinHook.
 2. Answer the host side before installing anything:
    ```cpp
    devkit::setName("MyMod");   // Lua chunk names the game's errors show
@@ -48,10 +49,9 @@ like ReShade's other windows.
      the runner waits and appends the result.
    - The add-on's own key can call `devkit::commands::start({"line", "line"})`.
 4. Use the tools directly: `game_lua::run` and its console, `travel::go`, `cutscenes::play`,
-   `save_redirect::install`, each with its `onFrameStart` called from the game thread. Paths for command results
-   are `devkit::commands::folder()`. `frame_log.*` also needs `resource_dump.*` and `shader_bytecode.*` from
-   `src/`, which `devkit.cmake` does not compile. `frame_log.*` itself is in the `devkit` library; the add-on that
-   links it supplies those two and links `d3dcompiler`.
+   `save_redirect::install`; the first three each have an `onFrameStart` to call from the game thread. Paths for
+   command results are `devkit::commands::folder()`. `frame_log.*` is in the `devkit` library but also needs
+   `src/resource_dump.*`, which `devkit.cmake` does not compile: the add-on that links it supplies it.
 5. Draw the devkit's page from the overlay callback, inside the window ReShade gives it:
 
    ```cpp

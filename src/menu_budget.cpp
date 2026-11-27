@@ -7,7 +7,7 @@
 #include "features/frame_generation/presenter.hpp"
 #include "features/global_illumination/light_combine.hpp"
 #include "features/hdr/hdr.hpp"
-#include "features/indirect_light/ssilvb.hpp"
+#include "features/indirect_light/ssgi.hpp"
 #include "features/lamp_contact_shadows/lamp_contact_shadows.hpp"
 #include "features/lamp_soft_shadows/lamp_soft_shadows.hpp"
 #include "features/path_tracing/path_tracing.hpp"
@@ -72,21 +72,23 @@ const EffectLine EffectLines[]{
     {.effect = Effect::LampSoftShadows, .passes = {{Pass::LampSoftLight, "Lamps: light draws, with the soft shadow"}}, .health = lamp_soft_shadows::health},
     {.effect = Effect::SunContactShadows, .passes = {{Pass::SunTrace, "Sun: contact shadow trace"}}, .health = sun_contact_shadows::health},
     {.effect = Effect::LampContactShadows, .passes = {{Pass::LampShadows, "Lamps: shadow draws"}}, .health = lamp_contact_shadows::health},
-    {.effect = Effect::GlobalIllumination, .passes = {{Pass::GiRays, "Rays and the light cache"}, {Pass::GiDenoiser, "Denoiser and render size"},
+    // With Ray Reconstruction the sun's rays and path tracing's lamps run alongside the light's rays, so their time is in its.
+    {.effect = Effect::GlobalIllumination, .passes = {{Pass::GiRays, "Rays and the light cache (with Ray Reconstruction, the sun's and lamps' rays too)"}, {Pass::GiDenoiser, "Denoiser and render size"},
             {Pass::GiProbeLight, "The game's probe light, copied"}, {Pass::GiCombine, "Adding the light"}},
         .health = light_combine::health},
-    {.effect = Effect::PathTracing, .passes = {{Pass::Reflections, "Reflections"}, {Pass::LampLight, "Point and spot lights"},
-            {Pass::PathTracedLight, "Adding the light"}},
+    {.effect = Effect::PathTracing, .passes = {{Pass::Reflections, "Reflections"}, {Pass::PathTracedLight, "Adding the light"}},
         .health = path_tracing::health},
     {.effect = Effect::AmbientOcclusion, .passes = {{Pass::OcclusionPrefilter, "Depth prefilter"}, {Pass::OcclusionMarch, "March"}, {Pass::OcclusionDenoise, "Denoise"},
             {Pass::OcclusionApply, "Applying to the indirect light"}},
         .health = gtvbao::health},
-    {.effect = Effect::IndirectLight, .passes = {{Pass::LightPrefilter, "Depth prefilter"}, {Pass::LightMarch, "March (half size)"}, {Pass::LightDenoise, "Denoise"},
-            {Pass::LightUpsample, "Upscaling to the render size"}},
-        .health = ssilvb::health},
-    {.effect = Effect::VolumetricFog, .passes = {{Pass::FogPass, "The game's fog pass, larger"}, {Pass::SkyTables, "Sky tables (physical look)"}, {Pass::FogShadow, "Sun shadow in the fog"},
-            {Pass::FogScattering, "Scattering"}, {Pass::FogIntegration, "Integration"}, {Pass::Sky, "Physical sky"}},
+    {.effect = Effect::IndirectLight, .passes = {{Pass::SsgiPrefilter, "Depth prefilter"}, {Pass::SsgiGather, "Gather"}, {Pass::SsgiAccumulate, "Temporal accumulation"}, {Pass::SsgiFilter, "Denoise"},
+            {Pass::SsgiResolve, "Resolve to the render size"}},
+        .health = ssgi::health},
+    // The fill's scattering and integration run for either; they count with the light shafts.
+    {.effect = Effect::VolumetricFog, .passes = {{Pass::FogPass, "The game's fog pass, larger"}, {Pass::FogShadow, "Sun shadow in the fog"},
+            {Pass::FogScattering, "Scattering"}, {Pass::FogIntegration, "Integration"}},
         .health = atmosphere::health},
+    {.effect = Effect::PhysicalSky, .passes = {{Pass::SkyTables, "Sky tables"}, {Pass::Sky, "Sky draw"}}, .health = atmosphere::health},
     {.effect = Effect::Sea, .passes = {{Pass::SeaWaves, "Waves: spectrum, FFT and maps"}, {Pass::SeaSurface, "Surface into the G-buffer"}},
         .health = sea::health},
     {.effect = Effect::WaterCaustics, .passes = {{Pass::WaterCaustics, "Webs over the rivers"}}, .health = water_caustics::health},

@@ -14,9 +14,9 @@ using gi_d3d12::Kernel;
 constexpr std::uint32_t HashTiles = HashBuckets * HashTilesPerBucket;
 constexpr std::uint32_t CellsPerTile = HashTileCellRatio * HashTileCellRatio + 16 + 4 + 1; // Mips 0 to 3
 constexpr std::uint32_t HashCells = HashTiles * CellsPerTile;
-// Capsaicin's defaults: cells of 32 pixels on screen, no smaller than 10 cm, 16 samples a cell, and
-// 70% of the multibounce rays left out.
-constexpr float HashCellPixels = 32, HashMinCellSize = 0.1f, MaxSamples = 16, DiscardMultibounce = 0.7f;
+// Capsaicin's defaults: cells of 32 pixels on screen, no smaller than 10 cm, and 70% of the multibounce rays left
+// out. Its 16 samples a cell are Diagnostics' (fill).
+constexpr float HashCellPixels = 32, HashMinCellSize = 0.1f, DiscardMultibounce = 0.7f;
 // Hits a cell takes its light from each frame (gi_light.hlsl, HashGridCache_QueueLight).
 constexpr std::uint32_t CellSamplesPerFrame = 4;
 }
@@ -57,19 +57,20 @@ Light::Light(ID3D12Device* device, UINT width, UINT height, bool isPerRenderPixe
     updateTiles = buffer(std::uint64_t{HashTiles} * 4, "Creating the updated tiles");
     updateValues = buffer(std::uint64_t{HashCells} * 16, "Creating the hash grid's new light");
     updateIndirectValues = buffer(std::uint64_t{HashCells} * 16, "Creating the hash grid's new indirect light");
-    // Second hits (a ray's bounce) first, then third hits (their cells' multibounce rays).
-    visibility = buffer(std::uint64_t{rayCount} * 2 * 16, "Creating the hits");
-    visibilityCells = buffer(std::uint64_t{rayCount} * 2 * 4, "Creating the hits' cells");
-    visibilityQueries = buffer(std::uint64_t{rayCount} * 2 * 4, "Creating the hits' rays");
+    // Second hits (a ray's bounce) first, then third hits (their cells' multibounce rays), then the distant first
+    // hits that light their cells (TraceLight): a light pixel's worth of room each.
+    visibility = buffer(std::uint64_t{rayCount} * 3 * 16, "Creating the hits");
+    visibilityCells = buffer(std::uint64_t{rayCount} * 3 * 4, "Creating the hits' cells");
+    visibilityQueries = buffer(std::uint64_t{rayCount} * 3 * 4, "Creating the hits' rays");
     multibounce = buffer(std::uint64_t{rayCount} * 8, "Creating the multibounce weights");
-    lights = buffer(std::uint64_t{rayCount} * 2 * 4, "Creating the hits to light");
+    lights = buffer(std::uint64_t{rayCount} * 3 * 4, "Creating the hits to light");
     foliageKeys = buffer(std::uint64_t{GI_FOLIAGE_MEMORY_SLOTS} * 4, "Creating the foliage memory's keys");
     foliageTouched = buffer(std::uint64_t{GI_FOLIAGE_MEMORY_SLOTS} * 4, "Creating the foliage memory's ages");
     foliageAdded = buffer(std::uint64_t{GI_FOLIAGE_MEMORY_SLOTS} * 16, "Creating the foliage memory's new light");
     foliageLight = buffer(std::uint64_t{GI_FOLIAGE_MEMORY_SLOTS} * 8, "Creating the foliage memory's light");
 }
 
-void Light::fill(gi::GIFrameConstants& constants, float verticalFov, std::uint32_t parity) const
+void Light::fill(gi::GIFrameConstants& constants, float verticalFov, std::uint32_t parity, float maxSamples) const
 {
     const float width = static_cast<float>(renderWidth), height = static_cast<float>(renderHeight);
     const float scale = std::max(1.0f / height, height / (width * width));
@@ -81,7 +82,7 @@ void Light::fill(gi::GIFrameConstants& constants, float verticalFov, std::uint32
     constants.hashTileCells = {64, 16, 4, 1};
     constants.hashTileFirstCells = {0, 64, 80, 84};
     constants.hashMisc = {CellsPerTile, parity, CellSamplesPerFrame, 0};
-    constants.hashSamples = {MaxSamples, DiscardMultibounce, MaxSamples, static_cast<float>(HashTileCellRatio)};
+    constants.hashSamples = {maxSamples, DiscardMultibounce, maxSamples, static_cast<float>(HashTileCellRatio)};
 }
 
 void Light::describe(gi_d3d12::Descriptors& d, std::uint32_t parity) const
@@ -103,13 +104,13 @@ void Light::describe(gi_d3d12::Descriptors& d, std::uint32_t parity) const
     d.outputBuffer(binding::HashGridCache_UpdateTileBuffer, updateTiles.Get(), 4, HashTiles);
     d.outputBuffer(binding::HashGridCache_UpdateCellValueBuffer, updateValues.Get(), 4, std::uint64_t{HashCells} * 4);
     d.outputBuffer(binding::HashGridCache_UpdateCellValueIndirectBuffer, updateIndirectValues.Get(), 4, std::uint64_t{HashCells} * 4);
-    d.outputBuffer(binding::HashGridCache_VisibilityBuffer, visibility.Get(), 16, std::uint64_t{rayCount} * 2);
-    d.outputBuffer(binding::HashGridCache_VisibilityCellBuffer, visibilityCells.Get(), 4, std::uint64_t{rayCount} * 2);
-    d.outputBuffer(binding::HashGridCache_VisibilityQueryBuffer, visibilityQueries.Get(), 4, std::uint64_t{rayCount} * 2);
+    d.outputBuffer(binding::HashGridCache_VisibilityBuffer, visibility.Get(), 16, std::uint64_t{rayCount} * 3);
+    d.outputBuffer(binding::HashGridCache_VisibilityCellBuffer, visibilityCells.Get(), 4, std::uint64_t{rayCount} * 3);
+    d.outputBuffer(binding::HashGridCache_VisibilityQueryBuffer, visibilityQueries.Get(), 4, std::uint64_t{rayCount} * 3);
     d.outputBuffer(binding::HashGridCache_MultibounceInfoBuffer, multibounce.Get(), 8, rayCount);
     d.outputBuffer(binding::HashGridCache_PackedTileIndexBuffer, packedTiles[now].Get(), 4, HashTiles);
     d.outputBuffer(binding::HashGridCache_PreviousPackedTileIndexBuffer, packedTiles[last].Get(), 4, HashTiles);
-    d.outputBuffer(binding::HashGridCache_LightBuffer, lights.Get(), 4, std::uint64_t{rayCount} * 2);
+    d.outputBuffer(binding::HashGridCache_LightBuffer, lights.Get(), 4, std::uint64_t{rayCount} * 3);
     d.outputTexture(binding::Light_LastViewZ, viewZ[last].Get(), DXGI_FORMAT_R32_FLOAT);
     d.outputBuffer(binding::FoliageMemory_Keys, foliageKeys.Get(), 4, GI_FOLIAGE_MEMORY_SLOTS);
     d.outputBuffer(binding::FoliageMemory_Touched, foliageTouched.Get(), 4, GI_FOLIAGE_MEMORY_SLOTS);
@@ -120,7 +121,7 @@ void Light::describe(gi_d3d12::Descriptors& d, std::uint32_t parity) const
 }
 
 void Light::record(gi_d3d12::Recorder& r, std::uint32_t parity, const gi_denoiser::Camera& camera, std::uint32_t frameSlot,
-    bool isValidationShown)
+    bool isValidationShown, const std::function<void()>& alongsideRays)
 {
     const auto now = std::chrono::steady_clock::now();
     if (lastRecord)
@@ -146,7 +147,11 @@ void Light::record(gi_d3d12::Recorder& r, std::uint32_t parity, const gi_denoise
     if (denoiser) lightPixels(Kernel::PrepareGuides);
 
     r.mark("rays and their hits' light", performance::Pass::GiRays);
-    lightPixels(Kernel::TraceLight);
+    // No barrier between the rays and what runs alongside them: each dispatch's last waves leave most of the GPU
+    // idle, which the others fill. The albedos the rays' hits read are learned after them.
+    r.dispatch(Kernel::TraceLight, groups(lightWidth, 8), groups(lightHeight, 8));
+    if (alongsideRays) alongsideRays();
+    r.barrier();
     r.dispatch(Kernel::LearnAlbedo, groups(std::uint64_t{groups(lightWidth, 16)} * groups(lightHeight, 16), 64));
     r.barrier();
 

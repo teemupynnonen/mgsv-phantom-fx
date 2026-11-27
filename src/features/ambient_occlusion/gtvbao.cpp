@@ -37,7 +37,7 @@ std::array<Target, 2> visibility;
 Target edges; // Depth edges for the denoiser, written by the march
 visibility_bitmask::Progress progress{"GTVBAO"};
 
-// Compiles the shaders once; call with resourceMutex held. Returns false when GTVBAO is unavailable.
+// Makes the shaders once from their precompiled bytecode (compiled from source in a dev build); call with resourceMutex held. Returns false when GTVBAO is unavailable.
 bool ensurePipeline()
 {
     if (applyShader) return true;
@@ -146,7 +146,7 @@ bool compute(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D
     const visibility_bitmask::Parameters parameters{{width, height}, settings.radiusMetres, visibility_bitmask::MaxRadiusShare * static_cast<float>(height),
         settings.strength, 1, 1, 0};
     const SavedComputeState saved(context, visibility_bitmask::PassSlots);
-    visibility_bitmask::march(context, visibility_bitmask::Mode::Occlusion, parameters, scene, depth, normals, nullptr, nullptr, specular, visibility, edges);
+    visibility_bitmask::march(context, parameters, scene, depth, normals, specular, visibility, edges);
 
     return true;
 }

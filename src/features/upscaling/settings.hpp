@@ -26,8 +26,9 @@ bool upscales(Mode mode);
 // Render width divided by output width, by NVIDIA's ratios or AMD's. DLSS's own optimal sizes take
 // precedence when NGX is ready.
 float nominalScale(Upscaler upscaler, Mode mode, float customScale);
-// Texture LOD bias that keeps output-resolution texture detail when rendering below it.
-float mipBias(float scale, float offset);
+// Texture LOD bias that keeps output-resolution texture detail when rendering below it: AMD's
+// log2(render / output) - 1, as the upscaler resolves several frames of detail back in.
+float mipBias(float scale);
 }
 
 namespace phantom_fx
@@ -35,7 +36,6 @@ namespace phantom_fx
 struct Upscaling
 {
     static constexpr float MinRenderScale = 0.33f, MaxRenderScale = 1;
-    static constexpr float MinTextureBiasOffset = -2, MaxTextureBiasOffset = 1;
 
     upscaler::Upscaler upscaler{upscaler::Upscaler::Dlss};
     upscaler::Mode mode{upscaler::Mode::Dlaa};
@@ -44,7 +44,6 @@ struct Upscaling
     upscaler::ReconstructionPreset reconstructionPreset{upscaler::ReconstructionPreset::Default};
     float sharpness{0.33f};
     float customRenderScale{0.75f};
-    float textureBiasOffset{};
 
     // DLSS upscales and Ray Reconstruction is asked for; whether it runs is the upscaler's.
     bool isRayReconstructionAsked() const { return upscaler == upscaler::Upscaler::Dlss && mode != upscaler::Mode::Off && rayReconstruction; }

@@ -85,12 +85,21 @@ void settingsPersist(const fs::path& root)
         .frameGeneration = {.mode = FrameGenerationMode::X3}, .sun = {.diameterDegrees = 1.25f}, .rayTracedShadows = {.on = true, .withGameShadows = true}, .softShadows = {.on = true},
         .contactShadows = {.on = true, .shape = {.contrast = 2, .reachPixels = 40, .thickness = 0.01f, .fadeMetres = 300}},
         .rayTracedLights = {.on = true, .shadowRaysPerPixel = 8, .flashlightBrightness = 3.5f}, .globalIllumination = {.raysPerLightPixel = 4}, .ambientOcclusion = {.on = true, .radiusMetres = 2, .strength = 1.5f},
-        .indirectLight = {.on = true, .radiusMetres = 3, .strength = 0.5f}, .volumetricFog = {.on = true, .look = AtmosphereLook::Physical, .haze = 0.5f},
+        .indirectLight = {.on = true, .radius = 0.9f, .strength = 0.5f}, .volumetricFog = {.on = true}, .physicalSky = {.on = true, .haze = 0.5f},
         .frameRate = {.unlocked = true}};
     saveSettings(path, chosen);
     expect(loadSettings(path) == chosen,
         "Restart restores the upscaler, mode, preset, sharpening, frame rate unlock, frame generation, soft, screen-space and ray-traced "
-        "shadows, the contact shadows' shape, GTVBAO, SSILVB, the global illumination's rays and the volumetric fog.");
+        "shadows, the contact shadows' shape, GTVBAO, VB-SSGI, the global illumination's rays, the light shafts and the physical sky.");
+    write(path, "volumetric_fog=1\natmosphere_look=physical\n");
+    const auto physical = loadSettings(path);
+    expect(physical.volumetricFog.on && physical.physicalSky.on, "The old physical look keeps its light shafts and turns the physical sky on.");
+    write(path, "volumetric_fog=1\natmosphere_look=mgsv\n");
+    expect(!loadSettings(path).physicalSky.on, "The old MGSV look keeps the game's sky.");
+    write(path, "volumetric_fog=0\natmosphere_look=physical\n");
+    expect(!loadSettings(path).physicalSky.on, "The old physical look did nothing with the fog off, so the sky stays the game's.");
+    write(path, "volumetric_fog=1\natmosphere_look=physical\nphysical_sky=0\n");
+    expect(!loadSettings(path).physicalSky.on, "The physical sky's own switch wins over the old look.");
     write(path, "frame_generation=dynamic\n");
     expect(loadSettings(path).frameGeneration.mode == FrameGenerationMode::Dynamic, "Dynamic frame generation is read back.");
     write(path, "frame_generation=fsr\n");
@@ -107,9 +116,7 @@ void settingsPersist(const fs::path& root)
     write(path, "sharpness=7\n");
     expect(loadSettings(path).upscaling.sharpness == 1, "Sharpening is clamped.");
     write(path, "custom_scale=0.1\nmip_bias_offset=-5\n");
-    const auto clamped = loadSettings(path).upscaling;
-    expect(clamped.customRenderScale == Upscaling::MinRenderScale && clamped.textureBiasOffset == Upscaling::MinTextureBiasOffset,
-        "The custom scale and the texture bias offset are clamped.");
+    expect(loadSettings(path).upscaling.customRenderScale == Upscaling::MinRenderScale, "The custom scale is clamped, and the retired texture bias key is ignored.");
     write(path, "ambient_occlusion=gtvbao\nocclusion_radius=10\nocclusion_strength=-1\n");
     const auto occlusion = loadSettings(path).ambientOcclusion;
     expect(!occlusion.on && occlusion.radiusMetres == 4 && occlusion.strength == 0,
@@ -122,19 +129,23 @@ void settingsPersist(const fs::path& root)
     expect(merged.softShadows.on && merged.contactShadows.on, "The sun's keys switch the lamps' soft and contact shadows too; the old lamp keys are ignored.");
     write(path, "indirect_light=yes\nindirect_light_radius=0\nindirect_light_strength=9\n");
     const auto light = loadSettings(path).indirectLight;
-    expect(!light.on && light.radiusMetres == 0.25f && light.strength == 3,
-        "An invalid toggle leaves SSILVB off, and its radius and strength are clamped.");
+    expect(!light.on && light.radius == 0.25f && light.strength == 6,
+        "An invalid toggle leaves VB-SSGI off, and its radius and strength are clamped.");
+    write(path, "indirect_light_radius=1\n");
+    expect(loadSettings(path).indirectLight.radius == 1, "An old radius, a share of the height, reads as that many metres, in range.");
+    write(path, "indirect_light_radius=50\n");
+    expect(loadSettings(path).indirectLight.radius == 8, "A radius in metres is clamped at the most.");
 
-    const Settings upscaling{.upscaling = {.mode = Mode::Custom, .dlssPreset = Preset::K, .sharpness = 0.25f, .customRenderScale = 0.75f, .textureBiasOffset = -0.5f}};
+    const Settings upscaling{.upscaling = {.mode = Mode::Custom, .dlssPreset = Preset::K, .sharpness = 0.25f, .customRenderScale = 0.75f}};
     saveSettings(path, upscaling);
-    expect(loadSettings(path) == upscaling, "Restart restores an upscaling mode with its custom scale and texture bias offset.");
+    expect(loadSettings(path) == upscaling, "Restart restores an upscaling mode with its custom scale.");
 
     for (const auto& invalid : {Settings{.upscaling = {.upscaler = Upscaler::Count}}, Settings{.upscaling = {.mode = Mode::Count}},
              Settings{.upscaling = {.dlssPreset = static_cast<Preset>(7)}}, Settings{.upscaling = {.sharpness = std::numeric_limits<float>::quiet_NaN()}},
-             Settings{.upscaling = {.sharpness = 2}}, Settings{.upscaling = {.customRenderScale = 2}}, Settings{.upscaling = {.textureBiasOffset = 3}},
+             Settings{.upscaling = {.sharpness = 2}}, Settings{.upscaling = {.customRenderScale = 2}},
              Settings{.frameGeneration = {.mode = FrameGenerationMode::Count}}, Settings{.sun = {.diameterDegrees = 0}},
              Settings{.globalIllumination = {.raysPerLightPixel = 3}}, Settings{.ambientOcclusion = {.radiusMetres = 0}},
-             Settings{.ambientOcclusion = {.strength = 4}}, Settings{.indirectLight = {.radiusMetres = 5}}, Settings{.indirectLight = {.strength = -1}}})
+             Settings{.ambientOcclusion = {.strength = 4}}, Settings{.indirectLight = {.radius = 20}}, Settings{.indirectLight = {.strength = -1}}})
         expect(saveRejected(path, chosen, invalid), "Invalid settings cannot replace valid saved ones.");
 }
 
@@ -205,16 +216,16 @@ void effectPlan()
     all.rayTracedShadows.on = all.softShadows.on = all.contactShadows.on = true;
     all.rayTracedLights.on = true;
     all.globalIllumination.on = all.ambientOcclusion.on = all.indirectLight.on = true;
-    all.volumetricFog.on = all.sea.on = true;
+    all.volumetricFog.on = all.physicalSky.on = all.sea.on = true;
 
     const auto plan = planEffects(all, {});
     expect(plan.runs(Effect::RayTracedShadows) && plan.runs(Effect::RayTracedLights) && plan.runs(Effect::GlobalIllumination)
-            && plan.runs(Effect::VolumetricFog) && plan.runs(Effect::Sea),
+            && plan.runs(Effect::VolumetricFog) && plan.runs(Effect::PhysicalSky) && plan.runs(Effect::Sea),
         "The effects nothing replaces run.");
 
     for (const auto effect : {Effect::SoftShadows, Effect::SunContactShadows, Effect::LampContactShadows, Effect::LampSoftShadows, Effect::AmbientOcclusion,
              Effect::IndirectLight})
-        expect(plan[effect] == EffectState::Replaced, "The ray-traced effects replace the soft and contact shadows, GTVBAO and SSILVB.");
+        expect(plan[effect] == EffectState::Replaced, "The ray-traced effects replace the soft and contact shadows, GTVBAO and VB-SSGI.");
 
     Settings withoutTracedLights = all;
     withoutTracedLights.rayTracedLights.on = false;
@@ -626,10 +637,10 @@ void modeMaths()
             && nominalScale(Dlss, Mode::Custom, std::numeric_limits<float>::quiet_NaN()) == Upscaling{}.customRenderScale,
         "Custom uses its scale within the supported range.");
 
-    expect(mipBias(1, 0) == 0 && close(mipBias(0.5f, 0), -1) && close(mipBias(2.0f / 3, 0), std::log2(2.0 / 3)),
-        "The texture LOD bias is log2(render / output).");
-    expect(close(mipBias(0.5f, 0.25f), -0.75) && close(mipBias(0.5f, -9), -1 + Upscaling::MinTextureBiasOffset) && mipBias(0, 0) == 0,
-        "The offset is added within its range, and invalid scales give no bias.");
+    expect(close(mipBias(0.5f), -2) && close(mipBias(1.0f / 3), std::log2(1.0 / 3) - 1) && close(mipBias(2.0f / 3), std::log2(2.0 / 3) - 1),
+        "The texture LOD bias is log2(render / output) - 1.");
+    expect(mipBias(1) == 0 && mipBias(2) == 0 && mipBias(0) == 0 && mipBias(std::numeric_limits<float>::quiet_NaN()) == 0,
+        "Rendering at the output size, or an invalid scale, gives no bias.");
 
     expect(multiplier(FrameGenerationMode::Off) == 0 && multiplier(FrameGenerationMode::X2) == 2 && multiplier(FrameGenerationMode::X6) == 6
             && multiplier(FrameGenerationMode::Dynamic) == 0 && multiplier(FrameGenerationMode::Fsr) == 0,
@@ -687,8 +698,7 @@ void planKeptForOtherSettings()
     auto other = wanted;
     other.dlssPreset = Preset::K;
     other.sharpness = 1;
-    other.textureBiasOffset = -1;
-    expect(plan.isFor(other, Output), "The preset, sharpening and the texture bias keep the plan.");
+    expect(plan.isFor(other, Output), "The preset and sharpening keep the plan.");
 
     auto fsr = wanted, quality = wanted, scaled = wanted;
     fsr.upscaler = Upscaler::Fsr;
@@ -1160,9 +1170,9 @@ float4 main(uint id : SV_VertexID) : SV_Position
 
         return code;
     };
-    const auto shaderCode = compiled(lamp_contact_shadows::shaders::LightShadow, "ps_5_0");
     ComPtr<ID3D11PixelShader> shader;
-    expect(SUCCEEDED(device->CreatePixelShader(shaderCode->GetBufferPointer(), shaderCode->GetBufferSize(), nullptr, shader.GetAddressOf())),
+    expect(SUCCEEDED(device->CreatePixelShader(lamp_contact_shadows::shaders::LightShadow.code, lamp_contact_shadows::shaders::LightShadow.size,
+               nullptr, shader.GetAddressOf())),
         "Create the lamp shadow's shader.");
     const auto vertexCode = compiled(FullscreenVertex, "vs_5_0");
     ComPtr<ID3D11VertexShader> vertexShader;

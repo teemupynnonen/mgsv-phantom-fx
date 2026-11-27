@@ -19,6 +19,7 @@ RWTexture2D<float4> g_ReflectionMap : register(u98);       // The hit as the gam
 Texture2D<float> g_SurfaceDepth : register(t26);           // The nearest glass, mirror or water the game drew at each pixel (forward_surfaces.hpp); 0 without
 Texture2D<float4> g_SurfaceNormal : register(t27);         // Its world-space normal, its roughness in w; water's w is negative
 RWTexture2D<float4> g_SurfaceReflection : register(u99);   // What it reflects, times the exposure; a: the ray's hit distance
+RWTexture2D<float> g_ForwardShadow : register(u100);       // The sun's visibility at the surface itself, for the composite to dim it by
 
 // Water's reflectance (F0 0.02) at the eye's angle over GGX's lobe: Karis' fit of the split sum ("Physically
 // Based Shading on Mobile", 2014), as the sea's guides use it. A water surface with its ripples' roughness,
@@ -34,7 +35,7 @@ float WaterReflectance(float toEyeN, float roughness)
 }
 
 // A river's or a liquid's, near a mirror as the game's shader samples its cube map: the ripples' normal does the rest.
-// The guides take the same (surface_shaders.hpp, ReconstructionGuides).
+// The guides take the same (reconstruction_guides.cs.hlsl).
 static const float WaterRoughness = 0.05f;
 // FP16's largest, which Ray Reconstruction takes as the sky.
 static const float SkyHitDistance = 65504.0f;
@@ -310,7 +311,7 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
     if (depth <= 0.0f) return;
 
     float4 normalRoughness = g_SurfaceNormal.Load(int3(did, 0));
-    // A river or a liquid (WaterSurface, surface_shaders.hpp) marks itself with a negative w.
+    // A river or a liquid (water_surface.ps.hlsl) marks itself with a negative w.
     const bool isWater = normalRoughness.w < 0.0f;
     if (isWater) normalRoughness.w = WaterRoughness;
     float3 normal = normalize(normalRoughness.xyz);
@@ -329,4 +330,17 @@ void TraceSurfaceReflections(uint2 did : SV_DispatchThreadID)
     // Water reflects as water does: its reflectance at the eye's angle. Glass's is in its weights, from the game's own shader.
     if (isWater) light *= WaterReflectance(saturate(dot(normal, toEye)), normalRoughness.w);
     g_SurfaceReflection[did] = float4(min(RemoveNaNs(light) * g_Frame.nearFar.w, BrightestHit), hitDistance);
+
+    // The surface's own sun shadow, for the composite to dim what it covers (surface_shaders.hpp, Composite): a ray from
+    // the surface towards a point on the sun's disc, one sample, seeded by the pixel alone. Water takes no sun shadow
+    // (the composite reads 1 at its pixels), so it traces none: the ray would never be read. Nor does a frame without a
+    // sun: its direction is zero, and the ray would have none.
+    if (isWater || dot(g_Frame.sunColor.rgb, 1.0f) <= 0.0f)
+    {
+        g_ForwardShadow[did] = 1.0f;
+        return;
+    }
+    Random sunRandom = MakeRandom(did.x + did.y * g_BufferDimensions.x, 0u);
+    g_ForwardShadow[did] = VisibilityFromSurface(origin, normal, CopyTolerance(world), SunSample(sunRandom.rand2()), 1e4f,
+        ShadowRayTowards(RayTowardsSun));
 }

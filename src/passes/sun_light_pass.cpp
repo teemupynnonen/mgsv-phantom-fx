@@ -18,7 +18,9 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -54,8 +56,11 @@ struct Composition
     Sun sun;
     RayTracedShadows rayTraced;
     bool onlyContactShadows{}; // Diagnostics: the sun is shadowed by its contact shadows alone
+    // The add-on's sea hands its sparkles over in the translucency, which the game's shader would light as leaves':
+    // the replacement lights them, everywhere, with none of the shadow effects as the game's own shadow.
+    bool sea{};
 
-    bool any() const { return softShadows || contactShadows || rayTracedShadows || isPathTracing; }
+    bool any() const { return softShadows || contactShadows || rayTracedShadows || isPathTracing || sea; }
 };
 
 FrameLatch<Composition> latch;
@@ -73,6 +78,32 @@ ComPtr<ID3D11Device> device;
 std::array<ComPtr<ID3D11PixelShader>, 6> replacements;
 ComPtr<ID3D11Buffer> optionsBuffer;
 
+#if PHANTOM_DEV_SHADERS
+// A dev build's hot reload, as the sea's: present looks at the sun pass's .hlsl files twice a second or so and, when
+// one was saved, compiles them all again. A failed compile is logged and the shaders in use stay. `sourcesSeen` is
+// the newest file the shaders in use were compiled from.
+std::filesystem::file_time_type sourcesSeen{};
+std::uint64_t sourcesChecked{};
+
+// The newest write among the sun pass's files; none when the folder could not be read through, as a partial scan
+// would look like a save or hide one.
+std::optional<std::filesystem::file_time_type> newestSource() noexcept
+{
+    std::filesystem::file_time_type newest{};
+    std::error_code error;
+    const auto directory = std::filesystem::path(PHANTOM_DEV_SHADER_ROOT) / "passes/shaders";
+    for (std::filesystem::directory_iterator entry(directory, error), end; !error && entry != end; entry.increment(error))
+    {
+        if (!entry->path().filename().native().starts_with(L"sun_light")) continue;
+        const auto written = entry->last_write_time(error);
+        if (error) return std::nullopt;
+        newest = std::max(newest, written);
+    }
+    if (error) return std::nullopt;
+
+    return newest;
+}
+#endif
 
 std::size_t replacementOf(bool isShadowMapped, bool reflectsSky)
 {
@@ -85,26 +116,24 @@ std::size_t pathTracedOf(bool isShadowMapped)
     return 4 + (isShadowMapped ? 1 : 0);
 }
 
-// Compiles the shaders once; call with resourceMutex held. Returns false when they are unavailable.
+// Makes the shaders once, from their precompiled bytecode (compiled from source in a dev build); call with resourceMutex held. Returns false when they are unavailable.
 bool ensurePipeline()
 {
     if (optionsBuffer) return true;
     if (!device || pipelineFailed) return false;
 
+#if PHANTOM_DEV_SHADERS
+    // Before compiling: a file saved meanwhile is newer, and the next look reloads it.
+    if (const auto newest = newestSource()) sourcesSeen = *newest;
+#endif
     try
     {
         for (const bool isShadowMapped : {true, false})
             for (const bool reflectsSky : {true, false})
-            {
-                const D3D_SHADER_MACRO defines[]{{"SHADOW_MAP", isShadowMapped ? "1" : "0"}, {"SKY_REFLECTION", reflectsSky ? "1" : "0"}, {}};
-                replacements[replacementOf(isShadowMapped, reflectsSky)] = pixelShader(device.Get(), shaders::SunLight, "sun-light", defines);
-            }
+                replacements[replacementOf(isShadowMapped, reflectsSky)] = pixelShader(device.Get(), shaders::SunLight[isShadowMapped][reflectsSky], "sun-light");
 
         for (const bool isInShadowRange : {true, false})
-        {
-            const D3D_SHADER_MACRO defines[]{{"SHADOW_MAP", "0"}, {"SKY_REFLECTION", "0"}, {"PATH_TRACED", "1"}, {"CLOUD_SHADOW", isInShadowRange ? "1" : "0"}, {}};
-            replacements[pathTracedOf(isInShadowRange)] = pixelShader(device.Get(), shaders::SunLight, "sun-light-path-traced", defines);
-        }
+            replacements[pathTracedOf(isInShadowRange)] = pixelShader(device.Get(), shaders::PathTraced[isInShadowRange], "sun-light-path-traced");
 
         // Last, so it marks a complete pipeline.
         optionsBuffer = makeConstantBuffer(device.Get(), sizeof(ShaderOptions), "Creating the sun shadow options");
@@ -121,6 +150,35 @@ bool ensurePipeline()
         return false;
     }
 }
+
+#if PHANTOM_DEV_SHADERS
+// Call with resourceMutex held.
+void reloadShadersIfSaved()
+{
+    if (++sourcesChecked % 30 != 1) return;
+
+    const auto newest = newestSource();
+    if (!newest || *newest == sourcesSeen) return;
+    sourcesSeen = *newest;
+    if (!optionsBuffer) return; // ensurePipeline compiles them from the files anyway
+
+    try
+    {
+        std::array<ComPtr<ID3D11PixelShader>, 6> made;
+        for (const bool isShadowMapped : {true, false})
+            for (const bool reflectsSky : {true, false})
+                made[replacementOf(isShadowMapped, reflectsSky)] = pixelShader(device.Get(), shaders::SunLight[isShadowMapped][reflectsSky], "sun-light");
+        for (const bool isInShadowRange : {true, false})
+            made[pathTracedOf(isInShadowRange)] = pixelShader(device.Get(), shaders::PathTraced[isInShadowRange], "sun-light-path-traced");
+        replacements = std::move(made);
+        log("Sun light pass shaders reloaded.");
+    }
+    catch (const std::exception& error)
+    {
+        log(std::string("Sun light pass shader reload failed, the previous shaders stay: ") + error.what());
+    }
+}
+#endif
 
 // Writes the replacement shaders' options on `context`; call with resourceMutex held. With the
 // ray-traced shadow, the shadow map's part is always soft.
@@ -157,8 +215,9 @@ bool drawSun(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, co
         rayTraced = ray_tracing::sunShadow(static_cast<UINT>(size[0]), static_cast<UINT>(size[1]));
     }
 
-    // Beyond the shadow range there is no shadow map to soften.
-    if (!composition.contactShadows && !(composition.softShadows && sun.isShadowMapped) && !rayTraced && !isPathTracedPass) return false;
+    // Beyond the shadow range there is no shadow map to soften; the sea's sparkles reach past it.
+    if (!composition.contactShadows && !(composition.softShadows && sun.isShadowMapped) && !rayTraced && !isPathTracedPass && !composition.sea)
+        return false;
 
     const auto scene = constant_capture::pixelShaderReads<game_constants::SceneConstants>(context);
     const auto light = constant_capture::pixelShaderReads<game_constants::SunLightConstants>(context);
@@ -258,6 +317,7 @@ void configure(const Configuration& configuration) noexcept
         .sun = configuration.settings.sun,
         .rayTraced = configuration.settings.rayTracedShadows,
         .onlyContactShadows = configuration.diagnostics.onlyScreenSpaceShadows,
+        .sea = configuration.effects.runs(Effect::Sea),
     };
 
     latch.set(composition);
@@ -321,5 +381,9 @@ void present() noexcept
     const auto current = latch.present();
     active = current.any() && !pipelineFailed;
     contact_shadow_trace::tracesThisFrame(contact_shadow_trace::Tracer::Sun, active && current.contactShadows);
+#if PHANTOM_DEV_SHADERS
+    std::lock_guard lock(resourceMutex);
+    reloadShadersIfSaved();
+#endif
 }
 }

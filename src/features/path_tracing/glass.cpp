@@ -41,8 +41,30 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         // it covers and the fog over it, and the traced reflection takes the cube map's place at its weight.
         ID3D11ShaderResourceView* none{};
         context->PSSetShaderResources(row->reflectionSlot, 1, &none);
+        // Its shadow map leaves too (t8, s15): the rays' shadow takes its place at the composite (forward_surfaces,
+        // tracedShadow). A pane the game's map shaded would keep a shadow the scene no longer has.
+        constexpr UINT GlassShadowSlot = 8, ShadowSamplerSlot = 15;
+        ID3D11ShaderResourceView* litShadow{};
+        ID3D11SamplerState* litSampler{};
+        const bool shadowReplaced = forward_surfaces::tracedShadow(&litShadow, &litSampler);
+        ID3D11ShaderResourceView* gameShadow{};
+        ID3D11SamplerState* gameSampler{};
+        if (shadowReplaced)
+        {
+            context->PSGetShaderResources(GlassShadowSlot, 1, &gameShadow);
+            context->PSGetSamplers(ShadowSamplerSlot, 1, &gameSampler);
+            context->PSSetShaderResources(GlassShadowSlot, 1, &litShadow);
+            context->PSSetSamplers(ShadowSamplerSlot, 1, &litSampler);
+        }
         context->DrawIndexedInstanced(call.count, call.instances, call.first, call.vertexOffset, call.firstInstance);
         context->PSSetShaderResources(row->reflectionSlot, 1, reflected.GetAddressOf());
+        if (shadowReplaced)
+        {
+            context->PSSetShaderResources(GlassShadowSlot, 1, &gameShadow);
+            context->PSSetSamplers(ShadowSamplerSlot, 1, &gameSampler);
+            if (gameShadow) gameShadow->Release();
+            if (gameSampler) gameSampler->Release();
+        }
 
         // The surface's own draw, into the targets the composite reads.
         forward_surfaces::record(context, call, *row);

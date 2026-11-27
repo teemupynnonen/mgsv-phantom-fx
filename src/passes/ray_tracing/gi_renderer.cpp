@@ -68,6 +68,9 @@ constexpr float AlphaTestedBlocking = 0.5f, ShadowRayLength = 5000;
 // How far global illumination's diffuse rays look for a hit with Short rays, metres (LightRayReach in gi_hit_light.hlsli):
 // what lies further out lights little, and the long rays cost the most to trace.
 constexpr std::uint32_t LightRayReach = 100;
+// The light cache's distance and samples last sent to the rays, for the log.
+std::uint32_t sentCacheReach{};
+float sentCacheSamples{};
 // Diagnostics: the most phases a frame's list times.
 constexpr std::uint32_t MaxMarks = 32;
 
@@ -173,6 +176,7 @@ struct State
         std::uint32_t slot{}, width{}, height{};
         FrameBinding binding;
         ID3D12Resource* reflection{};
+        ID3D12Resource* shadow{}; // The sun's visibility at the surface, written beside the reflection
     };
     std::optional<SurfaceTrace> surfaceTrace;
     HANDLE event{};
@@ -238,7 +242,7 @@ struct State
     std::uint64_t statsFence{}, lastStats{};
     Shared depth, normal, albedo, output, shadow, shadowDebug, velocity, terrainPages, terrainHeights, lightDebug, materialSpecular, skyCube, guideNormals,
         guideSpecular, reflection, reflectionDistance, reflectionMap, guideMaterial, guideLobe, specularTable, lampMasks, lampDiffuse, lampSpecular, surfaceDepth,
-        surfaceNormal, surfaceReflection;
+        surfaceNormal, surfaceReflection, forwardShadow;
 
     ~State()
     {
@@ -700,7 +704,9 @@ void logStats(State& s)
         + " without room in it), " + value(GI_COUNTER_VISIBILITY1) + " multibounce rays kept (" + value(GI_COUNTER_MULTIBOUNCE_AWAY)
         + " of those traced reached the sky), " + value(GI_COUNTER_LIGHTS) + " cache hits lit, " + value(GI_COUNTER_COPIES)
         + " copies of a surface skipped, " + value(GI_COUNTER_UPDATE_TILES) + " cache tiles updated, " + value(GI_COUNTER_FOLIAGE)
-        + " light pixels on foliage (" + value(GI_COUNTER_FOLIAGE_MEMORY_FULL) + " without room in the foliage memory).");
+        + " light pixels on foliage (" + value(GI_COUNTER_FOLIAGE_MEMORY_FULL) + " without room in the foliage memory), "
+        + value(GI_COUNTER_CACHED_HITS) + " first hits read from the light cache (from " + std::to_string(sentCacheReach) + " cells, "
+        + std::to_string(sentCacheSamples) + " samples a cell, as last sent to the rays).");
 
     constexpr const char* MaximumNames[GI_COUNTER_MAXIMA]{"a hit's albedo", "a hit's direct light", "a cell's direct light", "a cell's indirect light",
         "a multibounce", "a ray's light", "a denoised light pixel", "a render pixel"};
@@ -827,7 +833,7 @@ std::pair<std::string, std::string> describeProbe(const State& s, std::span<cons
 
     if (probe.glass.w > 0.5f)
         text += std::format("the sun's ray crosses a pane: instance {}, geometry {}, its mask {}, cover {:.2f}, lets through {:.2f} (at the mask's "
-            "sharpest level, head-on)\n",
+            "sharpest level)\n",
             probe.glassHit.x - 1, probe.glassHit.y, probe.glassHit.w, probe.glass.x, probe.glass.y);
     else
         text += "the sun's ray crosses no pane\n";
@@ -1109,6 +1115,7 @@ Result render(Frame& frame)
                 traced.surfaceDepth = openShared(s, s.surfaceDepth, frame.textures.surfaceDepth, "Opening the glass's depth").Get();
                 traced.surfaceNormal = openShared(s, s.surfaceNormal, frame.textures.surfaceNormal, "Opening the glass's normals").Get();
                 traced.surfaceReflection = openShared(s, s.surfaceReflection, frame.textures.surfaceReflection, "Opening the glass's reflections").Get();
+                traced.forwardShadow = openShared(s, s.forwardShadow, frame.textures.forwardShadow, "Opening the surfaces' shadow").Get();
             }
         }
         if (traces.tracesLampLight)
@@ -1178,13 +1185,15 @@ Result render(Frame& frame)
 
             constants.terrainPatchMesh = {static_cast<std::uint32_t>(update.patchMeshIndexOffset), static_cast<std::uint32_t>(update.patchMeshVertexOffset), 0, 0};
         }
-        if (traces.tracesLight) s.light->fill(constants, frame.verticalFov, parity);
+        if (traces.tracesLight) s.light->fill(constants, frame.verticalFov, parity, frame.hashMaxSamples);
+        sentCacheReach = static_cast<std::uint32_t>(std::max(frame.lightCacheReach, 0.0f));
+        sentCacheSamples = frame.hashMaxSamples;
         if (traces.tracesSun) s.shadows->fill(constants);
         constants.objectMotion = {velocity ? 1u : 0u, 0, 0, 0};
         const auto probePixel = frame.probePixel.value_or(std::array{frame.width / 2, frame.height / 2});
         constants.shadowDiagnostics = {frame.twoSidedShadows ? 1u : 0u, frame.shadowStarts ? 1u : 0u, std::min(probePixel[0], frame.width - 1),
             std::min(probePixel[1], frame.height - 1)};
-        constants.lightDiagnostics = {0, 0, lightDebug ? static_cast<std::uint32_t>(frame.lightDebugView) : 0u, 0};
+        constants.lightDiagnostics = {0, 0, lightDebug ? static_cast<std::uint32_t>(frame.lightDebugView) : 0u, frame.mainViewCastsSun ? 1u : 0u};
         constants.reconstruction = {traces.isForReconstruction ? 1u : 0u, materialSpecular ? 1u : 0u, skyCube ? 1u : 0u, 0};
         constants.emission = {frame.emissionScale, frame.emissionCap, 0, 0};
         constants.closestRayFlags = {s.hasMicromapSupport ? GI_RAY_FLAG_FORCE_OMM_2_STATE : 0u, 0, 0, 0};
@@ -1197,7 +1206,8 @@ Result render(Frame& frame)
 
         // A ray a render pixel for Ray Reconstruction, whatever the ray quality: as many rays as High's four a
         // 2 x 2, the most a sample can take apart.
-        constants.lightRays = {traces.isForReconstruction ? 1u : frame.lightRays, frame.usesShortLightRays ? LightRayReach : 0u, 0, 0};
+        constants.lightRays = {traces.isForReconstruction ? 1u : frame.lightRays, frame.usesShortLightRays ? LightRayReach : 0u,
+            static_cast<std::uint32_t>(std::max(frame.lightCacheReach, 0.0f)), frame.lightAblation};
 
         // ---- Descriptors ----
         descriptors.texture(binding::Depth, depth, DXGI_FORMAT_R32_FLOAT);
@@ -1306,8 +1316,19 @@ Result render(Frame& frame)
         for (auto* each : trace::inOrder())
             if (each->runsIn(traces)) each->record(traceFrame, recorder);
 
-        if (traces.tracesLampLight) path_tracing_rays::recordLamps(recorder, frame.width, frame.height);
-        if (traces.tracesSun) s.shadows->record(recorder, traces.isForReconstruction);
+        // For Ray Reconstruction the lamps' light and the sun's rays read nothing the light's passes write, nor the
+        // light theirs: they run alongside its rays, between one pair of barriers (docs/DEVELOPMENT.md, "Overlapping
+        // traces"). The debug views read the sun's rays straight after them, and the scene view has no light passes.
+        const bool isAlongsideLight = traces.tracesLight && traces.isForReconstruction && !frame.showScene && !frame.debugShadows;
+        const auto alongsideLight = [&] {
+            if (traces.tracesLampLight) path_tracing_rays::dispatchLamps(recorder, frame.width, frame.height);
+            if (traces.tracesSun) s.shadows->dispatchRaysForReconstruction(recorder);
+        };
+        if (!isAlongsideLight)
+        {
+            if (traces.tracesLampLight) path_tracing_rays::recordLamps(recorder, frame.width, frame.height);
+            if (traces.tracesSun) s.shadows->record(recorder, traces.isForReconstruction);
+        }
         if (frame.debugShadows)
         {
             recorder.mark("debug view and probe");
@@ -1325,11 +1346,13 @@ Result render(Frame& frame)
             recorder.mark("scene view");
             recorder.dispatch(Kernel::DebugScene, groups(frame.width, 8), groups(frame.height, 8));
         }
-        else if (traces.tracesLight) s.light->record(recorder, parity, denoiserCamera(frame), slot, lightDebug && frame.lightDebugView == LightDebugView::Validation);
+        else if (traces.tracesLight)
+            s.light->record(recorder, parity, denoiserCamera(frame), slot, lightDebug && frame.lightDebugView == LightDebugView::Validation,
+                isAlongsideLight ? std::function<void()>{alongsideLight} : std::function<void()>{});
 
         if (traces.tracesReflections) path_tracing_rays::recordReflections(recorder, frame.width, frame.height);
 
-        if (traces.tracesGlass) surfaceTrace = State::SurfaceTrace{slot, frame.width, frame.height, frameBinding, traced.surfaceReflection};
+        if (traces.tracesGlass) surfaceTrace = State::SurfaceTrace{slot, frame.width, frame.height, frameBinding, traced.surfaceReflection, traced.forwardShadow};
 
         if constexpr (DiagnosticLog)
         {
@@ -1411,7 +1434,9 @@ bool traceSurfaces(std::uint64_t waitValue, std::uint64_t signalValue)
         const auto firstMark = static_cast<UINT>(marks.size());
         recorder.marker = timestampMarker(s, list, trace.slot);
         recorder.transition(trace.reflection, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        recorder.transition(trace.shadow, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         path_tracing_rays::recordSurfaceReflections(recorder, trace.width, trace.height);
+        recorder.transition(trace.shadow, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
         recorder.transition(trace.reflection, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
         recorder.mark(nullptr);
         const auto marked = static_cast<UINT>(marks.size()) - firstMark;

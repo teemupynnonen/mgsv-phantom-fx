@@ -1,27 +1,10 @@
 #pragma once
 
-#include "passes/visibility_bitmask_shaders.hpp"
+#include "d3d11_helpers.hpp"
+#include "phantom_shaders/gi_light_combine.hpp"
 
-// HLSL for the global illumination's combine (light_combine.hpp), compiled at runtime with d3dcompiler_47.
+// HLSL for the global illumination's combine (light_combine.hpp), precompiled at build time (shaders/).
 namespace phantom_fx::light_combine::shaders
 {
-// The global illumination's light in place of the game's probe light in its diffuse light. The
-// game's light target keeps the probe light, as its exposure measures that target; the upscale
-// draws the probe light aside as well, for this to take it out.
-inline constexpr char AddLight[] = PHANTOM_FX_MARCH_PARAMETERS R"(
-Texture2D<float4> Diffuse : register(t0); // The game's diffuse light, as the resolve reads it
-Texture2D<float4> Light : register(t1);   // The traced light, in the same units
-Texture2D<float4> Ambient : register(t2); // The game's probe light, which the upscale drew aside
-RWTexture2D<float4> OutDiffuse : register(u0);
-
-[numthreads(8, 8, 1)]
-void main(uint2 pixel : SV_DispatchThreadID)
-{
-    if (any(pixel >= Size)) return;
-
-    float4 diffuse = Diffuse[pixel];
-    float3 direct = max(diffuse.rgb - Ambient[pixel].rgb, 0.0f);
-    OutDiffuse[pixel] = float4(direct * DiffuseScale + Light[pixel].rgb * LightStrength, diffuse.a);
-}
-)";
+inline constexpr Shader AddLight{g_gi_light_combine, sizeof(g_gi_light_combine), "features/global_illumination/shaders/light_combine.cs.hlsl", "cs_5_0"};
 }

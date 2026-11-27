@@ -28,6 +28,8 @@
 #include "performance.hpp"
 #include "remaster/remaster.hpp"
 #include "resource_dump.hpp"
+#include "phantom_shaders/rt_guides.hpp"
+#include "phantom_shaders/rt_pack.hpp"
 
 #include <Windows.h>
 #include <d3d11_4.h>
@@ -67,9 +69,13 @@ struct Options
     float sunSize{0.53f}; // The sun's angular diameter for the shadows and the light's hits, in degrees
     int lightPixelRays{2}; // The light's rays a light pixel (a 2 x 2 of render pixels): 1, 2 or 4
     bool usesShortLightRays{true}; // The light's rays look LightRayReach metres (gi_renderer.cpp), not without end
+    float lightCacheReach{4}; // Diagnostics: from how far a light ray's first hit takes its light from the cache, in cells (0: never)
+    float hashMaxSamples{16};  // Diagnostics: the cache's samples a cell averages over
+    unsigned lightAblation{};  // Diagnostics: what the light's rays leave out, to time the rest (gi_light.hlsl)
     bool debugShadows{}; // Diagnostics: the shadow debug view and probe (shadowDebug, shadowProbe), with the shadows
     bool shadowStarts{}; // Diagnostics: the debug view shows where the shadow rays leave each pixel
     bool twoSidedShadows{}; // Diagnostics: every surface blocks rays towards lights from both sides, as until 2026-10-26
+    bool mainViewCastsSun{}; // Diagnostics: a model's main-view-only meshes block the sun where it has a sun stand-in (GI_GEOMETRY_STOOD_IN)
     gi_renderer::LightDebugView lightDebugView{}; // Diagnostics: over the image (lightDebug)
 
     bool logOften{};   // Diagnostics: the light's statistics logged every few frames (as each readback returns), not every ten seconds
@@ -80,50 +86,8 @@ struct Options
 // G-buffer (docs/DEVELOPMENT.md, "Velocity").
 constexpr UINT ObjectVelocitySlot = 3;
 
-// Packs what the kernels read from the G-buffer: the depth, the normals in world space (0 where
-// the sky is; alpha 1/3 on foliage, the specular target's material 43, else 1) and the albedo, linear
-// (alpha 0 where the add-on's sea drew, else 1: IsSeaPixel in gi_common.hlsli).
-constexpr char PackSource[] = R"(
-Texture2D<float> g_Depth : register(t0);
-Texture2D<float4> g_Normal : register(t1);
-Texture2D<float4> g_Albedo : register(t2);
-Texture2D<float4> g_Specular : register(t3);
-Texture2D<float> g_SeaDepth : register(t4); // The sea's depth where it drew (sea::surfaceDepth)
-RWTexture2D<float> g_DepthOut : register(u0);
-RWTexture2D<float4> g_NormalOut : register(u1);
-RWTexture2D<float4> g_AlbedoOut : register(u2);
-
-cbuffer Parameters : register(b0)
-{
-    float4 g_View[3]; // World to view, rows
-    uint2 g_Size;
-    uint g_HasAlbedo;
-    uint g_HasSpecular;
-    uint g_HasSea;
-};
-
-[numthreads(8, 8, 1)]
-void main(uint2 id : SV_DispatchThreadID)
-{
-    if (any(id >= g_Size)) return;
-
-    float depth = g_Depth.Load(int3(id, 0));
-    g_DepthOut[id] = depth;
-
-    // DecodeViewSpaceNormal: z = 2 b^2 - 1, xy the direction of 2 rg - 1 at length sqrt(1 - z^2).
-    float3 encoded = g_Normal.Load(int3(id, 0)).xyz;
-    float2 xy = encoded.xy * 2 - 1;
-    float z = encoded.z * encoded.z * 2 - 1;
-    float rest = 1 - z * z;
-    float3 view = float3(rsqrt(dot(xy, xy) * rest + 1e-7) * (rest * xy), z);
-    float3 world = normalize(view.x * g_View[0].xyz + view.y * g_View[1].xyz + view.z * g_View[2].xyz);
-    bool foliage = g_HasSpecular && round(g_Specular.Load(int3(id, 0)).z * 255) == 43;
-    g_NormalOut[id] = depth > 0 ? float4(0.5 * world + 0.5, foliage ? 1.0 / 3 : 1) : 0;
-
-    bool isSea = g_HasSea && depth > 0 && g_SeaDepth.Load(int3(id, 0)) == depth;
-    g_AlbedoOut[id] = float4(g_HasAlbedo ? g_Albedo.Load(int3(id, 0)).rgb : 0.25, isSea ? 0 : 1);
-}
-)";
+constexpr Shader PackCode{g_rt_pack, sizeof(g_rt_pack), "passes/ray_tracing/shaders/pack.cs.hlsl", "cs_5_0"};
+constexpr Shader GuideCode{g_rt_guides, sizeof(g_rt_guides), "passes/ray_tracing/shaders/guides.cs.hlsl", "cs_5_0"};
 
 struct PackParameters
 {
@@ -131,141 +95,6 @@ struct PackParameters
     std::uint32_t width, height, hasAlbedo, hasSpecular;
     std::uint32_t hasSea, padding[3];
 };
-
-// DLSS Ray Reconstruction's guides from the G-buffer, as its integration guide asks for them: the
-// world-space normal with the roughness in w, the diffuse albedo, and the specular albedo, the share of
-// light the surface reflects towards the eye. That share is the game's for its sky reflection
-// (SKY_REFLECTION in sun_light_pass_shaders.hpp): its specular colour (the material table's, times the
-// specular target's intensity) through its Fresnel table at the eye's angle, from at least the sun pass's
-// least F0 (cPSLight c2.z), times half the smoothness. The game's materials are tuned to it: with a
-// physical one (NVIDIA's EnvBRDFApprox2), Snake's red arm, an 11% white specular of roughness 0.59,
-// reflected 3 to 4 times as much and the sky's light turned it grey. The sea (sea.hpp) is not one of the
-// game's materials: it reflects as water does, all of its light at grazing angles. Where the sky is: no
-// normal and roughness, albedo 0.5, no specular albedo. The specular albedo's alpha is 0 on the sea, which the game's
-// reflection blend leaves to its own reflectance (reflections.hlsl), and on the sky.
-constexpr char GuideSource[] = R"(
-Texture2D<float> g_Depth : register(t0);
-Texture2D<float4> g_Normal : register(t1);
-Texture2D<float4> g_Albedo : register(t2);    // Through an sRGB view: linear
-Texture2D<float4> g_Specular : register(t3);  // Roughness, intensity, material, translucency
-Texture2D<float4> g_Fresnel : register(t4);   // g_lut1: u the cosine, v F0
-Texture2D<float4> g_Materials : register(t5); // g_MaterialTexture: u the material, row 0.25 its colour, 0.75 its F0
-Texture2D<float> g_SeaDepth : register(t6);   // The sea's depth where it drew (sea::surfaceDepth)
-Texture3D<float4> g_SpecularLobe : register(t7); // g_lut2: x the halfway vector's angle, y the roughness, z the anisotropy
-RWTexture2D<float4> g_NormalRoughness : register(u0);
-RWTexture2D<float4> g_DiffuseAlbedo : register(u1);
-RWTexture2D<float4> g_SpecularAlbedo : register(u2);
-RWTexture2D<float4> g_Material : register(u3); // Path tracing's: rgb the specular colour; a the translucency
-RWTexture2D<float4> g_Lobe : register(u4);     // x the light through the leaves' floor, the translucency times the material's; y F0; z the anisotropy
-RWTexture2D<float4> g_MaterialSpecular : register(u5); // Each material's specular colour at normal incidence, for the rays' hits (HitMaterialOf)
-RWTexture2D<float4> g_SpecularTable : register(u6); // g_lut2's slices one below the other, which Direct3D 12's lamps read (direct_light.hlsl)
-
-cbuffer Parameters : register(b0)
-{
-    float4 g_View[3];          // World to view, rows
-    float4 g_ProjectionParam;  // cPSScene c21: 1 / P00, 1 / P11, B, A
-    float2 g_Jitter;           // cPSScene c28.xy, in NDC
-    uint2 g_Size;
-    uint g_HasAlbedo;
-    uint g_HasSpecular;
-    uint g_HasTables;
-    float g_SkyReflectionFloor; // The sun pass's cPSLight c2.z, the frame before
-    uint g_HasSea;
-};
-
-// The texel a point sampler takes at (u, v), as the sun pass reads the material table.
-float4 PointAt(Texture2D<float4> table, float u, float v)
-{
-    uint width, height;
-    table.GetDimensions(width, height);
-    return table.Load(int3(min(uint2(float2(u, v) * float2(width, height)), uint2(width, height) - 1), 0));
-}
-
-// The Fresnel table at (cosine, F0), as a linear clamped sampler takes it.
-float FresnelAt(float cosine, float F0)
-{
-    uint width, height;
-    g_Fresnel.GetDimensions(width, height);
-    float2 texel = clamp(float2(cosine * width, F0 * height) - 0.5, 0, float2(width, height) - 1);
-    uint2 low = uint2(texel);
-    uint2 high = min(low + 1, uint2(width, height) - 1);
-    float2 t = frac(texel);
-    float above = lerp(g_Fresnel.Load(int3(low.x, low.y, 0)).x, g_Fresnel.Load(int3(high.x, low.y, 0)).x, t.x);
-    float below = lerp(g_Fresnel.Load(int3(low.x, high.y, 0)).x, g_Fresnel.Load(int3(high.x, high.y, 0)).x, t.x);
-    return lerp(above, below, t.y);
-}
-
-// Water's reflectance (F0 0.02) at the eye's angle, over GGX's lobe: Karis' fit of the split sum ("Physically
-// Based Shading on Mobile", 2014).
-float WaterReflectance(float toEyeN, float roughness)
-{
-    const float4 c0 = float4(-1, -0.0275, -0.572, 0.022);
-    const float4 c1 = float4(1, 0.0425, 1.04, -0.04);
-    float4 r = roughness * c0 + c1;
-    float a004 = min(r.x * r.x, exp2(-9.28 * toEyeN)) * r.x + r.y;
-    float2 ab = float2(-1.04, 1.04) * a004 + r.zw;
-    return 0.02 * ab.x + ab.y;
-}
-
-[numthreads(8, 8, 1)]
-void main(uint2 id : SV_DispatchThreadID)
-{
-    if (any(id >= g_Size)) return;
-
-    if (g_HasTables && id.y == 0 && id.x < 256)
-        g_MaterialSpecular[uint2(id.x, 0)] = float4(g_Materials.Load(int3(id.x, 0, 0)).rgb * FresnelAt(1, g_Materials.Load(int3(id.x, 1, 0)).x), 1);
-    if (g_HasTables && id.x < 64 && id.y < 256) g_SpecularTable[id] = g_SpecularLobe.Load(int4(id.x, id.y % 16, id.y / 16, 0));
-
-    float depth = g_Depth.Load(int3(id, 0));
-    if (depth <= 0)
-    {
-        g_NormalRoughness[id] = 0;
-        g_DiffuseAlbedo[id] = float4(0.5, 0.5, 0.5, 1);
-        g_SpecularAlbedo[id] = 0;
-        g_Material[id] = 0;
-        g_Lobe[id] = 0;
-        return;
-    }
-
-    // DecodeViewSpaceNormal, as the pack above.
-    float3 encoded = g_Normal.Load(int3(id, 0)).xyz;
-    float2 xy = encoded.xy * 2 - 1;
-    float z = encoded.z * encoded.z * 2 - 1;
-    float rest = 1 - z * z;
-    float3 normal = float3(rsqrt(dot(xy, xy) * rest + 1e-7) * (rest * xy), z);
-    float3 world = normalize(normal.x * g_View[0].xyz + normal.y * g_View[1].xyz + normal.z * g_View[2].xyz);
-
-    // The eye's direction to the pixel in view space, as the sun pass works it out.
-    float2 ndc = float2((id.x + 0.5) / g_Size.x * 2 - 1, 1 - (id.y + 0.5) / g_Size.y * 2) - g_Jitter;
-    float viewZ = g_ProjectionParam.z / (depth - g_ProjectionParam.w);
-    float3 eye = normalize(float3(ndc * g_ProjectionParam.xy * viewZ, viewZ));
-
-    float4 specular = g_HasSpecular ? g_Specular.Load(int3(id, 0)) : float4(1, 0, 0, 0);
-    float roughness = specular.x;
-    float toEyeN = saturate(-dot(normal, eye));
-    float3 specularColor = specular.y;
-    float3 reflected = specular.y * max(0.04, g_SkyReflectionFloor);
-    float F0 = 0.04, anisotropy = 0;
-    float translucencyScale = 0; // The material's (its table's row 0.25, w)
-    if (g_HasTables)
-    {
-        float4 color = PointAt(g_Materials, specular.z, 0.25);
-        float4 row = PointAt(g_Materials, specular.z, 0.75);
-        F0 = row.x;
-        anisotropy = row.w;
-        specularColor = specular.y * color.rgb;
-        reflected = specularColor * FresnelAt(toEyeN, max(F0, g_SkyReflectionFloor));
-        translucencyScale = color.w;
-    }
-
-    g_NormalRoughness[id] = float4(world, roughness);
-    g_DiffuseAlbedo[id] = float4(g_HasAlbedo ? g_Albedo.Load(int3(id, 0)).rgb : 0.5, 1);
-    bool isSea = g_HasSea && g_SeaDepth.Load(int3(id, 0)) == depth;
-    g_SpecularAlbedo[id] = float4(isSea ? WaterReflectance(toEyeN, roughness) : saturate(reflected * ((1 - roughness) * 0.5)), isSea ? 0 : 1);
-    g_Material[id] = float4(saturate(specularColor), specular.w);
-    g_Lobe[id] = float4(saturate(specular.w * translucencyScale), F0, anisotropy, 0);
-}
-)";
 
 struct GuideParameters
 {
@@ -444,9 +273,9 @@ void ensurePipeline()
         return;
     }
 
-    packShader = computeShader(device.Get(), PackSource, "gi-pack");
+    packShader = computeShader(device.Get(), PackCode, "gi-pack");
     packParameters = makeConstantBuffer(device.Get(), sizeof(PackParameters), "Creating the G-buffer pack's constants");
-    guideShader = computeShader(device.Get(), GuideSource, "reconstruction-guides");
+    guideShader = computeShader(device.Get(), GuideCode, "reconstruction-guides");
     guideParameters = makeConstantBuffer(device.Get(), sizeof(GuideParameters), "Creating the Ray Reconstruction guides' constants");
 
     check(device->CreateFence(0, D3D11_FENCE_FLAG_SHARED, IID_PPV_ARGS(&fence)), "Creating the shared fence");
@@ -957,6 +786,7 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
         textures.surfaceDepth = surfaces.depth;
         textures.surfaceNormal = surfaces.normal;
         textures.surfaceReflection = surfaces.reflection;
+        textures.forwardShadow = surfaces.forwardShadow;
     }
 
     frame.width = depthOut.width;
@@ -1016,9 +846,13 @@ void kick(ID3D11ShaderResourceView* depth, const Options& options)
     frame.debugShadows = shadowDebug != nullptr;
     frame.shadowStarts = options.shadowStarts;
     frame.twoSidedShadows = options.twoSidedShadows;
+    frame.mainViewCastsSun = options.mainViewCastsSun;
     frame.lightDebugView = options.lightDebugView;
     frame.lightRays = static_cast<std::uint32_t>(std::clamp(options.lightPixelRays, 1, 4));
     frame.usesShortLightRays = options.usesShortLightRays;
+    frame.lightCacheReach = options.lightCacheReach;
+    frame.hashMaxSamples = options.hashMaxSamples;
+    frame.lightAblation = options.lightAblation;
     // The lights' colours in the sun's units for the hits (gi_light.hlsl, LocalLightAt).
     for (auto& localLight : localLightsToTrace)
         for (auto& value : localLight.color) value *= LightScale;
@@ -1137,9 +971,13 @@ void configure(const Configuration& configuration) noexcept
         .sunSize = settings.sun.diameterDegrees,
         .lightPixelRays = settings.globalIllumination.raysPerLightPixel,
         .usesShortLightRays = settings.globalIllumination.usesShortRays,
+        .lightCacheReach = diagnostics.lightCacheReach,
+        .hashMaxSamples = diagnostics.hashMaxSamples,
+        .lightAblation = (diagnostics.lightBounces ? 0u : 1u) | (diagnostics.lightHitLight ? 0u : 2u),
         .debugShadows = diagnostics.debugView == DebugView::ShadowRays || diagnostics.debugView == DebugView::ShadowStarts,
         .shadowStarts = diagnostics.debugView == DebugView::ShadowStarts,
         .twoSidedShadows = diagnostics.twoSidedShadows,
+        .mainViewCastsSun = diagnostics.mainViewCastsSun,
         .lightDebugView = diagnostics.debugView == DebugView::LightHistory      ? gi_renderer::LightDebugView::History
                           : diagnostics.debugView == DebugView::LightValidation ? gi_renderer::LightDebugView::Validation
                                                                                 : gi_renderer::LightDebugView::None,
@@ -1273,7 +1111,7 @@ void noteSun(ID3D11DeviceContext* context, bool shadowMapped) noexcept
         noted.skyReflectionFloor = light->skyReflectionFloor;
         notes.note(keyOf(context), [&](Notes& contextNotes) {
             contextNotes.sun = noted;
-            // The range as SunShadow reads it (sun_light_pass_shaders.hpp).
+            // The range as SunShadow reads it (passes/shaders/sun_light.ps.hlsl).
             if (shadowMapped) contextNotes.shadowRange = std::array<float, 4>{light->shadowRangeCentre, light->shadowRangeStart, light->shadowRangeFade, 1};
             // The sun pass reads the shadows, and the point and spot lights are drawn before its list: it waits for them.
             if (shadowing.load(std::memory_order_relaxed) || localShadowing.load(std::memory_order_relaxed)) contextNotes.wait = true;

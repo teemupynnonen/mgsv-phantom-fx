@@ -290,6 +290,26 @@ void HashGridCache_QueueLight(uint visibilityIndex, uint cellIndex)
     g_HashGridCache_LightBuffer[index] = visibilityIndex;
 }
 
+// A first hit that takes its light from its cell (TraceLight) keeps the cell lit too: queued as one of its samples
+// while the cell has fewer than HASH_CELL_SAMPLES_PER_FRAME claims this frame, into the room after the multibounce's.
+// A hit past the room is left out; the cell is lit the next frame.
+void HashGridCache_KeepForLight(HashGridCache_Visibility visibility, uint cellIndex, uint first, uint room)
+{
+    uint claimed;
+    InterlockedAdd(g_HashGridCache_UpdateCellValueBuffer[4 * cellIndex + 3], 1, claimed);
+    if (claimed >= HASH_CELL_SAMPLES_PER_FRAME) return;
+
+    uint index;
+    InterlockedAdd(g_Counters[GI_COUNTER_VISIBILITY2], 1, index);
+    if (index >= room) return;
+
+    g_HashGridCache_VisibilityBuffer[first + index] = HashGridCache_PackVisibility(visibility);
+    g_HashGridCache_VisibilityCellBuffer[first + index] = cellIndex;
+    uint lightIndex;
+    InterlockedAdd(g_Counters[GI_COUNTER_LIGHTS], 1, lightIndex);
+    g_HashGridCache_LightBuffer[lightIndex] = first + index;
+}
+
 // A hit the cache keeps, for PopulateCells and the multibounce: `query` is where it came from.
 uint HashGridCache_Keep(uint counter, uint first, HashGridCache_Visibility visibility, uint cellIndex, uint query)
 {
@@ -334,7 +354,7 @@ float4 SampleHit(Texture2D<float4> texture, SceneTriangle t, float2 uv0, float2 
     return texture.SampleLevel(g_WrapSampler, InterpolatedUV(uv0, uv1, uv2, barycentrics), HitLevel(texture, t, uv0, uv1, uv2, footprint));
 }
 
-// A linear colour as its sRGB encoded values, and back. As HDR's (hdr_shaders.hpp), whose shaders are built apart from these.
+// A linear colour as its sRGB encoded values, and back. As HDR's (features/hdr/shaders/), whose shaders are built apart from these.
 float3 LinearToSrgb(float3 value)
 {
     return lerp(value * 12.92f, 1.055f * pow(max(value, 1e-6f), 1.0f / 2.4f) - 0.055f, step(0.0031308f, value));
@@ -557,18 +577,27 @@ float3 DiffuseRayEmission(HashGridCache_Visibility visibility, float3 emission)
     return min(emission, g_Frame.emission.y);
 }
 
+// A hit's mesh's flags (GI_GEOMETRY_*).
+uint HitFlags(HashGridCache_Visibility visibility)
+{
+    return g_Geometries[FirstGeometry(g_Instances[visibility.instanceIndex]) + visibility.geometryIndex].flags;
+}
+
 // Leaves (GI_GEOMETRY_LEAF) let light through.
 bool HitIsLeaf(HashGridCache_Visibility visibility)
 {
     return (g_Geometries[FirstGeometry(g_Instances[visibility.instanceIndex]) + visibility.geometryIndex].flags & GI_GEOMETRY_LEAF) != 0;
 }
 
-// The light at a hit from one of the frame's point and spot lights, chosen by its light here without
-// shadows (weighted reservoir sampling, a candidate a light that can reach it), through a shadow ray to it:
-// its light before the cosine, over the chance it was chosen.
-float3 SampledLocalLightReaching(float3 world, float3 normal, float3 origin, float tolerance, inout Random random, out float3 towardsLight)
+// One of the frame's point and spot lights, chosen by its light here without shadows (weighted reservoir sampling, a
+// candidate a light that can reach it); no ray is traced. `reaching`: its light before the cosine and the shadow, over the
+// chance it was chosen; `rayLength` is 0 when it needs no ray. Returns the weights' total: the light all of them give
+// at the hit, cosine included, 0 if none reaches it.
+float ChooseLocalLight(float3 world, float3 normal, inout Random random, out float3 reaching, out float3 towardsLight, out float rayLength)
 {
+    reaching = 0.0f;
     towardsLight = normal;
+    rayLength = 0.0f;
     float total = 0.0f, chosenWeight = 0.0f;
     float3 chosenLight = 0.0f, chosenDirection = 0.0f;
     float chosenDistance = 0.0f, chosenClearance = 0.0f;
@@ -596,28 +625,19 @@ float3 SampledLocalLightReaching(float3 world, float3 normal, float3 origin, flo
     if (!(chosenWeight > 0.0f)) return 0.0f;
 
     towardsLight = chosenDirection;
-    float rayLength = chosenDistance - chosenClearance;
-    float visibility = rayLength > 0.0f ? VisibilityFromSurface(origin, normal, tolerance, chosenDirection, rayLength, ShadowRayTowards(RayTowardsLamp)) : 1.0f;
-    return chosenLight * (total / chosenWeight * visibility);
+    rayLength = chosenDistance - chosenClearance;
+    reaching = chosenLight * (total / chosenWeight);
+    return total;
 }
 
-// The same with the cosine: the diffuse light at the hit.
-float3 SampledLocalLight(float3 world, float3 normal, float3 origin, float tolerance, inout Random random)
-{
-    float3 toLight;
-    float3 reaching = SampledLocalLightReaching(world, normal, origin, tolerance, random, toLight);
-    return reaching * saturate(dot(normal, toLight));
-}
-
-// The diffuse light at a surface from one of the self-lit meshes the frame aims at (GIFrameConstants::emitters): one
-// chosen by its light here (weighted reservoir sampling), a triangle of it and a point on that, through a shadow ray:
-// its radiance at the point, times the cosines at both ends and the triangle's area over the squared distance, in the
-// game's diffuse light units (over pi), over the chances of what was chosen: an unbiased estimate of their diffuse
-// light. Their specular light comes by the reflections' own rays meeting them.
-float3 SampledEmitterLight(float3 world, float3 normal, float3 origin, float tolerance, inout Random random)
+// One of the self-lit meshes the frame aims at (GIFrameConstants::emitters), chosen by its light here (weighted
+// reservoir sampling); no ray is traced. `chances`: those of what is chosen so far, for EmitterLightTowards. Returns the
+// weights' total: about the light they all give at the hit, cosine included, in the lamps' units; 0 if none reaches it.
+float ChooseEmitter(float3 world, float3 normal, inout Random random, out uint chosen, out float chances)
 {
     float total = 0.0f, chosenWeight = 0.0f;
-    uint chosen = 0u;
+    chosen = 0u;
+    chances = 0.0f;
     for (uint i = 0; i < g_Frame.emitterCount.x; ++i)
     {
         float3 towardsCentre = g_Frame.emitters[i].sphere.xyz - world;
@@ -642,6 +662,17 @@ float3 SampledEmitterLight(float3 world, float3 normal, float3 origin, float tol
 
     if (!(chosenWeight > 0.0f)) return 0.0f;
 
+    chances = g_Frame.emitters[chosen].place.z * total / chosenWeight;
+    return total;
+}
+
+// A triangle of the emitter `ChooseEmitter` chose and a point on that: its radiance at the point, times the cosines at
+// both ends and the triangle's area over the squared distance, in the game's diffuse light units (over pi), over the
+// chances of what was chosen, before the shadow; 0 if the point does not light the surface. `rayLength`: the shadow ray's.
+float3 EmitterLightTowards(float3 world, float3 normal, uint chosen, float chances, inout Random random, out float3 direction, out float rayLength)
+{
+    direction = normal;
+    rayLength = 0.0f;
     GIEmitter emitter = g_Frame.emitters[chosen];
     SceneTriangle t = LoadTriangle(emitter.place.x, emitter.place.y, random.randInt(emitter.place.z));
     float2 u = random.rand2();
@@ -650,7 +681,7 @@ float3 SampledEmitterLight(float3 world, float3 normal, float3 origin, float tol
     float3 offset = TrianglePoint(t, barycentrics) - world;
     float pointSquared = dot(offset, offset);
     float pointDistance = sqrt(pointSquared);
-    float3 direction = offset / max(pointDistance, 1e-4f);
+    direction = offset / max(pointDistance, 1e-4f);
     float cosine = dot(normal, direction);
     float3 edges = cross(t.v1 - t.v0, t.v2 - t.v0);
     float twiceArea = length(edges);
@@ -672,9 +703,25 @@ float3 SampledEmitterLight(float3 world, float3 normal, float3 origin, float tol
     float3 radiance = min(EmissionAt(t, barycentrics), g_Frame.emission.y);
     if (!any(radiance > 0.0f)) return 0.0f;
 
-    float visibility = VisibilityFromSurface(origin, normal, tolerance, direction, max(pointDistance - 0.01f, 0.0f), ShadowRayTowards(RayTowardsLamp));
-    float chances = emitter.place.z * total / chosenWeight;
-    return radiance * (visibility * cosine * cosineThere * twiceArea * chances / (TWO_PI * max(pointSquared, 1e-3f)));
+    rayLength = max(pointDistance - 0.01f, 0.0f);
+    return radiance * (cosine * cosineThere * twiceArea * chances / (TWO_PI * max(pointSquared, 1e-3f)));
+}
+
+// The diffuse light at a surface from the self-lit meshes the frame aims at: one chosen (ChooseEmitter), a point on it,
+// through a shadow ray: an unbiased estimate of their diffuse light. Their specular light comes by the reflections' own
+// rays meeting them.
+float3 SampledEmitterLight(float3 world, float3 normal, float3 origin, float tolerance, inout Random random)
+{
+    uint chosen;
+    float chances;
+    if (!(ChooseEmitter(world, normal, random, chosen, chances) > 0.0f)) return 0.0f;
+
+    float3 direction;
+    float rayLength;
+    float3 light = EmitterLightTowards(world, normal, chosen, chances, random, direction, rayLength);
+    if (!any(light > 0.0f)) return 0.0f;
+
+    return light * VisibilityFromSurface(origin, normal, tolerance, direction, rayLength, ShadowRayTowards(RayTowardsLamp));
 }
 
 // The share of the light on a leaf's far side it lets through to the near side, over the share it reflects
@@ -733,6 +780,43 @@ float3 SunLight(float3 world, float3 normal, float3 origin, float tolerance, boo
     return SunReaching(world, normal, origin, tolerance, leaf, true, random, direction) * abs(dot(normal, g_Frame.sunDirection.xyz));
 }
 
+static const uint OwnLightLamp = 1u, OwnLightEmitter = 2u;
+
+// The light a hit gets from a point or spot light or a self-lit mesh, through one shadow ray to one of them, not one to
+// each: each has a weight, its light there without its shadow, cosine included, in the same units (the totals of their own
+// sampling, ChooseLocalLight and ChooseEmitter, which stay as they are). One is chosen by it, its ray traced and its light
+// taken over the chance it was chosen: unbiased, as that is above 0 for each that reaches the hit. The sun keeps its own
+// ray (SunReaching): chosen among them by its light without the shadow, a hit in the shade spent its one ray on a sun it
+// could not see as often as the sun outweighed the lamps, and the shade flickered under Ray Reconstruction (2026-11-27).
+// `reaching`: a lamp's light before the cosine and the albedo, a self-lit mesh's with its cosines already (`kind`).
+float3 LocalOwnLightReaching(float3 world, float3 normal, float3 origin, float tolerance, inout Random random, out float3 direction, out uint kind)
+{
+    kind = OwnLightLamp;
+    direction = normal;
+    float3 lampLight, towardsLamp;
+    float lampLength;
+    float lampWeight = ChooseLocalLight(world, normal, random, lampLight, towardsLamp, lampLength);
+    uint emitter;
+    float emitterChances;
+    float emitterWeight = ChooseEmitter(world, normal, random, emitter, emitterChances);
+    float total = lampWeight + emitterWeight;
+    if (!(total > 0.0f)) return 0.0f;
+
+    if (random.rand() * total < lampWeight)
+    {
+        direction = towardsLamp;
+        float visibility = lampLength > 0.0f ? VisibilityFromSurface(origin, normal, tolerance, direction, lampLength, ShadowRayTowards(RayTowardsLamp)) : 1.0f;
+        return lampLight * (total / lampWeight * visibility);
+    }
+
+    kind = OwnLightEmitter;
+    float rayLength;
+    float3 light = EmitterLightTowards(world, normal, emitter, emitterChances, random, direction, rayLength) * (total / emitterWeight);
+    if (!any(light > 0.0f)) return 0.0f;
+
+    return light * VisibilityFromSurface(origin, normal, tolerance, direction, rayLength, ShadowRayTowards(RayTowardsLamp));
+}
+
 // The light a hit sends towards `toEye` from the sun, a point or spot light and a self-lit mesh: their diffuse light
 // by its albedo, and with path tracing the sun's and the light's specular light by GGX, as the sun pass and the lamps
 // shade what the camera sees; a self-lit mesh's specular light is the specular ray that meets it. `origin` and
@@ -740,11 +824,13 @@ float3 SunLight(float3 world, float3 normal, float3 origin, float tolerance, boo
 float3 HitOwnLight(HitMaterial material, float3 toEye, float3 origin, float tolerance, inout Random random)
 {
     float3 toSun, toLight;
+    uint kind;
     float3 sun = SunReaching(material.world, material.geometric, origin, tolerance, material.isLeaf, material.isMatte, random, toSun);
-    float3 lamp = SampledLocalLightReaching(material.world, material.geometric, origin, tolerance, random, toLight);
+    float3 local = LocalOwnLightReaching(material.world, material.geometric, origin, tolerance, random, toLight, kind);
+    float3 lamp = kind == OwnLightLamp ? local : 0.0f;
     float sunCosine = dot(material.normal, toSun);
     float3 light = material.albedo * (sun * (material.isLeaf ? abs(sunCosine) : saturate(sunCosine)) + lamp * saturate(dot(material.normal, toLight)));
-    light += material.albedo * SampledEmitterLight(material.world, material.geometric, origin, tolerance, random);
+    if (kind == OwnLightEmitter) light += material.albedo * local;
     if (!any(material.specularColor > 0.0f)) return light;
 
     float3 specular = GgxSpecular(sun, material.normal, toEye, toSun, material.roughness, material.specularColor);
@@ -759,13 +845,17 @@ float3 BounceSide(float3 normal, bool leaf, inout Random random, out float weigh
     return leaf && random.rand() * weight >= 1.0f ? -normal : normal;
 }
 
-// The light a cache cell's hit reflects from the sun, the sky and the frame's point and spot lights, in the
+// The light a cache cell's hit reflects from the sun, the sky, the frame's point and spot lights and self-lit meshes, in the
 // game's diffuse light units times albedo; a leaf adds what it lets through from its far side.
 float3 HitDirectLight(float3 world, float3 normal, float3 albedo, bool leaf, inout Random random)
 {
     float3 origin = LiftOffTriangle(world, normal);
     float tolerance = CopyTolerance(world);
     float3 light = SunLight(world, normal, origin, tolerance, leaf, random);
+    float3 toLight;
+    uint kind;
+    float3 local = LocalOwnLightReaching(world, normal, origin, tolerance, random, toLight, kind);
+    light += kind == OwnLightLamp ? local * saturate(dot(normal, toLight)) : local;
 
     // The sky through a cosine-weighted ray: its radiance is irradiance over pi for that sample.
     float skyWeight;
@@ -773,9 +863,6 @@ float3 HitDirectLight(float3 world, float3 normal, float3 albedo, bool leaf, ino
     float3 skyDirection = mapToCosineHemisphere(random.rand2(), skySide);
     float3 skyOrigin = all(skySide == normal) ? origin : LiftOffTriangle(world, skySide);
     light += SkyRadiance(skyDirection) * (skyWeight * VisibilityFromSurface(skyOrigin, skySide, tolerance, skyDirection, 1e4f, RayTowardsSurface));
-
-    light += SampledLocalLight(world, normal, origin, tolerance, random);
-    light += SampledEmitterLight(world, normal, origin, tolerance, random);
     return albedo * light;
 }
 

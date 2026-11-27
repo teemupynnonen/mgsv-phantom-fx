@@ -45,6 +45,7 @@ struct Settings
     AmbientOcclusion ambientOcclusion;
     IndirectLight indirectLight;
     VolumetricFog volumetricFog;
+    PhysicalSky physicalSky;
     Sea sea;
     WaterCaustics waterCaustics;
     DepthOfField depthOfField;
@@ -72,6 +73,7 @@ template<class Visit> void forEachFeature(Settings& settings, Visit&& visit)
     visit(settings.ambientOcclusion);
     visit(settings.indirectLight);
     visit(settings.volumetricFog);
+    visit(settings.physicalSky);
     visit(settings.sea);
     visit(settings.waterCaustics);
     visit(settings.depthOfField);
@@ -122,7 +124,7 @@ LightingStep lightingStepOf(const Settings& settings);
 // The lighting effects are switched as their step switches them: no effect of it switched off.
 bool isLightingAsStep(const Settings& settings);
 // A first launch, without a settings file: screen-space lighting, upscaled at Quality, the frame rate
-// unlocked and the fog physical.
+// unlocked, light shafts and the physical sky.
 Settings firstLaunchSettings();
 
 // What the image shows for troubleshooting. The Shadow views, of the ray-traced shadows, and the Light
@@ -147,12 +149,22 @@ struct Diagnostics
     bool gameFxaa{}; // Comparison: leave the frame to the game's FXAA, keeping DLSS ready
     bool onlyScreenSpaceShadows{}; // The sun shadowed by the screen-space shadows alone
     bool showAmbientOcclusion{};   // GTVBAO's occlusion alone in place of the lit scene
-    bool showIndirectLight{};      // SSILVB's light alone in place of the lit scene
+    bool showIndirectLight{};      // VB-SSGI's light alone in place of the lit scene
     bool showGlobalIllumination{}; // The global illumination's light alone in place of the lit scene
     bool showTracedScene{};        // The global illumination's traced scene from the camera
     bool twoSidedShadows{};        // Rays towards lights blocked by every surface from both sides, as until 2026-10-26
+    bool mainViewCastsSun{};       // The sun's rays blocked by a main-view-only mesh where its model has a sun stand-in (GI_GEOMETRY_STOOD_IN)
     int lightVolumes{};            // 0 the ray-traced lights within the game's volumes, 1 those with a shadow map beyond, 2 every one beyond
     bool logGlobalIlluminationOften{}; // The global illumination's light logged every few frames, not every ten seconds
+    // The light cache's part in the light (docs/DEVELOPMENT.md, "Making it cheaper"): how distant a hit takes its light
+    // from a cell, in cells of the hit's own size (0: never), and the samples a cell averages over (fewer follow a change
+    // sooner, more noise).
+    float lightCacheReach{4};
+    float hashMaxSamples{16};
+    // What the light's rays leave out, to time what each part costs (Developer page, Light cache). Both change the
+    // picture, so they are for measuring.
+    bool lightBounces{true};  // The hits' bounce ray, the sky's or the cache's light after it
+    bool lightHitLight{true}; // The light a hit's own surface and the game's lights give it
 };
 
 // Effects a cost measurement's step runs without (performance.hpp), while the settings, PhantomFX.ini

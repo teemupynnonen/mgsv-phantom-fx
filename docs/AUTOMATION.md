@@ -22,7 +22,7 @@ underneath until it measurably hurts. About 7 working days in four phases, each 
 
 | Layer | What it is | Files |
 | --- | --- | --- |
-| Game | 28 line verbs mapped almost one to one onto internal functions; writes one text result per command file | `src/devkit/automation.*` |
+| Game | 28 line verbs mapped almost one to one onto internal functions; writes one text result per command file | `src/devkit/automation.*`, `src/dev/devkit_link.cpp` |
 | Bridge | Four CLIs that write files, poll every 50 ms, and parse text and DDS | `fx.py`, `case.py`, `perf.py`, `scout.py` |
 | Agent | A 120-line skill holding commands, paths, safety rules and how to read reports | `.agents/skills/mgsv-automation/` |
 
@@ -74,9 +74,8 @@ PhantomFX; without PhantomFX those lines say they are unknown, and `help` lists 
 
 | Tool | What it does | Replaces |
 | --- | --- | --- |
-| `key` | Presses a key at the game's window, for loading screens that wait for one: `key space` | `key <name> [times]` |
 | session | `status`, `open player\|copy`, `freeze`, `release`, `start` (install, launch, free roam), `stop`, `boot`, `travel`, `acc`, `recover` (a copy stuck on a screen that waits for a key: presses it, no restart), `show` / `hide` (the copy's window on screen to watch or play, or off it again); holds which game and build for later calls | `fx.py status`, `boot`, `acc`, `travel`, `install.ps1`, `launch.ps1` |
-| `run` | A batch of `automation.hpp` lines, each answered `ok` or an error; the escape hatch for anything not below | `fx.py run` |
+| `run` | A batch of command lines, DevKit's and the add-ons', each answered `ok` or an error; the escape hatch for anything not below | `fx.py run` |
 | `observe` | One query: `pixel`, `region`, `object`, `excluded`, `memory`, `lua`; filters by hash, owner, bounds or reason left out; returns rows and paths | `probe`, `peek`, `drawn`, `owner`, `lua` |
 | `capture` | `image`, `inspect` or `perf` on the frozen frame; returns files plus a preview as image content | `image`, `inspect`, `textures`, `perf`, `png`, `diff` |
 | `case` | `latest`, `open`, `record`, `replay`, `compare`; replay is a job | `case.py`, `fx.py replay` |
@@ -92,8 +91,7 @@ is how the surface became too specific.
 A loading screen that waits for Space stops the game's own loop, so a command file cannot press it. `boot`, `travel`
 and `recover` press a gamepad A from outside the game, every few seconds while it is not playing: DevKit hooks
 XInput and merges the button into what the game reads, so no window is brought forward and the user's focus is not
-taken. With the copy's window already in front, Space is sent instead;
-`recover` is the tool for a copy already sitting on one, and it never restarts the game. When the loop does run,
+taken. `recover` is the tool for a copy already sitting on one, and it never restarts the game. When the loop does run,
 `key <name> [times]` presses one from a command file. Do not restart a game stuck on such a screen, and do not
 improvise a keypress.
 
@@ -153,7 +151,8 @@ Stop there if it does not.
 
 ## Phase 1, built
 
-`tools/automation/mcp_server.py` is the server: `session`, `run`, `case`, `capture`, `verify`, `setting` and `job`.
+`tools/automation/mcp_server.py` is the server: `session`, `run`, `case`, `capture`, `verify`, `setting`, `job`,
+`weather` and `time_of_day`.
 It wraps today's scripts, so the game needs no changes. `tools/automation/test_mcp.py` checks the file handshake,
 the refusals and the paths without the game. Both were run on 2026-11-20: the tools are listed by an MCP client,
 `case` returns a real report and its pictures as image content, and `setting` reads the copy's ini.
@@ -164,7 +163,7 @@ Run it from the repository root; an MCP client starts the same command:
 uv run -q --with mcp --with numpy --with pillow --with scipy python tools/automation/mcp_server.py
 ```
 
-`opencode.json` registers it project-locally. `PHANTOM_FX_GAME` and `PHANTOM_FX_AUTOMATION_GAME` (read in `fx.py`
+Register that command in the MCP client. `PHANTOM_FX_GAME` and `PHANTOM_FX_AUTOMATION_GAME` (read in `fx.py`
 and the two PowerShell scripts) point the CLI, the server and the copy's installer at other installs. `PHANTOM_FX_DEV_BUILD`
 selects another build. `session` with action `start` drives the whole way as one job: install the checkout's
 `build/dev` into the copy, launch it, press the startup notices away (autosave, online information), skip the

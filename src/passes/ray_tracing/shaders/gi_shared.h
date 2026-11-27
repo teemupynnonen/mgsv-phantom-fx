@@ -27,7 +27,7 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_INSTANCE_SEA       8u // The sea's plane at its level under the eye (sea.hpp): one-sided, its front up, water's albedo
 #define GI_INSTANCE_KINDS     0xFFu
 
-// Water's albedo, linear (sea_shaders.hpp): the light it sends back up as a share of what falls on it, set so the
+// Water's albedo, linear (features/sea/shaders/): the light it sends back up as a share of what falls on it, set so the
 // sea looking down matches the game's own at Mother Base (docs/DEVELOPMENT.md, "Sea"). The sea's own surface and
 // its plane's hits share it.
 #define GI_SEA_ALBEDO 0.012f, 0.066f, 0.123f
@@ -48,6 +48,7 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_GEOMETRY_LAYER_BLEND   4096u // Its layer takes the base texture's place where it lies, not multiplying it (LayeredAlbedo)
 #define GI_GEOMETRY_LAYER_LINEAR  8192u // With GI_GEOMETRY_LAYER_BLEND: in linear light, not on the encoded values
 #define GI_GEOMETRY_LAYER_MASK_BLUE 16384u // Its layer's mask is in the texture's blue channel, not the red
+#define GI_GEOMETRY_STOOD_IN      32768u // A main-view-only mesh of a model with a sun stand-in (a hut's window trim, which the stand-in leaves open): with lightDiagnostics.w the sun's rays meet it (StopsShadowRay)
 
 // The game's textures the scene holds at most (g_SceneTextures, gi_textures.hpp).
 #define GI_MAX_TEXTURES 4096u
@@ -97,6 +98,8 @@ struct float4x4 { float m[16]; }; // Rows, applied as dot(row, v), as the engine
 #define GI_COUNTER_FOLIAGE        11u // Light pixels on the game's foliage (PrepareGuides)
 #define GI_COUNTER_FOLIAGE_MEMORY_FULL 12u // Foliage light pixels the foliage memory had no room for (ResolveLight)
 #define GI_COUNTER_MULTIBOUNCE_AWAY 13u // Multibounce rays that reach the sky (PopulateMultibounceCells)
+#define GI_COUNTER_VISIBILITY2    14u // Distant first hits queued to light their cells (TraceLight); counts past the room they have
+#define GI_COUNTER_CACHED_HITS    15u // The light's first hits that took their light from a cell (TraceLight)
 // The frame's largest value (asuint of a float, its largest channel) at each step of the light
 // (MaxDiagnostic in gi_light.hlsl), to find where light grows past what the sun and sky give.
 #define GI_COUNTER_MAX_ALBEDO     16u // A hit's albedo
@@ -195,7 +198,9 @@ struct GIFrameConstants
     // The light (gi_light.hlsl): its rays, from a grid half the render size each way, and the hash grid
     // cache (AMD Capsaicin's HashGridCacheConstants).
     uint4 lightLayout;        // xy: the light's size; z: its pixels; w: frame parity
-    uint4 lightRays;          // x: rays a light pixel, 1, 2 or 4, twice on foliage (TraceLight); y: how far they look, metres (0: no end)
+    uint4 lightRays;          // x: rays a light pixel, 1, 2 or 4, twice on foliage (TraceLight); y: how far they look, metres (0: no end);
+                              // z: from how far a first hit takes its light from the cache, in its cells (0: never);
+                              // w: what is left out to time the rest (Diagnostics): 1 the bounce rays, 2 the hits' own light
     float4 cellSizes;         // y: hash cell size; z: smallest hash cell; w: hash tile size
     uint4 hashCounts;         // x: buckets; y: tiles; z: cells; w: tiles per bucket
     uint4 hashTileSizes;      // Cells across a tile, mips 0 to 3
@@ -208,7 +213,7 @@ struct GIFrameConstants
     float4 shadowParams; // x: tangent of the sun's angular radius (SunSample); y: how much sun an alpha-tested mesh blocks; z: ray length; w: 1 on a fresh start
     uint4 objectMotion;  // x: 1 when g_ObjectVelocity (gi_common.hlsli) holds this frame's velocity of the game's moving meshes
     uint4 shadowDiagnostics; // x: 1 for every surface casting from both sides (ShadowRayTowards); y: 1 for the debug view of where the shadow rays leave (ShadowStartColor); zw: the pixel the probes read
-    uint4 lightDiagnostics;  // z: the light's debug view into g_LightDebug (CompositeLight), GI_LIGHT_DEBUG_*
+    uint4 lightDiagnostics;  // z: the light's debug view into g_LightDebug (CompositeLight), GI_LIGHT_DEBUG_*; w: 1 for GI_GEOMETRY_STOOD_IN meshes blocking the sun
     // x: 1 while DLSS Ray Reconstruction denoises (ray_reconstruction.hpp): the light takes a sample a render
     // pixel and goes out without its denoiser (gi_light.hlsl, PerRenderPixel), the sun's and the lights' shadows
     // as their rays found them. y: 1 while path tracing: the hits have their materials (HitMaterialOf in
@@ -303,7 +308,7 @@ struct GIGeometry
     uint layerTexture;    // 1 + its layer's index (rgb its colour, a how much of it lies), 0 without
     uint layerMaskTexture; // 1 + its layer's mask's index (how much of it lies), 0 without
     float4 layerMapping;  // The layer's coordinates: (second coordinates + zw) x xy
-    float texelsPerMetre; // With GI_GEOMETRY_ALPHA_TEXTURE or GI_GEOMETRY_GLASS: its texture's texels along a metre of its surface, on average
+    float texelsPerMetre; // With GI_GEOMETRY_ALPHA_TEXTURE: its texture's texels along a metre of its surface, on average
     float3 unused;
 };
 
@@ -348,8 +353,8 @@ struct GIShadowProbe
                      // primitive of the whole ray's first hit (hits.w)
     uint4 crossed;   // The first thing between the lifted start and the surface, from the start, as lightNearest; zeros for none
     // The pane the sun's ray crosses there, if any: what its mask covers and what reaches the start through it.
-    float4 glass;    // x: the pane's cover (PaneCover), y: what it lets through (PaneTransmittance), z: the pane's geometry row,
-                     // w: 1 where the ray meets a pane first, 0 where it does not
+    float4 glass;    // x: the pane's cover (GlassCover), y: what it lets through (PaneTransmittance), z: the pane's geometry row,
+                     // w: 1 on a pane met against its face, 0 with none
     uint4 glassHit;  // x its instance + 1, y its geometry, z its primitive; w its mask texture's id, 0 without one
 };
 

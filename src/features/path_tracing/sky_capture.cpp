@@ -7,6 +7,7 @@
 #include "log.hpp"
 #include "passes/ray_tracing/ray_tracing.hpp"
 #include "performance.hpp"
+#include "phantom_shaders/sky_to_ray_units.hpp"
 
 #include <Windows.h>
 #include <wrl/client.h>
@@ -71,34 +72,6 @@ struct SkyWorkConstants
 
 static_assert(sizeof(SkyLightConstants) == 176 && sizeof(SkyWorkConstants) == 576);
 
-// The face's texture holds what the scene would: exposed, and sRGB encoded beyond 1 (docs/DEVELOPMENT.md, "HDR").
-constexpr char ToRayUnits[] = R"(
-Texture2DArray<float4> Drawn : register(t0);
-RWTexture2DArray<float4> Output : register(u0);
-
-cbuffer Parameters : register(b0)
-{
-    uint Face;
-    uint Size;
-    float Scale; // From the exposed light to the rays' units
-    float Most;
-};
-
-float3 Decoded(float3 encoded)
-{
-    float3 high = pow((max(encoded, 0) + 0.055) / 1.055, 2.4);
-    return encoded <= 0.04045 ? encoded / 12.92 : high;
-}
-
-[numthreads(8, 8, 1)]
-void main(uint2 id : SV_DispatchThreadID)
-{
-    if (any(id >= Size)) return;
-
-    Output[uint3(id, Face)] = float4(clamp(Decoded(Drawn.Load(int4(id, Face, 0)).rgb), 0, Most) * Scale, 1);
-}
-)";
-
 struct Parameters
 {
     std::uint32_t face, size;
@@ -117,6 +90,7 @@ ComPtr<ID3D11UnorderedAccessView> cubeAccess;
 ComPtr<ID3D11RasterizerState> rasterizer;
 ComPtr<ID3D11Buffer> systemBuffer, sceneBuffer, lightBuffer, objectBuffer, workBuffer, parameterBuffer;
 ComPtr<ID3D11ComputeShader> toRayUnits;
+constexpr Shader ToRayUnitsCode{g_sky_to_ray_units, sizeof(g_sky_to_ray_units), "features/path_tracing/shaders/sky_to_ray_units.cs.hlsl", "cs_5_0"};
 
 // The face this frame's draws go into, and whether one did; the face the last frame drew and its exposure, for update.
 std::uint32_t currentFace{};
@@ -173,7 +147,7 @@ bool ensurePipeline()
         objectBuffer = makeConstantBuffer(device.Get(), sizeof(ObjectConstants), "Creating the sky's object constants");
         workBuffer = makeConstantBuffer(device.Get(), sizeof(SkyWorkConstants), "Creating the sky's work constants");
         parameterBuffer = makeConstantBuffer(device.Get(), sizeof(Parameters), "Creating the sky's parameters");
-        toRayUnits = computeShader(device.Get(), ToRayUnits, "sky-to-ray-units");
+        toRayUnits = computeShader(device.Get(), ToRayUnitsCode, "sky-to-ray-units");
         cube = shared;
         log("Path tracing: the sky is captured for the rays.");
 
