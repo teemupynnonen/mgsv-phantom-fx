@@ -282,12 +282,42 @@ ComPtr<ID3D11Buffer> makeIndices()
     return buffer;
 }
 
+#if PHANTOM_DEV_SHADERS
+// A dev build's hot reload: present looks at the sea's .hlsl files twice a second or so and, when one was saved,
+// compiles them all again. A failed compile is logged and the shaders in use stay. `sourcesSeen` is the newest file
+// the shaders in use were compiled from.
+std::filesystem::file_time_type sourcesSeen{};
+std::uint64_t sourcesChecked{};
+
+// The newest write among the sea's files; none when the folder could not be read through, as a partial scan would
+// look like a save or hide one.
+std::optional<std::filesystem::file_time_type> newestSource() noexcept
+{
+    std::filesystem::file_time_type newest{};
+    std::error_code error;
+    const auto directory = std::filesystem::path(PHANTOM_DEV_SHADER_ROOT) / "features/sea/shaders";
+    for (std::filesystem::directory_iterator entry(directory, error), end; !error && entry != end; entry.increment(error))
+    {
+        const auto written = entry->last_write_time(error);
+        if (error) return std::nullopt;
+        newest = std::max(newest, written);
+    }
+    if (error) return std::nullopt;
+
+    return newest;
+}
+#endif
+
 // Makes everything once, its shaders from their precompiled bytecode (compiled from source in a dev build); call with resourceMutex held. Returns false when it is unavailable.
 bool ensurePipeline()
 {
     if (surfacePixel) return true;
     if (!device || hasPipelineFailed) return false;
 
+#if PHANTOM_DEV_SHADERS
+    // Before compiling: a file saved meanwhile is newer, and the next look reloads it.
+    if (const auto newest = newestSource()) sourcesSeen = *newest;
+#endif
     try
     {
         constantBuffer = makeConstantBuffer(device.Get(), sizeof(Constants), "Creating the sea's constants");
@@ -361,34 +391,14 @@ bool ensurePipeline()
 }
 
 #if PHANTOM_DEV_SHADERS
-// A dev build's hot reload, as VB-SSGI's: present looks at the sea's .hlsl files twice a second or so and, when one
-// was saved, compiles them all again. A failed compile is logged and the shaders in use stay.
-std::filesystem::file_time_type sourcesSeen{};
-std::uint64_t sourcesChecked{};
-
-std::filesystem::file_time_type newestSource() noexcept
-{
-    const auto directory = std::filesystem::path(PHANTOM_DEV_SHADER_ROOT) / "features/sea/shaders";
-    std::filesystem::file_time_type newest{};
-    std::error_code error;
-    for (const auto& entry : std::filesystem::directory_iterator(directory, error))
-        newest = std::max(newest, entry.last_write_time(error));
-
-    return newest;
-}
-
 // Call with resourceMutex held.
 void reloadShadersIfSaved()
 {
     if (++sourcesChecked % 30 != 1) return;
 
     const auto newest = newestSource();
-    if (sourcesSeen == std::filesystem::file_time_type{} || newest == sourcesSeen)
-    {
-        sourcesSeen = newest;
-        return;
-    }
-    sourcesSeen = newest;
+    if (!newest || *newest == sourcesSeen) return;
+    sourcesSeen = *newest;
     if (!surfacePixel) return; // ensurePipeline compiles them from the files anyway
 
     try
