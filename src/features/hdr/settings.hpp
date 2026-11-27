@@ -4,8 +4,8 @@
 
 namespace phantom_fx
 {
-// HDR10 output (hdr.hpp). Turning it on or off takes a restart: the swap chain and the scene targets
-// are made for it. The brightnesses apply at once.
+// HDR10 output (hdr.hpp). It and the brightnesses apply from the next frame: the float scene's swap
+// chain is made for HDR whether it is on or not.
 struct Hdr
 {
     bool on{};

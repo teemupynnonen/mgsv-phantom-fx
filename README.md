@@ -106,7 +106,7 @@ Needs DXR 1.1.
 
 ## Notes
 
-- Enabling frame generation, switching it between DLSS and FSR, or enabling HDR requires a game restart.
+- Enabling frame generation or switching it between DLSS and FSR requires a game restart. HDR turns on and off at once.
 
 ## Uninstall
 
