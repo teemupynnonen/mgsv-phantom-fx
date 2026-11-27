@@ -14,7 +14,12 @@
 #include "features/photo_mode/photo_mode.hpp"
 #include "fxui/fxui.hpp"
 #include "log.hpp"
+#include "performance.hpp"
 
+#include <Windows.h>
+#include <cstdint>
+#include <format>
+#include <string>
 #include <string_view>
 
 // The devkit's game layer: the build check the add-on makes.
@@ -45,6 +50,118 @@ fxui::Tone toneOf(devkit::Tone tone)
     return fxui::Tone::Dim;
 }
 
+// What the light's rays cost, part by part: each part left out for a few seconds, after a few seconds with everything as
+// it was, and the GPU's cost averaged over what is left after the settling. Run from the Light cache item, so it needs
+// the Developer page open.
+struct LightAblation
+{
+    static constexpr int Variants = 3, Phases = Variants * 2, PhaseMs = 6000, SettleMs = 2000;
+    static constexpr const char* Names[Variants]{"the light cache", "the bounce rays", "the hits' own light"};
+    bool running{};
+    int phase{};
+    std::uint64_t phaseStart{};
+    Diagnostics base;
+    double baseFrame{}, baseRays{}, baseCount{};
+    double frame[Variants]{}, rays[Variants]{}, count[Variants]{};
+    std::string result;
+};
+
+LightAblation ablation;
+
+// The settings of phase `phase`: the variant that phase tests left out, everything else as it was.
+Diagnostics ablatedSettings(int phase)
+{
+    auto settings = ablation.base;
+    const int variant = phase / 2;
+    if (phase % 2 == 1)
+    {
+        if (variant == 0) settings.lightCacheReach = 0;
+        if (variant == 1) settings.lightBounces = false;
+        if (variant == 2) settings.lightHitLight = false;
+    }
+    return settings;
+}
+
+void drawLightCache()
+{
+    const fxui::Item item({.id = "lightCache", .name = "Light cache", .summary = "How distant a hit reads the light cache, how fast its cells follow a change, and what the light's rays cost.",
+        .keywords = "cache lag light global illumination distance samples compare cost bounce"});
+    if (!item) return;
+
+    performance::watch();
+    auto options = core::currentDiagnostics();
+    bool changed = false;
+    changed |= fxui::slider("Hits from the cache past (m)", options.lightCacheReach,
+        {.min = 0.0f, .max = 50.0f, .standard = 10.0f, .format = "%.0f",
+            .tip = "A light ray's first hit this far or further takes its light from the cache, about four rays fewer. 0 turns it off."});
+    changed |= fxui::slider("Cache samples a cell", options.hashMaxSamples,
+        {.min = 1.0f, .max = 32.0f, .standard = 16.0f, .format = "%.0f",
+            .tip = "Cells average over this many samples: fewer follow a light's change sooner, with more noise."});
+    if (changed && !ablation.running) core::applyDiagnostics(options);
+
+    const auto costs = performance::status().costs;
+    const auto rays = costs.passes[static_cast<std::size_t>(performance::Pass::GiRays)];
+    fxui::note(Tone::Dim, std::format("Now: GPU frame {:.2f} ms, the global illumination's rays {:.2f} ms.", costs.gpuFrame, rays));
+
+    if (!ablation.running)
+    {
+        if (fxui::button("Compare what the rays cost (36 s)",
+                "Times the rays with everything on, then with the light cache off, their bounce rays out, and the hits' own light out, six "
+                "seconds each. Stand still, in the light you want to judge."))
+        {
+            ablation = {};
+            ablation.running = true;
+            ablation.base = options;
+            ablation.phaseStart = GetTickCount64();
+            core::applyDiagnostics(ablatedSettings(0));
+        }
+    }
+    else
+    {
+        const auto now = GetTickCount64();
+        const int variant = ablation.phase / 2;
+        if (now - ablation.phaseStart >= LightAblation::SettleMs)
+        {
+            if (ablation.phase % 2 == 1)
+            {
+                ablation.frame[variant] += costs.gpuFrame;
+                ablation.rays[variant] += rays;
+                ablation.count[variant] += 1;
+            }
+            else
+            {
+                ablation.baseFrame += costs.gpuFrame;
+                ablation.baseRays += rays;
+                ablation.baseCount += 1;
+            }
+        }
+        fxui::note(Tone::Warn, std::format("Comparing: step {} of {}, {}{}. Stay on this page and keep still.", ablation.phase + 1,
+            LightAblation::Phases, ablation.phase % 2 ? "without " : "with ", ablation.phase % 2 ? LightAblation::Names[variant] : "everything"));
+        if (now - ablation.phaseStart >= LightAblation::PhaseMs)
+        {
+            ablation.phase += 1;
+            ablation.phaseStart = now;
+            const bool done = ablation.phase >= LightAblation::Phases;
+            core::applyDiagnostics(done ? ablation.base : ablatedSettings(ablation.phase));
+            if (done)
+            {
+                ablation.running = false;
+                const auto mean = [](double sum, double count) { return count > 0 ? sum / count : 0.0; };
+                const double baseFrame = mean(ablation.baseFrame, ablation.baseCount), baseRays = mean(ablation.baseRays, ablation.baseCount);
+                std::string text = std::format("Everything on: GPU frame {:.2f} ms, rays {:.2f} ms.", baseFrame, baseRays);
+                for (int i = 0; i < LightAblation::Variants; ++i)
+                {
+                    const double frame = mean(ablation.frame[i], ablation.count[i]), withoutRays = mean(ablation.rays[i], ablation.count[i]);
+                    text += std::format("  Without {}: {:.2f} and {:.2f} ms, so it costs {:.2f} of the frame and {:.2f} of the rays.",
+                        LightAblation::Names[i], frame, withoutRays, baseFrame - frame, baseRays - withoutRays);
+                }
+                ablation.result = text;
+                log(text);
+            }
+        }
+    }
+    if (!ablation.result.empty()) fxui::note(Tone::Ok, ablation.result);
+}
 // What frames cost, on file.
 void drawCostRecording()
 {
@@ -96,6 +213,7 @@ void drawPage()
     {
         drawCostRecording();
         remaster::drawTool();
+        drawLightCache();
     }
     if constexpr (DiagnosticLog && !ToolsOnly)
     {

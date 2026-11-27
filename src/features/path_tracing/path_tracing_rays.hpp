@@ -33,6 +33,8 @@ struct Textures
 void describe(gi_d3d12::Descriptors& descriptors, const Textures& textures);
 // The lamps' light at the render size. Needs the frame's scene built.
 void recordLamps(gi_d3d12::Recorder& recorder, std::uint32_t width, std::uint32_t height);
+// The same without its timing or the barrier after it, to run alongside the light's rays (gi_light::Light::record).
+void dispatchLamps(gi_d3d12::Recorder& recorder, std::uint32_t width, std::uint32_t height);
 // The reflections, which read the light's cache: after its passes.
 void recordReflections(gi_d3d12::Recorder& recorder, std::uint32_t width, std::uint32_t height);
 // Those of glass and mirrors: in the frame's tables, after the game drew them.

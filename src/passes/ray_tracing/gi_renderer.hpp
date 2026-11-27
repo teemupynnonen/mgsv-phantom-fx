@@ -125,6 +125,9 @@ struct Frame
     std::uint32_t frameIndex{};
     kick_traces::KickTraces traces; // The one answer to what runs; a texture a trace needs is there when it runs
     bool showScene{}; // The output shows the traced scene instead of the light
+    float lightCacheReach{10}; // Metres from which a light ray's first hit takes its light from the cache (TraceLight); 0 never
+    float hashMaxSamples{16};  // The light cache's samples a cell averages over (UpdateTiles)
+    unsigned lightAblation{};  // What the light's rays leave out, to time the rest (Diagnostics): 1 the bounce rays, 2 the hits' own light
     bool logOften{};  // Diagnostics: the light's statistics logged every few frames (as each readback returns), not every ten seconds
     // Self-lit meshes' light: its scale from the game's units, and the most radiance one lights others with, so scaled;
     // what tunes each and a number that changes with it (scene_contents::GameScene).
