@@ -284,7 +284,7 @@ add_library(phantom_fx SHARED src/addon.cpp src/core.cpp src/modules.cpp src/fea
     src/game_dither.cpp src/game_light_volumes.cpp src/features/frame_generation/presenter.cpp src/features/frame_generation/frame_generation.cpp src/game_loop.cpp src/passes/contact_shadow_trace.cpp src/passes/sun_light_pass.cpp src/features/sun_contact_shadows/sun_contact_shadows.cpp
     src/passes/local_light_pass.cpp src/features/lamp_contact_shadows/lamp_contact_shadows.cpp src/features/lamp_soft_shadows/lamp_soft_shadows.cpp
     src/features/depth_of_field/depth_of_field.cpp src/passes/indirect_light_pass.cpp src/passes/visibility_bitmask.cpp src/features/ambient_occlusion/gtvbao.cpp
-    src/features/indirect_light/ssilvb.cpp src/features/global_illumination/light_combine.cpp src/features/global_illumination/river_light.cpp src/features/photo_mode/photo_mode.cpp src/features/photo_mode/focus.cpp src/features/hdr/hdr.cpp src/weather.cpp src/character.cpp src/features/volumetric_fog/atmosphere.cpp src/features/sea/sea.cpp src/features/water_caustics/water_caustics.cpp src/features/water_caustics/caustics_map.cpp src/passes/forward_water_pass.cpp src/sun_movement.cpp
+    src/features/indirect_light/ssgi.cpp src/features/global_illumination/light_combine.cpp src/features/global_illumination/river_light.cpp src/features/photo_mode/photo_mode.cpp src/features/photo_mode/focus.cpp src/features/hdr/hdr.cpp src/weather.cpp src/character.cpp src/features/volumetric_fog/atmosphere.cpp src/features/sea/sea.cpp src/features/water_caustics/water_caustics.cpp src/features/water_caustics/caustics_map.cpp src/passes/forward_water_pass.cpp src/sun_movement.cpp
     src/fidelityfx.cpp src/features/upscaling/d3d12_host.cpp src/features/upscaling/fsr_upscaler.cpp src/features/upscaling/ray_reconstruction.cpp src/features/path_tracing/path_tracing.cpp src/features/path_tracing/forward_surfaces.cpp src/features/path_tracing/glass.cpp src/features/path_tracing/water.cpp src/features/path_tracing/path_tracing_rays.cpp src/features/path_tracing/sky_capture.cpp src/features/frame_generation/fsr_frame_generation.cpp src/performance.cpp src/performance_menu.cpp
     src/passes/ray_tracing/ray_tracing.cpp src/passes/ray_tracing/kick_traces.cpp src/passes/ray_tracing/trace.cpp src/passes/ray_tracing/shared_textures.cpp src/passes/ray_tracing/engine_scene.cpp src/passes/ray_tracing/scene_description.cpp src/passes/ray_tracing/engine_brush.cpp src/passes/ray_tracing/gi_inputs.cpp src/features/ray_traced_lights/local_lights.cpp src/features/ray_traced_lights/light_choice.cpp src/features/ray_traced_lights/lamp_shadow_rays.cpp src/passes/ray_tracing/gi_renderer.cpp src/passes/ray_tracing/light_bins.cpp src/passes/ray_tracing/gi_scene.cpp src/passes/ray_tracing/scene_contents.cpp src/passes/ray_tracing/gi_textures.cpp src/features/global_illumination/gi_light.cpp src/features/global_illumination/gi_denoiser.cpp src/features/global_illumination/gi_lighting.cpp src/features/ray_traced_shadows/gi_shadow.cpp
     ${PHANTOM_FX_DEV_SOURCES} "${CMAKE_BINARY_DIR}/version.rc")
@@ -339,7 +339,10 @@ set(PHANTOM_FX_SHADERS
     dof_lens_composite|src/features/depth_of_field/shaders/lens_composite.ps.hlsl|ps_5_0
     gi_light_combine|src/features/global_illumination/shaders/light_combine.cs.hlsl|cs_5_0
     gi_river_light|src/features/global_illumination/shaders/river_light.ps.hlsl|ps_5_0
-    ssilvb_upsample|src/features/indirect_light/shaders/ssilvb_upsample.cs.hlsl|cs_5_0
+    ssgi_gather|src/features/indirect_light/shaders/ssgi_gather.cs.hlsl|cs_5_0
+    ssgi_accumulate|src/features/indirect_light/shaders/ssgi_accumulate.cs.hlsl|cs_5_0
+    ssgi_filter|src/features/indirect_light/shaders/ssgi_filter.cs.hlsl|cs_5_0
+    ssgi_resolve|src/features/indirect_light/shaders/ssgi_resolve.cs.hlsl|cs_5_0
     water_caustics|src/features/water_caustics/shaders/caustics.ps.hlsl|ps_5_0
     lamp_contact_shadow|src/features/lamp_contact_shadows/shaders/light_shadow.ps.hlsl|ps_5_0
     lamp_point_light|src/features/lamp_soft_shadows/shaders/point_light.ps.hlsl|ps_5_0
@@ -384,12 +387,9 @@ set(PHANTOM_FX_SHADERS
     sun_light_path_traced_cloud|src/passes/shaders/sun_light_path_traced_cloud.ps.hlsl|ps_5_0
     sun_light_path_traced|src/passes/shaders/sun_light_path_traced.ps.hlsl|ps_5_0
     visibility_prefilter|src/passes/shaders/visibility_prefilter.cs.hlsl|cs_5_0
-    visibility_march_occlusion|src/passes/shaders/visibility_march_occlusion.cs.hlsl|cs_5_0
-    visibility_march_light|src/passes/shaders/visibility_march_light.cs.hlsl|cs_5_0
+    visibility_march|src/passes/shaders/visibility_march.cs.hlsl|cs_5_0
     visibility_denoise_occlusion|src/passes/shaders/visibility_denoise_occlusion.cs.hlsl|cs_5_0
     visibility_denoise_occlusion_final|src/passes/shaders/visibility_denoise_occlusion_final.cs.hlsl|cs_5_0
-    visibility_denoise_light|src/passes/shaders/visibility_denoise_light.cs.hlsl|cs_5_0
-    visibility_denoise_light_final|src/passes/shaders/visibility_denoise_light_final.cs.hlsl|cs_5_0
     ui_redirect_whole_target|src/passes/shaders/ui_redirect_whole_target.vs.hlsl|vs_5_0
     ui_redirect_stretch_depth|src/passes/shaders/ui_redirect_stretch_depth.ps.hlsl|ps_5_0
     ui_redirect_composite_behind|src/passes/shaders/ui_redirect_composite_behind.ps.hlsl|ps_5_0
@@ -457,7 +457,7 @@ install(FILES "${nrd_SOURCE_DIR}/LICENSE.txt" DESTINATION PhantomFX RENAME NVIDI
 install(FILES "${RESHADE_DIR}/LICENSE.md" DESTINATION PhantomFX RENAME ReShade-LICENSE.txt COMPONENT addon)
 install(FILES "${RESHADE_DIR}/imgui/LICENSE.txt" DESTINATION PhantomFX RENAME ImGui-LICENSE.txt COMPONENT addon)
 # The sharpening shader is ported from FidelityFX FSR 1 RCAS; the screen-space shadows are Bend Studio's;
-# GTVBAO is ported from three-gtvbao, with XeGTAO's noise and denoiser; SSILVB gathers light as SSRT3 does.
+# GTVBAO is ported from three-gtvbao, with XeGTAO's noise and denoiser; VB-SSGI is ported from the RenoDX MGSV add-on's indirect lighting.
 install(FILES licenses/AMD-FidelityFX-LICENSE.txt licenses/Bend-Studio-SSS-LICENSE.txt licenses/three-gtvbao-LICENSE.txt
     licenses/XeGTAO-LICENSE.txt licenses/SSRT3-LICENSE.txt licenses/RenoDX-LICENSE.txt
     licenses/UnrealEngineSkyAtmosphere-LICENSE.txt licenses/Capsaicin-LICENSE.txt DESTINATION PhantomFX COMPONENT addon)

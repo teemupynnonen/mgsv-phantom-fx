@@ -1,4 +1,4 @@
-// The constant buffer of the march's compute shaders, and of SSILVB's upsample and the global
+// The constant buffer of the march's compute shaders, and of the global
 // illumination's combine; each reads the fields it needs.
 cbuffer Parameters : register(b0)
 {
@@ -6,8 +6,8 @@ cbuffer Parameters : register(b0)
     float Radius;            // Metres
     float MaxRadiusPixels;   // Caps the march for surfaces close to the camera
     float OcclusionStrength; // GTVBAO: exponent on the visibility
-    float LightStrength;     // SSILVB: multiplies the light
-    float DiffuseScale;      // SSILVB: 0 leaves the game's diffuse light out, for the diagnostics
+    float LightStrength;     // The combine: multiplies the light
+    float DiffuseScale;      // The combine: 0 leaves the game's diffuse light out, for the diagnostics
     float Padding;
 };
 

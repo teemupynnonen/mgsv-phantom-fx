@@ -1,11 +1,11 @@
 #ifndef LIGHT
 #define LIGHT 0
 #endif
-// Diagnostics: drawn in place of the deferred resolve, GTVBAO's occlusion (LIGHT 0) or SSILVB's light
+// Diagnostics: drawn in place of the deferred resolve, GTVBAO's occlusion (LIGHT 0) or SSGI's light
 // (LIGHT 1) alone. Every resolve vertex shader outputs the position first. The resolve writes through
 // an sRGB view: the visibility is linearised first and stored as it is, rather than brightened by
-// the encoding; SSILVB's light, which the last denoise pass writes without the game's diffuse light,
-// is linear already.
+// the encoding; SSGI's light, which its resolve writes without the game's diffuse light, is linear
+// already.
 #if LIGHT
 Texture2D<float4> Light : register(t9);
 #else

@@ -5,6 +5,7 @@
 #include "game_code.hpp"
 #include "game_memory.hpp"
 #include "log.hpp"
+#include "passes/velocity_request.hpp"
 
 #include <Windows.h>
 #include <MinHook.h>
@@ -123,7 +124,7 @@ void preExec(void* plugin, std::uint8_t* context, void* view)
     originalPreExec(plugin, context, view);
 
     auto* flags = *reinterpret_cast<std::uint64_t**>(context + FrameFlags);
-    if (velocityOnly.load(std::memory_order_relaxed) && flags) *flags |= VelocityPasses;
+    if ((velocityOnly.load(std::memory_order_relaxed) || velocity_request::isWanted()) && flags) *flags |= VelocityPasses;
 
     applyStrength(static_cast<const std::uint8_t*>(plugin), static_cast<const std::uint8_t*>(view));
 }
