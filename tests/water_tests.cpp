@@ -1,54 +1,19 @@
-#include "features/path_tracing/surface_shaders.hpp"
 #include "features/water_caustics/caustics_map.hpp"
-#include "features/water_caustics/water_caustics_shaders.hpp"
-#include "passes/forward_scene.hpp"
 
-#include <Windows.h>
-#include <d3dcompiler.h>
-#include <wrl/client.h>
 #include <cstdlib>
 #include <iostream>
 #include <numeric>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
-// A shader these features compile at run time that fails only turns its feature off, with a line in the log.
+// The caustics map is made on the processor; the shaders themselves are compiled at build time.
 namespace
 {
 using namespace phantom_fx;
-using Microsoft::WRL::ComPtr;
 
 void expect(bool condition, const std::string& message)
 {
     if (!condition) throw std::runtime_error(message);
-}
-
-void compiles(const std::string& source, const char* target, const std::vector<D3D_SHADER_MACRO>& defines = {{}})
-{
-    ComPtr<ID3DBlob> code, errors;
-    const auto result = D3DCompile(source.data(), source.size(), "test", defines.data(), nullptr, "main", target, D3DCOMPILE_WARNINGS_ARE_ERRORS, 0,
-        code.GetAddressOf(), errors.GetAddressOf());
-    expect(SUCCEEDED(result), errors ? static_cast<const char*>(errors->GetBufferPointer()) : "Compile a shader.");
-}
-
-void surfaceShadersCompile()
-{
-    const auto common = std::string(forward_scene::Common) + surface_shaders::SurfaceOutput;
-
-    compiles(common + surface_shaders::GlassSurface, "ps_5_0");
-    compiles(common + surface_shaders::MirrorSurface, "ps_5_0");
-    compiles(surface_shaders::Composite, "ps_5_0");
-    compiles(surface_shaders::ReconstructionGuides, "cs_5_0");
-    for (const auto* layered : {"0", "1"})
-        for (const auto* twoChannel : {"0", "1"})
-            for (const auto* ripples : {"0", "1"})
-                compiles(common + surface_shaders::WaterSurface, "ps_5_0", {{"LAYERED", layered}, {"TWO_CHANNEL", twoChannel}, {"RIPPLES", ripples}, {}});
-}
-
-void causticsCompile()
-{
-    compiles(std::string(forward_scene::Common) + water_caustics::shaders::Caustics, "ps_5_0");
 }
 
 // How much `map` changes over a step between neighbouring rows, on average, and across its seam.
@@ -79,8 +44,6 @@ int main()
 {
     try
     {
-        surfaceShadersCompile();
-        causticsCompile();
         causticsMapTiles();
     }
     catch (const std::exception& error)

@@ -16,7 +16,7 @@
 // the prefiltered distances itself, per gather tap, to test what blocks each one.
 namespace phantom_fx::visibility_bitmask
 {
-// The compute shaders' constant buffer (PHANTOM_FX_MARCH_PARAMETERS in visibility_bitmask_shaders.hpp),
+// The compute shaders' constant buffer (shaders/visibility_march.hlsli),
 // which the global illumination's combine reads too.
 struct Parameters
 {
@@ -75,9 +75,9 @@ void prefilterDistances(ID3D11DeviceContext* context, const Parameters& paramete
 void attach(ID3D11Device* device) noexcept;
 // Releases everything; only when no Direct3D work can run (device teardown, unload).
 void detach() noexcept;
-// Compiles the shaders while GTVBAO or SSGI runs, before their first frame.
+// Makes the shaders while GTVBAO or SSGI runs, before their first frame.
 void configure(const Configuration& configuration) noexcept;
-// Compiles the shaders once; false when they are unavailable (see PhantomFX.log).
+// Makes the shaders once, from their precompiled bytecode (compiled from source in a dev build); false when they are unavailable (see PhantomFX.log).
 bool ready() noexcept;
 bool failed() noexcept;
 

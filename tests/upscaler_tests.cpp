@@ -1161,9 +1161,9 @@ float4 main(uint id : SV_VertexID) : SV_Position
 
         return code;
     };
-    const auto shaderCode = compiled(lamp_contact_shadows::shaders::LightShadow, "ps_5_0");
     ComPtr<ID3D11PixelShader> shader;
-    expect(SUCCEEDED(device->CreatePixelShader(shaderCode->GetBufferPointer(), shaderCode->GetBufferSize(), nullptr, shader.GetAddressOf())),
+    expect(SUCCEEDED(device->CreatePixelShader(lamp_contact_shadows::shaders::LightShadow.code, lamp_contact_shadows::shaders::LightShadow.size,
+               nullptr, shader.GetAddressOf())),
         "Create the lamp shadow's shader.");
     const auto vertexCode = compiled(FullscreenVertex, "vs_5_0");
     ComPtr<ID3D11VertexShader> vertexShader;

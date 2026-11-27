@@ -236,9 +236,7 @@ std::shared_ptr<const Targets> createTargets(unsigned width, unsigned height)
 std::shared_ptr<const DepthFill> createDepthFill()
 {
     auto created = std::make_shared<DepthFill>();
-    const auto code = compile(shaders::WholeTarget, "ui-whole-target", "vs_5_0");
-    check(device->CreateVertexShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, created->wholeTarget.GetAddressOf()),
-        "Creating the UI depth's vertex shader");
+    created->wholeTarget = vertexShader(device.Get(), shaders::WholeTarget, "ui-whole-target");
     created->stretchDepth = pixelShader(device.Get(), shaders::StretchDepth, "ui-stretch-depth");
     D3D11_DEPTH_STENCIL_DESC write{};
     write.DepthEnable = TRUE;

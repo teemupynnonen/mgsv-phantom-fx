@@ -30,7 +30,7 @@ ComPtr<ID3D11ComputeShader> prefilterShader, occlusionShader, denoiseShader, fin
 ComPtr<ID3D11Buffer> parameterBuffer;
 DistanceMips distances; // shaders::PrefilterDepths' output, written before each march
 
-// Compiles the shaders once; call with resourceMutex held. Returns false when they are unavailable.
+// Makes the shaders once, from their precompiled bytecode (compiled from source in a dev build); call with resourceMutex held. Returns false when they are unavailable.
 bool ensurePipeline()
 {
     if (occlusionShader) return true;
@@ -38,10 +38,9 @@ bool ensurePipeline()
 
     try
     {
-        const D3D_SHADER_MACRO occlusionPass[]{{"FINAL", "0"}, {}}, lastOcclusionPass[]{{"FINAL", "1"}, {}};
         prefilterShader = computeShader(device.Get(), shaders::PrefilterDepths, "depth-prefilter");
-        denoiseShader = computeShader(device.Get(), shaders::Denoise, "gtvbao-denoise", occlusionPass);
-        finalDenoiseShader = computeShader(device.Get(), shaders::Denoise, "gtvbao-denoise-final", lastOcclusionPass);
+        denoiseShader = computeShader(device.Get(), shaders::Denoise[0], "gtvbao-denoise");
+        finalDenoiseShader = computeShader(device.Get(), shaders::Denoise[1], "gtvbao-denoise-final");
         parameterBuffer = makeConstantBuffer(device.Get(), sizeof(Parameters), "Creating the march constants");
 
         // Last, so it marks a complete pipeline.

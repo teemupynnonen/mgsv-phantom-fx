@@ -1,10 +1,5 @@
-#pragma once
-
-// HLSL the shaders drawn over the game's forward draws share (glass, mirrors, rivers, their caustics), put before their own:
-// what those draws have bound.
-namespace phantom_fx::forward_scene
-{
-inline constexpr char Common[] = R"(
+// HLSL the shaders drawn over the game's forward draws share (glass, mirrors, rivers, their caustics),
+// put before their own: what those draws have bound.
 cbuffer cPSScene : register(b2)
 {
     float4 m_sceneRows[8];
@@ -39,5 +34,4 @@ float SceneViewZ(Texture2D<float> depth, float2 position)
 {
     return m_projectionParam.z / (depth.Load(int3(position, 0)) - m_projectionParam.w);
 }
-)";
-}
+

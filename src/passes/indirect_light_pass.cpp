@@ -86,7 +86,7 @@ ComPtr<ID3D11ShaderResourceView> whiteView; // 1x1, the resolve's occlusion whil
 // its place.
 visibility_bitmask::Target diffuseWithLight;
 
-// Compiles the shaders and makes the fixed resources once; call with resourceMutex held. Returns
+// Makes the shaders (from their precompiled bytecode; compiled from source in a dev build) and the fixed resources once; call with resourceMutex held. Returns
 // false when they are unavailable.
 bool ensurePipeline()
 {
@@ -95,9 +95,8 @@ bool ensurePipeline()
 
     try
     {
-        const D3D_SHADER_MACRO occlusionView[]{{"LIGHT", "0"}, {}}, lightView[]{{"LIGHT", "1"}, {}};
-        showOcclusionShader = pixelShader(device.Get(), shaders::Show, "gtvbao-show", occlusionView);
-        showLightShader = pixelShader(device.Get(), shaders::Show, "ssgi-show", lightView);
+        showOcclusionShader = pixelShader(device.Get(), shaders::Show, "gtvbao-show");
+        showLightShader = pixelShader(device.Get(), shaders::ShowLight, "ssgi-show");
         showSceneShader = pixelShader(device.Get(), shaders::ShowScene, "traced-scene-show");
 
         D3D11_TEXTURE2D_DESC white{};

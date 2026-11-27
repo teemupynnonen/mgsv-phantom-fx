@@ -503,7 +503,7 @@ bool isShownInStep(Effect effect, LightingStep step)
     return std::ranges::find(added, effect) != added.end() || (step == LightingStep::Ultra && effect == Effect::GlobalIllumination);
 }
 
-// What is switched off that `step` switches on, by the items' names: "Contact shadows and Bounce light (SSILVB)".
+// What is switched off that `step` switches on, by the items' names: "Contact shadows and Bounce light (VB-SSGI)".
 std::string offInStep(const Settings& wanted, LightingStep step)
 {
     auto asStep = wanted;
@@ -572,7 +572,7 @@ void drawLighting(Settings& wanted, const fxui::Budget& budget, const MenuFrame&
         }
     }
 
-    // Also an effect a step beneath adds that nothing replaces, on or off: such as SSILVB with bounce
+    // Also an effect a step beneath adds that nothing replaces, on or off: such as VB-SSGI with bounce
     // light off, which runs in its place.
     const auto plan = planEffects(wanted, {});
     const auto isShown = [&](Effect effect) {

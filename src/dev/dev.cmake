@@ -8,5 +8,5 @@ set(PHANTOM_FX_DEV_SOURCES src/dev/dev.cpp src/dev/devkit_link.cpp
 set_source_files_properties(src/dev/remaster/tool.cpp PROPERTIES COMPILE_DEFINITIONS "PHANTOM_FX_MATERIALS_FILE=\"${CMAKE_SOURCE_DIR}/src/remaster/materials.json\"")
 
 # The record's kernel takes the shadow rays' file whole, so a change there makes it again.
-list(APPEND GI_SHADER_INCLUDES "${CMAKE_SOURCE_DIR}/src/features/ray_traced_shadows/gi_shadow.hlsl" "${CMAKE_SOURCE_DIR}/src/dev/inspect_shared.h")
+list(APPEND GI_SHADER_INCLUDES "${CMAKE_SOURCE_DIR}/src/features/ray_traced_shadows/shaders/gi_shadow.hlsl" "${CMAKE_SOURCE_DIR}/src/dev/inspect_shared.h")
 add_gi_kernels(dev/inspect.hlsl InspectPixels)

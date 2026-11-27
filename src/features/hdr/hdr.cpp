@@ -52,7 +52,7 @@ constexpr std::uint32_t AndOpcode = 0x01, MinOpcode = 0x33, OpcodeMask = 0x7FF;
 constexpr std::size_t ClampReach = 8;
 constexpr float HalfMax = 65504;
 
-// How the output shader writes the back buffer (hdr_shaders.hpp, Output).
+// How the output shader writes the back buffer (shaders/output.ps.hlsl).
 enum class Encoding : std::uint32_t { SrgbView, Srgb, Pq };
 
 struct OutputParameters
@@ -118,7 +118,7 @@ std::unordered_map<ID3D11View*, ID3D11Resource*> srgbViews;
 std::map<DxbcHash, Patched> patchedShaders;
 std::unordered_map<const void*, const Patched*> patchedByCode;
 
-// Compiles the shaders and makes the fixed buffers; call with the mutex held.
+// Makes the shaders from their precompiled bytecode (compiled from source in a dev build) and the fixed buffers; call with the mutex held.
 void createPipeline()
 {
     // The encode reads and writes the float target in place.
@@ -130,8 +130,7 @@ void createPipeline()
     captureShader = computeShader(device.Get(), shaders::Capture, "hdr-capture");
     encodeShader = computeShader(device.Get(), shaders::Encode, "hdr-encode");
     decodeShader = computeShader(device.Get(), shaders::Decode, "hdr-decode");
-    const D3D_SHADER_MACRO grade[]{{"UPGRADE_TONEMAP", active() ? "1" : "0"}, {}};
-    gradeShader = pixelShader(device.Get(), shaders::Grade, "hdr-grade", grade);
+    gradeShader = pixelShader(device.Get(), active() ? shaders::GradeUpgrade : shaders::Grade, "hdr-grade");
     reduceShader = pixelShader(device.Get(), shaders::Reduce, "hdr-reduce");
     outputShader = pixelShader(device.Get(), shaders::Output, "hdr-output");
     outputBuffer = makeConstantBuffer(device.Get(), sizeof(OutputParameters), "Creating the HDR output constants");

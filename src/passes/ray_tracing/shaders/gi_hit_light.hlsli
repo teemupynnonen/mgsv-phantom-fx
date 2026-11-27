@@ -354,7 +354,7 @@ float4 SampleHit(Texture2D<float4> texture, SceneTriangle t, float2 uv0, float2 
     return texture.SampleLevel(g_WrapSampler, InterpolatedUV(uv0, uv1, uv2, barycentrics), HitLevel(texture, t, uv0, uv1, uv2, footprint));
 }
 
-// A linear colour as its sRGB encoded values, and back. As HDR's (hdr_shaders.hpp), whose shaders are built apart from these.
+// A linear colour as its sRGB encoded values, and back. As HDR's (features/hdr/shaders/), whose shaders are built apart from these.
 float3 LinearToSrgb(float3 value)
 {
     return lerp(value * 12.92f, 1.055f * pow(max(value, 1e-6f), 1.0f / 2.4f) - 0.055f, step(0.0031308f, value));
