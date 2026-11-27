@@ -311,7 +311,9 @@ void TraceLight(uint2 did : SV_DispatchThreadID)
                     // beyond it, and flashes as the camera moves and the cells are made again.
                     float4 direct = unpackHalf4(g_HashGridCache_ValueBuffer[hitCell]);
                     float4 indirect = unpackHalf4(g_HashGridCache_ValueIndirectBuffer[hitCell]);
-                    if (direct.w >= HASH_MAX_SAMPLE_COUNT)
+                    // Only a distant hit's cell that is also a bounce's gets indirect samples (PopulateMultibounceCells); without any,
+                    // taking the cell would drop the hit's bounce light, so it traces its own.
+                    if (direct.w >= HASH_MAX_SAMPLE_COUNT && indirect.w > 0.0f)
                     {
                         light = direct.rgb / direct.w + indirect.rgb / max(indirect.w, 1.0f);
                         CountDiagnostic(GI_COUNTER_CACHED_HITS, true);
