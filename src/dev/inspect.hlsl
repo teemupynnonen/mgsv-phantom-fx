@@ -1,7 +1,7 @@
 // A debug case's record of every pixel (automation.hpp), compared with the game's own answers there. It asks what the
 // sun's shadow rays and their debug view ask, so it takes their file whole; -E leaves their kernels out.
-#include "../../features/ray_traced_shadows/shaders/gi_shadow.hlsl"
-#include "../inspect_shared.h"
+#include "../features/ray_traced_shadows/shaders/gi_shadow.hlsl"
+#include "inspect_shared.h"
 
 // How far off the game's surface a scene surface still counts as that surface, along the camera's ray: as the tests of
 // the depth are, so far parts of the terrain's coarse rings match. As SURFACE_METRES and SURFACE_SHARE in case.py.
