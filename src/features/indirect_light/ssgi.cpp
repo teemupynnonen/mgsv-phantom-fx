@@ -45,11 +45,15 @@ struct Parameters
     float random;          // c2.w
     float minSamples;      // c3.x
     float visibility;      // c3.y
-    float padding[2];      // c3.zw; the buffer rounds to 64 bytes
+    float thickness;       // c3.z
+    float useMips;         // c3.w
 };
 
 // A constant buffer's size must be a multiple of 16.
 static_assert(sizeof(Parameters) == 64);
+
+// How deep the gather takes a sample's surface, as a share of its view depth (three-gtvbao's linear thickness).
+constexpr float Thickness = 0.12f;
 
 // The game's compute slots the passes bind, saved around them.
 constexpr ComputeSlots PassSlots{.buffers = 2, .views = 8, .accesses = 8};
@@ -361,13 +365,14 @@ bool compute(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D
     parameters.random = static_cast<float>((frameCounter.load() * 2654435761u) & 0xFFFFu) / 65535.0f;
     parameters.minSamples = 1.0f;
     parameters.visibility = light.visibility;
+    parameters.thickness = Thickness;
 
     const SavedComputeState saved(context, PassSlots);
 
-    // The prefiltered distances for the gather's per-tap occlusion test. Without the march's
-    // pipeline the test is off and the gather binds the fallback.
+    // The prefiltered distances the gather marches. Without the march's pipeline it marches the depth
+    // at full size and binds the fallback.
     const visibility_bitmask::DistanceMips* distanceMips = nullptr;
-    if (parameters.visibility > 0.0f && visibility_bitmask::ready())
+    if (visibility_bitmask::ready())
     {
         visibility_bitmask::Parameters vbParameters{};
         vbParameters.size[0] = width;
@@ -383,16 +388,12 @@ bool compute(ID3D11DeviceContext* context, ID3D11ShaderResourceView* depth, ID3D
         {
             visibility_bitmask::prefilterDistances(context, vbParameters, scene, depth, specularMaterial, mips);
             distanceMips = &mips;
+            parameters.useMips = 1.0f;
         }
         catch (const std::exception& error)
         {
-            log(std::string("VB-SSGI: the distance prefilter failed, the occlusion test is off: ") + error.what());
-            parameters.visibility = 0.0f;
+            log(std::string("VB-SSGI: the distance prefilter failed, the gather marches the depth: ") + error.what());
         }
-    }
-    else
-    {
-        parameters.visibility = 0.0f;
     }
 
     ID3D11Buffer* buffers[]{parameterBuffer.Get(), scene};
