@@ -599,7 +599,7 @@ the probes at any pixel (`probe <x> <y>`), the camera anywhere while frozen, set
 console, and `reveal <hash>`, which tries the scene with a model in it: a fix for a left-out model can be seen
 working before it is written. `fx.py case` records a case without the key.
 
-**Automation copy.** `tools/automation/install.ps1` makes a copy of the game from hard links with this build in it,
+**Automation copy.** `tools/automation/install.ps1` puts this build into a separate copy of the game (downloaded once from Steam's depot; install stops with the command to run when it is missing),
 `launch.ps1` runs it off-screen, `fx.py --copy boot` steps it from launch to free roam in about 40 seconds, and
 `fx.py --copy acc` goes on into the helicopter's cabin (`TppMission.ReserveMissionClear` for mission 40050). The title
 screen shows the same cabin but moves on by itself: a freeze there lands in a loading screen, which stalls under the pause

@@ -25,7 +25,16 @@ if (Get-Process mgsvtpp -ErrorAction SilentlyContinue) { throw 'The game is runn
 # The game's own files come from Steam's depot 287701 (the English game, nothing of the player's mods), downloaded
 # once straight into the automation folder. Nothing is shared with the player's folder, on any drive, so a run can
 # never touch their files.
-if (-not (Test-Path (Join-Path $Game 'mgsvtpp.exe'))) {
+$exe = Join-Path $Game 'mgsvtpp.exe'
+# An older copy was made of hard links to the player's files. Removing a link leaves the player's file as it is; their
+# settings and saves in the copy's DevKit folder stay.
+if ((Test-Path $exe) -and (Get-Item $exe).LinkType -eq 'HardLink') {
+    Write-Warning "$Game shares its game files with another folder; replacing them with the depot's."
+    foreach ($item in 'master', 'mgo', 'CustomSoundtrack', 'D-Mod', 'mgsvtpp.exe', 'mgsvmgo.exe', 'steam_api64.dll', 'steam_appid.txt', 'version_info.txt') {
+        Remove-Item (Join-Path $Game $item) -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+if (-not (Test-Path $exe)) {
     throw @"
 The automation copy has no game yet. Download the vanilla game into it once (about 26 GB; it asks for your Steam login):
 
