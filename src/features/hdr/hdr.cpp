@@ -98,7 +98,7 @@ struct DofCopy
     ComPtr<ID3D11ShaderResourceView> view;
 };
 
-std::atomic<bool> floatScene{}, outputWanted{};
+std::atomic<bool> floatScene{}, outputWanted{}, sceneFailed{}, unsupportedBuild{};
 std::atomic<bool> twinsInUse{}, tenBitChain{};
 // The HDR output the swap chain's colour space was last set for; none after a new swap chain.
 std::mutex outputMutex;
@@ -376,7 +376,9 @@ Output output() noexcept
 {
     if (!outputWanted.load(std::memory_order_relaxed)) return Output::Off;
     // The float scene could not start, or this build of the game is not supported.
-    if (!isSceneFloat()) return Output::Unavailable;
+    if (sceneFailed || unsupportedBuild) return Output::Unavailable;
+    // Started without the float scene: HDR needs the restart the menu asks for.
+    if (!isSceneFloat()) return Output::Off;
 
     return shown;
 }
@@ -402,12 +404,14 @@ void attach(ID3D11Device* gameDevice) noexcept
         // The game has made none of its targets yet, so it runs with its own 8-bit scene.
         log(std::string(active() ? "HDR output is unavailable: " : "The scene stays 8-bit: ") + error.what());
         floatScene = false;
+        sceneFailed = true;
     }
 }
 
 void detach() noexcept
 {
     shown = Output::Off;
+    sceneFailed = false;
     twinsInUse = false;
     tenBitChain = false;
     {
@@ -437,8 +441,10 @@ void detach() noexcept
 
 void configure(const Configuration& configuration) noexcept
 {
-    // The scene stays the game's 8-bit one when the float scene did not start: HDR output takes a restart.
-    if (isSceneFloat()) outputWanted = configuration.settings.hdr.on;
+    // Kept whatever the scene is: the settings come before enable() at start, and HDR output must apply
+    // to the first frame. active() and output() take the scene into account.
+    outputWanted = configuration.settings.hdr.on;
+    unsupportedBuild = !configuration.supportedBuild;
     peakNits = configuration.settings.hdr.peakNits;
     paperWhiteNits = configuration.settings.hdr.paperWhiteNits;
 }
@@ -496,18 +502,19 @@ bool applyOutput(IDXGISwapChain* chain)
         displayPeak = maxNits > 0 ? maxNits : 0;
     }
 
-    appliedOutput = wanted;
     const bool hdr10 = wanted && hdrDisplay;
     UINT support{};
     const auto space = hdr10 ? DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
     if (FAILED(chain3->CheckColorSpaceSupport(space, &support)) || !(support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT)
         || FAILED(chain3->SetColorSpace1(space)))
     {
-        shown = Output::Sdr;
-        log(hdr10 ? "HDR: the swap chain cannot present HDR10, so the game shows SDR." : "HDR: the swap chain refused the sRGB colour space.");
+        // The colour space as it was, which is what shown and the output shader keep; the change is
+        // tried again at the next present.
+        logOnce(hdr10 ? "HDR: the swap chain cannot present HDR10, so the game shows SDR." : "HDR: the swap chain refused the sRGB colour space.");
         return false;
     }
 
+    appliedOutput = wanted;
     shown = hdr10 ? Output::Hdr10 : Output::Sdr;
     if (hdr10) log("HDR: the swap chain presents HDR10; the display reports " + std::to_string(std::lround(maxNits)) + " nits at most.");
     else if (wanted) log("HDR: Windows HDR is off for this display, so the game shows SDR.");
