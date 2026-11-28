@@ -53,10 +53,21 @@ void TraceSunShadows(uint2 gtid : SV_GroupThreadID, uint2 gid : SV_GroupID, uint
     if (all(did < g_Frame.dimensions.xy))
     {
         float depth = g_Depth.Load(int3(did, 0));
-        if (depth > 0.0f)
+        float4 packedNormal = g_Normal.Load(int3(did, 0));
+        float3 normal = DecodeNormal(packedNormal);
+        // The sun pass gives no sun at all to a pixel whose G-buffer normal faces away from the sun unless it is
+        // translucent: its ray would change nothing there, so it takes the shadow a blocked ray gives, for the denoiser
+        // too. Only pixels the pack knows to be opaque (alpha 1), and with a margin for the normals' 10 bits and the sun
+        // pass's direction, which is the last frame's.
+        bool facesAway = packedNormal.w > 5.0f / 6.0f && dot(normal, g_Frame.sunDirection.xyz) < -0.05f;
+        if (depth > 0.0f && facesAway)
+        {
+            lit = false;
+            light = 0.0f;
+        }
+        else if (depth > 0.0f)
         {
             float3 position = DepthPosition(did, depth);
-            float3 normal = DecodeNormal(g_Normal.Load(int3(did, 0)));
             Random random = MakeRandom(g_Frame.dimensions.z, did.y * g_Frame.dimensions.x + did.x);
             float3 toSun = SunSample(random.rand2());
             float3 origin, facing;

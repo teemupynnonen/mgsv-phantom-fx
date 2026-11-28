@@ -1,5 +1,5 @@
 // Packs what the kernels read from the G-buffer: the depth, the normals in world space (0 where
-// the sky is; alpha 1/3 on foliage, the specular target's material 43, else 1) and the albedo, linear
+// the sky is; alpha 1/3 on foliage, the specular target's material 43, 2/3 where it may be translucent, else 1) and the albedo, linear
 // (alpha 0 where the add-on's sea drew, else 1: IsSeaPixel in gi_common.hlsli).
 Texture2D<float> g_Depth : register(t0);
 Texture2D<float4> g_Normal : register(t1);
@@ -34,9 +34,13 @@ void main(uint2 id : SV_DispatchThreadID)
     float rest = 1 - z * z;
     float3 view = float3(rsqrt(dot(xy, xy) * rest + 1e-7) * (rest * xy), z);
     float3 world = normalize(view.x * g_View[0].xyz + view.y * g_View[1].xyz + view.z * g_View[2].xyz);
-    bool foliage = g_HasSpecular && round(g_Specular.Load(int3(id, 0)).z * 255) == 43;
-    g_NormalOut[id] = depth > 0 ? float4(0.5 * world + 0.5, foliage ? 1.0 / 3 : 1) : 0;
-
+    float4 specular = g_HasSpecular ? g_Specular.Load(int3(id, 0)) : 0;
+    bool foliage = g_HasSpecular && round(specular.z * 255) == 43;
     bool isSea = g_HasSea && depth > 0 && g_SeaDepth.Load(int3(id, 0)) == depth;
+    // The sun pass lights a pixel facing away from the sun only through its translucency (the sea's sparkles too), so
+    // the sun's rays skip only the pixels known to have none (TraceSunShadows).
+    bool translucent = !g_HasSpecular || specular.w > 0 || isSea;
+    g_NormalOut[id] = depth > 0 ? float4(0.5 * world + 0.5, foliage ? 1.0 / 3 : translucent ? 2.0 / 3 : 1) : 0;
+
     g_AlbedoOut[id] = float4(g_HasAlbedo ? g_Albedo.Load(int3(id, 0)).rgb : 0.25, isSea ? 0 : 1);
 }
