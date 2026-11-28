@@ -1,9 +1,9 @@
-# Installs a dev build into the automation game folder: a copy of the game made of hard links, so test
+# Installs a dev build into the automation game folder: a separate copy of the vanilla game, so test
 # builds never replace the add-on in the Steam folder. Run with the game closed.
 param(
     [string]$Build = (Join-Path $PSScriptRoot '..\..\build\dev'),
     [string]$Game = $(if ($env:PHANTOM_FX_AUTOMATION_GAME) { $env:PHANTOM_FX_AUTOMATION_GAME } else { Join-Path $env:USERPROFILE 'Documents\Development\mgsv-automation\game' }),
-    # The player's game the copy is made from: PHANTOM_FX_GAME, else Steam's usual folder.
+    # The player's game, for ReShade, their settings and saves only: PHANTOM_FX_GAME, else Steam's usual folder.
     [string]$Steam = $(if ($env:PHANTOM_FX_GAME) { $env:PHANTOM_FX_GAME } else { 'C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP' }),
     # The saves every run starts from; the game reads and writes a copy (src/devkit/save_redirect.hpp).
     [string]$SeedSaves = (Join-Path (Split-Path $Game) 'seed-saves'),
@@ -22,25 +22,18 @@ if (-not $PSBoundParameters.ContainsKey('Build') -and $env:PHANTOM_FX_DEV_BUILD)
 
 if (Get-Process mgsvtpp -ErrorAction SilentlyContinue) { throw 'The game is running; close it first.' }
 
-# The game's own files, linked once. A hard link cannot cross drives, so a copy on another drive gets real copies.
+# The game's own files come from Steam's depot 287701 (the English game, nothing of the player's mods), downloaded
+# once straight into the automation folder. Nothing is shared with the player's folder, on any drive, so a run can
+# never touch their files.
 if (-not (Test-Path (Join-Path $Game 'mgsvtpp.exe'))) {
-    $sameDrive = (Split-Path -Qualifier $Game) -eq (Split-Path -Qualifier $Steam)
-    $place = if ($sameDrive) { { param($l, $t) New-Item -ItemType HardLink -Path $l -Target $t | Out-Null } } else { { param($l, $t) Copy-Item $t $l } }
-    foreach ($item in 'master', 'mgo', 'CustomSoundtrack', 'mgsvtpp.exe', 'mgsvmgo.exe', 'steam_api64.dll', 'steam_appid.txt', 'version_info.txt') {
-        $path = Join-Path $Steam $item
-        if (Test-Path $path -PathType Container) {
-            # A lock file belongs to whatever holds it open, and an interrupted copy resumes where it stopped.
-            Get-ChildItem $path -Recurse -File | Where-Object Extension -ne '.lock' | ForEach-Object {
-                $link = Join-Path $Game $_.FullName.Substring($Steam.Length)
-                if ((Test-Path $link) -and -not $sameDrive -and (Get-Item $link).Length -eq $_.Length) { return }
-                New-Item -ItemType Directory -Force (Split-Path $link) | Out-Null
-                & $place $link $_.FullName
-            }
-        } else {
-            New-Item -ItemType Directory -Force $Game | Out-Null
-            & $place (Join-Path $Game $item) $path
-        }
-    }
+    throw @"
+The automation copy has no game yet. Download the vanilla game into it once (about 26 GB; it asks for your Steam login):
+
+    winget install SteamRE.DepotDownloader
+    DepotDownloader -app 287700 -depot 287701 -dir "$Game" -username <your Steam name> -remember-password
+
+then run this again.
+"@
 }
 
 # ReShade and the player's settings with this run's in place.
