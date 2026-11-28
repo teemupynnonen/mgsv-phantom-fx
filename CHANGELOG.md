@@ -30,6 +30,8 @@
 
 ### Changed
 
+- **The shaded sides of clouds are brighter.** The parts of a cloud facing away from the sun were a dark grey; the sky's
+  light on them is now more than twice as strong with the physical sky, so they read as soft grey and keep their shape.
 - **Clouds look like a sky of cumulus, not rows of streaks.** The cloud noise no longer stretches every cloud along one
   axis or repeats every few kilometres, which lined the clouds up in rows running to the horizon. Clouds now drift with
   the weather's wind and stop when the game is paused, gather in clumps with open sky between them, and rise tallest at
@@ -93,6 +95,12 @@
 
 ### Fixed
 
+- **Cloud shadows lie under their clouds again.** The shadows on the ground were worked out for the sky's sun, which sets
+  below the horizon while the game still lights the ground with a sun 26 degrees up, so near dusk and dawn there were far
+  more shadows than clouds. They now follow the sun the ground is lit by.
+- **Clouds move faster when time does.** Their drift followed the real clock, so sleeping or speeding up the day left
+  them where they were. They now follow the game's clock: the same pace as before at normal speed, faster when time
+  runs fast, and still when it stops.
 - **Physical sky is no longer blown out to white.** It was lit with the game's own sky sun, which is several times
   the sunlight on the ground and grows as the sun sets, so at dusk the whole sky clipped and the clouds lost their
   shape. It now takes the ground's sunlight back through the air, so the sky, the clouds and the sea keep their colour

@@ -75,8 +75,8 @@ ComPtr<ID3D11Buffer> settingsBuffer;
 struct ShaderSettings
 {
     float steps, coverage, size, wind, shadow;
-    // The distance the clouds travel in this draw, in metres: the weather's wind times the Wind setting, over the real time
-    // since the last draw, so they drift whatever the game's clock does and a slider changes their pace, not their place.
+    // The distance the clouds travel in this draw, in metres: the weather's wind times the Wind setting, over the time since the
+    // last draw at the game clock's pace, so they keep up with fast time and a slider changes their pace, not their place.
     float stepX, stepZ;
     float fog; // 1 the game's fog over the clouds, 0 none
     // Counts the draws: the march's dither turns with it, so the upscaler's history averages the grain at the clouds' edges away.
@@ -92,6 +92,9 @@ std::atomic<float> steps{192}, coverage{1}, size{1}, wind{1}, shadow{1}, fog{1};
 // direction: the layer's own is not in the game's constants, only an offset that stops with its clock.
 constexpr float CloudWindScale = 2;
 constexpr float WindDirectionX = 0.8f, WindDirectionZ = 0.6f;
+// The game's clock at its normal pace, in game seconds per real second (measured: 587 in 29.4 s), what the wind's speed is
+// for; and the most the drift follows it, in times the real step, so a set clock does not fling the clouds across the sky.
+constexpr float NormalClockRate = 20, MostClockSpeedUp = 50, SecondsPerDay = 86400;
 constexpr float WindOf(weather::Type type)
 {
     switch (type)
@@ -655,7 +658,20 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         lastDraw = now;
         const float coverTarget = CoverOf(weather::state().requested.value_or(weather::Type::Sunny));
         weatherCover = weatherCover < 0 ? coverTarget : weatherCover + (coverTarget - weatherCover) * std::min(seconds / 30, 1.0f);
-        const float travel = seconds * CloudWindScale * wind.load(std::memory_order_relaxed)
+        // The game's clock sets the pace: normal time drifts them at the wind's own speed, faster time (a sleep, the cigar) faster, a
+        // stopped clock not at all. A jump of the clock (set from the menu, or a mission's) is capped so they do not leap.
+        static float lastClock = -1;
+        const auto sky = weather::state();
+        float driftSeconds = seconds;
+        if (sky.available)
+        {
+            float passed = lastClock < 0 ? 0 : sky.clock - lastClock;
+            if (passed < -SecondsPerDay / 2) passed += SecondsPerDay; // Past midnight
+            driftSeconds = seconds > 0 ? std::clamp(passed / NormalClockRate, 0.0f, seconds * MostClockSpeedUp) : 0;
+            lastClock = sky.clock;
+        }
+        else lastClock = -1;
+        const float travel = driftSeconds * CloudWindScale * wind.load(std::memory_order_relaxed)
             * WindOf(weather::state().requested.value_or(weather::Type::Sunny));
         const ShaderSettings values{steps.load(std::memory_order_relaxed), coverage.load(std::memory_order_relaxed),
             size.load(std::memory_order_relaxed), wind.load(std::memory_order_relaxed), shadow.load(std::memory_order_relaxed),

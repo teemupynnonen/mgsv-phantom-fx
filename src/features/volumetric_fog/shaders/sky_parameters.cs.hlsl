@@ -85,4 +85,5 @@ void main()
     // a is 1: the clouds tell this texture from an empty slot by it.
     float3 deckTransmittance = TransmittanceToTop(BottomRadius + 2, towardsSun.y);
     Output[uint2(CloudSunTexel, 0)] = float4(sunlight * (1 - overcast) * deckTransmittance, 1);
+    Output[uint2(GroundSunTexel, 0)] = float4(normalize(ToWorld(m_lightParams[0].xyz)), 0);
 }

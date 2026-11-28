@@ -3,6 +3,9 @@
 // density is clouds' own (cloud_density.hlsli), so a shadow lies under the cloud that casts it.
 #include "cloud_density.hlsli"
 static const int ShadowSteps = 32;
+// The physical sky's parameters (clouds.cpp binds them at the clouds' slot): atmosphere.hlsli's texels.
+Texture2D<float4> SkyParameters : register(t18);
+static const int CloudSunTexel = 7, GroundSunTexel = 8;
 
 float4 main(float4 color : COLOR0, float4 uv : TEXCOORD0, float4 world : TEXCOORD1, float4 position : SV_Position) : SV_Target
 {
@@ -11,7 +14,10 @@ float4 main(float4 color : COLOR0, float4 uv : TEXCOORD0, float4 world : TEXCOOR
     float2 xz = centre + (position.xy / ShadowSize - 0.5) * ShadowExtent;
     float3 start = float3(xz.x, LayerBase, xz.y);
 
+    // The sun the ground is lit by, which the shadow is read with (gi_common.hlsli, CloudShadowAt): the game keeps it 26 degrees up,
+    // where the sky's own sun sets below the horizon. Built along the sky's, the shadows lay far from the clouds that cast them.
     float3 towardsSun = normalize(m_materials[0].xyz);
+    if (SkyParameters.Load(int3(CloudSunTexel, 0, 0)).a > 0.5) towardsSun = SkyParameters.Load(int3(GroundSunTexel, 0, 0)).xyz;
     // A sun at the horizon would send the ray through the layer for hundreds of kilometres: past this it is treated as set.
     float rise = max(towardsSun.y, 0.1);
     float pathLength = (LayerTop - LayerBase) / rise;
