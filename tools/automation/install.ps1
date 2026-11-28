@@ -68,6 +68,13 @@ $keepConfig = Test-Path (Join-Path $saves 'TPP_CONFIG_DATA')
 if ($keepConfig) { Copy-Item (Join-Path $saves 'TPP_CONFIG_DATA') $ownConfig -Force }
 if (Test-Path $saves) { Remove-Item $saves -Recurse -Force }
 New-Item -ItemType Directory -Force $saves | Out-Null
+# With no seed yet, the player's latest saves become it: the local folder and the remote one, as launch.ps1 guards them.
+if (-not (Test-Path $SeedSaves)) {
+    $userdata = Join-Path $Steam '..\..\..\userdata'
+    New-Item -ItemType Directory -Force $SeedSaves | Out-Null
+    Get-ChildItem (Join-Path $userdata '*\287700\local\*'), (Join-Path $userdata '*\311340\remote\*') -File -ErrorAction SilentlyContinue |
+        Where-Object Extension -ne '.bak' | Copy-Item -Destination $SeedSaves -Force
+}
 Copy-Item (Join-Path $SeedSaves '*') $saves
 if ($keepConfig) { Copy-Item $ownConfig (Join-Path $saves 'TPP_CONFIG_DATA') -Force }
 # The copy drops the game's startup logos, which cost eighteen seconds of every run (src/devkit/automation.cpp).
