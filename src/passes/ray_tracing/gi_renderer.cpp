@@ -17,6 +17,7 @@
 #include "passes/ray_tracing/gi_scene.hpp"
 #include "passes/ray_tracing/light_bins.hpp"
 #include "passes/ray_tracing/scene_contents.hpp"
+#include "features/clouds/clouds.hpp"
 #include "passes/ray_tracing/shaders/gi_shared.h"
 #include "passes/ray_tracing/trace.hpp"
 
@@ -240,7 +241,7 @@ struct State
     std::array<bool, FramesInFlight> countersWritten{};
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT statsFootprint{};
     std::uint64_t statsFence{}, lastStats{};
-    Shared depth, normal, albedo, output, shadow, shadowDebug, velocity, terrainPages, terrainHeights, lightDebug, materialSpecular, skyCube, guideNormals,
+    Shared depth, normal, albedo, output, shadow, shadowDebug, velocity, terrainPages, terrainHeights, lightDebug, materialSpecular, skyCube, cloudShadow, guideNormals,
         guideSpecular, reflection, reflectionDistance, reflectionMap, guideMaterial, guideLobe, specularTable, lampMasks, lampDiffuse, lampSpecular, surfaceDepth,
         surfaceNormal, surfaceReflection, forwardShadow;
 
@@ -1131,6 +1132,7 @@ Result render(Frame& frame)
             ? openShared(s, s.materialSpecular, frame.textures.materialSpecular, "Opening the materials' specular colours").Get()
             : nullptr;
         auto* skyCube = frame.textures.skyCube ? openShared(s, s.skyCube, frame.textures.skyCube, "Opening the sky's cube").Get() : nullptr;
+        auto* cloudShadow = frame.textures.cloudShadow ? openShared(s, s.cloudShadow, frame.textures.cloudShadow, "Opening the clouds' shadow").Get() : nullptr;
         auto* terrainPages = terrain ? openShared(s, s.terrainPages, frame.terrain->pages, "Opening the terrain's page table").Get() : nullptr;
         auto* terrainHeights = terrain ? openShared(s, s.terrainHeights, frame.terrain->heights, "Opening the terrain's heights").Get() : nullptr;
 
@@ -1195,6 +1197,10 @@ Result render(Frame& frame)
             std::min(probePixel[1], frame.height - 1)};
         constants.lightDiagnostics = {0, 0, lightDebug ? static_cast<std::uint32_t>(frame.lightDebugView) : 0u, frame.mainViewCastsSun ? 1u : 0u};
         constants.reconstruction = {traces.isForReconstruction ? 1u : 0u, materialSpecular ? 1u : 0u, skyCube ? 1u : 0u, 0};
+        // The map is centred on the eye snapped to a texel, as cloud_density.hlsli's CloudShadowCentre does.
+        const float cloudTexel = clouds::ShadowExtent / clouds::ShadowSize;
+        constants.cloudShadow = {cloudShadow ? std::floor(frame.eye[0] / cloudTexel) * cloudTexel : 0.0f,
+            cloudShadow ? std::floor(frame.eye[2] / cloudTexel) * cloudTexel : 0.0f, cloudShadow ? clouds::ShadowExtent : 0.0f, clouds::LayerBase};
         constants.emission = {frame.emissionScale, frame.emissionCap, 0, 0};
         constants.closestRayFlags = {s.hasMicromapSupport ? GI_RAY_FLAG_FORCE_OMM_2_STATE : 0u, 0, 0, 0};
         if (traces.isPathTraced)
@@ -1235,6 +1241,7 @@ Result render(Frame& frame)
         if (velocity) descriptors.texture(binding::ObjectVelocity, velocity, frame.textures.velocityFormat);
         if (materialSpecular) descriptors.texture(binding::MaterialSpecular, materialSpecular, DXGI_FORMAT_R16G16B16A16_FLOAT);
         if (skyCube) descriptors.cube(binding::SkyCube, skyCube, DXGI_FORMAT_R16G16B16A16_FLOAT);
+        if (cloudShadow) descriptors.texture(binding::CloudShadow, cloudShadow, DXGI_FORMAT_R8_UNORM);
         if (frame.debugShadows)
         {
             descriptors.outputBuffer(binding::ShadowProbe, s.probe.Get(), sizeof(GIShadowProbe), 1);

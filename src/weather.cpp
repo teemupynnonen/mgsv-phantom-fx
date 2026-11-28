@@ -203,6 +203,21 @@ bool supported() noexcept
     return expected;
 }
 
+// The game's pause manager (docs/DEVELOPMENT.md, "Photo mode"), a global with its vtable first: each frame start ORs
+// its active requests' pause bits into + 8, and game time steps by zero while any is set.
+bool isGamePaused() noexcept
+{
+    constexpr std::uintptr_t PauseManagerRva = 0x2B65D40, PauseVtableRva = 0x20C56C0;
+    constexpr std::size_t PauseBits = 8;
+    static const std::uint8_t* const manager = [] {
+        auto* base = game_code::image();
+        return isSupportedGameBuild() && *reinterpret_cast<std::uint8_t* const*>(base + PauseManagerRva) == base + PauseVtableRva
+            ? base + PauseManagerRva
+            : nullptr;
+    }();
+    return manager && *reinterpret_cast<const volatile std::uint32_t*>(manager + PauseBits) != 0;
+}
+
 State state() noexcept
 {
     std::scoped_lock lock(mutex);

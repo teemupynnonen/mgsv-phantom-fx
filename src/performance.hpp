@@ -39,7 +39,7 @@ enum class Pass : std::size_t
     OcclusionPrefilter, OcclusionMarch, OcclusionDenoise, OcclusionApply,
     SsgiPrefilter, SsgiGather, SsgiAccumulate, SsgiFilter, SsgiResolve,
     FogPass, SkyTables, FogShadow, FogScattering, FogIntegration, Sky,
-    SeaWaves, SeaSurface, WaterCaustics,
+    SeaWaves, SeaSurface, WaterCaustics, CloudShadow, Clouds,
     GiInputs, GiProbeLight, GiCombine, GiWait, LocalLights, PathTracedLight,
 
     // On Direct3D 12

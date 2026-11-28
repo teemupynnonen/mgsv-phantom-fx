@@ -43,7 +43,7 @@ constexpr std::array<const char*, static_cast<std::size_t>(Pass::Count)> PassNam
     "OcclusionPrefilter", "OcclusionMarch", "OcclusionDenoise", "OcclusionApply",
     "SsgiPrefilter", "SsgiGather", "SsgiAccumulate", "SsgiFilter", "SsgiResolve",
     "FogPass", "SkyTables", "FogShadow", "FogScattering", "FogIntegration", "Sky",
-    "SeaWaves", "SeaSurface", "WaterCaustics",
+    "SeaWaves", "SeaSurface", "WaterCaustics", "CloudShadow", "Clouds",
     "GiInputs", "GiProbeLight", "GiCombine", "GiWait", "LocalLights", "PathTracedLight",
     "RayTracedScene", "SunShadowRays", "SunShadowDenoiser", "LightShadowRays", "LightShadowFilter", "GiRays", "GiDenoiser", "Reflections", "LampLight",
     "HdrEncode", "HdrDecode", "HdrGrade"};

@@ -121,6 +121,10 @@ Attach `PhantomFX.log`, `ReShade.log` and `sl.log` from the game folder.
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
+## Credits
+
+- Clouds: based on Andrew Schneider's SIGGRAPH talks [The Real-time Volumetric Cloudscapes of Horizon: Zero Dawn](https://advances.realtimerendering.com/s2015/The%20Real-time%20Volumetric%20Cloudscapes%20of%20Horizon%20-%20Zero%20Dawn%20-%20ARTR.pdf) (2015) and [Nubis: Authoring Realtime Volumetric Cloudscapes with the Decima Engine](https://advances.realtimerendering.com/s2017/Nubis%20-%20Authoring%20Realtime%20Volumetric%20Cloudscapes%20with%20the%20Decima%20Engine%20-%20Final%20.pdf) (2017).
+
 ## License
 
 MIT.

@@ -770,6 +770,7 @@ float3 SunReaching(float3 world, float3 normal, float3 origin, float tolerance, 
     float visibility = VisibilityFromSurface(sunOrigin, sunSide, tolerance, direction, 1e4f, ShadowRayTowards(RayTowardsSun));
     if (visibility <= 0.0f) return 0.0f;
 
+    visibility *= CloudShadowAt(world);
     return g_Frame.sunColor.rgb * (visibility * (sunFar ? LeafTransmittance : 1.0f) / chance);
 }
 

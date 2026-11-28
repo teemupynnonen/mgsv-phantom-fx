@@ -30,6 +30,21 @@
 
 ### Changed
 
+- **Clouds look like a sky of cumulus, not rows of streaks.** The cloud noise no longer stretches every cloud along one
+  axis or repeats every few kilometres, which lined the clouds up in rows running to the horizon. Clouds now drift with
+  the weather's wind and stop when the game is paused, gather in clumps with open sky between them, and rise tallest at
+  their core. Coverage now follows its slider all the way, and the game's painted wisps no longer show through.
+- **Clouds cost about a quarter of what they did, and no longer flicker or grain.** They are marched at half the render
+  size, with steps sized to the layer instead of a fixed count, and each frame is blended into the last ten, so the
+  edges are steady. They now have their own line in the Budget, with their real cost.
+- **Clouds follow the curve of the Earth and fade into the distance.** The horizon is no longer a solid wall of
+  cloud, and with Physical sky the far clouds take on the air's haze and the sun's colour at dusk instead of
+  staying white.
+- **The clouds and the sky start where they look best.** A new install gets Coverage 40% (a few clouds in clumps in fair
+  weather, where 100% was a busy sky) and Physical sky gets Haze 10% (a little dust, so the far hills fade instead of
+  standing razor-sharp). Both are the same sliders, at a different starting point.
+- **Clouds stay at night.** Their coverage now comes from the weather, so the sky no longer clears itself when the
+  sun sets.
 - **Volumetric fog is now two switches: Light shafts and Physical sky.** Volumetric fog used to shadow the sun in the
   fog and, with its Look set to Physical, also replace the game's sky and haze, so one switch did two unrelated things.
   **Light shafts** (the `volumetric_fog` key) only shadows the sun in the fog. **Physical sky** (`physical_sky`, with

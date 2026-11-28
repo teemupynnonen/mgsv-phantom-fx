@@ -1,6 +1,7 @@
 #include "modules.hpp"
 
 #include "features/ambient_occlusion/gtvbao.hpp"
+#include "features/clouds/clouds.hpp"
 #include "features/frame_rate/frame_rate.hpp"
 #include "features/global_illumination/light_combine.hpp"
 #include "features/global_illumination/river_light.hpp"
@@ -72,6 +73,7 @@ constexpr Module Modules[]{
     {.attach = ray_tracing::attach, .configure = ray_tracing::configure, .present = ray_tracing::present, .detach = ray_tracing::detach},
     {.attach = local_lights::attach, .configure = local_lights::configure, .present = local_lights::present, .detach = local_lights::detach},
     {.attach = atmosphere::attach, .configure = atmosphere::configure, .present = atmosphere::present, .detach = atmosphere::detach},
+    {.attach = withDevice<clouds::attach>, .configure = clouds::configure, .detach = clouds::detach},
     {.attach = sea::attach, .configure = sea::configure, .present = sea::present, .detach = sea::detach},
     {.attach = withDevice<water_caustics::attach>, .configure = water_caustics::configure, .present = water_caustics::present, .detach = water_caustics::detach},
 

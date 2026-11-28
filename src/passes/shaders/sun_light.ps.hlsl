@@ -40,7 +40,8 @@ cbuffer cSunShadows : register(b6) // The add-on's options
     float g_frame;              // Turns the soft shadows' samples: the frame modulo 64 while DLSS accumulates frames, else 0
     float g_screenSpaceShadows; // 1: the screen-space shadow in t7 multiplies the sun's shadow
     float g_rayTraced;          // 1: the ray-traced shadow in t6 is the sun's shadow (see SunShadow)
-    float3 g_padding;
+    float g_ownCloudShadow;     // 1: the ray-traced shadow already has the add-on's cloud shadow, so the game's cloud texture is left out
+    float2 g_padding;
 };
 
 // The sea's sparkles: their brightness, and the metres from the camera where they start and reach full strength.
@@ -242,11 +243,15 @@ float SunShadow(float3 viewPosition, float2 pixel, float3 tangentX, float3 tange
         shadow = (1 - shadow) * inViewRange + shadow;
     shadow = saturate(shadow - m_lightParams[6].w);
 
-    float2 cloudPosition = float2(dot(m_objectParams[9], position), dot(m_objectParams[10], position));
-    float cloud = g_CloudTexture.Sample(g_samplerLinear_Wrap, cloudPosition).x;
-    float cloudAmount = saturate((1 / (m_objectParams[12].z - 0)) * (cloud - 0));
-    cloudAmount = cloudAmount * cloudAmount * (cloudAmount * -2 + 3);
-    shadow = saturate(m_objectParams[12].w * cloudAmount) * shadow;
+    // The game's clouds' shadow, from its own cloud texture: left out when the rays carry the add-on's clouds' shadow instead.
+    [branch] if (g_ownCloudShadow == 0)
+    {
+        float2 cloudPosition = float2(dot(m_objectParams[9], position), dot(m_objectParams[10], position));
+        float cloud = g_CloudTexture.Sample(g_samplerLinear_Wrap, cloudPosition).x;
+        float cloudAmount = saturate((1 / (m_objectParams[12].z - 0)) * (cloud - 0));
+        cloudAmount = cloudAmount * cloudAmount * (cloudAmount * -2 + 3);
+        shadow = saturate(m_objectParams[12].w * cloudAmount) * shadow;
+    }
 
     float heightFade = 1 - saturate((viewPosition.z - m_objectParams[11].x) * m_objectParams[11].y);
     return heightFade * heightFade * shadow;
@@ -274,11 +279,15 @@ float PathTracedShadow(float3 viewPosition, float rayTraced)
     float shadow = rayTraced;
 #if CLOUD_SHADOW
     float4 position = float4(viewPosition, 1);
-    float2 cloudPosition = float2(dot(m_objectParams[9], position), dot(m_objectParams[10], position));
-    float cloud = g_CloudTexture.Sample(g_samplerLinear_Wrap, cloudPosition).x;
-    float cloudAmount = saturate((1 / (m_objectParams[12].z - 0)) * (cloud - 0));
-    cloudAmount = cloudAmount * cloudAmount * (cloudAmount * -2 + 3);
-    shadow = saturate(m_objectParams[12].w * cloudAmount) * shadow;
+    // The game's clouds' shadow, from its own cloud texture: left out when the rays carry the add-on's clouds' shadow instead.
+    [branch] if (g_ownCloudShadow == 0)
+    {
+        float2 cloudPosition = float2(dot(m_objectParams[9], position), dot(m_objectParams[10], position));
+        float cloud = g_CloudTexture.Sample(g_samplerLinear_Wrap, cloudPosition).x;
+        float cloudAmount = saturate((1 / (m_objectParams[12].z - 0)) * (cloud - 0));
+        cloudAmount = cloudAmount * cloudAmount * (cloudAmount * -2 + 3);
+        shadow = saturate(m_objectParams[12].w * cloudAmount) * shadow;
+    }
 
     float heightFade = 1 - saturate((viewPosition.z - m_objectParams[11].x) * m_objectParams[11].y);
     shadow *= heightFade * heightFade;

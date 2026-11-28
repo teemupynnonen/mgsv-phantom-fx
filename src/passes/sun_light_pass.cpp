@@ -1,6 +1,7 @@
 #include "passes/sun_light_pass.hpp"
 
 #include "constant_capture.hpp"
+#include "features/clouds/clouds.hpp"
 #include "d3d11_helpers.hpp"
 #include "dev/game_shadow.hpp"
 #include "dev_tools.hpp"
@@ -42,7 +43,7 @@ constexpr std::uint32_t PatternTurns = 64; // Frames before the soft shadows' sa
 // cSunShadows (b6) of the replacement shaders.
 struct ShaderOptions
 {
-    float soft, sunTangent, frame, screenSpace, rayTraced, padding[3];
+    float soft, sunTangent, frame, screenSpace, rayTraced, ownCloudShadow, padding[2];
 };
 static_assert(sizeof(ShaderOptions) % 16 == 0);
 
@@ -187,7 +188,9 @@ void writeOptions(ID3D11DeviceContext* context, const Composition& composition, 
     constexpr float DegreesToRadians = 3.14159265f / 180;
     const ShaderOptions values{composition.softShadows || rayTraced ? 1.0f : 0.0f, std::tan(composition.sun.diameterDegrees * 0.5f * DegreesToRadians),
         turnPattern.load(std::memory_order_relaxed) ? static_cast<float>(frame.load(std::memory_order_relaxed) % PatternTurns) : 0.0f,
-        hasContactShadow ? 1.0f : 0.0f, rayTraced ? 1.0f : 0.0f, {}};
+        hasContactShadow ? 1.0f : 0.0f, rayTraced ? 1.0f : 0.0f,
+        // The rays trace the add-on's clouds' shadow (clouds::shadowTexture) into theirs: the game's cloud texture would shade twice.
+        rayTraced && clouds::shadowTexture() ? 1.0f : 0.0f, {}};
     check(write(context, optionsBuffer.Get(), values), "Writing the sun shadow options");
 }
 

@@ -47,7 +47,7 @@ constexpr float HistoryWeight = 0.95f;
 constexpr std::uint32_t JitterPeriod = 64;
 // Hillaire's lookup tables (shaders/atmosphere.hlsli).
 constexpr UINT TransmittanceWidth = 256, TransmittanceHeight = 64, MultipleScatteringSize = 32, SkyViewWidth = 192, SkyViewHeight = 108;
-constexpr UINT SkyParameterTexels = 7;
+constexpr UINT SkyParameterTexels = 8;
 // Milliseconds between the sky parameters in the log, while the physical look runs.
 constexpr std::uint64_t SkyLogInterval = 10000;
 
@@ -754,5 +754,12 @@ void present() noexcept
     {
         if (physicalLook) logSkyParameters();
     }
+}
+
+ID3D11ShaderResourceView* skyParametersView() noexcept
+{
+    if (!physicalLook.load(std::memory_order_relaxed)) return nullptr;
+    std::lock_guard lock(resourceMutex);
+    return skyReady ? skyParameters.view.Get() : nullptr;
 }
 }

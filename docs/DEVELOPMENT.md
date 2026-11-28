@@ -289,6 +289,7 @@ what draws it, when that is the feature's own.
 | `indirect_light/` | `ssgi.*`: VB-SSGI's bounce, added to the diffuse light the resolve reads. `shaders/ssgi_gather.cs.hlsl`, `shaders/ssgi_accumulate.cs.hlsl`, `shaders/ssgi_filter.cs.hlsl`, `shaders/ssgi_resolve.cs.hlsl` (with `shaders/ssgi_common.hlsli`): the gather (with its per-tap visibility test), the temporal accumulation, the a-trous denoiser and the resolve. A dev build compiles them from the checkout at run time, like every shader (see "VB-SSGI") |
 | `volumetric_fog/` | `atmosphere.*`: the larger fog texture, the game's fog pass over all of it, the shadowed fill before the resolve. `shaders/fog_media.cs.hlsl`, `shaders/fog_visibility.cs.hlsl`, `shaders/fog_integrate.cs.hlsl` (with `fog_inputs.hlsli`): the game's fog formula per froxel with the sun shadowed; `shaders/transmittance.cs.hlsl`, `shaders/multiple_scattering.cs.hlsl`, `shaders/sky_view.cs.hlsl`, `shaders/sky_ambient.cs.hlsl`, `shaders/sky_parameters.cs.hlsl`, `shaders/sky_draw.ps.hlsl` (variants `sky_draw_<moon>_<float scene>_<HDR output>.ps.hlsl`), `shaders/atmosphere.hlsli`: Hillaire's atmosphere tables, the physical fog and sky (Epic Games' reference, MIT) |
 | `water_caustics/` | `water_caustics.*`: the light a river's waves focus on its bed, drawn over the river's own draw. `caustics_map.*`: the tiling web, made at start-up. `shaders/caustics.ps.hlsl`: that draw |
+| `clouds/` | `clouds.*`: the cloud deck in place of the game's cloud draw, at half size with its history and composite, its wind and ground shadow (see "Clouds"). `cloud_noise.hpp`: the 3D noise and its mips, shared with `tools/noise-preview`. `cloud_density.hlsli`: the one density. `clouds.hlsl`, `clouds_resolve.hlsl`, `clouds_composite.hlsl`, `clouds_vs.hlsl`, `cloud_shadow.hlsl`: the march, the history, the composite, the full-screen triangle, the ground's shadow |
 | `sea/` | `sea.*`: the sea's waves and its surface in the G-buffer in place of the game's sea, its level and wind from the game's, its depth for the guides and its level for the ray-traced scene (see "Sea"). `shaders/spectrum.cs.hlsl`, `shaders/fft.cs.hlsl`, `shaders/fft_columns.cs.hlsl`, `shaders/maps.cs.hlsl`, `shaders/surface.hlsl` (the body of `surface_vs.hlsl` and `surface_ps.hlsl`), `shaders/sea_common.hlsli`: the spectrum, the FFT, the maps, the surface |
 | `photo_mode/` | `photo_mode.*`: photo mode (F2), the game's pause, a free camera through the camera selector, the game's input held back; hiding the UI (F3); the dev build's Enter teleport. `focus.*`: its autofocus |
 | `hdr/` | `hdr.*`: the float scene, in SDR too, and HDR10 output: the swap chain, the float scene targets and their sRGB views, the shader patches, the grading and output passes (see "HDR"). `shaders/capture.cs.hlsl`, `shaders/encode.cs.hlsl`, `shaders/decode.cs.hlsl`, `shaders/reduce.ps.hlsl`, `shaders/grade.ps.hlsl`, `shaders/grade_upgrade.ps.hlsl`, `shaders/output.ps.hlsl`: the encode and decode of the float scene, bloom's reduction, the grading, the output to PQ or, in SDR, to the game's 8 bits with a dither |
@@ -4083,7 +4084,7 @@ planet's centre is the origin, in km; the game's world has y up in metres.
   its sky leaves most of it out. **Haze** (`atmosphere_haze`, 0 to 1, the `Fog` constants' `Haze`)
   raises that share towards all of it in any weather and deepens the layer from 300 m to 1 km, as
   deep as dust: at 1 the distance fades about as the game's does (on a thin-fog day in Afghanistan
-  6.3e-4 / m, about 6 km of view against the game's 8; at 0 about 120 km), and the sky pales with it. The height fog
+  6.3e-4 / m, about 6 km of view against the game's 8; at 0 about 120 km, at the default 0.1 about 30 km), and the sky pales with it. The height fog
   also dims the sunlight that reaches the air and itself: `e^(-density x scale height / sin(elevation))`,
   the sine at least 0.01 (a 1 km layer is about 100 km long at the horizon); without it, 100 % haze at
   sunset glowed at the display's peak towards the sun (frame 8938: 700 nits). Both shadowed and integrated over the slice as in the game's look; the slices are added
@@ -4114,6 +4115,136 @@ planet's centre is the origin, in km; the game's world has y up in metres.
   Its two textures go to `t6` and `t7` for the draw; the game's are bound again after it.
 - Checked on WARP with made-up constants: blue sky with a pale horizon at noon, orange towards the sun
   at 1 degree, the pink band and the Earth's shadow at -2 degrees.
+
+## Clouds
+
+With **Clouds** (`clouds=1`, under World, tagged Experimental) the game's cloud draw is replaced by the
+add-on's deck: a raymarch of its own 3D noise that keeps the game's weather, coverage and wind, so the
+shapes hold together and light at the edges instead of the game's own four-step march. Off leaves the
+game's clouds untouched.
+
+- **The game's draw.** `tpp3dfw_generativeClouds` (`4e081ddecae4b78e7229ae6dec61d2ee`, `GamePass::SkyDome`,
+  indexed) draws the dome with the game's cloud material in `cPSMaterial` (`b4`): `c0.xyz` towards the sun,
+  `c0.w` the phase's `g`, `c1.xy` the first offset, `c1.z` the density's scale, `c1.w` the coverage,
+  `c2.xyz` the ambient, `c2.w` the sun's scale, `c3` the density's exponent and cross sections, `c5.x` the
+  depth, `c5.zw` the second offset and `c6.x` the density's base. `cPSObject` `c10.xyz` is the sun's light,
+  `cPSScene` `c20.xyz` the eye, `c23.z` the exposure and `c25` the fog's slice and colour scales. The
+  add-on's pixel shader draws in its place with the game's vertex shader and render target, and puts every
+  state it changes back.
+- **The noise.** A 64-cube (`R8_UNORM`, with its full mip chain) of gradient-noise fbm, periods 4, 8, 16 and
+  32, its lookup bent by a domain warp (a twentieth of the cube), turned into billows
+  (`0.75 n + 0.25 (1 - |2 n - 1|)`) and gained around its own median. It is made once at attach
+  (`cloud_noise.hpp`) and bound at `t14` with the add-on's own trilinear, wrapping sampler (`s12`) for the
+  draw. The gradients are Perlin's twelve, to the middles of the cube's edges: an earlier set left z out of
+  every corner, stretched each feature along z, and a deck seen edge-on turned that into streaks running to
+  the horizon. `tools/noise-preview` bakes the same cube off-game and draws cuts of it, a top-down map and a
+  horizon view, so a shape can be judged without a restart.
+- **No repeat.** The cube repeats every unit, about 4.5 km of sky at the default Size, and over a 100 km deck
+  the repeats lined the clouds up in rows. Each lookup reads the cube turned about the vertical and scaled
+  (`Turned`): the group and the shape each sum two lookups whose lattices never meet again (the sum's spread
+  is put back with `x 0.7`), and the finer octave and the erosion take turns of their own.
+- **The density** (`cloud_density.hlsli`, the one density the sky and the ground shadow both read). The
+  layer is 900 to 6000 m of height above the curved Earth. Weather coverage is the weather's own (`CoverOf`
+  in `clouds.cpp`: Sunny 0.6, Cloudy 0.85, Rainy 1, Sandstorm 0.7, Foggy 0.9, eased over about 30 s when the
+  weather changes) times the dome's alpha, steepened (`pow 1.5`). The game's cloud material's `c1.w` was
+  used before; the game fades it to 0 as the sun sets, as its painted clouds did, and the sky emptied at
+  dusk. The menu's Coverage below 100% takes a share of it, above adds towards overcast
+  (`(coverage - 1) x (1 - weather) x 0.6`). A group lookup (`1 / 20 km`) says where a cloud group is and how
+  high its column ends. The coverage is the share of the sky that has cloud: the shape's own 10th and 90th
+  (`lerp(0.72, 0.28, fill)`) are the marks a column must clear, and the group lifts or sinks that mark by
+  up to 0.3, so a clear day has cloud in clumps with open sky between them; below a quarter's cover the mark
+  rises out of reach, so the slider still clears the sky. The cloud's own fbm (`1 / 4.5 km`, y x 1.6) gives
+  the base and the column's top; the top rises with the cloud's core (towers at the core, low at the rim),
+  as a flat slab seen from below squashed into rows parallel to the horizon. The fill tightens with height
+  to 0.55, so a cumulus is a dome over a broad base. Two octaves of erosion (6x and 17x) wear only the rim,
+  ragged low down and rounded above. A sample whose broad shape cannot pass the lowest mark stops after four
+  lookups, before the finer ones: most samples of a fair sky end there. Each lookup reads the mip its
+  footprint covers (`footprint` metres, across its pixel and along its step), so a far sample reads the mean
+  of what it stands for and not one speck of it, which grained the far deck; a fixed fade with distance did
+  the same job before and drew rings around the eye, which read as rows. The march samples
+  `saturate(density x 4)`.
+- **The curve of the Earth.** The layer follows it (radius 6360 km): a ray's height above the ground grows by
+  `t^2 / 2R`, the march enters and leaves the layer where that curve crosses its base and top
+  (`CurvedCrossing`), and every sample is read at its height above the curve (`Curved`). A flat slab ran a
+  level ray through 150 km of cloud and packed the horizon into a wall; curved, a level ray from the deck
+  meets the base about 105 km out.
+- **The march** (`clouds.hlsl`). For the main view the draw becomes a full-screen triangle: the ray is built
+  from `cPSScene`'s projection and view axes, and the scene's own depth (`t13`, reversed: 0 is the far
+  plane) ends it at the nearest surface, so terrain and aircraft stand in front of a cloud. The steps are
+  the layer's chord over the quality's count (64, 128, 192 or 256), but never shorter than 25.6 km over that
+  count (100 m on Ultra, 400 on Low): a fixed count took every pixel 256 times through the layer, 20 m
+  apart looking up, and cost as much over a clear sky as over a cloudy one. A dither (`t15`), turned by the
+  golden ratio each frame, picks where the first step lands; coarse steps cross clear air, and a coarse step
+  that lands in density goes back and comes in at a quarter step for eight steps, so an edge is found at
+  the same place in every pixel. Each step's length is stretched by its own turn of the dither (0.65 to
+  1.35), or a cloud's slabs read as rings around it. Towards the sun four steps grow (`1 + 1.9 k`) x 350 m,
+  about 5.4 km, through the cloud's bulk (`coarse`: the erosion left at its mean), which is what the light
+  sees; six full lookups there, every fine step, were most of the cost. Extinction is 0.012 / m at density
+  1. Multiple scattering is three octaves of ever-softer extinction (Wrenninge's,
+  `0.55 e^-od + 0.3 e^(-0.25 od) + 0.15 e^(-0.06 od)`), so the lit side stands out and a shaded side goes
+  grey, not black; a flat floor of 0.7 lit every side alike and the clouds read as paint. The phase is the
+  two-lobe one, `0.7 HG(g = 0.6) + 0.2 HG(g = -0.2) + 0.1`. Each slab adds
+  `T x (1 - e^(-density x extinction x dt)) x scatter`, and the result is divided by `1 - T` so the sun is
+  not multiplied twice; alpha is `(1 - T) x` the dome's alpha, premultiplied after sRGB encoding.
+- **Half size and a history.** The march runs at half the render size (`LowScale` 2, `clouds.cpp`
+  `drawAtHalfSize`): each of its pixels stands for a 2 x 2 block, marches to the farthest surface in it,
+  and writes the cloud (`R16G16B16A16_FLOAT`) and where it first took light (`R32_FLOAT`). Its dither turns
+  every frame, so alone each frame flickered in 2 x 2 blocks; `clouds_resolve.hlsl` blends it into the
+  history at the same size (one tenth a frame), clamped to the range of its 3 x 3 neighbours so a moving
+  cloud or a turn does not smear. The clouds are kilometres away, so the camera's turn alone says where a
+  cloud was: the ray is taken into last frame's view, which a one-thread compute shader copies from
+  `cPSScene` (`c4`, `c5`, `c8` to `c10`) into a structured buffer after each frame. `clouds_composite.hlsl`
+  then brings the history over the scene at full size with the game's blend: each pixel blends its four
+  nearest, leaving out any whose cloud begins behind this pixel's own surface, so a ridge keeps a sharp edge.
+  At full size the clouds cost 5 to 9 ms at a 1080p render on Ultra.
+- **The light.** With Physical sky on, the clouds take its sun and sky (its parameters at `t18`, read through
+  `atmosphere::skyParametersView`): a texel of its own (`CloudSunTexel`) holds the sunlight through the air
+  down to the deck's middle (2 km), so a cloud reddens with the sky at dusk, and the sky's mean light lights
+  the shaded side. The game's cloud light stays white as the sun sets, which left the clouds white against an
+  orange sky. Without Physical sky the game's own cloud material lights them, as before.
+- **The air in front.** With Physical sky, the air between the eye and the cloud's mean depth (its Rayleigh
+  and Mie and its height fog, eight samples along the curved ray) dims and reddens the cloud, and its alpha
+  falls by as much, so the sky behind, which already holds the light the air scatters in, shows through: a
+  cloud 80 km out was as white and as sharp as one overhead, pasted on. Without Physical sky the game's fog
+  (`clouds_fog`, on) does the same: its fog volume (`t12`, the 128-slice log2 atlas the readers in
+  "Volumetric fog" describe) is read at the cloud's mean depth (`fog.rgb x scale + colour x fog.a`); off
+  keeps every cloud at its own colour.
+- **The ground's shadow** (`cloud_shadow.hlsl`). A 1024 x 1024 `R8_UNORM` square of 30 km around the eye,
+  its centre snapped to a texel so it does not shimmer; 32 steps from the layer's base towards the sun read
+  the same density's bulk (`coarse`), and the transmittance is floored at 0.3: a cloud's shadow is never black, the sky's
+  light still reaches. The menu's Ground shadow (0 to 150%) scales the optical depth. The map is drawn once
+  a frame just before the cloud draw. It is shared with Direct3D 12 (`SharedWithD3D12`) and read by the
+  ray-traced sun's shadows (`CloudShadowAt`, `gi_common.hlsli`, used by `gi_shadow.hlsl`) and path
+  tracing's sun (`gi_hit_light.hlsli`). While the rays carry it, the sun pass leaves the game's own cloud
+  texture (`t4`) out (`g_ownCloudShadow`), so the ground is not shaded twice; without rays the game's own
+  cloud shadow stands.
+- **The wind and a pause.** The game's cloud offset (`cPSMaterial` `c5.zw`) moves only with game time, so a
+  stopped clock froze the clouds. Their drift is now the weather's own wind (the sea's table, 4 to 14 m/s)
+  times 2 and the Wind setting, over the real time since the last draw; the direction is fixed, as the
+  game's constants hold no wind direction at the layer. A one-thread compute shader adds each draw's step
+  to a structured buffer (`t17`); its x and y offset the group lookup (x 0.00005) and the 3D noise
+  (x 0.00022). The game's pause (`weather::isGamePaused`, the sea's own check) stops the step, so a pause
+  menu, photo mode or a frozen frame holds them, and 0% freezes them.
+- **The painted dome.** `tpp3dfw_constant_sky`, drawn just before the game's cloud draw, paints its own
+  wisps of cloud; with the deck on, that draw is left out, or the sky showed two layers, the soft one
+  showing through the deck.
+- **Mirrors.** The full-screen draw runs only when the viewport and the bound scene depth are the render
+  target's own, single-sampled. A mirror's smaller camera keeps the game's dome draw, without depth, so a
+  reflection does not show the main view's deck twice.
+- **Settings.** World > Clouds: on/off, Quality (Low 64, Medium 128, High 192, Ultra 256 steps; High by
+  default), Coverage 20 to 200% (40), Size 50 to 200% (150), Ground shadow 0 to 150% (100), Wind 0 to 300%
+  (100) and Fog on clouds (on). All are live; the INI keys are `clouds_quality`, `clouds_coverage`,
+  `clouds_size`, `clouds_shadow`, `clouds_wind` and `clouds_fog`. A dev build reloads `clouds.hlsl` and
+  `cloud_shadow.hlsl` on save (`hot_shader`); a release build precompiles them, and the composite and the
+  history, with fxc (`cmake/phantom_shaders.cmake`). The noise is baked in C++ and needs a restart.
+- **Budget.** Clouds are an effect (`Effect::Clouds`): the F1 switch and the effect plan run them, the Budget
+  has their line with two timed passes (`CloudShadow`, the ground's map; `Clouds`, the march, the history and
+  the composite), and a measurement leaves them out in turn.
+- **Based on** Andrew Schneider's SIGGRAPH talks, "The Real-time Volumetric Cloudscapes of Horizon: Zero
+  Dawn" (2015) and "Nubis: Authoring Realtime Volumetric Cloudscapes with the Decima Engine" (2017). The
+  weather-and-shape density model and the two-lobe phase follow the 2015 talk; the 2017 one set the group
+  scale and the contrast it was tuned to. The multiple scattering's octaves follow Magnus Wrenninge's
+  "Oz: The Great and Volumetric" (SIGGRAPH 2013 talk). The fog, the ground shadow and the wind are the game's own.
 
 ## Sea
 

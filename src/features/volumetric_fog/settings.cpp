@@ -43,7 +43,7 @@ void describe(PhysicalSky& sky, SettingVisitor& visit)
             .format = "%.0f%%",
             .readoutScale = 100,
             .tip = "Dust in the air that fades the distance. A matter of taste: no setting is more physically based or closer to the game's "
-                   "look. 0% (the default) is clear air, about 120 km of view on a clear day; 100% is about 8 km, with a paler sky. Fog, "
+                   "look. 10% (the default) is a little dust, about 30 km of view on a clear day; 0% is clear air, about 120 km. 100% is about 8 km, with a paler sky. Fog, "
                    "sandstorms and rain are always at full thickness."});
 }
 }

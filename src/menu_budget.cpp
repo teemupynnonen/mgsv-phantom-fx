@@ -4,6 +4,7 @@
 #include "core.hpp"
 #include "dev_tools.hpp"
 #include "features/ambient_occlusion/gtvbao.hpp"
+#include "features/clouds/clouds.hpp"
 #include "features/frame_generation/presenter.hpp"
 #include "features/global_illumination/light_combine.hpp"
 #include "features/hdr/hdr.hpp"
@@ -92,6 +93,7 @@ const EffectLine EffectLines[]{
     {.effect = Effect::Sea, .passes = {{Pass::SeaWaves, "Waves: spectrum, FFT and maps"}, {Pass::SeaSurface, "Surface into the G-buffer"}},
         .health = sea::health},
     {.effect = Effect::WaterCaustics, .passes = {{Pass::WaterCaustics, "Webs over the rivers"}}, .health = water_caustics::health},
+    {.effect = Effect::Clouds, .passes = {{Pass::CloudShadow, "Ground shadow map"}, {Pass::Clouds, "Ray march over the sky"}}, .health = clouds::health},
 };
 static_assert(std::size(EffectLines) == static_cast<std::size_t>(Effect::Count));
 

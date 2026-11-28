@@ -251,6 +251,9 @@ struct GIFrameConstants
     float4 emission;
     uint4 emitterCount;
     uint4 closestRayFlags; // x: what closest-hit rays add to their flags (TraceClosest)
+    // The clouds' shadow on the ground (g_CloudShadow, cloud_shadow.hlsl): xy the map's centre in the world's x and z; z its extent
+    // in metres, 0 with no map; w the height of the layer's base. The map is indexed by where a ray to the sun crosses that height.
+    float4 cloudShadow;
     GIEmitter emitters[GI_MAX_EMITTERS];
 };
 
