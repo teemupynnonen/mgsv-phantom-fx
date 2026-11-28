@@ -65,8 +65,9 @@
 
 - **Ray-traced shadows trace no ray where the sun cannot light the surface.** A surface turned away from the sun, and
   not see-through like leaves or cloth the game lights from behind, gets no sun whatever its shadow, so its sun ray is
-  skipped and it is taken as shadowed. That is often a large share of the screen with the sun low; the time saved is
-  not measured yet.
+  skipped and it is taken as shadowed. That is often a large share of the screen with the sun low. With path tracing and
+  Ray Reconstruction the sun's rays are a small part of the frame: 0.15 ms of 36 ms at DLAA, nothing measurable at Ultra
+  Performance. Ray-traced shadows without path tracing have not been timed.
 
 ### Fixed
 
