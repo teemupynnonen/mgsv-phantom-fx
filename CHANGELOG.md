@@ -63,6 +63,10 @@
   was 128 dispatches a frame, about 3.3 ms: roughly 16% of a 1080p frame and 6-8% at 4K. A light undrawn for 60 frames
   is measured again, so a new map keeps none of the old one's boxes.
 
+- **The ray-traced scene's top level is built for tracing speed.** Every ray of global illumination, shadows and
+  reflections starts its search there, so a better-built top level should speed all of them up for a little more
+  build time each frame. The gain has not been measured in game yet. The image is the same.
+
 ### Fixed
 
 - **The light cache no longer makes fireflies in dark rooms.** A ray's distant hit took a cell's light as soon as it
