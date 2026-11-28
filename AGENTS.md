@@ -39,6 +39,9 @@ part you are about to change.
 
 - A lighting fault is checked in the running game, not from memory: use the `.agents/skills/mgsv-automation` skill,
   which records a case and reports it, instead of asking for screenshots or numbers.
+- Always use the `mgsv-automation` MCP tools (`session`, `run`, `case`, `capture`, `verify`, `setting`, `weather`,
+  `time_of_day`, `job`). Never run `fx.py`, `launch.ps1`, `install.ps1` or `case.py` by hand to drive the game. If the MCP
+  is not available, stop and tell the user; do not fall back to the manual commands.
 - State what was verified and how. If it was not built, tested or checked in the game, say so plainly.
 
 ## Commits and pull requests
