@@ -24,7 +24,7 @@ float4 main(float4 color : COLOR0, float4 uv : TEXCOORD0, float4 world : TEXCOOR
     for (int i = 0; i < ShadowSteps; ++i)
     {
         float3 where = start + towardsSun * (dt * (i + 0.5));
-        opticalDepth += saturate(CloudDensity(where, windXZ, wind, baseCover) * 4) * dt;
+        opticalDepth += saturate(CloudDensity(where, windXZ, wind, baseCover, 0) * 4) * dt;
     }
     // A cloud's shadow is never black: the sun still reaches the ground as the sky's light, scattered through the cloud.
     // The menu's strength: 0 leaves the ground lit, 1 the shipped look, and below 1 the shadow only softens the sun.

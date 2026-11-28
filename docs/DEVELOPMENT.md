@@ -4126,18 +4126,24 @@ game's clouds untouched.
   `cPSScene` `c20.xyz` the eye, `c23.z` the exposure and `c25` the fog's slice and colour scales. The
   add-on's pixel shader draws in its place with the game's vertex shader and render target, and puts every
   state it changes back.
-- **The noise.** A 64-cube (`R8_UNORM`) of value-noise fbm, periods 4, 8, 16 and 32, turned into billows
-  (`0.75 n + 0.25 (1 - |2 n - 1|)`) and gained around its 0.63 median so a threshold has clear air to pick.
-  It is made once at attach (`generateNoise`) and bound at `t14` for the draw; the game's own cloud texture
-  is eight slices, which cannot give a cloud a 3D outline.
+- **The noise.** A 64-cube (`R8_UNORM`) of gradient-noise fbm, periods 4, 8, 16 and 32, its lookup bent by a
+  domain warp (a twentieth of the cube), turned into billows (`0.75 n + 0.25 (1 - |2 n - 1|)`) and gained
+  around its own median. It is made once at attach (`cloud_noise.hpp`) and bound at `t14` for the draw. Value
+  noise's cubic lattice read as straight lines over the thin layer; gradient noise has no axis to line up
+  along, and the warp bends what is left. `tools/noise-preview` bakes the same cube off-game and draws cuts
+  of it, so a shape can be judged without a restart.
 - **The density** (`cloud_density.hlsli`, the one density the sky and the ground shadow both read). The
   layer is 900 to 6000 m of world height, not the eye's. Weather coverage is the dome's own alpha times
   `c1.w`, steepened (`pow 1.5`); the menu's Coverage below 100% takes a share of it, above adds towards
   overcast (`(coverage - 1) x (1 - weather) x 0.6`, so a clear day can still fill). A group lookup
-  (`1 / 20 km`) says where a cloud group is and how high its column ends; the cloud's own fbm
-  (`1 / 4.5 km`, y x 1.6) gives the base and the column's top. The profile opens just above the layer's
-  base and closes below that top, and the coverage tightens with height to 0.6, so a cumulus is a dome
-  over a broad base. A 6x lookup erodes only the rim, ragged low down and rounded above. Every lookup is at
+  (`1 / 20 km`) says where a cloud group is and how high its column ends. The coverage is the share of the
+  sky that has cloud: the shape's own 10th and 90th (`lerp(0.72, 0.28, fill)`) are the marks a column must
+  clear, and the group lifts or sinks that mark by a fifth, so a clear day has cloud in clumps with open sky
+  between them. The cloud's own fbm (`1 / 4.5 km`, y x 1.6)
+  gives the base and the column's top. The profile opens over a band a few hundred metres deep whose foot
+  rises and falls with the group and the cloud's own shape, rather than at one height for the whole sky,
+  which read as a line across it; it closes below that top, and the fill tightens with height to 0.55,
+  so a cumulus is a dome over a broad base. A 6x lookup erodes only the rim, ragged low down and rounded above. Every lookup is at
   the point of the world, so the shape is a 3D silhouette and not a picture on the layer's base plane, and
   the sun's march sees where a neighbouring cloud begins and ends. The march samples `saturate(density x 4)`.
 - **The march** (`clouds.hlsl`). For the main view the draw becomes a full-screen triangle: the ray is built
@@ -4147,7 +4153,11 @@ game's clouds untouched.
   as a hard band above the horizon. The budget is the quality's steps (64, 128, 192 or 256); a dither
   (`t15`) picks where the first step lands; coarse steps cross clear air, and a coarse step that lands in
   density goes back and comes in at a quarter step for eight steps, so an edge is found at the same place
-  in every pixel. Towards the sun six steps grow (`1 + 0.7 k`) x 350 m, about 5.8 km through the same
+  in every pixel. Each step's length is then stretched by its own turn of the dither (0.65 to 1.35), so
+  the steps do not all land at the same depths in every pixel: without it a cloud's slabs read as rings
+  around it. The fine noise of the density fades to its mean with the view distance (the erosion from 4
+  to 25 km, the second shape octave from 15 to 60 km), because the steps grow with distance while the
+  detail does not, and far out each pixel otherwise caught a different bit of it. Towards the sun six steps grow (`1 + 0.7 k`) x 350 m, about 5.8 km through the same
   density; extinction is 0.012 / m at density 1. Multiple scattering is approximated
   (`max(e^-od, 0.7 e^(-0.08 od))`) so a shaded side goes grey, not black. The phase is the two-lobe one,
   `0.7 HG(g = 0.6) + 0.2 HG(g = -0.2) + 0.1`; the ambient is greyed 65% towards its luminance. Each slab
@@ -4167,16 +4177,21 @@ game's clouds untouched.
   tracing's sun (`gi_hit_light.hlsli`). While the rays carry it, the sun pass leaves the game's own cloud
   texture (`t4`) out (`g_ownCloudShadow`), so the ground is not shaded twice; without rays the game's own
   cloud shadow stands.
-- **The wind and a pause.** The game's cloud offset (`cPSMaterial` `c5.zw`, in kilometres) moves only with
-  game time and its weather's wind. A one-thread compute shader adds the change since the last cloud draw,
-  times 1000 and the Wind setting, to a structured buffer (`t17`); its x and y offset the group lookup
-  (x 0.00005) and the 3D noise (x 0.00022). The first frame and any jump past 0.5 km add nothing, so a load
-  or a weather change does not snap the clouds forward; a paused game holds them, and 0% freezes them.
+- **The wind and a pause.** The game's cloud offset (`cPSMaterial` `c5.zw`) moves only with game time, so a
+  stopped clock froze the clouds. Their drift is now the weather's own wind (the sea's table, 4 to 14 m/s)
+  times 2 and the Wind setting, over the real time since the last draw; the direction is fixed, as the
+  game's constants hold no wind direction at the layer. A one-thread compute shader adds each draw's step
+  to a structured buffer (`t17`); its x and y offset the group lookup (x 0.00005) and the 3D noise
+  (x 0.00022). The game's pause (`weather::isGamePaused`, the sea's own check) stops the step, so a pause
+  menu, photo mode or a frozen frame holds them, and 0% freezes them.
+- **The painted dome.** `tpp3dfw_constant_sky`, drawn just before the game's cloud draw, paints its own
+  wisps of cloud; with the deck on, that draw is left out, or the sky showed two layers, the soft one
+  showing through the deck.
 - **Mirrors.** The full-screen draw runs only when the viewport and the bound scene depth are the render
   target's own, single-sampled. A mirror's smaller camera keeps the game's dome draw, without depth, so a
   reflection does not show the main view's deck twice.
 - **Settings.** World > Clouds: on/off, Quality (Low 64, Medium 128, High 192, Ultra 256 steps; High by
-  default), Coverage 20 to 200% (160), Size 50 to 200% (150), Ground shadow 0 to 150% (100), Wind 0 to 300%
+  default), Coverage 20 to 200% (110), Size 50 to 200% (150), Ground shadow 0 to 150% (100), Wind 0 to 300%
   (100) and Fog on clouds (on). All are live; the INI keys are `clouds_quality`, `clouds_coverage`,
   `clouds_size`, `clouds_shadow`, `clouds_wind` and `clouds_fog`. A dev build reloads `clouds.hlsl` and
   `cloud_shadow.hlsl` on save (`hot_shader`); a release build precompiles them with fxc

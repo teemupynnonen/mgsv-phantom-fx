@@ -28,6 +28,10 @@ struct State
 // The supported build with the expected engine code; otherwise the menu cannot change anything.
 bool supported() noexcept;
 State state() noexcept;
+
+// Whether the game's time is stopped: a pause menu, photo mode, a frozen frame. What moves with game time (the sea, the
+// clouds' drift) stops with it.
+bool isGamePaused() noexcept;
 // These apply at the next frame start.
 void setClock(float seconds) noexcept;
 void stopClock(bool stopped) noexcept;

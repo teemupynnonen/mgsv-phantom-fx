@@ -65,23 +65,6 @@ constexpr float WindOf(weather::Type type)
     }
 }
 
-// The game's pause manager (docs/DEVELOPMENT.md, "Photo mode"), a global with its vtable first: each frame start ORs
-// its active requests' pause bits into + 8, and game time steps by zero while any is set. The sea stops with it: a
-// pause menu, photo mode, a frozen frame.
-constexpr std::uintptr_t PauseManagerRva = 0x2B65D40, PauseVtableRva = 0x20C56C0;
-constexpr std::size_t PauseBits = 8;
-
-bool isGamePaused() noexcept
-{
-    static const std::uint8_t* const manager = [] {
-        auto* base = game_code::image();
-        return isSupportedGameBuild() && *reinterpret_cast<std::uint8_t* const*>(base + PauseManagerRva) == base + PauseVtableRva
-            ? base + PauseManagerRva
-            : nullptr;
-    }();
-    return manager && *reinterpret_cast<const volatile std::uint32_t*>(manager + PauseBits) != 0;
-}
-
 // The wind turns towards the weather's over about 20 seconds; foam fades over about 2.5.
 constexpr float WindSeconds = 20, FoamSeconds = 2.5f;
 constexpr float Choppiness = 1;
@@ -891,7 +874,7 @@ void present() noexcept
     notes.present();
 
     const auto ticks = clock::ticksNow();
-    const double elapsed = lastPresent && !isGamePaused() ? std::clamp(clock::millisecondsOf(ticks - lastPresent) / 1000, 0.0, 0.1) : 0;
+    const double elapsed = lastPresent && !weather::isGamePaused() ? std::clamp(clock::millisecondsOf(ticks - lastPresent) / 1000, 0.0, 0.1) : 0;
     lastPresent = ticks;
 
     {

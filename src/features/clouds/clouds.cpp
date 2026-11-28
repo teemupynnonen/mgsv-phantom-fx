@@ -2,10 +2,12 @@
 #include "features/clouds/clouds.hpp"
 
 #include "d3d11_helpers.hpp"
+#include "features/clouds/cloud_noise.hpp"
 #include "features/path_tracing/sky_capture.hpp"
 #include "game_shaders.hpp"
 #include "log.hpp"
 #include "phantom_fx_settings.hpp"
+#include "weather.hpp"
 #include "phantom_shaders/cloud_shadow.hpp"
 #include "phantom_shaders/clouds.hpp"
 #include "phantom_shaders/clouds_vs.hpp"
@@ -34,6 +36,8 @@ using Microsoft::WRL::ComPtr;
 
 // tpp3dfw_generativeClouds, the game's cloud pixel shader (game_shaders.hpp).
 constexpr std::string_view CloudChecksum = "4e081ddecae4b78e7229ae6dec61d2ee";
+// tpp3dfw_constant_sky, the painted dome drawn just before them.
+constexpr std::string_view DomeChecksum = "1d8d495cfad8edf0a94795d1b83ab365";
 
 std::mutex resourceMutex;
 ComPtr<ID3D11Device> device;
@@ -44,8 +48,8 @@ ComPtr<ID3D11DepthStencilState> noDepth;
 ComPtr<ID3D11RasterizerState> noCulling;
 // The slot the game binds the scene's depth at for its cloud draw, and the one the add-on's 3D noise takes.
 constexpr UINT SceneDepthSlot = 13, CloudNoiseSlot = 14;
-// A 64-cube of value-noise fbm (generateNoise): the game's own cloud texture has eight slices.
-constexpr int NoiseSize = 64;
+// A 64-cube of fbm (cloud_noise): the game's own cloud texture has eight slices.
+constexpr int NoiseSize = cloud_noise::Size;
 ComPtr<ID3D11Texture3D> noiseTexture;
 ComPtr<ID3D11ShaderResourceView> noiseView;
 // The ground's cloud shadow (cloud_shadow.hlsl): the sun's transmittance through the layer, over a square around the eye.
@@ -62,17 +66,30 @@ ComPtr<ID3D11Buffer> settingsBuffer;
 struct ShaderSettings
 {
     float steps, coverage, size, wind, shadow;
-    // The clouds' own travelled distance in metres (the wind setting's, integrated here): a slider that changes the speed
-    // must not move the clouds, only their pace.
-    float offsetX, offsetZ;
+    // The distance the clouds travel in this draw, in metres: the weather's wind times the Wind setting, over the real time
+    // since the last draw, so they drift whatever the game's clock does and a slider changes their pace, not their place.
+    float stepX, stepZ;
     float fog; // 1 the game's fog over the clouds, 0 none
 };
 static_assert(sizeof(ShaderSettings) % 16 == 0);
 std::atomic<float> steps{192}, coverage{1}, size{1}, wind{1}, shadow{1}, fog{1};
-// The clouds' drift (cloud_wind below): the game's own cloud offset, which moves only with game time and its weather's wind,
-// taken a change at a time and scaled by the Wind setting, so a paused game holds them and the slider changes their pace without
-// moving them. A structured buffer of two float4s: [0].xy the distance travelled in metres, [0].zw the game's last offset in
-// kilometres; [1].x 1 once it holds one.
+// The clouds' drift (cloud_wind below): the distance travelled in metres, summed on the GPU from each draw's step.
+// A structured buffer of two float4s, [0].xy the distance.
+// The weather's wind at the cloud layer in metres a second (the sea's table, as the clouds follow the same wind), and its
+// direction: the layer's own is not in the game's constants, only an offset that stops with its clock.
+constexpr float CloudWindScale = 2;
+constexpr float WindDirectionX = 0.8f, WindDirectionZ = 0.6f;
+constexpr float WindOf(weather::Type type)
+{
+    switch (type)
+    {
+    case weather::Type::Cloudy: return 8;
+    case weather::Type::Rainy: return 14;
+    case weather::Type::Sandstorm: return 10;
+    case weather::Type::Foggy: return 4;
+    default: return 6;
+    }
+}
 constexpr UINT WindSlot = 17;
 ComPtr<ID3D11ComputeShader> windShader;
 ComPtr<ID3D11Buffer> windState;
@@ -80,77 +97,25 @@ ComPtr<ID3D11UnorderedAccessView> windAccess;
 ComPtr<ID3D11ShaderResourceView> windView;
 constexpr const char* WindSource = R"(
 cbuffer cPSMaterial : register(b4) { float4 m_materials[8]; };
-cbuffer cCloudSettings : register(b7) { float g_cloudSteps, g_cloudCoverage, g_cloudSize, g_cloudWind, g_cloudShadow, g_padding[3]; };
+cbuffer cCloudSettings : register(b7) { float g_cloudSteps, g_cloudCoverage, g_cloudSize, g_cloudWind, g_cloudShadow; float2 g_cloudStep; float g_padding; };
 RWStructuredBuffer<float4> State : register(u0);
 
 [numthreads(1, 1, 1)]
 void main()
 {
-    float4 travelled = State[0];
-    float2 game = m_materials[5].zw;
-    float2 change = game - travelled.zw;
-    // The first frame, or a jump (a load, a new weather): no drift from it.
-    if (State[1].x == 0 || any(abs(change) > 0.5)) change = 0;
-    travelled.xy += change * 1000 * g_cloudWind;
-    travelled.zw = game;
-    State[0] = travelled;
-    State[1] = float4(1, 0, 0, 0);
+    State[0].xy += g_cloudStep;
 }
 )";
 
-std::uint32_t hash3(int x, int y, int z)
+// The field the add-on ships: gradient noise, which has no axis to line up along, its lattice bent by a warp. The preview tool
+// (tools/noise-preview) bakes the same recipe, so what it shows is what the sky gets.
+cloud_noise::Recipe shippingRecipe()
 {
-    std::uint32_t v = static_cast<std::uint32_t>(x) * 374761393u + static_cast<std::uint32_t>(y) * 668265263u
-        + static_cast<std::uint32_t>(z) * 2147483647u;
-    v = (v ^ (v >> 13)) * 1274126177u;
-    return v ^ (v >> 16);
-}
-
-float lattice(int x, int y, int z, int period)
-{
-    const auto wrap = [period](int v) { return ((v % period) + period) % period; };
-    return static_cast<float>(hash3(wrap(x), wrap(y), wrap(z)) & 0xff) / 255.0f;
-}
-
-float valueNoise(float x, float y, float z, int period)
-{
-    const int xi = static_cast<int>(std::floor(x)), yi = static_cast<int>(std::floor(y)), zi = static_cast<int>(std::floor(z));
-    const float fx = x - xi, fy = y - yi, fz = z - zi;
-    const auto smooth = [](float t) { return t * t * (3 - 2 * t); };
-    const float u = smooth(fx), v = smooth(fy), w = smooth(fz);
-    const auto mix = [](float a, float b, float t) { return a + (b - a) * t; };
-    const float c000 = lattice(xi, yi, zi, period), c100 = lattice(xi + 1, yi, zi, period);
-    const float c010 = lattice(xi, yi + 1, zi, period), c110 = lattice(xi + 1, yi + 1, zi, period);
-    const float c001 = lattice(xi, yi, zi + 1, period), c101 = lattice(xi + 1, yi, zi + 1, period);
-    const float c011 = lattice(xi, yi + 1, zi + 1, period), c111 = lattice(xi + 1, yi + 1, zi + 1, period);
-    return mix(mix(mix(c000, c100, u), mix(c010, c110, u), v), mix(mix(c001, c101, u), mix(c011, c111, u), v), w);
-}
-
-std::vector<std::uint8_t> generateNoise()
-{
-    std::vector<std::uint8_t> voxels(static_cast<std::size_t>(NoiseSize) * NoiseSize * NoiseSize);
-    for (int z = 0; z < NoiseSize; ++z)
-        for (int y = 0; y < NoiseSize; ++y)
-            for (int x = 0; x < NoiseSize; ++x)
-            {
-                const float u = static_cast<float>(x) / NoiseSize, v = static_cast<float>(y) / NoiseSize, w = static_cast<float>(z) / NoiseSize;
-                float n = 0, amplitude = 0.5f, total = 0;
-                for (const int period : {4, 8, 16, 32})
-                {
-                    n += valueNoise(u * period, v * period, w * period, period) * amplitude;
-                    total += amplitude;
-                    amplitude *= 0.5f;
-                }
-                n /= total;
-                // Billows: the first octave's rounded side turned into the cloud's cauliflower.
-                n = std::clamp(0.75f * n + 0.25f * (1 - std::fabs(2 * n - 1)), 0.0f, 1.0f);
-                // FBM averages toward its middle, and this one's median is 0.63 with a narrow spread: centre the
-                // contrast on that median and gain it up, so a threshold has real clear air to pick.
-                n = std::clamp((n - 0.63f) * 6.0f + 0.5f, 0.0f, 1.0f);
-                voxels[(static_cast<std::size_t>(z) * NoiseSize + y) * NoiseSize + x] = static_cast<std::uint8_t>(n * 255);
-            }
-
-    return voxels;
+    cloud_noise::Recipe recipe;
+    recipe.generator = cloud_noise::Generator::Gradient;
+    recipe.warp = 0.05f;
+    recipe.median = std::nanf("");
+    return recipe;
 }
 #if PHANTOM_FX_DEV_TOOLS
 std::unique_ptr<HotShader> hot; // Watches clouds.hlsl; a saved edit replaces `pixel` at the next cloud draw
@@ -210,7 +175,7 @@ void ensurePipeline() noexcept
         check(device->CreateShaderResourceView(windState.Get(), nullptr, windView.GetAddressOf()), "The clouds' wind view");
 
         // The 3D volume, once: the shape the game's 2D atlas cannot give the clouds.
-        const auto voxels = generateNoise();
+        const auto voxels = cloud_noise::bake(shippingRecipe());
         D3D11_TEXTURE3D_DESC noise{};
         noise.Width = noise.Height = noise.Depth = NoiseSize;
         noise.MipLevels = 1;
@@ -398,7 +363,12 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
     if (!call.indexed) return false;
 
     const auto* row = shader.row();
-    if (!row || row->pass != game_shaders::GamePass::SkyDome || CloudChecksum != row->checksum) return false;
+    if (!row || row->pass != game_shaders::GamePass::SkyDome) return false;
+
+    // The game's painted dome (tpp3dfw_constant_sky) carries its own wisps of cloud, which would show through the deck as a second,
+    // soft layer; the deck is the sky's clouds, so the dome is left out.
+    if (DomeChecksum == row->checksum) return isOn.load(std::memory_order_relaxed);
+    if (CloudChecksum != row->checksum) return false;
 
     if (!isOn.load(std::memory_order_relaxed))
     {
@@ -430,9 +400,15 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
     ComPtr<ID3D11Buffer> gameSettings;
     context->PSGetConstantBuffers(SettingsSlot, 1, gameSettings.GetAddressOf());
     {
+        static std::chrono::steady_clock::time_point lastDraw{};
+        const auto now = std::chrono::steady_clock::now();
+        const float seconds = lastDraw.time_since_epoch().count() && !weather::isGamePaused() ? std::min(std::chrono::duration<float>(now - lastDraw).count(), 0.1f) : 0;
+        lastDraw = now;
+        const float travel = seconds * CloudWindScale * wind.load(std::memory_order_relaxed)
+            * WindOf(weather::state().requested.value_or(weather::Type::Sunny));
         const ShaderSettings values{steps.load(std::memory_order_relaxed), coverage.load(std::memory_order_relaxed),
             size.load(std::memory_order_relaxed), wind.load(std::memory_order_relaxed), shadow.load(std::memory_order_relaxed),
-            0, 0, fog.load(std::memory_order_relaxed)};
+            travel * WindDirectionX, travel * WindDirectionZ, fog.load(std::memory_order_relaxed)};
         std::lock_guard lock(resourceMutex);
         if (settingsBuffer && !FAILED(write(context, settingsBuffer.Get(), values)))
         {

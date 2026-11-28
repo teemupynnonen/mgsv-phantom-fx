@@ -30,6 +30,10 @@
 
 ### Changed
 
+- **Clouds look like a sky of cumulus, not rows of streaks.** The cloud noise no longer stretches every cloud along one
+  axis or repeats every few kilometres, which lined the clouds up in rows running to the horizon. Clouds now drift with
+  the weather's wind and stop when the game is paused, gather in clumps with open sky between them, and rise tallest at
+  their core. Coverage now follows its slider all the way, and the game's painted wisps no longer show through.
 - **Volumetric fog is now two switches: Light shafts and Physical sky.** Volumetric fog used to shadow the sun in the
   fog and, with its Look set to Physical, also replace the game's sky and haze, so one switch did two unrelated things.
   **Light shafts** (the `volumetric_fog` key) only shadows the sun in the fog. **Physical sky** (`physical_sky`, with

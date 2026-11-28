@@ -115,18 +115,21 @@ float4 main(float4 color : COLOR0, float4 uv : TEXCOORD0, float4 world : TEXCOOR
         for (int i = 0; i < steps * 2 && t < tExit; ++i)
         {
             float3 where = eye + ray * t;
-            float density = saturate(CloudDensity(where, windXZ, wind, baseCover) * 4) * farFade * smoothstep(30, 250, t);
+            float density = saturate(CloudDensity(where, windXZ, wind, baseCover, t) * 4) * farFade * smoothstep(30, 250, t);
             peak = max(peak, density);
+            // Every pixel's steps landed at the same depths, so a cloud's slabs read as rings around it. Each step's length varies by
+            // its own turn of the dither, which breaks the rings into the same fine noise the jitter already makes.
+            float wobble = 0.65 + 0.7 * frac(jitter + i * 0.618);
             if (fineLeft == 0)
             {
-                if (density <= 0.004) { t += stepLength; continue; }
+                if (density <= 0.004) { t += stepLength * wobble; continue; }
                 // A coarse step landed inside: go back and come in finely, so the edge is found at the same place
                 // by every pixel and not wherever the dither put its coarse step.
                 t = max(t - stepLength, tEnter);
                 fineLeft = 8;
                 continue;
             }
-            float dt = stepLength * 0.25;
+            float dt = stepLength * 0.25 * wobble;
             t += dt;
             fineLeft = density > 0.004 ? 8 : fineLeft - 1;
             if (density <= 0.004) continue;
@@ -137,7 +140,7 @@ float4 main(float4 color : COLOR0, float4 uv : TEXCOORD0, float4 world : TEXCOOR
                 float len = 1 + 0.7 * k;
                 float3 lightPos = where + towardsSun * lightStep * (reach + 0.5 * len);
                 reach += len;
-                opticalDepth += saturate(CloudDensity(lightPos, windXZ, wind, baseCover) * 4) * len * lightStep;
+                opticalDepth += saturate(CloudDensity(lightPos, windXZ, wind, baseCover, t) * 4) * len * lightStep;
             }
             opticalDepth *= Extinction;
             // Multiple scattering, approximated: deep inside, light still arrives, softer and weaker.
