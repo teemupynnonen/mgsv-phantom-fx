@@ -4,12 +4,16 @@
 #include "d3d11_helpers.hpp"
 #include "features/clouds/cloud_noise.hpp"
 #include "features/path_tracing/sky_capture.hpp"
+#include "features/volumetric_fog/atmosphere.hpp"
 #include "game_shaders.hpp"
 #include "log.hpp"
+#include "performance.hpp"
 #include "phantom_fx_settings.hpp"
 #include "weather.hpp"
 #include "phantom_shaders/cloud_shadow.hpp"
 #include "phantom_shaders/clouds.hpp"
+#include "phantom_shaders/clouds_composite.hpp"
+#include "phantom_shaders/clouds_resolve.hpp"
 #include "phantom_shaders/clouds_vs.hpp"
 #if PHANTOM_FX_DEV_TOOLS
 #include "hot_shader.hpp"
@@ -52,6 +56,11 @@ constexpr UINT SceneDepthSlot = 13, CloudNoiseSlot = 14;
 constexpr int NoiseSize = cloud_noise::Size;
 ComPtr<ID3D11Texture3D> noiseTexture;
 ComPtr<ID3D11ShaderResourceView> noiseView;
+// Trilinear and wrapping, over every mip: the game's samplers may stop at the first level. Bound at s12 for the draw.
+constexpr UINT NoiseSamplerSlot = 12;
+// The physical sky's parameters (atmosphere::skyParametersView), so the clouds have its sun and sky; empty while it is off.
+constexpr UINT SkyParametersSlot = 18;
+ComPtr<ID3D11SamplerState> noiseSampler;
 // The ground's cloud shadow (cloud_shadow.hlsl): the sun's transmittance through the layer, over a square around the eye.
 // ShadowSize and the extent match cloud_density.hlsli. Drawn once a frame before the sky; the sky's draw reads it at t16.
 constexpr UINT ShadowSize = 1024, CloudShadowSlot = 16, SettingsSlot = 7;
@@ -70,6 +79,10 @@ struct ShaderSettings
     // since the last draw, so they drift whatever the game's clock does and a slider changes their pace, not their place.
     float stepX, stepZ;
     float fog; // 1 the game's fog over the clouds, 0 none
+    // Counts the draws: the march's dither turns with it, so the upscaler's history averages the grain at the clouds' edges away.
+    float frame;
+    float weatherCover; // CoverOf the weather, eased over about half a minute so a change of weather fills or clears the sky
+    float padding[2];
 };
 static_assert(sizeof(ShaderSettings) % 16 == 0);
 std::atomic<float> steps{192}, coverage{1}, size{1}, wind{1}, shadow{1}, fog{1};
@@ -88,6 +101,19 @@ constexpr float WindOf(weather::Type type)
     case weather::Type::Sandstorm: return 10;
     case weather::Type::Foggy: return 4;
     default: return 6;
+    }
+}
+// The weather's cloud cover, 0 to 1: the game's own (its cloud material's coverage) fades to nothing as the sun sets, as its painted
+// clouds did, and took the layer with it at dusk. The weather does not change at night, so neither does its cloud.
+constexpr float CoverOf(weather::Type type)
+{
+    switch (type)
+    {
+    case weather::Type::Cloudy: return 0.85f;
+    case weather::Type::Rainy: return 1.0f;
+    case weather::Type::Sandstorm: return 0.7f;
+    case weather::Type::Foggy: return 0.9f;
+    default: return 0.6f;
     }
 }
 constexpr UINT WindSlot = 17;
@@ -123,6 +149,42 @@ std::unique_ptr<HotShader> hotShadow; // The same for cloud_shadow.hlsl and `sha
 #endif
 std::atomic<bool> isOn{};
 bool hasFailed{};
+std::atomic<bool> drawn{}; // The add-on has drawn the clouds over the scene at least once since they were turned on
+
+// The march at half the render size (clouds.hlsl, LowScale): a quarter of the pixels, each for a 2 x 2 block, and then
+// clouds_composite.hlsl over the scene at full size. At full size the clouds cost 5 to 9 ms at 1080p.
+constexpr UINT LowScale = 2, LowColorSlot = 19, LowDistanceSlot = 20, HistorySlot = 21, ViewHistorySlot = 22;
+ComPtr<ID3D11PixelShader> compositePixel;
+// The march's history (clouds_resolve.hlsl), two targets drawn in turn, and the view it was drawn from: the march's dither turns
+// every frame, and alone each frame flickered in 2 x 2 blocks.
+ComPtr<ID3D11PixelShader> resolvePixel;
+ComPtr<ID3D11Texture2D> history[2];
+ComPtr<ID3D11RenderTargetView> historyTarget[2];
+ComPtr<ID3D11ShaderResourceView> historyView[2];
+UINT historyIndex{}; // The one drawn last
+ComPtr<ID3D11Buffer> viewHistory;
+ComPtr<ID3D11UnorderedAccessView> viewHistoryAccess;
+ComPtr<ID3D11ShaderResourceView> viewHistoryView;
+ComPtr<ID3D11ComputeShader> viewCopyShader;
+constexpr const char* ViewCopySource = R"(
+cbuffer cPSScene : register(b2) { float4 m_scene[26]; };
+RWStructuredBuffer<float4> State : register(u0);
+
+[numthreads(1, 1, 1)]
+void main()
+{
+    State[0] = m_scene[4];
+    State[1] = m_scene[5];
+    State[2] = m_scene[8];
+    State[3] = m_scene[9];
+    State[4] = m_scene[10];
+    State[5] = float4(1, 0, 0, 0);
+}
+)";
+UINT lowWidth{}, lowHeight{};
+ComPtr<ID3D11Texture2D> lowColor, lowDistance;
+ComPtr<ID3D11RenderTargetView> lowColorTarget, lowDistanceTarget;
+ComPtr<ID3D11ShaderResourceView> lowColorView, lowDistanceView;
 
 void ensurePipeline() noexcept
 {
@@ -143,6 +205,22 @@ void ensurePipeline() noexcept
         raster.DepthClipEnable = TRUE;
         check(device->CreateRasterizerState(&raster, noCulling.GetAddressOf()), "The clouds' rasterizer state");
 
+        if (FAILED(device->CreatePixelShader(g_cloudsCompositePixelShader, sizeof(g_cloudsCompositePixelShader), nullptr, compositePixel.GetAddressOf())))
+            throw std::runtime_error("CreatePixelShader failed for the composite");
+        if (FAILED(device->CreatePixelShader(g_cloudsResolvePixelShader, sizeof(g_cloudsResolvePixelShader), nullptr, resolvePixel.GetAddressOf())))
+            throw std::runtime_error("CreatePixelShader failed for the history");
+        viewCopyShader = computeShader(device.Get(), ViewCopySource, "cloud-view-history");
+        D3D11_BUFFER_DESC viewDesc{};
+        viewDesc.ByteWidth = 6 * 16;
+        viewDesc.Usage = D3D11_USAGE_DEFAULT;
+        viewDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+        viewDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+        viewDesc.StructureByteStride = 16;
+        const float noView[24]{};
+        const D3D11_SUBRESOURCE_DATA viewData{noView, 0, 0};
+        check(device->CreateBuffer(&viewDesc, &viewData, viewHistory.GetAddressOf()), "The clouds' view history");
+        check(device->CreateUnorderedAccessView(viewHistory.Get(), nullptr, viewHistoryAccess.GetAddressOf()), "The clouds' view history access");
+        check(device->CreateShaderResourceView(viewHistory.Get(), nullptr, viewHistoryView.GetAddressOf()), "The clouds' view history view");
         if (FAILED(device->CreatePixelShader(g_cloudShadowPixelShader, sizeof(g_cloudShadowPixelShader), nullptr, shadowPixel.GetAddressOf())))
             throw std::runtime_error("CreatePixelShader failed for the cloud shadow");
         D3D11_TEXTURE2D_DESC shadowDesc{};
@@ -175,16 +253,27 @@ void ensurePipeline() noexcept
         check(device->CreateShaderResourceView(windState.Get(), nullptr, windView.GetAddressOf()), "The clouds' wind view");
 
         // The 3D volume, once: the shape the game's 2D atlas cannot give the clouds.
-        const auto voxels = cloud_noise::bake(shippingRecipe());
+        const auto levels = cloud_noise::mips(cloud_noise::bake(shippingRecipe()), NoiseSize);
         D3D11_TEXTURE3D_DESC noise{};
         noise.Width = noise.Height = noise.Depth = NoiseSize;
-        noise.MipLevels = 1;
+        noise.MipLevels = static_cast<UINT>(levels.size());
         noise.Format = DXGI_FORMAT_R8_UNORM;
         noise.Usage = D3D11_USAGE_IMMUTABLE;
         noise.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-        const D3D11_SUBRESOURCE_DATA data{voxels.data(), NoiseSize, NoiseSize * NoiseSize};
-        check(device->CreateTexture3D(&noise, &data, noiseTexture.GetAddressOf()), "The clouds' 3D noise");
+        std::vector<D3D11_SUBRESOURCE_DATA> data;
+        for (std::size_t level = 0; level < levels.size(); ++level)
+        {
+            const UINT side = static_cast<UINT>(NoiseSize >> level);
+            data.push_back({levels[level].data(), side, side * side});
+        }
+        check(device->CreateTexture3D(&noise, data.data(), noiseTexture.GetAddressOf()), "The clouds' 3D noise");
         check(device->CreateShaderResourceView(noiseTexture.Get(), nullptr, noiseView.GetAddressOf()), "The clouds' 3D noise view");
+        D3D11_SAMPLER_DESC sampler{};
+        sampler.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+        sampler.ComparisonFunc = D3D11_COMPARISON_NEVER;
+        sampler.MaxLOD = D3D11_FLOAT32_MAX;
+        check(device->CreateSamplerState(&sampler, noiseSampler.GetAddressOf()), "The clouds' noise sampler");
 #if PHANTOM_FX_DEV_TOOLS
         if (!hot) hot = std::make_unique<HotShader>(PHANTOM_FX_CLOUDS_HLSL, "ps_5_0");
         if (!hotShadow) hotShadow = std::make_unique<HotShader>(PHANTOM_FX_CLOUD_SHADOW_HLSL, "ps_5_0");
@@ -254,6 +343,134 @@ void drawOverScene(ID3D11DeviceContext* context)
     context->RSSetState(gameRaster.Get());
 }
 
+// The half-size targets, made again when the render size changes. Call with resourceMutex held.
+bool ensureLowTargets(UINT width, UINT height)
+{
+    const UINT wantedWidth = (width + LowScale - 1) / LowScale, wantedHeight = (height + LowScale - 1) / LowScale;
+    if (lowColor && wantedWidth == lowWidth && wantedHeight == lowHeight) return true;
+
+    lowColor.Reset();
+    lowDistance.Reset();
+    lowColorTarget.Reset();
+    lowDistanceTarget.Reset();
+    lowColorView.Reset();
+    lowDistanceView.Reset();
+    for (UINT i = 0; i < 2; ++i)
+    {
+        history[i].Reset();
+        historyTarget[i].Reset();
+        historyView[i].Reset();
+    }
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = wantedWidth;
+    desc.Height = wantedHeight;
+    desc.MipLevels = desc.ArraySize = 1;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    if (FAILED(device->CreateTexture2D(&desc, nullptr, lowColor.GetAddressOf()))) return false;
+    for (UINT i = 0; i < 2; ++i)
+        if (FAILED(device->CreateTexture2D(&desc, nullptr, history[i].GetAddressOf()))
+            || FAILED(device->CreateRenderTargetView(history[i].Get(), nullptr, historyTarget[i].GetAddressOf()))
+            || FAILED(device->CreateShaderResourceView(history[i].Get(), nullptr, historyView[i].GetAddressOf())))
+        {
+            lowColor.Reset();
+            return false;
+        }
+    desc.Format = DXGI_FORMAT_R32_FLOAT;
+    if (FAILED(device->CreateTexture2D(&desc, nullptr, lowDistance.GetAddressOf()))) return false;
+    if (FAILED(device->CreateRenderTargetView(lowColor.Get(), nullptr, lowColorTarget.GetAddressOf()))
+        || FAILED(device->CreateRenderTargetView(lowDistance.Get(), nullptr, lowDistanceTarget.GetAddressOf()))
+        || FAILED(device->CreateShaderResourceView(lowColor.Get(), nullptr, lowColorView.GetAddressOf()))
+        || FAILED(device->CreateShaderResourceView(lowDistance.Get(), nullptr, lowDistanceView.GetAddressOf())))
+    {
+        lowColor.Reset();
+        return false;
+    }
+
+    lowWidth = wantedWidth;
+    lowHeight = wantedHeight;
+    log("Clouds: marched at " + std::to_string(lowWidth) + " x " + std::to_string(lowHeight) + ".");
+    return true;
+}
+
+// The clouds' march into the half-size targets, then the composite over the game's target with its blend. False when the
+// targets could not be made: the march's pixels are half-size blocks, so it cannot simply run at full size.
+bool drawAtHalfSize(ID3D11DeviceContext* context)
+{
+    ComPtr<ID3D11RenderTargetView> gameTarget;
+    ComPtr<ID3D11DepthStencilView> gameDepthView;
+    context->OMGetRenderTargets(1, gameTarget.GetAddressOf(), gameDepthView.GetAddressOf());
+    if (!gameTarget || !compositePixel || !resolvePixel || !viewHistoryView) return false;
+    ComPtr<ID3D11Resource> targetResource;
+    gameTarget->GetResource(targetResource.GetAddressOf());
+    ComPtr<ID3D11Texture2D> targetTexture;
+    if (FAILED(targetResource.As(&targetTexture))) return false;
+    D3D11_TEXTURE2D_DESC targetDesc{};
+    targetTexture->GetDesc(&targetDesc);
+    {
+        std::lock_guard lock(resourceMutex);
+        if (!ensureLowTargets(targetDesc.Width, targetDesc.Height)) return false;
+    }
+
+    UINT viewports = 1;
+    D3D11_VIEWPORT gameViewport{};
+    context->RSGetViewports(&viewports, &gameViewport);
+    ComPtr<ID3D11BlendState> gameBlend;
+    FLOAT blendFactor[4]{};
+    UINT sampleMask{};
+    context->OMGetBlendState(gameBlend.GetAddressOf(), blendFactor, &sampleMask);
+
+    ID3D11RenderTargetView* const lowTargets[]{lowColorTarget.Get(), lowDistanceTarget.Get()};
+    context->OMSetRenderTargets(2, lowTargets, nullptr);
+    const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(lowWidth), static_cast<float>(lowHeight), 0, 1};
+    context->RSSetViewports(1, &viewport);
+    context->OMSetBlendState(opaqueBlend.Get(), nullptr, 0xffffffff);
+    context->PSSetShader(pixel.Get(), nullptr, 0);
+    drawOverScene(context);
+
+    // The history: this frame's march blended into the last, at the same size.
+    ID3D11ShaderResourceView* gameViews[4]{};
+    context->PSGetShaderResources(LowColorSlot, 4, gameViews);
+    const UINT next = historyIndex ^ 1;
+    auto* resolveTarget = historyTarget[next].Get();
+    context->OMSetRenderTargets(1, &resolveTarget, nullptr);
+    ID3D11ShaderResourceView* const resolveViews[]{lowColorView.Get(), nullptr, historyView[historyIndex].Get(), viewHistoryView.Get()};
+    context->PSSetShaderResources(LowColorSlot, 4, resolveViews);
+    context->PSSetShader(resolvePixel.Get(), nullptr, 0);
+    drawOverScene(context);
+
+    ID3D11RenderTargetView* restoreTarget = gameTarget.Get();
+    context->OMSetRenderTargets(1, &restoreTarget, gameDepthView.Get());
+    context->RSSetViewports(1, &gameViewport);
+    context->OMSetBlendState(gameBlend.Get(), blendFactor, sampleMask);
+    ID3D11ShaderResourceView* const lowViews[]{historyView[next].Get(), lowDistanceView.Get(), nullptr, nullptr};
+    context->PSSetShaderResources(LowColorSlot, 4, lowViews);
+    context->PSSetShader(compositePixel.Get(), nullptr, 0);
+    drawOverScene(context);
+    context->PSSetShaderResources(LowColorSlot, 4, gameViews);
+    historyIndex = next;
+
+    // This frame's view, for the next frame's history.
+    if (viewCopyShader && viewHistoryAccess)
+    {
+        ComPtr<ID3D11Buffer> scene;
+        context->PSGetConstantBuffers(2, 1, scene.GetAddressOf());
+        SavedComputeState saved(context, {.buffers = 3, .accesses = 1});
+        ID3D11Buffer* const buffers[3]{nullptr, nullptr, scene.Get()};
+        context->CSSetConstantBuffers(0, 3, buffers);
+        auto* access = viewHistoryAccess.Get();
+        context->CSSetUnorderedAccessViews(0, 1, &access, nullptr);
+        context->CSSetShader(viewCopyShader.Get(), nullptr, 0);
+        context->Dispatch(1, 1, 1);
+    }
+    for (auto* view : gameViews)
+        if (view) view->Release();
+    context->PSSetShader(pixel.Get(), nullptr, 0);
+    return true;
+}
+
 
 // The shadow map, drawn with the game's own cloud constants (still bound for its cloud draw): one triangle over a square
 // target. The game's render target, viewport, blend and the rest are put back after.
@@ -296,6 +513,15 @@ void renderShadowMap(ID3D11DeviceContext* context)
 }
 }
 
+Health health()
+{
+    if (!isOn.load(std::memory_order_relaxed)) return {};
+    if (hasFailed) return Health::unavailable("The clouds are unavailable (see PhantomFX.log).");
+    if (!drawn.load(std::memory_order_relaxed)) return Health::waiting("The clouds show where the game draws its sky.");
+
+    return {};
+}
+
 ID3D11Texture2D* shadowTexture() noexcept
 {
     return isOn.load(std::memory_order_relaxed) && shadowDrawn.load(std::memory_order_relaxed) ? shadowMap.Get() : nullptr;
@@ -311,7 +537,7 @@ void attach(ID3D11Device* gameDevice) noexcept
 void configure(const Configuration& configuration) noexcept
 {
     const auto& settings = configuration.settings.clouds;
-    const bool on = configuration.areEnhancementsOn && settings.on;
+    const bool on = configuration.effects.runs(Effect::Clouds);
     isOn.store(on, std::memory_order_relaxed);
     const float qualitySteps = settings.quality == CloudQuality::Low ? 64.0f
         : settings.quality == CloudQuality::Medium ? 128.0f
@@ -346,6 +572,26 @@ void detach() noexcept
     opaqueBlend.Reset();
     noiseView.Reset();
     noiseTexture.Reset();
+    noiseSampler.Reset();
+    compositePixel.Reset();
+    resolvePixel.Reset();
+    viewCopyShader.Reset();
+    viewHistory.Reset();
+    viewHistoryAccess.Reset();
+    viewHistoryView.Reset();
+    for (UINT i = 0; i < 2; ++i)
+    {
+        history[i].Reset();
+        historyTarget[i].Reset();
+        historyView[i].Reset();
+    }
+    lowColor.Reset();
+    lowDistance.Reset();
+    lowColorTarget.Reset();
+    lowDistanceTarget.Reset();
+    lowColorView.Reset();
+    lowDistanceView.Reset();
+    lowWidth = lowHeight = 0;
     screenVertex.Reset();
     noDepth.Reset();
     noCulling.Reset();
@@ -355,6 +601,7 @@ void detach() noexcept
 #endif
     device.Reset();
     isOn.store(false, std::memory_order_relaxed);
+    drawn.store(false, std::memory_order_relaxed);
     hasFailed = false;
 }
 
@@ -401,14 +648,18 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
     context->PSGetConstantBuffers(SettingsSlot, 1, gameSettings.GetAddressOf());
     {
         static std::chrono::steady_clock::time_point lastDraw{};
+        static std::uint32_t drawCount = 0;
+        static float weatherCover = -1;
         const auto now = std::chrono::steady_clock::now();
         const float seconds = lastDraw.time_since_epoch().count() && !weather::isGamePaused() ? std::min(std::chrono::duration<float>(now - lastDraw).count(), 0.1f) : 0;
         lastDraw = now;
+        const float coverTarget = CoverOf(weather::state().requested.value_or(weather::Type::Sunny));
+        weatherCover = weatherCover < 0 ? coverTarget : weatherCover + (coverTarget - weatherCover) * std::min(seconds / 30, 1.0f);
         const float travel = seconds * CloudWindScale * wind.load(std::memory_order_relaxed)
             * WindOf(weather::state().requested.value_or(weather::Type::Sunny));
         const ShaderSettings values{steps.load(std::memory_order_relaxed), coverage.load(std::memory_order_relaxed),
             size.load(std::memory_order_relaxed), wind.load(std::memory_order_relaxed), shadow.load(std::memory_order_relaxed),
-            travel * WindDirectionX, travel * WindDirectionZ, fog.load(std::memory_order_relaxed)};
+            travel * WindDirectionX, travel * WindDirectionZ, fog.load(std::memory_order_relaxed), static_cast<float>(drawCount++ % 1024), weatherCover, {}};
         std::lock_guard lock(resourceMutex);
         if (settingsBuffer && !FAILED(write(context, settingsBuffer.Get(), values)))
         {
@@ -440,14 +691,30 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
     context->PSGetShaderResources(CloudNoiseSlot, 1, &gameNoise);
     auto* noise = noiseView.Get();
     context->PSSetShaderResources(CloudNoiseSlot, 1, &noise);
+    ID3D11SamplerState* gameSampler = nullptr;
+    context->PSGetSamplers(NoiseSamplerSlot, 1, &gameSampler);
+    auto* sampler = noiseSampler.Get();
+    context->PSSetSamplers(NoiseSamplerSlot, 1, &sampler);
+    ID3D11ShaderResourceView* gameSky = nullptr;
+    context->PSGetShaderResources(SkyParametersSlot, 1, &gameSky);
+    auto* sky = atmosphere::skyParametersView();
+    context->PSSetShaderResources(SkyParametersSlot, 1, &sky);
 
     // The main view: over the whole scene, reading its depth, so the clouds meet the terrain, the aircraft and the eye.
     // Anything else (a mirror) keeps the dome, drawn as the game does, without the depth.
     if (screenVertex && isMainView(context))
     {
+        performance::Timed timed(context, performance::Pass::CloudShadow);
         renderShadowMap(context);
+        timed.next(performance::Pass::Clouds);
         context->PSSetShader(pixel.Get(), nullptr, 0);
-        drawOverScene(context);
+        if (!drawAtHalfSize(context))
+        {
+            static bool noted{};
+            if (!noted) log("Clouds: the half-size targets could not be made; the clouds are left out.");
+            noted = true;
+        }
+        drawn.store(true, std::memory_order_relaxed);
     }
     else context->DrawIndexedInstanced(call.count, call.instances, call.first, call.vertexOffset, call.firstInstance);
     // The rays see the sky the player sees: capture the dome draw too, with the add-on's pixel shader still bound.
@@ -456,6 +723,10 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
     context->PSSetShaderResources(CloudShadowSlot, 1, &noShadow);
     context->PSSetShaderResources(CloudNoiseSlot, 1, &gameNoise);
     if (gameNoise) gameNoise->Release();
+    context->PSSetSamplers(NoiseSamplerSlot, 1, &gameSampler);
+    if (gameSampler) gameSampler->Release();
+    context->PSSetShaderResources(SkyParametersSlot, 1, &gameSky);
+    if (gameSky) gameSky->Release();
     context->PSSetShaderResources(WindSlot, 1, &gameWind);
     if (gameWind) gameWind->Release();
     context->PSSetShader(gamePixel.Get(), nullptr, 0);

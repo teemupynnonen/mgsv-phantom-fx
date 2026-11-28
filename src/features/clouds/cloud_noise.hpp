@@ -171,4 +171,28 @@ inline std::vector<std::uint8_t> bake(const Recipe& recipe)
         voxels[i] = static_cast<std::uint8_t>(std::clamp((field[i] - median) * spread * recipe.gain + 0.5f, 0.0f, 1.0f) * 255);
     return voxels;
 }
+
+// The cube's mip chain, each level the mean of eight voxels of the one above, wrapping like the sampler. A far sample reads the level
+// its pixel and its step cover: the full-detail cube there gives each pixel a different speck of it, which is grain.
+inline std::vector<std::vector<std::uint8_t>> mips(const std::vector<std::uint8_t>& top, int size)
+{
+    std::vector<std::vector<std::uint8_t>> levels{top};
+    for (int from = size; from > 1; from /= 2)
+    {
+        const std::vector<std::uint8_t>& above = levels.back();
+        const int to = from / 2;
+        std::vector<std::uint8_t> level(static_cast<std::size_t>(to) * to * to);
+        for (int z = 0; z < to; ++z)
+            for (int y = 0; y < to; ++y)
+                for (int x = 0; x < to; ++x)
+                {
+                    int sum = 0;
+                    for (int k = 0; k < 8; ++k)
+                        sum += above[(static_cast<std::size_t>(2 * z + (k >> 2)) * from + 2 * y + ((k >> 1) & 1)) * from + 2 * x + (k & 1)];
+                    level[(static_cast<std::size_t>(z) * to + y) * to + x] = static_cast<std::uint8_t>((sum + 4) / 8);
+                }
+        levels.push_back(std::move(level));
+    }
+    return levels;
+}
 } // namespace phantom_fx::cloud_noise

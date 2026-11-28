@@ -45,4 +45,8 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
 // Each present. The game records a whole frame between presents. While the physical look runs, the
 // diagnostic log gets the sky's parameters every ten seconds.
 void present() noexcept;
+
+// The physical sky's parameters (shaders/atmosphere.hlsli, SkyParameters) for the clouds to be lit by the same sun and sky, or null
+// while the physical look is off. On the render thread, after this frame's fog pass.
+ID3D11ShaderResourceView* skyParametersView() noexcept;
 }

@@ -29,23 +29,28 @@ cbuffer cCloudSettings : register(b7)
 {
     float g_cloudSteps, g_cloudCoverage, g_cloudSize, g_cloudWind, g_cloudShadow;
     float g_cloudOffsetX, g_cloudOffsetZ, g_cloudFog; // g_cloudFog: 1 the game's fog over the clouds, 0 none
+    float g_cloudFrame; // counts the draws (clouds.cpp): the march's dither turns with it
+    float g_cloudWeather; // the weather's cloud cover (clouds.cpp, CoverOf), steady through the night
 };
 
-SamplerState LinearWrap : register(s10);
-// The add-on's 64-cube of value-noise fbm (clouds.cpp), bound over the game's texture at t14 for the draw.
+// The add-on's own trilinear, wrapping sampler over every mip (clouds.cpp), bound for the draw.
+SamplerState NoiseSampler : register(s12);
+// The add-on's 64-cube of gradient-noise fbm and its mips (clouds.cpp), bound over the game's texture at t14 for the draw.
 Texture3D<float> CloudNoise : register(t14);
 
-float Noise3D(float3 p)
+// lod: log2 of how many of the cube's voxels one sample stands for. A far sample reads the mean of what its pixel and its step
+// cover, not one speck of it: with the full-detail cube there, neighbouring pixels caught different specks and the deck grained.
+float Noise3D(float3 p, float lod)
 {
-    return CloudNoise.SampleLevel(LinearWrap, p, 0).x;
+    return CloudNoise.SampleLevel(NoiseSampler, p, max(lod, 0)).x;
 }
 
 // The cube, turned about the vertical and scaled. The cube repeats every unit, and seen across a 100 km deck that repeat lines the
 // clouds up in rows; two lookups whose lattices are turned and scaled apart never repeat together.
-float Turned(float3 p, float angle, float scale, float offset)
+float Turned(float3 p, float angle, float scale, float offset, float lod)
 {
     float c = cos(angle), s = sin(angle);
-    return Noise3D(float3(c * p.x - s * p.z, p.y, s * p.x + c * p.z) * scale + offset);
+    return Noise3D(float3(c * p.x - s * p.z, p.y, s * p.x + c * p.z) * scale + offset, lod + log2(scale));
 }
 
 // How much faster than the true ground speed the clouds travel; 1 is the real wind.
@@ -69,7 +74,8 @@ float3 CloudWind() { float2 travelled = CloudWindState[0].xy; return float3(trav
 // The weather's coverage, steepened: fair weather (about 0.6) gives scattered clouds, an overcast sky (1) the full bank.
 float CloudBaseCover(float domeAlpha)
 {
-    float weather = pow(saturate(domeAlpha * m_materials[1].w), 1.5);
+    // The weather's, not the game's cloud material's: that fades to 0 at dusk and emptied the sky with it.
+    float weather = pow(saturate(domeAlpha * g_cloudWeather), 1.5);
     // Below 100% the menu thins the weather's clouds; above, it adds cloud towards an overcast, so a clear day can still have a
     // full sky (a multiplier on a clear day's small coverage could not).
     float more = saturate(g_cloudCoverage - 1);
@@ -79,7 +85,9 @@ float CloudBaseCover(float domeAlpha)
 // The density at one point of the world. Everything (the weather's coverage, the column's top, the shape) is looked
 // up HERE, at this point, so the outline is a 3D shape and not a picture on the layer's base plane, and the march
 // towards the sun sees where a neighbouring cloud begins and ends.
-float CloudDensity(float3 where, float2 windXZ, float3 wind, float baseCover, float viewDistance)
+// footprint: how many metres one sample stands for, across its pixel and along its step; 0 reads full detail.
+// coarse: the march towards the sun, which sees the cloud's bulk and not its rim; the erosion's two lookups are left at their mean.
+float CloudDensity(float3 where, float2 windXZ, float3 wind, float baseCover, float footprint, bool coarse = false)
 {
     float height = saturate((where.y - LayerBase) / (LayerTop - LayerBase));
     // Larger clouds from the same volume: a smaller frequency, so a cell spans more of the sky. Anchored on the world, so a cloud
@@ -87,7 +95,7 @@ float CloudDensity(float3 where, float2 windXZ, float3 wind, float baseCover, fl
     float frequency = 1.0 / clamp(g_cloudSize, 0.25, 4.0);
     float3 g = float3(where.x * 0.00005 * frequency + windXZ.x, 0.5, where.z * 0.00005 * frequency + windXZ.y);
     // Two lookups summed have a narrower spread than one: 0.7 (about 1/sqrt 2) gives it back, so the thresholds below still hold.
-    float group = 0.5 + (Noise3D(g) + Turned(float3(g.x, 0.31, g.z), 1.21, 0.73, 0.17) - 1) * 0.7;
+    float group = 0.5 + (Noise3D(g, 0) + Turned(float3(g.x, 0.31, g.z), 1.21, 0.73, 0.17, 0) - 1) * 0.7;
     // The region lifts the cloud or sinks it, never empties it: the coverage itself is the share of the sky that has cloud.
     float cover = baseCover;
     if (cover <= 0) return 0;
@@ -95,11 +103,14 @@ float CloudDensity(float3 where, float2 windXZ, float3 wind, float baseCover, fl
     // Larger cells than before: one cloud is kilometres across, as a cumulus is.
     float3 p = where * (0.00022 * frequency) + wind;
     p.y *= 1.6;
-    // The march's steps lengthen with the distance and the noise's detail does not, so far out each pixel would catch a different bit of
-    // it and the sky grained. The finer octaves fade to their mean as the view distance passes what a step can resolve.
-    float fineFade = 1 - smoothstep(50000, 150000, viewDistance), detailFade = 1 - smoothstep(25000, 120000, viewDistance);
-    float broad = 0.5 + (Noise3D(p) + Turned(p, 0.83, 0.87, 0.29) - 1) * 0.7;
-    float base = broad * 0.65 + lerp(0.5, Turned(p, 2.07, 2.3, 0.37), fineFade) * 0.35;
+    // The mip the footprint covers at the cube's own scale; each finer lookup adds its scale's log2 (Turned).
+    float lod = log2(max(footprint * 64 * 0.00022 * frequency, 1e-6));
+    float broad = 0.5 + (Noise3D(p, lod) + Turned(p, 0.83, 0.87, 0.29, lod) - 1) * 0.7;
+    // Clear air, known before the finer lookup: the shape is at most broad * 0.65 + 0.35, and the mark it must pass is never below the
+    // one at full cover. Most samples of a fair sky stop here.
+    float lowestMark = lerp(0.72, 0.28, cover) + (0.5 - group) * 0.6 + (1 - saturate(cover * 4)) * 0.3;
+    if (broad * 0.65 + 0.35 <= lowestMark) return 0;
+    float base = broad * 0.65 + Turned(p, 2.07, 2.3, 0.37, lod) * 0.35;
     // One base for the whole layer reads as a shelf across the sky and one top as a lid: both take their height from the column's own
     // shape and its group, over a third of the layer or more, so a far deck ends at many heights instead of two planes.
     float baseShift = saturate(0.02 + 0.35 * (1 - group) + 0.45 * (base - 0.5));
@@ -108,7 +119,10 @@ float CloudDensity(float3 where, float2 windXZ, float3 wind, float baseCover, fl
     float columnTop = max(saturate(0.22 + 0.5 * base + 0.15 * (group - 0.5)), baseShift + 0.15);
     // A cloud is tallest at its core and low at its rim, like a cauliflower. A flat slab seen from below squashes into rows parallel to
     // the horizon; towers with depth break them up.
-    float core = saturate((base - (lerp(0.72, 0.28, cover) + (0.5 - group) * 0.6)) / 0.3);
+    // The group's clumps lift the mark by up to 0.18 on their own: below a quarter's cover the mark rises out of reach instead, so the
+    // slider still clears the sky at its low end.
+    float sparse = (1 - saturate(cover * 4)) * 0.3;
+    float core = saturate((base - (lerp(0.72, 0.28, cover) + (0.5 - group) * 0.6 + sparse)) / 0.3);
     float lowTop = baseShift + 0.15;
     columnTop = lerp(lowTop, max(columnTop, lowTop), sqrt(core)) * lerp(1.0, 1.35, core);
     columnTop = min(columnTop, 1);
@@ -118,13 +132,16 @@ float CloudDensity(float3 where, float2 windXZ, float3 wind, float baseCover, fl
     // 100% is not a case apart from the rest, and the group lifts or sinks the mark. A cumulus narrows as it rises, so the fill
     // tightens with height and the top is a dome over a broad base.
     float fill = cover * lerp(1.0, 0.55, saturate(height / max(columnTop, 0.05)));
-    float threshold = lerp(0.72, 0.28, fill) + (0.5 - group) * 0.6;
+    float threshold = lerp(0.72, 0.28, fill) + (0.5 - group) * 0.6 + sparse;
     float mass = saturate((base - threshold) / 0.12) * profile;
     if (mass <= 0) return 0;
-    // Erosion only at the rim: ragged wisps low down, rounded billows higher up.
-    float detail = lerp(0.5, Turned(p + wind * 0.33, 1.39, 6.0, 0.11), detailFade);
+    // Erosion only at the rim: ragged wisps low down, rounded billows higher up. Two octaves, the second three times finer, so a
+    // near cloud's edge has small curls on its billows and not one smooth brush-stroke outline.
+    if (coarse) return saturate((mass - 0.5 * 0.45) / (1 - 0.5 * 0.45));
+    float3 churn = p + wind * 0.33;
+    float detail = Turned(churn, 1.39, 6.0, 0.11, lod) * 0.65 + Turned(churn, 2.71, 17.0, 0.53, lod) * 0.35;
     float erode = lerp(detail, 1 - detail, saturate(height * 3));
-    return saturate((mass - erode * 0.35) / (1 - erode * 0.35));
+    return saturate((mass - erode * 0.45) / (1 - erode * 0.45));
 }
 // The shadow map's centre: the eye, snapped to a texel so the map does not shimmer as the camera moves.
 float2 CloudShadowCentre(float3 eye)

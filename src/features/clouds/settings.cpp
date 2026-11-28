@@ -25,7 +25,8 @@ void describe(Clouds& clouds, SettingVisitor& visit)
                    "blurring into a grey sheet. It keeps the game's weather, its coverage and its wind, and lights the clouds with the "
                    "sun's phase and a powder edge. Off leaves the game's clouds.",
             .summary = "The cloud deck with shape and lit edges.",
-            .keywords = "clouds sky weather overcast volumetric"});
+            .keywords = "clouds sky weather overcast volumetric",
+            .effect = Effect::Clouds});
     visit.choice(clouds.quality,
         {.iniKey = "clouds_quality",
             .label = "Quality",

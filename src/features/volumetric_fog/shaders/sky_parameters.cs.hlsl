@@ -81,4 +81,8 @@ void main()
     Output[uint2(FogShapeTexel, 0)] = float4(fogScaleHeight, SchlickToG(FogMedium[2].w), m_eyepos.y, 0);
     Output[uint2(SourceTexel, 0)] = float4(groundSunlight, SkySun ? skySunlight : 0, Luminance(transmittance), gameExtinction);
     Output[uint2(OvercastTexel, 0)] = float4(deckLight * overcast, overcast);
+    // The clouds' sun: the same sunlight, through the air down to the deck's middle (2 km), so a cloud reddens with the sky at dusk.
+    // a is 1: the clouds tell this texture from an empty slot by it.
+    float3 deckTransmittance = TransmittanceToTop(BottomRadius + 2, towardsSun.y);
+    Output[uint2(CloudSunTexel, 0)] = float4(sunlight * (1 - overcast) * deckTransmittance, 1);
 }

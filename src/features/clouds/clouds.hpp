@@ -1,5 +1,6 @@
 #pragma once
 
+#include "effects.hpp"
 #include "ui_redirect.hpp"
 
 #include <d3d11.h>
@@ -26,6 +27,8 @@ void detach() noexcept;
 // a point's ray to the sun crosses the height LayerBase (cloud_density.hlsli).
 constexpr float ShadowExtent = 30000.0f, ShadowSize = 1024.0f, LayerBase = 900.0f;
 ID3D11Texture2D* shadowTexture() noexcept;
+// For the budget.
+Health health();
 
 // The cloud draw: true when it was drawn here, with the game's own pixel shader put back.
 bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_shaders::DrawnShader& shader) noexcept;
