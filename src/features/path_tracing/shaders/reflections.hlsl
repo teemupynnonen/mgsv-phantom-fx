@@ -205,7 +205,10 @@ float3 ReflectedLight(float3 origin, float3 normal, float tolerance, float3 dire
         if (ray == 1 && isRough && !(hitFlags & GI_GEOMETRY_EMISSIVE) && CachedLight(origin + hit.distance * direction, direction, hit.distance, cached)) return cached;
 
         HashGridCache_Visibility visibility = VisibilityOf(hit, direction);
-        HitMaterial material = HitMaterialOf(visibility, cone.x + travelled * cone.y, false);
+        // Where the cache has nothing for a rough surface's hit, it is shaded as the diffuse rays shade theirs: under the blur its
+        // specular light and normal map do not show, and matte it reads neither, may leave out a dim sun's ray (SunRayChance)
+        // and ends at its diffuse bounce, with no specular ray of its own.
+        HitMaterial material = HitMaterialOf(visibility, cone.x + travelled * cone.y, ray == 1 && isRough);
         light += throughput * material.emission;
         if (material.isSelfLit) return light;
 
