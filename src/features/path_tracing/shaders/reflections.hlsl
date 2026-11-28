@@ -163,7 +163,10 @@ SceneHit TraceReflectionRay(inout float3 origin, inout float3 normal, inout floa
     for (uint pane = 0; pane <= MostPanes; ++pane)
     {
         uint copies;
-        hit = TraceFromSurface(origin, normal, tolerance, direction, end - travelled, GI_MASK_SCENE, true, LightCone(origin), RayAlongReflection, copies);
+        // The alpha test reads cut-outs at the ray's own cone, as wide as it has spread by here and spreading as the roughness
+        // makes it: at a pixel's spread alone, a rough surface's ray read foliage at sharper mips than its hit's shading does.
+        float2 rayCone = float2(cone.x + travelled * cone.y, cone.y);
+        hit = TraceFromSurface(origin, normal, tolerance, direction, end - travelled, GI_MASK_SCENE, true, rayCone, RayAlongReflection, copies);
         if (!hit.hit || !(g_Geometries[FirstGeometry(g_Instances[hit.instance]) + hit.geometry].flags & GI_GEOMETRY_GLASS)) return hit;
 
         travelled += hit.distance;
