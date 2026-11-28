@@ -36,7 +36,8 @@ static const int FogShapeTexel = 4;  // x its height scale, m; y its phase's g; 
 static const int SourceTexel = 5;    // For the log: x the game's sunlight on the ground, y its sky's, z the air's transmittance to the sun
 static const int OvercastTexel = 6;  // rgb the light of the game's cloud deck over the sky, a how much of the sky it covers
 static const int CloudSunTexel = 7;  // rgb the sunlight at the cloud deck, through the air to it (clouds.hlsl)
-static const uint SkyParameterTexels = 8;
+static const int GroundSunTexel = 8;  // xyz towards the sun the ground is lit by (never below 26 degrees up), for the clouds' shadow (cloud_shadow.hlsl)
+static const uint SkyParameterTexels = 9;
 
 float3 ToAtmosphere(float3 world)
 {

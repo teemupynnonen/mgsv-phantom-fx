@@ -95,6 +95,9 @@
 
 ### Fixed
 
+- **Cloud shadows lie under their clouds again.** The shadows on the ground were worked out for the sky's sun, which sets
+  below the horizon while the game still lights the ground with a sun 26 degrees up, so near dusk and dawn there were far
+  more shadows than clouds. They now follow the sun the ground is lit by.
 - **Clouds move faster when time does.** Their drift followed the real clock, so sleeping or speeding up the day left
   them where they were. They now follow the game's clock: the same pace as before at normal speed, faster when time
   runs fast, and still when it stops.
