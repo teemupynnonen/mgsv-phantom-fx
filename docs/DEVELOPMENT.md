@@ -4080,7 +4080,7 @@ planet's centre is the origin, in km; the game's world has y up in metres.
   its sky leaves most of it out. **Haze** (`atmosphere_haze`, 0 to 1, the `Fog` constants' `Haze`)
   raises that share towards all of it in any weather and deepens the layer from 300 m to 1 km, as
   deep as dust: at 1 the distance fades about as the game's does (on a thin-fog day in Afghanistan
-  6.3e-4 / m, about 6 km of view against the game's 8; at 0 about 120 km), and the sky pales with it. The height fog
+  6.3e-4 / m, about 6 km of view against the game's 8; at 0 about 120 km, at the default 0.1 about 30 km), and the sky pales with it. The height fog
   also dims the sunlight that reaches the air and itself: `e^(-density x scale height / sin(elevation))`,
   the sine at least 0.01 (a 1 km layer is about 100 km long at the horizon); without it, 100 % haze at
   sunset glowed at the display's peak towards the sun (frame 8938: 700 nits). Both shadowed and integrated over the slice as in the game's look; the slices are added
@@ -4228,7 +4228,7 @@ game's clouds untouched.
   target's own, single-sampled. A mirror's smaller camera keeps the game's dome draw, without depth, so a
   reflection does not show the main view's deck twice.
 - **Settings.** World > Clouds: on/off, Quality (Low 64, Medium 128, High 192, Ultra 256 steps; High by
-  default), Coverage 20 to 200% (110), Size 50 to 200% (150), Ground shadow 0 to 150% (100), Wind 0 to 300%
+  default), Coverage 20 to 200% (40), Size 50 to 200% (150), Ground shadow 0 to 150% (100), Wind 0 to 300%
   (100) and Fog on clouds (on). All are live; the INI keys are `clouds_quality`, `clouds_coverage`,
   `clouds_size`, `clouds_shadow`, `clouds_wind` and `clouds_fog`. A dev build reloads `clouds.hlsl` and
   `cloud_shadow.hlsl` on save (`hot_shader`); a release build precompiles them, and the composite and the

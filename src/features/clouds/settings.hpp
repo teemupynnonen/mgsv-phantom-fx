@@ -14,7 +14,8 @@ struct Clouds
 {
     bool on{};
     CloudQuality quality{CloudQuality::High};
-    float coverage{1.1f}; // The weather's own coverage, a share of it below 100% and towards overcast above, in the same weather
+    // The game's fair-weather sky is mostly clear: 40% leaves a few clouds in clumps, where 100% was a busy sky.
+    float coverage{0.4f}; // The weather's own coverage, a share of it below 100% and towards overcast above, in the same weather
     float size{1.5f}; // Larger is wider clouds, with the same sky filled by bigger shapes
     float shadow{1};   // How dark the clouds' shadow on the ground is; 0 leaves the ground alone
     float wind{1};     // How fast they drift, 1 being the game's real wind

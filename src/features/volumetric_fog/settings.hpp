@@ -16,7 +16,8 @@ struct VolumetricFog
 struct PhysicalSky
 {
     bool on{};
-    float haze{};
+    // A tenth: enough dust that the far hills and the far clouds fade into the sky, less than a weather's own fog.
+    float haze{0.1f};
 
     bool operator==(const PhysicalSky&) const = default;
 };
