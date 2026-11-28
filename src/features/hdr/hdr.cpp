@@ -528,6 +528,8 @@ void swapChainReady(IDXGISwapChain* chain) noexcept
 {
     std::lock_guard lock(outputMutex);
     appliedOutput.reset();
+    // A swap chain starts in sRGB (DXGI's default); applyOutput gives it the wanted one when it can.
+    shown = Output::Sdr;
     applyOutput(chain);
 }
 
