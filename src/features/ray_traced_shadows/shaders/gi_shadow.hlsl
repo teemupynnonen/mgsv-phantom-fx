@@ -58,8 +58,9 @@ void TraceSunShadows(uint2 gtid : SV_GroupThreadID, uint2 gid : SV_GroupID, uint
         // The sun pass gives no sun at all to a pixel whose G-buffer normal faces away from the sun unless it is
         // translucent: its ray would change nothing there, so it takes the shadow a blocked ray gives, for the denoiser
         // too. Only pixels the pack knows to be opaque (alpha 1), and with a margin for the normals' 10 bits and the sun
-        // pass's direction, which is the last frame's.
-        bool facesAway = packedNormal.w > 5.0f / 6.0f && dot(normal, g_Frame.sunDirection.xyz) < -0.05f;
+        // pass's direction, which is the last frame's. Only while path tracing: the sun passes without it that have the
+        // sky reflection (SKY_REFLECTION 1) light it by this same shadow, so a skipped pixel would lose its reflection.
+        bool facesAway = g_Frame.reconstruction.y != 0u && packedNormal.w > 5.0f / 6.0f && dot(normal, g_Frame.sunDirection.xyz) < -0.05f;
         if (depth > 0.0f && facesAway)
         {
             lit = false;
