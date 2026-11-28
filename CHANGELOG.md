@@ -95,6 +95,9 @@
 
 ### Fixed
 
+- **Clouds move faster when time does.** Their drift followed the real clock, so sleeping or speeding up the day left
+  them where they were. They now follow the game's clock: the same pace as before at normal speed, faster when time
+  runs fast, and still when it stops.
 - **Physical sky is no longer blown out to white.** It was lit with the game's own sky sun, which is several times
   the sunlight on the ground and grows as the sun sets, so at dusk the whole sky clipped and the clouds lost their
   shape. It now takes the ground's sunlight back through the air, so the sky, the clouds and the sea keep their colour
