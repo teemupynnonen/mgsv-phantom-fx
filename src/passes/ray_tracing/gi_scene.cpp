@@ -102,7 +102,7 @@ Scene::Scene(ID3D12Device5* device, D3D12_CPU_DESCRIPTOR_HANDLE textures, UINT d
 
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
     inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
-    inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
+    inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
     inputs.NumDescs = MaxInstances;
     inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuild{};
@@ -407,7 +407,8 @@ void Scene::recordTopLevel(ID3D12GraphicsCommandList4& list)
 
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC top{};
     top.Inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
-    top.Inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
+    // Every ray of every pass starts at this root, so its trace speed outweighs its build time.
+    top.Inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
     top.Inputs.NumDescs = instanceCount();
     top.Inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
     top.Inputs.InstanceDescs = instanceDescs->GetGPUVirtualAddress();

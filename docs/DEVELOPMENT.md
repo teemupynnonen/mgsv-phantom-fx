@@ -2957,7 +2957,7 @@ it is the game's own scene throughout (see "Draw capture (removed)" below).
   compacted size with the build, and are copied into that room when the frame slot comes round
   (`COPY_MODE_COMPACT`); the old room returns once the GPU is past that frame. Offline they compact to
   34 to 40% of their size. The terrain rings and the characters are built in place or refitted
-  (`ALLOW_UPDATE`).
+  (`ALLOW_UPDATE`). The top level is built again each frame `PREFER_FAST_TRACE`: every ray starts there.
 - **Geometry table** (`GIGeometry`, `t16`). A row per geometry, a structure's rows contiguous and in its
   order: the vertices' and indices' offsets, `GI_GEOMETRY_CUT_OUT`, `GI_GEOMETRY_UV`, its base texture
   (1 + its index in `g_SceneTextures`) and, for cut-out geometry with one (`GI_GEOMETRY_ALPHA_TEXTURE`),
