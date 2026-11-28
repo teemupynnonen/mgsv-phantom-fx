@@ -72,6 +72,10 @@
 
 ### Fixed
 
+- **Physical sky is no longer blown out to white.** It was lit with the game's own sky sun, which is several times
+  the sunlight on the ground and grows as the sun sets, so at dusk the whole sky clipped and the clouds lost their
+  shape. It now takes the ground's sunlight back through the air, so the sky, the clouds and the sea keep their colour
+  from noon to sunset.
 - **The light cache no longer makes fireflies in dark rooms.** A ray's distant hit took a cell's light as soon as it
   had one sample, and from a coarser cell area when it had few, which in an unlit interior divided one bright sample by
   a small weight, or averaged in a sunlit wall beyond the room. It now takes only the hit's own cell once a full cell's

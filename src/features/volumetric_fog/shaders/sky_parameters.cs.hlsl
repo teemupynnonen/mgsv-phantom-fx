@@ -39,14 +39,14 @@ void main()
     // light belong together.
     float3 towardsSun = SkySun ? normalize(SkyMaterial[3].xyz) : normalize(ToWorld(m_lightParams[0].xyz));
     float cameraHeight = max(m_eyepos.y * 0.001, 0.001);
-    // The game lights its sky with its own sun, about four times the sunlight it lights the ground
-    // with: the sky's sun above the air, exposed and at most 1000, as the game's sky takes it. Without
-    // a sky draw with the sun, the ground's: it reaches the camera through the air, and the game lights
-    // a surface with its albedo times it, where a physical one takes albedo / pi.
+    // The sun above the air is the ground's sunlight taken back through it: the game lights a surface
+    // with its albedo times that light, where a physical one takes albedo / pi. Not the game's sky sun
+    // (logged for comparison): it is about four times the ground's at noon and grows as the sun sets,
+    // standing in for the air the atmosphere here already has, so it blew the sky out to white.
     float3 transmittance = TransmittanceToTop(BottomRadius + cameraHeight, towardsSun.y);
     float groundSunlight = Luminance(m_lightParams[1].xyz * m_exposure.z);
     float skySunlight = min(SkyMaterial[3].w * m_exposure.z, 1000);
-    float sunlight = SkySun ? skySunlight : Pi * groundSunlight / max(Luminance(transmittance), 0.002);
+    float sunlight = Pi * groundSunlight / max(Luminance(transmittance), 0.002);
 
     // The game's weather draws a grey cloud deck over its sky (its sky draws' "cloudy" share: 0 on a
     // clear day, 1 in rain), and lights the ground under it with almost no sun. The deck takes that
