@@ -253,6 +253,7 @@ void onInitPipeline(device* device, pipeline_layout, uint32_t count, const pipel
             const auto [hdrOriginal, hdrSize] = hdr::originalOf(shader->code, shader->code_size);
             const auto [code, size] = game_dither::originalOf(hdrOriginal, hdrSize);
             game_shaders::pixelShaderCreated(code, size, reinterpret_cast<IUnknown*>(pipeline.handle));
+            hdr::pixelShaderCreated(shader->code, reinterpret_cast<ID3D11PixelShader*>(pipeline.handle));
         }
         else if (subobjects[i].type == pipeline_subobject_type::vertex_shader)
             game_shaders::vertexShaderCreated(shader->code, shader->code_size, reinterpret_cast<IUnknown*>(pipeline.handle));
@@ -366,6 +367,10 @@ void onBindRenderTargets(command_list* list, uint32_t count, const resource_view
 
 void onBindPipeline(command_list* list, pipeline_stage stages, pipeline pipeline)
 {
+    // A sky shader's clamp follows HDR output as it is now: its other variant binds in its place.
+    if ((stages & pipeline_stage::pixel_shader) == pipeline_stage::pixel_shader)
+        if (auto* other = hdr::shaderFor(reinterpret_cast<ID3D11PixelShader*>(pipeline.handle))) native(list)->PSSetShader(other, nullptr, 0);
+
     if ((stages & pipeline_stage::vertex_shader) != pipeline_stage::vertex_shader) return;
 
     const auto kind = game_shaders::vertexShaderOf(reinterpret_cast<IUnknown*>(pipeline.handle));
@@ -398,8 +403,9 @@ void onPushDescriptors(command_list* list, shader_stage stages, pipeline_layout,
 
 void showColorSpace()
 {
-    if (effects && hdr::active())
-        effects->set_color_space(hdr::output() == hdr::Output::Hdr10 ? color_space::hdr10_st2084 : color_space::srgb);
+    // Told in SDR too: ReShade takes an R10G10B10A2 back buffer of unknown colour space for HDR10.
+    if (effects && hdr::tenBitBackBuffer())
+        effects->set_color_space(hdr::active() && hdr::output() == hdr::Output::Hdr10 ? color_space::hdr10_st2084 : color_space::srgb);
 }
 
 void onInitSwapchain(swapchain* chain, bool)
@@ -604,9 +610,12 @@ void onDestroyCommandList(command_list* list)
 }
 
 // With frame generation the game's swap chain is the presenter's stand-in, whose Present follows.
-void onPresent(command_queue* queue, swapchain*, const rect*, const rect*, uint32_t, const rect*)
+void onPresent(command_queue* queue, swapchain* chain, const rect*, const rect*, uint32_t, const rect*)
 {
     if (queue->get_immediate_command_list() != immediateList) return;
+
+    // HDR output turned on or off since the last frame.
+    if (hdr::present(reinterpret_cast<IDXGISwapChain*>(chain->get_native()))) showColorSpace();
 
     const bool generating = presenter::active();
     upscaler::setFrameGeneration(generating);
@@ -692,8 +701,13 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshadeMo
     if constexpr (DevTools) dev::install(directory);
     upscaler::initialize(directory);
     core::initialize(directory, isSupportedGameBuild());
-    // The game makes its swap chain and targets next, so the float scene and HDR are decided now.
-    if (isSupportedGameBuild()) hdr::enable(core::currentSettings().hdr.on ? hdr::Mode::HdrOutput : hdr::Mode::FloatScene);
+    // The game makes its swap chain and targets next, so the float scene is decided now: with HDR on, or
+    // with HDR switchable while the game runs. Otherwise HDR takes a restart (hdr/settings.hpp).
+    if (isSupportedGameBuild())
+    {
+        const auto& hdrSettings = core::currentSettings().hdr;
+        if (hdrSettings.on || hdrSettings.hot) hdr::enable();
+    }
 
     // Frame generation takes over the swap chain the game creates next, so it starts with the game.
     if (const auto mode = core::currentSettings().frameGeneration.mode; isSupportedGameBuild() && mode != upscaler::FrameGenerationMode::Off)

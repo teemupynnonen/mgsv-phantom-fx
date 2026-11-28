@@ -44,7 +44,7 @@ void drawBudget()
     if (fxui::button("Measure the real cost",
             "Times the GPU frame with everything on, then leaves out one effect at a time, the upscaler last: about 4 seconds a step. The differences "
             "include what the timed passes miss, such as the game's SSAO that GTVBAO leaves out. Hold still (photo mode) for steady numbers; your "
-            "settings come back at the end. HDR takes a restart, so it is not measured.",
+            "settings come back at the end. HDR is not measured: it costs what SDR does.",
             !state.measurement.running))
         measure();
     ImGui::SameLine(0, ImGui::GetFontSize() * 1.25f);

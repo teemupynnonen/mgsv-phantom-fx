@@ -52,8 +52,8 @@ constexpr std::uint32_t AndOpcode = 0x01, MinOpcode = 0x33, OpcodeMask = 0x7FF;
 constexpr std::size_t ClampReach = 8;
 constexpr float HalfMax = 65504;
 
-// How the output shader writes the back buffer (shaders/output.ps.hlsl).
-enum class Encoding : std::uint32_t { SrgbView, Srgb, Pq };
+// How the output shader writes the R10G10B10A2 back buffer (shaders/output.ps.hlsl).
+enum class Encoding : std::uint32_t { Srgb, Pq };
 
 struct OutputParameters
 {
@@ -75,10 +75,19 @@ struct Upgraded
 };
 
 // A game shader the add-on made from patched bytecode, and the game's own, which the add-on's other
-// parts identify it by.
+// parts identify it by. A sky shader, whose clamp to 1 stays with HDR output and is lifted in SDR, also
+// has the other variant made, which binds in place of the game's while HDR output is the other way.
 struct Patched
 {
     std::vector<std::uint8_t> code, original;
+    bool lifted{}; // The clamp in `code` is lifted
+    ComPtr<ID3D11PixelShader> other;
+};
+
+// A sky shader as the game made it and its other variant, by the clamp.
+struct SkyVariants
+{
+    ComPtr<ID3D11PixelShader> clampKept, clampLifted;
 };
 
 // The scene copy the depth of field composites over, kept in float: the game's is 8-bit.
@@ -89,8 +98,11 @@ struct DofCopy
     ComPtr<ID3D11ShaderResourceView> view;
 };
 
-std::atomic<Mode> mode{Mode::Off};
-std::atomic<bool> twinsInUse{};
+std::atomic<bool> floatScene{}, outputWanted{}, sceneFailed{}, unsupportedBuild{};
+std::atomic<bool> twinsInUse{}, tenBitChain{};
+// The HDR output the swap chain's colour space was last set for; none after a new swap chain.
+std::mutex outputMutex;
+std::optional<bool> appliedOutput;
 std::atomic<Output> shown{Output::Off};
 std::atomic<float> peakNits{}, paperWhiteNits{203}, displayPeak{};
 // When neither the settings nor the display give a peak.
@@ -105,7 +117,9 @@ thread_local ID3D11Resource* gameDofCopy{};
 std::shared_mutex mutex;
 ComPtr<ID3D11Device> device;
 ComPtr<ID3D11ComputeShader> captureShader, encodeShader, decodeShader;
-ComPtr<ID3D11PixelShader> gradeShader, reduceShader, outputShader;
+// The grading without and with the light the tonemap took added back (HDR output), so HDR output can
+// turn on and off.
+ComPtr<ID3D11PixelShader> gradeShaders[2], reduceShader, outputShader;
 DofCopy dofCopy;
 ComPtr<ID3D11Buffer> outputBuffer, curveBuffer;
 ComPtr<ID3D11ShaderResourceView> curveView;
@@ -117,6 +131,9 @@ std::unordered_map<ID3D11View*, ID3D11Resource*> srgbViews;
 // code; kept for the session.
 std::map<DxbcHash, Patched> patchedShaders;
 std::unordered_map<const void*, const Patched*> patchedByCode;
+// The sky shaders by the object the game made and binds.
+std::unordered_map<ID3D11PixelShader*, SkyVariants> skyShaders;
+std::atomic<bool> hasSkyVariants{};
 
 // Makes the shaders from their precompiled bytecode (compiled from source in a dev build) and the fixed buffers; call with the mutex held.
 void createPipeline()
@@ -130,7 +147,8 @@ void createPipeline()
     captureShader = computeShader(device.Get(), shaders::Capture, "hdr-capture");
     encodeShader = computeShader(device.Get(), shaders::Encode, "hdr-encode");
     decodeShader = computeShader(device.Get(), shaders::Decode, "hdr-decode");
-    gradeShader = pixelShader(device.Get(), active() ? shaders::GradeUpgrade : shaders::Grade, "hdr-grade");
+    gradeShaders[0] = pixelShader(device.Get(), shaders::Grade, "hdr-grade");
+    gradeShaders[1] = pixelShader(device.Get(), shaders::GradeUpgrade, "hdr-grade-upgrade");
     reduceShader = pixelShader(device.Get(), shaders::Reduce, "hdr-reduce");
     outputShader = pixelShader(device.Get(), shaders::Output, "hdr-output");
     outputBuffer = makeConstantBuffer(device.Get(), sizeof(OutputParameters), "Creating the HDR output constants");
@@ -338,25 +356,30 @@ void composeDofOverFloat(ID3D11DeviceContext* context)
 }
 }
 
-void enable(Mode chosen) noexcept
+void enable() noexcept
 {
-    mode = chosen;
-    if (chosen == Mode::HdrOutput) log("HDR output is on: the swap chain and the scene targets are made for it.");
-    else if (chosen == Mode::FloatScene) log("The scene targets are made float, with SDR output.");
+    floatScene = true;
+    log("The scene targets are made float; HDR output follows the settings.");
 }
 
 bool isSceneFloat() noexcept
 {
-    return mode.load(std::memory_order_relaxed) != Mode::Off;
+    return floatScene.load(std::memory_order_relaxed);
 }
 
 bool active() noexcept
 {
-    return mode.load(std::memory_order_relaxed) == Mode::HdrOutput;
+    return isSceneFloat() && outputWanted.load(std::memory_order_relaxed);
 }
 
 Output output() noexcept
 {
+    if (!outputWanted.load(std::memory_order_relaxed)) return Output::Off;
+    // The float scene could not start, or this build of the game is not supported.
+    if (sceneFailed || unsupportedBuild) return Output::Unavailable;
+    // Started without the float scene: HDR needs the restart the menu asks for.
+    if (!isSceneFloat()) return Output::Off;
+
     return shown;
 }
 
@@ -379,26 +402,34 @@ void attach(ID3D11Device* gameDevice) noexcept
     catch (const std::exception& error)
     {
         // The game has made none of its targets yet, so it runs with its own 8-bit scene.
-        if (active()) shown = Output::Unavailable;
         log(std::string(active() ? "HDR output is unavailable: " : "The scene stays 8-bit: ") + error.what());
-        mode = Mode::Off;
+        floatScene = false;
+        sceneFailed = true;
     }
 }
 
 void detach() noexcept
 {
     shown = Output::Off;
+    sceneFailed = false;
     twinsInUse = false;
+    tenBitChain = false;
+    {
+        std::lock_guard outputLock(outputMutex);
+        appliedOutput.reset();
+    }
     std::unique_lock lock(mutex);
     targets.clear();
     srgbViews.clear();
+    hasSkyVariants = false;
+    skyShaders.clear();
     patchedByCode.clear();
     patchedShaders.clear();
     dofCopy = {};
     captureShader.Reset();
     encodeShader.Reset();
     decodeShader.Reset();
-    gradeShader.Reset();
+    for (auto& shader : gradeShaders) shader.Reset();
     reduceShader.Reset();
     outputShader.Reset();
     outputBuffer.Reset();
@@ -410,31 +441,51 @@ void detach() noexcept
 
 void configure(const Configuration& configuration) noexcept
 {
+    // Kept whatever the scene is: the settings come before enable() at start, and HDR output must apply
+    // to the first frame. active() and output() take the scene into account.
+    outputWanted = configuration.settings.hdr.on;
+    unsupportedBuild = !configuration.supportedBuild;
     peakNits = configuration.settings.hdr.peakNits;
     paperWhiteNits = configuration.settings.hdr.paperWhiteNits;
 }
 
 bool upgradeSwapChain(DXGI_FORMAT& format, DXGI_SWAP_EFFECT& effect, UINT& bufferCount) noexcept
 {
-    if (!active()) return false;
+    // In SDR too, so HDR output can turn on later: the swap chain's format and swap effect are set
+    // when it is made, and the game holds views of its back buffer that a resize would need released.
+    if (!isSceneFloat()) return false;
 
     format = BackBufferFormat;
     // HDR needs flip model, which takes at least two buffers.
     if (effect == DXGI_SWAP_EFFECT_DISCARD || effect == DXGI_SWAP_EFFECT_SEQUENTIAL) effect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     bufferCount = std::max(bufferCount, 2u);
+    tenBitChain = true;
+    logOnce("Float scene: the swap chain is R10G10B10A2 with flip model, so HDR output can turn on and off.");
 
     return true;
 }
 
-void swapChainReady(IDXGISwapChain* chain) noexcept
+bool tenBitBackBuffer() noexcept
 {
-    if (!active() || !chain) return;
+    return tenBitChain.load(std::memory_order_relaxed);
+}
+
+namespace
+{
+// Sets the colour space for the HDR output wanted, when it is not what was last set. The display is
+// asked each time, so one whose HDR was turned on in Windows since is followed. Call with outputMutex
+// held; returns true when the colour space was set.
+bool applyOutput(IDXGISwapChain* chain)
+{
+    const bool wanted = active();
+    if (!tenBitBackBuffer() || !chain || appliedOutput == wanted) return false;
 
     ComPtr<IDXGISwapChain3> chain3;
     if (FAILED(chain->QueryInterface(IID_PPV_ARGS(&chain3))))
     {
+        appliedOutput = wanted;
         logOnce("HDR: the swap chain has no colour spaces (IDXGISwapChain3).");
-        return;
+        return false;
     }
 
     // The display shows HDR when Windows has it on for the output that holds the window.
@@ -451,21 +502,44 @@ void swapChainReady(IDXGISwapChain* chain) noexcept
         displayPeak = maxNits > 0 ? maxNits : 0;
     }
 
+    const bool hdr10 = wanted && hdrDisplay;
     UINT support{};
-    const auto space = hdrDisplay ? DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+    const auto space = hdr10 ? DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
     if (FAILED(chain3->CheckColorSpaceSupport(space, &support)) || !(support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT)
         || FAILED(chain3->SetColorSpace1(space)))
     {
-        shown = Output::Sdr;
-        logOnce("HDR: the swap chain cannot present HDR10, so the game shows SDR.");
-        return;
+        // The colour space as it was, which is what shown and the output shader keep; the change is
+        // tried again at the next present.
+        logOnce(hdr10 ? "HDR: the swap chain cannot present HDR10, so the game shows SDR." : "HDR: the swap chain refused the sRGB colour space.");
+        return false;
     }
 
-    const auto now = hdrDisplay ? Output::Hdr10 : Output::Sdr;
-    if (shown.exchange(now) == now) return;
+    appliedOutput = wanted;
+    shown = hdr10 ? Output::Hdr10 : Output::Sdr;
+    if (hdr10) log("HDR: the swap chain presents HDR10; the display reports " + std::to_string(std::lround(maxNits)) + " nits at most.");
+    else if (wanted) log("HDR: Windows HDR is off for this display, so the game shows SDR.");
+    else log("HDR output is off: the swap chain presents sRGB.");
 
-    log(hdrDisplay ? "HDR: the swap chain presents HDR10; the display reports " + std::to_string(std::lround(maxNits)) + " nits at most."
-                   : std::string("HDR: Windows HDR is off for this display, so the game shows SDR."));
+    return true;
+}
+}
+
+void swapChainReady(IDXGISwapChain* chain) noexcept
+{
+    std::lock_guard lock(outputMutex);
+    appliedOutput.reset();
+    // A swap chain starts in sRGB (DXGI's default); applyOutput gives it the wanted one when it can.
+    shown = Output::Sdr;
+    applyOutput(chain);
+}
+
+bool present(IDXGISwapChain* chain) noexcept
+{
+    if (!tenBitBackBuffer()) return false;
+
+    std::lock_guard lock(outputMutex);
+
+    return applyOutput(chain);
 }
 
 bool upgradeTexture(DXGI_FORMAT& format, bool& unorderedAccess) noexcept
@@ -532,9 +606,9 @@ bool upgradeView(ID3D11Resource* resource, DXGI_FORMAT& format) noexcept
         return true;
     }
 
-    // The game draws GammaControl into the back buffer through an R8G8B8A8_UNORM_SRGB view, which in
-    // SDR stays as it is.
-    if (!active()) return false;
+    // The game draws GammaControl into the back buffer through an R8G8B8A8_UNORM_SRGB view, which the
+    // R10G10B10A2 back buffer cannot have.
+    if (!tenBitBackBuffer()) return false;
 
     const bool eightBit = format == DXGI_FORMAT_R8G8B8A8_UNORM || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
         || format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
@@ -589,7 +663,8 @@ const std::vector<std::uint8_t>* patchedShader(const void* code, std::size_t siz
         if (const auto found = patchedShaders.find(*hash); found != patchedShaders.end()) return &found->second.code;
 
         const bool draw2D = draw2DSource(std::string_view(static_cast<const char*>(code), size), "_ps.hlsl");
-        const auto patched = draw2D ? saturateOutput(code, size) : withoutTonemap(code, size, !active());
+        const bool lift = !active();
+        const auto patched = draw2D ? saturateOutput(code, size) : withoutTonemap(code, size, lift);
         if (!patched)
         {
             if (draw2D) logOnce("Float scene: the 2D pass shader " + toHex(*hash) + " keeps its writes unclamped.");
@@ -604,10 +679,21 @@ const std::vector<std::uint8_t>* patchedShader(const void* code, std::size_t siz
             return nullptr;
         }
 
+        // The sky's other variant, for HDR output turned the other way; none for shaders without the clamp.
+        ComPtr<ID3D11PixelShader> other;
+        if (!draw2D)
+            if (const auto variant = withoutTonemap(code, size, !lift); variant && *variant != *patched
+                && FAILED(device->CreatePixelShader(variant->data(), variant->size(), nullptr, other.GetAddressOf())))
+            {
+                other.Reset();
+                logOnce("Float scene: Direct3D refused the other sky variant of " + toHex(*hash) + "; its clamp follows the setting at start.");
+            }
+
         const auto* original = static_cast<const std::uint8_t*>(code);
-        auto& entry = patchedShaders[*hash] = Patched{std::move(*patched), std::vector(original, original + size)};
+        auto& entry = patchedShaders[*hash] = Patched{std::move(*patched), std::vector(original, original + size), lift, std::move(other)};
         patchedByCode[entry.code.data()] = &entry;
-        log(std::string("Float scene: ") + (draw2D ? "clamped the writes of 2D pass shader " : "took TppTonemap out of shader ") + toHex(*hash) + ".");
+        log(std::string("Float scene: ") + (draw2D ? "clamped the writes of 2D pass shader " : "took TppTonemap out of shader ") + toHex(*hash)
+            + (entry.other ? ", with both sky clamps." : "."));
 
         return &entry.code;
     }
@@ -626,6 +712,49 @@ std::pair<const void*, std::size_t> originalOf(const void* code, std::size_t siz
     if (found == patchedByCode.end()) return {code, size};
 
     return {found->second->original.data(), found->second->original.size()};
+}
+
+void pixelShaderCreated(const void* code, ID3D11PixelShader* made) noexcept
+{
+    if (!isSceneFloat() || !code || !made) return;
+
+    try
+    {
+        ComPtr<ID3D11PixelShader> other;
+        std::vector<std::uint8_t> original;
+        {
+            std::unique_lock lock(mutex);
+            const auto found = patchedByCode.find(code);
+            if (found == patchedByCode.end() || !found->second->other) return;
+
+            const auto& entry = *found->second;
+            other = entry.other;
+            original = entry.original;
+            auto& variants = skyShaders[made];
+            (entry.lifted ? variants.clampLifted : variants.clampKept) = made;
+            (entry.lifted ? variants.clampKept : variants.clampLifted) = other;
+            hasSkyVariants = true;
+        }
+
+        // The other variant is the same game shader to the add-on's parts.
+        game_shaders::pixelShaderCreated(original.data(), original.size(), other.Get());
+    }
+    catch (...)
+    {
+    }
+}
+
+ID3D11PixelShader* shaderFor(ID3D11PixelShader* bound) noexcept
+{
+    if (!hasSkyVariants.load(std::memory_order_relaxed) || !bound) return nullptr;
+
+    std::shared_lock lock(mutex);
+    const auto found = skyShaders.find(bound);
+    if (found == skyShaders.end()) return nullptr;
+
+    auto* wanted = (active() ? found->second.clampKept : found->second.clampLifted).Get();
+
+    return wanted != bound ? wanted : nullptr;
 }
 
 bool beforeDraw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_shaders::DrawnShader& shader) noexcept
@@ -726,7 +855,7 @@ bool draw(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call, game_
         if (!row) return false;
 
         ID3D11PixelShader* replacement{};
-        if (row->pass == GamePass::Grade) replacement = gradeShader.Get();
+        if (row->pass == GamePass::Grade) replacement = gradeShaders[active() ? 1 : 0].Get();
         else if (row->pass == GamePass::Reduce)
         {
             // Only the reduction of the scene itself; the game runs it again on its own result.
@@ -841,10 +970,9 @@ OutputShader::OutputShader(ID3D11DeviceContext* target) noexcept
 {
     if (!isSceneFloat() || !outputShader) return;
 
-    // In SDR the back buffer is the game's, written through an sRGB view; HDR's swap chain is
-    // R10G10B10A2, encoded here, in PQ while the display shows HDR.
-    auto encoding = Encoding::SrgbView;
-    if (active()) encoding = shown == Output::Hdr10 ? Encoding::Pq : Encoding::Srgb;
+    // The back buffer is R10G10B10A2, encoded here: in PQ while HDR output is on and the display shows
+    // HDR, sRGB otherwise.
+    const auto encoding = active() && shown == Output::Hdr10 ? Encoding::Pq : Encoding::Srgb;
 
     const OutputParameters parameters{paperWhiteNits, peakNitsFor(peakNits), encoding, 0};
     if (FAILED(write(target, outputBuffer.Get(), parameters))) return;

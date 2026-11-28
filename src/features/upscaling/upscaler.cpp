@@ -397,7 +397,7 @@ void drawHudless(ID3D11DeviceContext* context, const ui_redirect::DrawCall& call
     ComPtr<ID3D11DepthStencilView> depth;
     context->OMGetRenderTargets(1, backBuffer.GetAddressOf(), depth.GetAddressOf());
     const auto output = textureDesc(backBuffer.Get());
-    const auto format = hdr::active() ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    const auto format = hdr::tenBitBackBuffer() ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
     if (output.Width != target->width || output.Height != target->height || output.Format != format) return;
 
     ComPtr<ID3D11ShaderResourceView> scene;
@@ -473,18 +473,18 @@ void ensureHudless()
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_DEFAULT;
     // The source takes the scene target's format, so DLSS's image copies into it.
-    const bool hdrOn = hdr::active();
+    const bool tenBit = hdr::tenBitBackBuffer();
     desc.Format = hdr::sceneFormat();
     desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
     D3D11_SHADER_RESOURCE_VIEW_DESC sourceView{hdr::isSceneFloat() ? desc.Format : DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, D3D11_SRV_DIMENSION_TEXTURE2D};
     sourceView.Texture2D.MipLevels = 1;
     // The target holds the back buffer's bits; Streamline reads it as R8G8B8A8_UNORM, as the real swap
-    // chain holds them, or R10G10B10A2_UNORM with HDR (frame_generation.cpp).
+    // chain holds them, or R10G10B10A2_UNORM with the float scene's swap chain (frame_generation.cpp).
     D3D11_TEXTURE2D_DESC target = desc;
-    target.Format = hdrOn ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_TYPELESS;
+    target.Format = tenBit ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_TYPELESS;
     target.BindFlags = D3D11_BIND_RENDER_TARGET;
     target.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
-    const D3D11_RENDER_TARGET_VIEW_DESC targetView{hdrOn ? target.Format : DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, D3D11_RTV_DIMENSION_TEXTURE2D};
+    const D3D11_RENDER_TARGET_VIEW_DESC targetView{tenBit ? target.Format : DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, D3D11_RTV_DIMENSION_TEXTURE2D};
     if (FAILED(device->CreateTexture2D(&desc, nullptr, created->source.GetAddressOf()))
         || FAILED(device->CreateShaderResourceView(created->source.Get(), &sourceView, created->sourceView.GetAddressOf()))
         || FAILED(device->CreateTexture2D(&target, nullptr, created->target.GetAddressOf()))

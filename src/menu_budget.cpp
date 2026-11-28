@@ -197,16 +197,16 @@ fxui::Budget budget(Settings& wanted, const performance::Costs& costs)
 
     State output = State::Working;
     std::string outputMessage;
-    if (wanted.hdr.on != hdr::active())
-    {
-        output = State::Restart;
-        outputMessage = wanted.hdr.on ? "Restart the game to turn HDR on." : "Restart the game to turn HDR off.";
-    }
-    else if (!wanted.hdr.on) output = State::Off;
+    if (!wanted.hdr.on) output = State::Off;
     else if (hdr::output() == hdr::Output::Unavailable)
     {
         output = State::Unavailable;
         outputMessage = "HDR output is unavailable (see PhantomFX.log).";
+    }
+    else if (wanted.hdr.on != hdr::active())
+    {
+        output = State::Restart;
+        outputMessage = "Restart the game to turn HDR on: 'Switch without a restart' was off when it started.";
     }
     else if (hdr::output() == hdr::Output::Sdr)
     {

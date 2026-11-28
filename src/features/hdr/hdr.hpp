@@ -18,8 +18,9 @@
 // HUD. On a supported build the scene keeps its light until the grading, in SDR too, where the 8 bits
 // showed as bands in smooth fog:
 //
-// - With HDR output, the swap chain becomes R10G10B10A2 with flip model, in the HDR10 colour space (PQ,
-//   BT.2020).
+// - With the scene in float, the swap chain becomes R10G10B10A2 with flip model, so HDR output can turn
+//   on and off without making it again: in the HDR10 colour space (PQ, BT.2020) with HDR output, sRGB
+//   otherwise.
 // - The scene target and its copy, which the renderer makes at known places, become 16-bit float.
 //   They hold sRGB-encoded colour, which 8-bit formats encode and decode in their _SRGB views; the
 //   float targets keep the encoded values, so a draw through such a view (the resolve) is encoded
@@ -31,27 +32,24 @@
 // - The grading pass tonemaps for the game's grading; with HDR output it then adds back the light the
 //   tonemap took.
 // - GammaControl, which wrote the back buffer, applies the game's brightness and maps the light to
-//   the display: with HDR output, its range; in SDR, 8 bits with a dither of half a step, which hides
-//   the steps left.
+//   the display: with HDR output, its range; in SDR, sRGB in 10 bits with a dither of half a step,
+//   which hides the steps left.
 // - The 2D pass's writes are clamped to 0 to 1, as the 8-bit target clamped them.
 //
 // DLSS runs in its HDR mode on the light (upscaler.cpp).
 namespace phantom_fx::hdr
 {
-// What the session keeps of the scene's light: nothing (the game's 8-bit scene), the float scene with
-// SDR output, or the float scene with HDR output.
-enum class Mode : std::uint8_t { Off, FloatScene, HdrOutput };
-
 // What the swap chain shows: HDR10, sRGB when the display has HDR off, or nothing of HDR's because
 // it is off or could not start.
 enum class Output : std::uint8_t { Off, Hdr10, Sdr, Unavailable };
 
 // ---- Setup ----
-// At start, before the game makes its swap chain and targets. A change takes a restart.
-void enable(Mode mode) noexcept;
+// At start, before the game makes its swap chain and targets: the scene in float for the session.
+void enable() noexcept;
 // The scene keeps its light in 16-bit float until the grading this session.
 bool isSceneFloat() noexcept;
-// HDR output runs this session.
+// HDR output is on: the settings want it and the scene is float. Follows the settings from the next
+// frame.
 bool active() noexcept;
 Output output() noexcept;
 // The peak brightness HDR maps to for a chosen one, in nits: 0 takes what the display reports.
@@ -64,11 +62,17 @@ void detach() noexcept;
 void configure(const Configuration& configuration) noexcept;
 
 // ---- Creation ----
-// The game's swap chain, before it is made or resized: R10G10B10A2 with flip model. Returns true
-// when the description changed.
+// The game's swap chain, before it is made or resized: R10G10B10A2 with flip model while the scene is
+// float, whether HDR output is on or not. Returns true when the description changed.
 bool upgradeSwapChain(DXGI_FORMAT& format, DXGI_SWAP_EFFECT& effect, UINT& bufferCount) noexcept;
-// After the swap chain was made or resized: HDR10 when its display shows HDR, sRGB otherwise.
+// The swap chain was made R10G10B10A2 this session.
+bool tenBitBackBuffer() noexcept;
+// After the swap chain was made or resized: HDR10 when HDR output is on and its display shows HDR,
+// sRGB otherwise.
 void swapChainReady(IDXGISwapChain* chain) noexcept;
+// Before each present: sets the swap chain's colour space when HDR output was turned on or off.
+// Returns true when it changed, for ReShade's runtime to be told.
+bool present(IDXGISwapChain* chain) noexcept;
 // A 2D texture about to be made: the scene target and its copy become 16-bit float, with unordered
 // access. Returns true when the description changed; textureCreated follows on the same thread.
 bool upgradeTexture(DXGI_FORMAT& format, bool& unorderedAccess) noexcept;
@@ -87,6 +91,11 @@ const std::vector<std::uint8_t>* patchedShader(const void* code, std::size_t siz
 // The game's own code for code patchedShader returned, which the add-on's parts identify shaders by;
 // other code as it is.
 std::pair<const void*, std::size_t> originalOf(const void* code, std::size_t size) noexcept;
+// A pixel shader the game made from `code`: a sky shader keeps its other clamp variant beside it.
+void pixelShaderCreated(const void* code, ID3D11PixelShader* made) noexcept;
+// A pixel shader the game binds: the sky variant to bind in its place for HDR output as it is now, or
+// null to keep it.
+ID3D11PixelShader* shaderFor(ID3D11PixelShader* bound) noexcept;
 
 // ---- Recording, on the game's render and worker threads ----
 // Before a draw, whoever draws it. Keeps a resolve's tonemap curve, copies the scene for the depth

@@ -276,8 +276,8 @@ void average(LONGLONG now, const std::optional<FrameCost>& sample)
 }
 
 // The steps from what is on now: each leaves out one more effect, the lighting effects in Effect's order
-// (effects.hpp), the upscaler last, as the others run at its render size. HDR takes a restart, so it is
-// not measured. Returns what the first step leaves out: nothing.
+// (effects.hpp), the upscaler last, as the others run at its render size. HDR output is not measured:
+// its cost is the float scene's, which runs in SDR too. Returns what the first step leaves out: nothing.
 std::optional<LeftOut> startMeasurement(LONGLONG now)
 {
     auto& m = measurement;

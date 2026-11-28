@@ -12,8 +12,8 @@ param(
     [int]$Width = 0,
     [int]$Height = 0,
     # PhantomFX.ini lines in place of the player's. Frame generation and HDR are off by default: the
-    # captures compare more easily without them, and changing either takes a restart.
-    [string[]]$Settings = @('frame_generation=off', 'hdr=0'),
+    # captures compare more easily without them, and changing frame generation takes a restart.
+    [string[]]$Settings = @('frame_generation=off', 'hdr=0', 'hdr_hot=0'),
     # A whole PhantomFX.ini to run with, a debug case's, in place of the two above.
     [string]$Ini
 )

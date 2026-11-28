@@ -1,8 +1,8 @@
 // In place of GammaControl, which wrote the back buffer: the game's brightness setting as it applies
 // it, then the display's encoding. HDR10 is PQ with BT.2020 primaries, the game's white at the paper
-// white and the brightest the image can be at the display's peak; without HDR on the display, sRGB
-// with highlights clipped, as the game showed it. In SDR the game's 8-bit back buffer encodes through
-// its sRGB view.
+// white and the brightest the image can be at the display's peak; otherwise sRGB with highlights
+// clipped, as the game showed it. The back buffer is R10G10B10A2 either way, so HDR output can turn
+// on and off without a new swap chain.
 #include "../../../shaders/hdr_common.hlsli"
 
 cbuffer cPSSystem : register(b0)
@@ -26,14 +26,13 @@ cbuffer OutputParameters : register(b2)
 {
     float PaperWhite; // Nits
     float Peak;       // Nits
-    uint Encoding;    // EncodingSrgbView, EncodingSrgb or EncodingPq
+    uint Encoding;    // EncodingSrgb or EncodingPq
     float Padding;
 };
 
-// As hdr.cpp's Encoding: linear, for the game's 8-bit sRGB view; sRGB; HDR10.
-static const uint EncodingSrgbView = 0u;
-static const uint EncodingSrgb = 1u;
-static const uint EncodingPq = 2u;
+// As hdr.cpp's Encoding: sRGB; HDR10.
+static const uint EncodingSrgb = 0u;
+static const uint EncodingPq = 1u;
 
 Texture2D<float4> inImage : register(t0);
 SamplerState g_samplerLinear_Clamp : register(s11);
@@ -89,14 +88,15 @@ uint Pcg(uint value)
     return (word >> 22u) ^ word;
 }
 
-// The 8-bit back buffer rounds a smooth gradient to steps a level apart, which show as bands in fog
-// and sky. Up to half a level either way, white noise by the pixel, turns each step's edge into grain
-// too fine to see. The game hid its own 8-bit steps with an 8x8 dither before the upscaler, which the
-// upscaler turned into a grid; here it comes last, at the output size.
+// The back buffer rounds a smooth gradient to steps a level apart, which at 8 bits showed as bands in
+// fog and sky. Up to half a level either way, white noise by the pixel, turns each step's edge into
+// grain too fine to see; at 10 bits it is a quarter of the 8-bit one, kept for displays that show 8.
+// The game hid its own 8-bit steps with an 8x8 dither before the upscaler, which the upscaler turned
+// into a grid; here it comes last, at the output size.
 float3 Dithered(float3 encoded, uint2 pixel)
 {
     const float noise = Pcg(pixel.x + Pcg(pixel.y)) * (1.0 / 4294967296.0);
-    return saturate(encoded + (noise - 0.5) / 255);
+    return saturate(encoded + (noise - 0.5) / 1023);
 }
 
 float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
@@ -104,8 +104,7 @@ float4 main(float4 position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Tar
     const float2 uv = texcoord * m_renderInfo.xy * m_renderBuffer.zw;
     const float3 encoded = inImage.Sample(g_samplerLinear_Clamp, uv).rgb;
     const float3 sdr = LinearToSrgb(saturate(Brightness(SrgbToLinear(encoded))));
-    if (Encoding == EncodingSrgbView) return float4(SrgbToLinear(Dithered(sdr, uint2(position.xy))), 1);
-    if (Encoding == EncodingSrgb) return float4(sdr, 1);
+    if (Encoding == EncodingSrgb) return float4(Dithered(sdr, uint2(position.xy)), 1);
 
     const float3 color = max(mul(Bt709To2020, Brightness(DisplayLinear(encoded))), 0);
     return float4(PerceptualQuantizer(RollOff(color, Peak / PaperWhite, WhiteClip) * PaperWhite / 10000), 1);

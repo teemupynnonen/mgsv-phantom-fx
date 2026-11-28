@@ -4,6 +4,12 @@
 
 ### New
 
+- **HDR turns on and off without a restart.** A new **Switch without a restart** setting (`hdr_hot`) keeps the scene
+  in 16-bit float from start, so the overlay's **HDR output** switch applies from the next frame: the colour space, the
+  grading and the sky's clamp follow it, and the display is asked again each time, so turning HDR on in Windows first
+  and then in the game works without restarting. It is off by default: then the float scene starts only with HDR on, as
+  before, and SDR keeps the game's own 8-bit scene. With it, SDR writes the 10-bit back buffer, which looked as before.
+
 - **Bounce light is now VB-SSGI, a visibility-bitmask gather.** It replaces SSILVB's gather (ported from the RenoDX
   MGSV add-on's indirect lighting, `renodx-mgsv` `src/games/mgsv/il`): a few slices through each pixel are marched
   over the prefiltered depth, each keeping a 32-sector occlusion bitmask, and the bounce takes light only from the

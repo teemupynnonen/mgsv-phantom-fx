@@ -16,9 +16,14 @@ void describe(Hdr& hdr, SettingVisitor& visit)
             .name = "HDR output",
             .tech = "HDR10",
             .tip = "The game in HDR10 on an HDR display: the sun, lamps, fire and reflections shine brighter than the game's white. It needs HDR "
-                   "on for the display in Windows. Turning it on or off takes a restart; the brightness applies at once.",
+                   "on for the display in Windows, and a restart unless 'Switch without a restart' is on.",
             .summary = "Brighter sun, lamps and fire. Turn HDR on in Windows first.",
             .keywords = "peak brightness paper white nits"});
+    visit.toggle(hdr.hot,
+        {.iniKey = "hdr_hot",
+            .label = "Switch without a restart",
+            .tip = "Turns HDR output on and off while the game runs. Read at start: the scene keeps its light in 16-bit float in SDR too, which "
+                   "costs about 0.3 ms at 4K and removes the banding in smooth fog."});
     visit.slider(hdr.peakNits,
         {.iniKey = "hdr_peak_nits",
             .label = "Peak brightness",
