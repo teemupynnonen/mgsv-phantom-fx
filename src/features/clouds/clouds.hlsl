@@ -17,7 +17,7 @@ static const int SkyDirectionTexel = 1, SkyAmbientTexel = 2, SkyFogTexel = 3, Sk
 // white wall in the sun does (albedo / pi of the sun, with the phase's mean about 0.17), and its shaded side about the sky's own light.
 // Measured in Africa at noon: at 2.5 and 3 every cloud clipped to a flat white, and at 1 a lit side still reached 1.0 against a sky of
 // about 0.07; at these a lit side is a few times the sky, as a cumulus is, and a shaded side reads grey.
-static const float PhysicalSunScale = 0.45, PhysicalSkyScale = 0.85;
+static const float PhysicalSunScale = 0.5, PhysicalSkyScale = 0.9;
 
 static const float Pi = 3.14159265;
 static const int Steps = 128;
