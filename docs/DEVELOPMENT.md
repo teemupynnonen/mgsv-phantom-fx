@@ -3271,7 +3271,11 @@ denoiser (see "Ray Reconstruction").
   size, from the depth's world position towards a point on the sun's disc (uniform over the disc of
   the sun size's angular radius, a new point each frame), up to 5 km. The sun's direction is the sun
   pass's (`cPSLight` `c0`), noted the frame before, as the scene is traced before that frame's sun
-  pass is recorded.
+  pass is recorded. While path tracing, no ray where the G-buffer's normal faces away from the sun (its cosine under
+  -0.05) on a pixel without translucency, which the sun pass leaves without sun whatever its shadow: it takes a blocked
+  ray's shadow, for the denoiser too. Not without path tracing: its sun passes with the sky reflection light that
+  by the same shadow. The G-buffer pack marks those pixels in the normals' alpha (1; 2/3 where the specular
+  target's translucency is set, on the sea, or without that target; 1/3 on foliage).
 - **Which faces cast** (`StopsShadowRay`, 2026-10-26). The game draws its shadow maps with front faces
   culled (1,227 of 1,267 shadow map draws in a capture of the prologue's hospital; the main view culls
   back faces), so an opaque surface casts from its back alone, as the light sees it. Rays towards the

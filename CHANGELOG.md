@@ -85,6 +85,12 @@
   was 128 dispatches a frame, about 3.3 ms: roughly 16% of a 1080p frame and 6-8% at 4K. A light undrawn for 60 frames
   is measured again, so a new map keeps none of the old one's boxes.
 
+- **Path tracing traces no sun ray where the sun cannot light the surface.** A surface turned away from the sun, and
+  not see-through like leaves or cloth the game lights from behind, gets no sun whatever its shadow, so its sun ray is
+  skipped and it is taken as shadowed. That is often a large share of the screen with the sun low. With Ray
+  Reconstruction the sun's rays are a small part of the frame: 0.15 ms of 36 ms at DLAA, nothing measurable at Ultra
+  Performance. Ray-traced shadows without path tracing still trace every pixel, as their sky reflection reads the shadow.
+
 ### Fixed
 
 - **Physical sky is no longer blown out to white.** It was lit with the game's own sky sun, which is several times
