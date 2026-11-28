@@ -63,7 +63,8 @@
   the blurred reflection now looks only as far as the bounce light's rays (100 m with **Short rays**) and shows the
   sky past that. Where the light cache has nothing for what it hits, that hit is lit like the bounce light's own
   hits, without the reflection's extra rays. Leaves' cut-outs in a reflection are also read at the blur's own detail,
-  not a sharp pixel's. The time saved is not measured yet.
+  not a sharp pixel's. At Mother Base's helipad the reflection pass went from 0.54 to 0.49 ms, and the image looks the
+  same.
 
 - **Ray-traced lights measure their volume once, not every frame.** At Mother Base at night with 128 lights traced, that
   was 128 dispatches a frame, about 3.3 ms: roughly 16% of a 1080p frame and 6-8% at 4K. A light undrawn for 60 frames
