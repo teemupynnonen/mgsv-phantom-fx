@@ -6,7 +6,7 @@ param(
     # The player's game the copy is made from: PHANTOM_FX_GAME, else Steam's usual folder.
     [string]$Steam = $(if ($env:PHANTOM_FX_GAME) { $env:PHANTOM_FX_GAME } else { 'C:\Program Files (x86)\Steam\steamapps\common\MGS_TPP' }),
     # The saves every run starts from; the game reads and writes a copy (src/devkit/save_redirect.hpp).
-    [string]$SeedSaves = (Join-Path $env:USERPROFILE 'Documents\Development\mgsv-automation\seed-saves'),
+    [string]$SeedSaves = (Join-Path (Split-Path $Game) 'seed-saves'),
     # No longer applied, only warned about. The copy has started at the game's defaults even with the player's
     # graphics config, so set its graphics once in its own menu; what it saves is kept (see below).
     [int]$Width = 0,
@@ -22,19 +22,23 @@ if (-not $PSBoundParameters.ContainsKey('Build') -and $env:PHANTOM_FX_DEV_BUILD)
 
 if (Get-Process mgsvtpp -ErrorAction SilentlyContinue) { throw 'The game is running; close it first.' }
 
-# The game's own files, linked once.
+# The game's own files, linked once. A hard link cannot cross drives, so a copy on another drive gets real copies.
 if (-not (Test-Path (Join-Path $Game 'mgsvtpp.exe'))) {
-    foreach ($item in 'master', 'mgo', 'CustomSoundtrack', 'D-Mod', 'mgsvtpp.exe', 'mgsvmgo.exe', 'steam_api64.dll', 'steam_appid.txt', 'version_info.txt') {
+    $sameDrive = (Split-Path -Qualifier $Game) -eq (Split-Path -Qualifier $Steam)
+    $place = if ($sameDrive) { { param($l, $t) New-Item -ItemType HardLink -Path $l -Target $t | Out-Null } } else { { param($l, $t) Copy-Item $t $l } }
+    foreach ($item in 'master', 'mgo', 'CustomSoundtrack', 'mgsvtpp.exe', 'mgsvmgo.exe', 'steam_api64.dll', 'steam_appid.txt', 'version_info.txt') {
         $path = Join-Path $Steam $item
         if (Test-Path $path -PathType Container) {
-            Get-ChildItem $path -Recurse -File | ForEach-Object {
+            # A lock file belongs to whatever holds it open, and an interrupted copy resumes where it stopped.
+            Get-ChildItem $path -Recurse -File | Where-Object Extension -ne '.lock' | ForEach-Object {
                 $link = Join-Path $Game $_.FullName.Substring($Steam.Length)
+                if ((Test-Path $link) -and -not $sameDrive -and (Get-Item $link).Length -eq $_.Length) { return }
                 New-Item -ItemType Directory -Force (Split-Path $link) | Out-Null
-                New-Item -ItemType HardLink -Path $link -Target $_.FullName | Out-Null
+                & $place $link $_.FullName
             }
         } else {
             New-Item -ItemType Directory -Force $Game | Out-Null
-            New-Item -ItemType HardLink -Path (Join-Path $Game $item) -Target $path | Out-Null
+            & $place (Join-Path $Game $item) $path
         }
     }
 }
