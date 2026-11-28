@@ -59,6 +59,13 @@
   own ray. At Africa's spawn at night (1440x810, Ray Reconstruction) the cache change alone took the global
   illumination's rays from about 21 to about 16.5 ms. The image looks the same.
 
+- **Path-traced reflections on rough surfaces cost less.** On rough surfaces, which is most of what the game draws,
+  the blurred reflection now looks only as far as the bounce light's rays (100 m with **Short rays**) and shows the
+  sky past that. Where the light cache has nothing for what it hits, that hit is lit like the bounce light's own
+  hits, without the reflection's extra rays. Leaves' cut-outs in a reflection are also read at the blur's own detail,
+  not a sharp pixel's. At Mother Base's helipad the reflection pass went from 0.54 to 0.49 ms, and the image looks the
+  same.
+
 - **Ray-traced lights measure their volume once, not every frame.** At Mother Base at night with 128 lights traced, that
   was 128 dispatches a frame, about 3.3 ms: roughly 16% of a 1080p frame and 6-8% at 4K. A light undrawn for 60 frames
   is measured again, so a new map keeps none of the old one's boxes.

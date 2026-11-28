@@ -155,14 +155,18 @@ bool CachedLight(float3 position, float3 direction, float hitDistance, out float
 
 // The closest hit along a specular ray, past glass (GI_GEOMETRY_GLASS). A pane reflects the ray by chance, as much of it
 // as HitMaterialOf says, and lets it through otherwise: `origin`, `normal`, `tolerance` and `direction` are left as the
-// ray goes on from the last pane, and `travelled` grows by the way to it.
-SceneHit TraceReflectionRay(inout float3 origin, inout float3 normal, inout float tolerance, inout float3 direction, float2 cone, inout float travelled, inout Random random)
+// ray goes on from the last pane, and `travelled` grows by the way to it. Past `reach` from where `travelled` was, it gets away.
+SceneHit TraceReflectionRay(inout float3 origin, inout float3 normal, inout float tolerance, inout float3 direction, float2 cone, float reach, inout float travelled, inout Random random)
 {
     SceneHit hit;
+    float end = travelled + reach;
     for (uint pane = 0; pane <= MostPanes; ++pane)
     {
         uint copies;
-        hit = TraceFromSurface(origin, normal, tolerance, direction, MAX_HIT_DISTANCE, GI_MASK_SCENE, true, LightCone(origin), RayAlongReflection, copies);
+        // The alpha test reads cut-outs at the ray's own cone, as wide as it has spread by here and spreading as the roughness
+        // makes it: at a pixel's spread alone, a rough surface's ray read foliage at sharper mips than its hit's shading does.
+        float2 rayCone = float2(cone.x + travelled * cone.y, cone.y);
+        hit = TraceFromSurface(origin, normal, tolerance, direction, end - travelled, GI_MASK_SCENE, true, rayCone, RayAlongReflection, copies);
         if (!hit.hit || !(g_Geometries[FirstGeometry(g_Instances[hit.instance]) + hit.geometry].flags & GI_GEOMETRY_GLASS)) return hit;
 
         travelled += hit.distance;
@@ -181,7 +185,8 @@ SceneHit TraceReflectionRay(inout float3 origin, inout float3 normal, inout floa
 
 // The light along a ray from a surface: at each hit its own light (HitOwnLight), and what it reflects: its
 // specular lobe's ray, or its diffuse lobe's, which ends at the sky's light or the cache as it stands. From a rough
-// surface (`isRough`) the first hit's light comes from the cache where it has any. `cone` as PixelCone gives it, which
+// surface (`isRough`) the first ray looks as far as the light's rays (LightRayReach) and its hit's light comes from the
+// cache where it has any. `cone` as PixelCone gives it, which
 // reads the hits' textures as sharp as the ray shows them.
 float3 ReflectedLight(float3 origin, float3 normal, float tolerance, float3 direction, float2 cone, bool isRough, inout Random random, out float hitDistance)
 {
@@ -190,7 +195,10 @@ float3 ReflectedLight(float3 origin, float3 normal, float tolerance, float3 dire
     float travelled = 0.0f;
     for (uint ray = 1; ray <= SpecularRays; ++ray)
     {
-        SceneHit hit = TraceReflectionRay(origin, normal, tolerance, direction, cone, travelled, random);
+        // A rough surface's blur takes no more from far off than the diffuse rays do, which stop at their reach and take the
+        // sky past it: the long rays cost the most to trace.
+        float reach = ray == 1 && isRough ? LightRayReach() : MAX_HIT_DISTANCE;
+        SceneHit hit = TraceReflectionRay(origin, normal, tolerance, direction, cone, reach, travelled, random);
         if (!hit.hit) return light + throughput * SkySeen(direction);
 
         travelled += hit.distance;
@@ -200,7 +208,10 @@ float3 ReflectedLight(float3 origin, float3 normal, float tolerance, float3 dire
         if (ray == 1 && isRough && !(hitFlags & GI_GEOMETRY_EMISSIVE) && CachedLight(origin + hit.distance * direction, direction, hit.distance, cached)) return cached;
 
         HashGridCache_Visibility visibility = VisibilityOf(hit, direction);
-        HitMaterial material = HitMaterialOf(visibility, cone.x + travelled * cone.y, false);
+        // Where the cache has nothing for a rough surface's hit, it is shaded as the diffuse rays shade theirs: under the blur its
+        // specular light and normal map do not show, and matte it reads neither, may leave out a dim sun's ray (SunRayChance)
+        // and ends at its diffuse bounce, with no specular ray of its own.
+        HitMaterial material = HitMaterialOf(visibility, cone.x + travelled * cone.y, ray == 1 && isRough);
         light += throughput * material.emission;
         if (material.isSelfLit) return light;
 
