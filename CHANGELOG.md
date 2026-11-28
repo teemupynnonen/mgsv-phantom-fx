@@ -30,6 +30,8 @@
 
 ### Changed
 
+- **The shaded sides of clouds are brighter.** The parts of a cloud facing away from the sun were a dark grey; the sky's
+  light on them is now more than twice as strong with the physical sky, so they read as soft grey and keep their shape.
 - **Clouds look like a sky of cumulus, not rows of streaks.** The cloud noise no longer stretches every cloud along one
   axis or repeats every few kilometres, which lined the clouds up in rows running to the horizon. Clouds now drift with
   the weather's wind and stop when the game is paused, gather in clumps with open sky between them, and rise tallest at
