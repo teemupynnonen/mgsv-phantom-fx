@@ -13,9 +13,11 @@ Texture2D<float> CloudShadow : register(t16);
 // The physical sky's parameters (volumetric_fog/shaders/atmosphere.hlsli), or nothing while it is off: then every texel reads 0.
 Texture2D<float4> SkyParameters : register(t18);
 static const int SkyDirectionTexel = 1, SkyAmbientTexel = 2, SkyFogTexel = 3, SkyFogShapeTexel = 4, CloudSunTexel = 7;
-// The physical sky's light is in the game's exposed units already. A lit top takes its sun through the phase and the multiple
-// scattering the march leaves out; the shaded side the sky above it, about three times the mean of the sky and the ground.
-static const float PhysicalSunScale = 2.5, PhysicalSkyScale = 3.0;
+// The physical sky's light is in the game's exposed units already, and physical: a thick cloud's lit side gives back about what a
+// white wall in the sun does (albedo / pi of the sun, with the phase's mean about 0.17), and its shaded side about the sky's own light.
+// Measured in Africa at noon: at 2.5 and 3 every cloud clipped to a flat white, and at 1 a lit side still reached 1.0 against a sky of
+// about 0.07; at these a lit side is a few times the sky, as a cumulus is, and a shaded side reads grey.
+static const float PhysicalSunScale = 0.45, PhysicalSkyScale = 0.85;
 
 static const float Pi = 3.14159265;
 static const int Steps = 128;
