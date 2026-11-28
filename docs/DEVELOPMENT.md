@@ -2082,8 +2082,9 @@ the game's lights) is left alone until it runs.
 - **Reflections** (`TraceReflections`, `src/features/path_tracing/shaders/reflections.hlsl`): a ray a render pixel
   along a reflection the surface's roughness spreads (GGX's visible normals, Heitz 2018, roughness squared,
   from Ray Reconstruction's normal guide). On a surface of roughness 0.5 and up (`RoughSurface`), most of what
-  the game draws, a reflection is a faint blur: the ray's hit takes the light cache's light for its place (`CachedLight`),
-  one ray a pixel; where no ray has lit that cell yet, at a self-lit mesh, and nearer than the cell is wide, it is
+  the game draws, a reflection is a faint blur: the ray looks as far as the global illumination's diffuse rays
+  (`LightRayReach`, 100 m with **Short rays**) and takes the sky past it, and its hit takes the light cache's light for
+  its place (`CachedLight`), one ray a pixel; where no ray has lit that cell yet, at a self-lit mesh, and nearer than the cell is wide, it is
   shaded as below. A cell is a tile deep along the ray's main axis, a metre at a room's distance, through a wall:
   until 2026-11-06 the rays from a dark room's wall beside a pipe 2 cm off it read the cell at the pipe's back, which
   held light the pipe lit afresh had none of, and drew a pale line along it at 4 to 10 times the wall's light, and
